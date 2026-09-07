@@ -133,7 +133,14 @@ def test_checkpoint_reuses_saved_input_without_reloading_implementation(monkeypa
 
 
 def test_implementation_repair_preserves_plan_but_reruns_passed_cases(monkeypatch) -> None:
-    fixed_input = _input("implementation-2")
+    fixed_input = _input("implementation-1").model_copy(
+        update={
+            "artifact_version_ids": {
+                TYPE_SOURCE_CODE: 3,
+                TYPE_DEPLOYMENT_FILE: 4,
+            }
+        }
+    )
     previous = {
         "job_id": "command-1",
         "app_id": "app-1",
@@ -173,7 +180,13 @@ def test_implementation_repair_preserves_plan_but_reruns_passed_cases(monkeypatc
     monkeypatch.setattr(
         testing_service.implementation_worker,
         "get_testing_input",
-        lambda _job_id: _completed_implementation("implementation-2"),
+        lambda _job_id: {
+            **_completed_implementation("implementation-1"),
+            "artifact_version_ids": {
+                TYPE_SOURCE_CODE: 3,
+                TYPE_DEPLOYMENT_FILE: 4,
+            },
+        },
     )
     monkeypatch.setattr(
         testing_service,
@@ -193,13 +206,13 @@ def test_implementation_repair_preserves_plan_but_reruns_passed_cases(monkeypatc
 
     result = testing_service.run_testing(
         "app-1",
-        "implementation-2",
+        "implementation-1",
         run_id="command-2",
         previous_job=previous,
         preserve_test=True,
     )
 
-    assert result["implementation_job_id"] == "implementation-2"
+    assert result["implementation_job_id"] == "implementation-1"
 
 
 def test_implementation_repair_without_test_candidate_uses_new_artifacts(

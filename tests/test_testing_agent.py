@@ -742,10 +742,79 @@ def test_testing_result_preserves_static_failure_evidence_for_repair(
     assert len(result["blocking_findings"]) == 1
     finding = result["blocking_findings"][0]
     assert finding["code"] == "testing.static"
+    assert finding["repairable"] is False
+    assert finding["defect_class"] == "PLATFORM_DEFECT"
+    assert finding["repair_owner"] == "platform"
+    assert finding["implementation_owner"] is None
     assert finding["file_hints"] == ["application/deployment/tofu/main.tf"]
     assert finding["evidence"]["issues"] == [issue]
     assert finding["evidence"]["commands"] == [command]
     assert finding["evidence"]["tool"] == "trivy"
+
+
+@pytest.mark.parametrize(
+    ("gate", "expected_class", "expected_owner"),
+    [
+        ("package", "PLATFORM_DEFECT", "platform"),
+        ("iac", "PLATFORM_OR_DESIGN_DEFECT", "platform-or-design"),
+    ],
+)
+def test_delivery_gate_failures_do_not_become_backend_owner_repairs(
+    gate: str,
+    expected_class: str,
+    expected_owner: str,
+    monkeypatch,
+) -> None:
+    fixed_input = FrozenTestingInput(
+        app_id="app-1",
+        implementation_job_id="implementation-1",
+        artifact_version_ids={TYPE_SOURCE_CODE: 1, TYPE_DEPLOYMENT_FILE: 2},
+    )
+    monkeypatch.setattr(testing_service, "load_file_snapshot", lambda *_args, **_kwargs: None)
+    package = {
+        "status": "FAILED" if gate == "package" else "PASSED",
+        "gateStatus": "FAIL" if gate == "package" else "PASS",
+        "issues": ["Generated deployment package is invalid"] if gate == "package" else [],
+        "commands": (
+            [{"status": "FAIL", "output": "package validation failed"}]
+            if gate == "package"
+            else []
+        ),
+        "targets": ["application/deployment/runtime/compose.yaml"],
+    }
+    iac = {
+        "status": "FAILED" if gate == "iac" else "PASSED",
+        "gateStatus": "FAIL" if gate == "iac" else "PASS",
+        "issues": ["OpenTofu validation failed"] if gate == "iac" else [],
+        "targets": ["application/deployment/tofu/main.tf"],
+    }
+    findings = testing_service._blocking_findings(
+        fixed_input,
+        {
+            "reports": {
+                "static": {
+                    "status": "FAILED" if gate == "package" else "PASSED",
+                    "gateStatus": "FAIL" if gate == "package" else "PASS",
+                    "trivyScan": {
+                        "status": "PASSED",
+                        "gateStatus": "PASS",
+                        "issues": [],
+                    },
+                    "deploymentPackage": package,
+                },
+                "iac": iac,
+                "dynamicFunctional": {"status": "passed", "gateStatus": "PASS"},
+            }
+        },
+    )
+
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding["code"] == f"testing.{gate}"
+    assert finding["repairable"] is False
+    assert finding["defect_class"] == expected_class
+    assert finding["repair_owner"] == expected_owner
+    assert finding["implementation_owner"] is None
 
 
 def test_testing_result_preserves_dynamic_runtime_evidence_for_implementation_repair(
@@ -872,6 +941,7 @@ def test_testing_result_preserves_dynamic_runtime_evidence_for_implementation_re
     blocking = result["blocking_findings"][0]
     assert blocking["defect_class"] == "SUT_DEFECT"
     assert blocking["repair_owner"] == "implementation"
+    assert blocking["implementation_owner"] == "backend"
     assert blocking["candidate_digest"] == "candidate-digest-1"
     assert blocking["plan_digest"] == "plan-digest-1"
     assert blocking["request_digest"] == "request-digest-1"

@@ -7,8 +7,18 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
+from app.implementation.runtime.linux_runner_transport import (
+    LLM_CREDENTIAL_ENVIRONMENT,
+    OWNER_NPM_CACHE,
+    OWNER_TERMINAL_HOME,
+    OWNER_TERMINAL_SHELL,
+    OWNER_TERMINAL_SHELL_ENV,
+    OWNER_TERMINAL_USER,
+    OWNER_TERMINAL_USER_ENV,
+)
 from app.implementation.runtime.runner_compat import gradle_command, install
 
 RUNNER_WORKSPACE = Path("/easydep-workspace")
@@ -16,6 +26,50 @@ HOST_BOOTSTRAP_GRADLE_CACHE = RUNNER_WORKSPACE / ".easydep/gradle-cache"
 # 임시 파일이 아니라 이름 있는 Docker volume이 이 고정 경로에 mount된다.
 RUNNER_GRADLE_CACHE = Path("/tmp/easydep-gradle-cache")  # noqa: S108
 GRADLE_CACHE_MARKER = RUNNER_GRADLE_CACHE / ".easydep-bootstrap-v1"
+
+
+def _prepare_owner_terminal_identity() -> None:
+    """Create the fixed shell that drops autonomous commands to ``appuser``."""
+
+    if os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") != "1":
+        return
+    if os.name != "posix" or os.geteuid() != 0:
+        raise RuntimeError("The fixed owner runner must initialize as Linux root.")
+
+    import pwd
+
+    account = pwd.getpwnam(OWNER_TERMINAL_USER)
+    if account.pw_uid == 0:
+        raise RuntimeError("The autonomous terminal user must not be root.")
+    setpriv = shutil.which("setpriv")
+    bash = shutil.which("bash")
+    if not setpriv or not bash:
+        raise RuntimeError("The fixed owner runner requires setpriv and bash.")
+
+    for directory in (Path(OWNER_TERMINAL_HOME), Path(OWNER_NPM_CACHE)):
+        directory.mkdir(parents=True, exist_ok=True)
+        os.chown(directory, account.pw_uid, account.pw_gid)
+        directory.chmod(0o700)
+
+    shell = Path(OWNER_TERMINAL_SHELL)
+    shell.write_text(
+        "#!/bin/sh\n"
+        'export SPRING_PROFILES_ACTIVE="${SPRING_PROFILES_ACTIVE:-test}"\n'
+        f'exec "{setpriv}" --reuid={account.pw_uid} --regid={account.pw_gid} '
+        f'--init-groups --no-new-privs "{bash}" "$@"\n',
+        encoding="utf-8",
+    )
+    os.chown(shell, 0, 0)
+    shell.chmod(0o755)
+    os.environ[OWNER_TERMINAL_USER_ENV] = OWNER_TERMINAL_USER
+    os.environ[OWNER_TERMINAL_SHELL_ENV] = str(shell)
+
+
+def _clear_llm_credentials_from_environment() -> None:
+    """Remove connection credentials after application settings are loaded."""
+
+    for name in LLM_CREDENTIAL_ENVIRONMENT:
+        os.environ.pop(name, None)
 
 
 def _seed_gradle_cache() -> None:
@@ -46,7 +100,13 @@ def _seed_gradle_cache() -> None:
 def _configure_runner_tools() -> None:
     if os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") == "1":
         _seed_gradle_cache()
+        _prepare_owner_terminal_identity()
     install()
+    # ``install`` imports the implementation runtime and therefore constructs
+    # app.config.settings before the process environment is scrubbed.  Later
+    # LLM calls use that in-memory Settings value, while TerminalTool receives
+    # an environment without the credential.
+    _clear_llm_credentials_from_environment()
 
 
 def _runner_job(job_path: Path) -> Path:
@@ -118,9 +178,11 @@ def _preflight(arguments: list[str]) -> int:
     jars = {
         "openapiGenerator7.24.0": Path("/opt/easydep/openapi-generator-7.24.0.jar").is_file(),
     }
+    owner_isolation = _probe_owner_isolation()
     preflight_result = {
         "schemaVersion": "easydep-member-runner-preflight/v1",
-        "workspaceBindPassed": (RUNNER_WORKSPACE / "pyproject.toml").is_file(),
+        "workspaceBindPassed": (RUNNER_WORKSPACE / "app" / "__init__.py").is_file(),
+        "ownerIsolation": owner_isolation,
         "tools": observed,
         "artifacts": jars,
     }
@@ -128,10 +190,108 @@ def _preflight(arguments: list[str]) -> int:
     return (
         0
         if preflight_result["workspaceBindPassed"]
+        and owner_isolation["passed"]
         and all(item["passed"] for item in observed.values())
         and all(jars.values())
         else 1
     )
+
+
+def _probe_owner_isolation() -> dict[str, object]:
+    """Exercise the same OS permission boundary used by live owner terminals."""
+
+    from app.implementation.agents.workspace import prepare_agent_workspace
+    from app.implementation.runtime.linux_runner_transport import OWNER_CONTROL_ROOT_ENV
+
+    previous_control = os.environ.get(OWNER_CONTROL_ROOT_ENV)
+    try:
+        with tempfile.TemporaryDirectory(prefix="easydep-owner-isolation-") as temporary:
+            control = Path(temporary)
+            run_root = control / "generated-runs" / "run_probe"
+            source_root = (
+                run_root
+                / "application"
+                / "src"
+                / "main"
+                / "java"
+                / "com"
+                / "example"
+            )
+            source_root.mkdir(parents=True)
+            allowed = source_root / "Service.java"
+            immutable = source_root / "api" / "Contract.java"
+            immutable.parent.mkdir(parents=True)
+            allowed.write_text("before\n", encoding="utf-8")
+            immutable.write_text("contract\n", encoding="utf-8")
+            control_file = control / "job.json"
+            control_file.write_text("{}\n", encoding="utf-8")
+            os.environ[OWNER_CONTROL_ROOT_ENV] = str(control)
+            sandbox = prepare_agent_workspace(
+                run_root,
+                {
+                    "task_id": "implement-backend-application",
+                    "task_type": "backend-implementation",
+                    "allowed_write_paths": [
+                        "application/src/main/java/com/example/Service.java"
+                    ],
+                    "allowed_write_roots": [
+                        "application/src/main/java/com/example"
+                    ],
+                    "immutable_paths": [
+                        "application/src/main/java/com/example/api"
+                    ],
+                },
+                persistent=True,
+            )
+            child_environment = os.environ.copy()
+            child_environment.update(
+                {
+                    "EASYDEP_PROBE_CONTROL": str(control_file),
+                    "EASYDEP_PROBE_ALLOWED": str(sandbox / allowed.relative_to(run_root)),
+                    "EASYDEP_PROBE_IMMUTABLE": str(
+                        sandbox / immutable.relative_to(run_root)
+                    ),
+                }
+            )
+            result = subprocess.run(
+                [
+                    OWNER_TERMINAL_SHELL,
+                    "-c",
+                    'test ! -r "$EASYDEP_PROBE_CONTROL" '
+                    '&& printf "after\\n" > "$EASYDEP_PROBE_ALLOWED" '
+                    '&& printf "changed\\n" > "$EASYDEP_PROBE_IMMUTABLE"',
+                ],
+                cwd=sandbox,
+                env=child_environment,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+            passed = (
+                result.returncode == 0
+                and control_file.read_text(encoding="utf-8") == "{}\n"
+                and (sandbox / allowed.relative_to(run_root)).read_text(encoding="utf-8")
+                == "after\n"
+                and (sandbox / immutable.relative_to(run_root)).read_text(encoding="utf-8")
+                == "changed\n"
+            )
+            return {
+                "passed": passed,
+                "detail": (
+                    "The owner can write its disposable candidate but cannot read job "
+                    "control state; immutable changes are rejected only at promotion."
+                    if passed
+                    else (result.stderr.strip() or result.stdout.strip() or "Isolation probe failed.")
+                ),
+            }
+    except Exception as error:
+        return {"passed": False, "detail": str(error)}
+    finally:
+        if previous_control is None:
+            os.environ.pop(OWNER_CONTROL_ROOT_ENV, None)
+        else:
+            os.environ[OWNER_CONTROL_ROOT_ENV] = previous_control
 
 
 def main(argv: list[str] | None = None) -> int:

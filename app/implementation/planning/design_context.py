@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import asdict, dataclass, field, replace
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from app.artifact_trace import TraceRef
@@ -12,7 +12,6 @@ from app.config import settings
 from app.llm_connection import build_llm_connection
 
 from ..domain.implementation_ir import (
-    ApiOperationIR,
     ApiPortIR,
     ComponentIR,
     ImplementationIR,
@@ -35,6 +34,7 @@ class TaskSpec:
     source_artifacts: dict[str, str]
     prompt_sha256: str
     llm: dict[str, object]
+    owner: str
     task_type: str = "control"
     # ``allowed_write_paths`` is the complete editable scope.  A work unit can
     # therefore fix a related source file instead of handing the error to a
@@ -76,167 +76,39 @@ class _UseCaseBundle:
     endpoints: tuple[dict[str, object], ...]
 
 
-def generate_api_adapter_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
-    """같은 Control의 유스케이스를 중심으로, 읽을 수 있는 크기의 작업을 만든다."""
+def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
+    """전체 backend 구현을 맡는 단일 owner 작업을 만든다."""
     package_path = spec.base_package.replace(".", "/")
     java_root = run_root / "application" / "src" / "main" / "java" / package_path
     ir = build_implementation_ir(spec, run_root)
     output = run_root / "reports" / "implementation-tasks"
     output.mkdir(parents=True, exist_ok=True)
     endpoints = _api_model_endpoints(spec)
+    _requirements, use_cases, _sources = _all_requirement_artifacts(spec)
     component_ids = _component_use_case_ids(spec)
-    bundles = _use_case_bundles(spec, ir, component_ids, endpoints)
+    use_case_ids = {
+        *_artifact_ids(use_cases),
+        *(value for values in component_ids.values() for value in values),
+        *(value for endpoint in endpoints for value in _use_case_ids(endpoint)),
+    }
+    bundle = _UseCaseBundle(
+        tuple(sorted(use_case_ids, key=_use_case_sort_key)),
+        tuple(item for item in ir.components if _is_work_component(item)),
+        tuple(ir.api_ports),
+        tuple(endpoints),
+    )
     bce_paths = [
         path.relative_to(run_root).as_posix()
         for path in sorted((java_root / "bce").rglob("*.java"))
     ]
-    tasks: list[TaskSpec] = []
-    writers: dict[str, str] = {}
-    for index, bundle in enumerate(bundles, start=1):
-        task = _build_use_case_task(
-            spec, run_root, ir, output, package_path, bce_paths, bundle, writers, index
-        )
-        tasks.append(task)
-        writers.update(dict.fromkeys(task.allowed_write_paths, task.task_id))
-    tasks = _grant_exclusive_write_roots(tasks)
-    for task in tasks:
-        (output / f"{task.task_id}.task.json").write_text(
-            json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    return tasks
-
-
-def _use_case_bundles(
-    spec: JobSpec,
-    ir: ImplementationIR,
-    component_ids: dict[str, set[str]],
-    endpoints: list[dict[str, object]],
-) -> list[_UseCaseBundle]:
-    """같은 Control이 함께 처리하는 유스케이스만 하나의 작업으로 묶는다.
-
-    Entity나 Boundary 하나가 여러 기능에 쓰인다는 이유만으로 모든 유스케이스를 한 대화에
-    넣으면 에이전트가 업무 규칙보다 파일 탐색에 시간을 쓴다. Control은 한 기능의 처리
-    흐름을 소유하므로 그 범위만 함께 둔다. 같은 Controller나 Entity를 공유하는 작업은
-    뒤의 ``depends_on`` 계산으로 순서만 정하고 하나의 큰 대화로 다시 합치지 않는다.
-    """
-    for endpoint in endpoints:
-        binding = endpoint.get("control_binding")
-        control = binding.get("control") if isinstance(binding, dict) else None
-        if isinstance(control, str) and control in ir.controls:
-            component_ids.setdefault(control, set()).update(_use_case_ids(endpoint))
-
-    all_ids: set[str] = set()
-    for ids in component_ids.values():
-        all_ids.update(ids)
-    for endpoint in endpoints:
-        all_ids.update(_use_case_ids(endpoint))
-    links = {use_case_id: {use_case_id} for use_case_id in all_ids}
-
-    def connect(related: set[str]) -> None:
-        for use_case_id in related:
-            links.setdefault(use_case_id, {use_case_id}).update(related)
-
-    for component in ir.components:
-        if component.stereotype.casefold() == "control":
-            connect(component_ids.get(component.name, set()))
-
-    groups: list[tuple[str, ...]] = []
-    pending = set(all_ids)
-    while pending:
-        root = min(pending, key=_use_case_sort_key)
-        group: set[str] = set()
-        frontier = [root]
-        while frontier:
-            use_case_id = frontier.pop()
-            if use_case_id in group:
-                continue
-            group.add(use_case_id)
-            frontier.extend(links.get(use_case_id, {use_case_id}) - group)
-        pending.difference_update(group)
-        groups.append(tuple(sorted(group, key=_use_case_sort_key)))
-
-    bundles = [_bundle_for_ids(ir, component_ids, endpoints, group) for group in groups]
-    assigned_components = {item.name for bundle in bundles for item in bundle.components}
-    assigned_ports = {item.name for bundle in bundles for item in bundle.ports}
-    common_components = tuple(
-        item
-        for item in ir.components
-        if item.name not in assigned_components and _is_work_component(item)
+    task = _build_backend_owner_task(
+        spec, run_root, ir, output, package_path, bce_paths, bundle
     )
-    common_ports = tuple(item for item in ir.api_ports if item.name not in assigned_ports)
-    # 유스케이스와 연결되지 않은 Entity/Boundary는 이미 typed Java와 persistence
-    # 골격으로 만들어져 있다. 구현할 시나리오나 operation도 없는데 코딩 에이전트에게
-    # JUnit 파일을 요구하면, 에이전트는 존재하지 않는 동작을 찾느라 검색만 반복한다.
-    # 연결 정보가 부족해도 실제 구현이 필요한 Control/Gateway 또는 HTTP port가 있을
-    # 때만 common 작업을 남긴다. 이 경우 관련 Entity도 같은 문맥으로 함께 전달한다.
-    needs_common_agent = bool(common_ports) or any(
-        item.stereotype.casefold() in {"control", "gateway"}
-        for item in common_components
+    (output / f"{task.task_id}.task.json").write_text(
+        json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
-    if needs_common_agent:
-        bundles.append(_UseCaseBundle((), common_components, common_ports, ()))
-    planned = [
-        bundle
-        for bundle in bundles
-        if bundle.ports or any(_is_work_component(item) for item in bundle.components)
-    ]
-    return sorted(
-        planned,
-        key=lambda bundle: (
-            _use_case_sort_key(bundle.use_case_ids[0]) if bundle.use_case_ids else (10**9, "common")
-        ),
-    )
-
-
-def _grant_exclusive_write_roots(
-    tasks: list[TaskSpec],
-) -> list[TaskSpec]:
-    """한 기능만 사용하는 package에는 OpenHands가 새 파일을 만들 수 있게 한다.
-
-    여러 작업이 같은 Java package를 사용하면 각자 약속된 파일만 편집한다. 한 작업만 쓰는
-    package라면 그 안의 helper나 설정 파일 구성은 코딩 에이전트가 스스로 정할 수 있다.
-    """
-    owners: dict[str, set[str]] = {}
-    for task in tasks:
-        for path in task.allowed_write_paths:
-            parent = Path(path.replace("\\", "/")).parent.as_posix()
-            if parent.startswith("application/"):
-                owners.setdefault(parent, set()).add(task.task_id)
-    return [
-        replace(
-            task,
-            allowed_write_roots=sorted(
-                root for root, task_ids in owners.items() if task_ids == {task.task_id}
-            ),
-        )
-        for task in tasks
-    ]
-
-
-def _bundle_for_ids(
-    ir: ImplementationIR,
-    component_ids: dict[str, set[str]],
-    endpoints: list[dict[str, object]],
-    use_case_ids: tuple[str, ...],
-) -> _UseCaseBundle:
-    wanted = set(use_case_ids)
-    selected_endpoints = tuple(
-        endpoint for endpoint in endpoints if _use_case_ids(endpoint) & wanted
-    )
-    components = tuple(
-        item for item in ir.components if component_ids.get(item.name, set()) & wanted
-    )
-    ports = tuple(
-        port
-        for port in ir.api_ports
-        if any(
-            _operation_matches_endpoint(operation, endpoint)
-            for operation in port.operations
-            for endpoint in selected_endpoints
-        )
-    )
-    return _UseCaseBundle(use_case_ids, components, ports, selected_endpoints)
+    return [task]
 
 
 def _is_work_component(component: ComponentIR) -> bool:
@@ -248,7 +120,7 @@ def _is_work_component(component: ComponentIR) -> bool:
     }
 
 
-def _build_use_case_task(
+def _build_backend_owner_task(
     spec: JobSpec,
     run_root: Path,
     ir: ImplementationIR,
@@ -256,15 +128,12 @@ def _build_use_case_task(
     package_path: str,
     bce_paths: list[str],
     bundle: _UseCaseBundle,
-    writers: dict[str, str],
-    index: int,
 ) -> TaskSpec:
-    """선택한 설계 slice와 필수 JUnit 클래스를 하나의 작업 계약으로 만든다."""
+    """전체 backend 계약과 owner 범위를 하나의 작업으로 만든다."""
     label = ", ".join(bundle.use_case_ids) or "common"
-    suffix = "-".join(item.casefold() for item in bundle.use_case_ids) or "common"
-    task_id = f"implement-use-cases-{suffix}"
+    task_id = "implement-backend-application"
     test_path = (
-        f"application/src/test/java/{package_path}/application/impl/UseCaseBundle{index}Test.java"
+        f"application/src/test/java/{package_path}/application/impl/BackendApplicationTest.java"
     )
     controls = [item.name for item in bundle.components if item.stereotype.casefold() == "control"]
     entities = [item.name for item in bundle.components if item.stereotype.casefold() == "entity"]
@@ -302,10 +171,35 @@ def _build_use_case_task(
         if (run_root / path).is_file()
     ]
     dependency_source_paths = [path for path in entity_sources if (run_root / path).is_file()]
-    editable = _work_unit_editable_paths(run_root, required, entity_sources)
-    depends_on = sorted({writers[path] for path in editable if path in writers})
-    requirements, use_cases, sources = _related_requirement_artifacts(spec, bundle.use_case_ids)
-    scenarios = _scenarios_for_use_cases(spec, bundle.use_case_ids)
+    owner_roots = [
+        f"application/src/main/java/{package_path}",
+        f"application/src/test/java/{package_path}",
+        "application/src/main/resources",
+        "application/src/test/resources",
+    ]
+    owner_files = [
+        path
+        for path in (
+            "application/build.gradle",
+            "application/settings.gradle",
+            "application/gradle.properties",
+        )
+        if (run_root / path).is_file()
+    ]
+    editable = _work_unit_editable_paths(
+        run_root,
+        required,
+        [*owner_roots, *owner_files],
+    )
+    immutable_paths = [
+        *(path for path in bce_paths if path not in entity_sources),
+        f"application/src/main/java/{package_path}/api",
+        f"application/src/main/java/{package_path}/persistence",
+        "application/src/main/resources/db/migration",
+    ]
+    editable = _without_immutable_paths(editable, immutable_paths)
+    requirements, use_cases, sources = _all_requirement_artifacts(spec)
+    scenarios = _all_scenarios(spec)
     implementation_context = _implementation_prompt_context(
         requirements, use_cases, scenarios
     )
@@ -395,8 +289,9 @@ def _build_use_case_task(
     context = {
         "schemaVersion": "implementation-context/v1alpha3",
         "taskId": task_id,
-        "taskType": "use-case",
-        "dependsOn": depends_on,
+        "taskType": "backend-implementation",
+        "owner": "backend",
+        "dependsOn": [],
         "requirementIds": _artifact_ids(requirements),
         "useCaseIds": list(bundle.use_case_ids),
         "controllerPaths": [
@@ -416,18 +311,20 @@ def _build_use_case_task(
     context_path = output / f"{task_id}.context.json"
     context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
     prompt = (
-        f"""# Application use-case bundle: {label}
+        f"""# Backend application owner: {spec.name}
 
-Implement only this design-backed bundle using the generated persistence scaffold. Do not invent behavior outside
-the supplied requirements, use-case scenarios, BCE, and OpenAPI contracts.
+Own the complete backend implementation across all supplied use cases. Inspect and modify related
+backend source, configuration, and tests as needed, while preserving the frozen design and public contracts.
 
-- BCE Entity sources may change only method bodies; preserve every public declaration.
-- Generated API interfaces are immutable. Controller routing, Control injection and
+- Generated BCE and API public declarations are frozen. Entity method bodies may be implemented,
+  but their fields, methods, signatures, and relationships must remain unchanged. Controller routing, Control injection and
   structural API/BCE conversion are already present; change a Controller body only when the
   focused scenario leaves one of this task's named body markers below.
-- Use the completed ERD repositories for persistent behavior; do not keep business state in
-  an in-memory collection or invent another persistence port.
-- Inspect the current contracts, then implement the feature and its focused JUnit scenario in
+- Persistence entities, repositories, and migrations are deterministic read-only projections of
+  the ERD. Use those repositories for persistent behavior and adapt application services or runtime
+  configuration when needed; do not keep business state in an in-memory collection or invent
+  another persistence port.
+- Inspect the current contracts, then implement all backend behavior and its JUnit scenarios in
   the order that best fits the existing source. Assert returned values and persisted state
   changes, including that rejected requests leave state unchanged.
 - Exercise every supplied input that changes the scenario result, and assert every response
@@ -463,10 +360,12 @@ These RTM references identify likely relevant artifacts. They are navigation hin
 or write boundary:
 {_prompt_json([*_operation_source_refs(spec, set(bundle.use_case_ids)), *_workload_source_refs(deployment_context)])}
 
-## Controller body markers owned by this task
+## Controller body markers to complete
 {chr(10).join(f"- `{marker}`" for marker in controller_markers) or "- none; the typed Controller is already complete"}
 """
         + _render_deployment_context(deployment_context)
+        + "\n\n## Backend owner roots\n"
+        + "\n".join(f"- `{root}`" for root in owner_roots)
         + render_allowed_output_rules(required)
     )
     prompt_path = output / f"{task_id}.prompt.md"
@@ -478,15 +377,13 @@ or write boundary:
         context_file=_relative(run_root, context_path),
         allowed_write_paths=editable,
         required_output_paths=required,
-        immutable_paths=[
-            *(path for path in bce_paths if path not in entity_sources),
-            f"application/src/main/java/{package_path}/api",
-        ],
+        immutable_paths=immutable_paths,
         source_artifacts=sources,
         prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         llm=llm_config(spec),
-        task_type="use-case",
-        depends_on=depends_on,
+        owner="backend",
+        task_type="backend-implementation",
+        depends_on=[],
         requirement_ids=_artifact_ids(requirements),
         use_case_ids=list(bundle.use_case_ids),
         required_test_paths=[test_path],
@@ -494,6 +391,7 @@ or write boundary:
             *_operation_source_refs(spec, set(bundle.use_case_ids)),
             *_workload_source_refs(deployment_context),
         ],
+        allowed_write_roots=owner_roots,
     )
     (output / f"{task_id}.task.json").write_text(
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
@@ -512,35 +410,12 @@ def _component_use_case_ids(spec: JobSpec) -> dict[str, set[str]]:
     }
 
 
-def _ids_for_components(spec: JobSpec, names: set[str]) -> tuple[str, ...]:
-    ids = (
-        set().union(
-            *(
-                use_case_ids
-                for component, use_case_ids in _component_use_case_ids(spec).items()
-                if component in names
-            )
-        )
-        if names
-        else set()
-    )
-    return tuple(sorted(ids, key=_use_case_sort_key))
-
-
 def _api_model_endpoints(spec: JobSpec) -> list[dict[str, object]]:
     endpoints = _read_json(spec.inputs.get("apiModel")).get("Endpoints", [])
     return (
         [item for item in endpoints if isinstance(item, dict)]
         if isinstance(endpoints, list)
         else []
-    )
-
-
-def _operation_matches_endpoint(operation: ApiOperationIR, endpoint: dict[str, object]) -> bool:
-    return (
-        operation.method.casefold() == str(endpoint.get("method") or "").casefold()
-        and operation.path == str(endpoint.get("path") or "")
-        and (not operation.operation_id or operation.operation_id == endpoint.get("operation_id"))
     )
 
 
@@ -562,52 +437,6 @@ def _gateway_adapter_path(package_path: str, name: str, kind: str) -> str:
     directory = "persistence" if kind == "persistence" else "gateway"
     adapter = name if kind == "persistence" else f"InMemory{name}"
     return f"application/src/main/java/{package_path}/adapter/out/{directory}/{adapter}Adapter.java"
-
-
-def _related_requirement_artifacts(
-    spec: JobSpec, use_case_ids: tuple[str, ...]
-) -> tuple[list[dict[str, object]], list[dict[str, object]], dict[str, str]]:
-    wanted = set(use_case_ids)
-    requirements, use_cases, sources = _all_requirement_artifacts(spec)
-    selected_use_cases = [item for item in use_cases if _use_case_ids(item) & wanted]
-    requirement_ids = {
-        str(value)
-        for item in selected_use_cases
-        for field in ("requirement_ids", "nfr_ids")
-        for value in (item.get(field) if isinstance(item.get(field), list) else [])
-        if str(value)
-    }
-    requirement_ids.update(_constraint_requirement_ids(spec, wanted))
-    return (
-        [
-            item
-            for item in requirements
-            if str(item.get("id") or "") in requirement_ids or bool(_use_case_ids(item) & wanted)
-        ],
-        selected_use_cases,
-        sources,
-    )
-
-
-def _constraint_requirement_ids(spec: JobSpec, use_case_ids: set[str]) -> set[str]:
-    """추적표가 해당 UC 또는 전체 시스템 조건으로 표시한 요구사항 ID를 읽는다."""
-    path = spec.inputs.get("useCaseSpec")
-    traceability = _read_json(path).get("traceability")
-    requirements = traceability.get("requirements") if isinstance(traceability, dict) else None
-    if not isinstance(requirements, dict):
-        return set()
-    result: set[str] = set()
-    for requirement_id, raw in requirements.items():
-        if not isinstance(raw, dict) or raw.get("modeled_as_constraint") is not True:
-            continue
-        constrained = {
-            str(item)
-            for field in ("use_cases", "constrains_use_cases")
-            for item in (raw.get(field) if isinstance(raw.get(field), list) else [])
-        }
-        if not constrained or constrained & use_case_ids:
-            result.add(str(requirement_id))
-    return result
 
 
 def _all_requirement_artifacts(
@@ -743,183 +572,15 @@ def _implementation_prompt_context(
     }
 
 
-def _scenarios_for_use_cases(
-    spec: JobSpec, use_case_ids: tuple[str, ...]
-) -> list[dict[str, object]]:
+def _all_scenarios(spec: JobSpec) -> list[dict[str, object]]:
     diagrams = _read_json(spec.inputs.get("sequenceModel")).get("Diagrams", [])
-    wanted = set(use_case_ids)
     return (
-        [item for item in diagrams if isinstance(item, dict) and item.get("use_case_id") in wanted]
+        [item for item in diagrams if isinstance(item, dict)]
         if isinstance(diagrams, list)
         else []
     )
 
 
-def _all_scenarios(spec: JobSpec) -> list[dict[str, object]]:
-    diagrams = _read_json(spec.inputs.get("sequenceModel")).get("Diagrams", [])
-    return (
-        [item for item in diagrams if isinstance(item, dict)] if isinstance(diagrams, list) else []
-    )
-
-
-def generate_wiring_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
-    """통합 실패가 있을 때만 실행할 Spring 설정 수리 작업을 준비한다.
-
-    정상 경로의 entrypoint, datasource와 health 설정은 generator가 이미 만든다. 여기서는
-    OpenHands가 실제 Bean 연결 오류를 고칠 수 있도록 편집 범위와 설계 문맥만 보존한다.
-    """
-    package_path = spec.base_package.replace(".", "/")
-    ir = build_implementation_ir(spec, run_root)
-    write_spring_boot_entrypoint(run_root, spec.base_package, ir.application_class)
-    flow_test_path = (
-        "application/src/test/java/"
-        f"{package_path}/integration/"
-        f"{ir.application_class.removesuffix('Application')}FlowTest.java"
-    )
-    repair_paths = [
-        f"application/src/main/java/{package_path}/config/ApplicationConfiguration.java",
-        "application/src/main/resources/application.yml",
-        "application/src/test/resources/application-test.yml",
-        f"application/src/test/java/{package_path}/config/ApplicationContextTest.java",
-        flow_test_path,
-    ]
-    editable_directories = [
-        f"application/src/main/java/{package_path}/config",
-        f"application/src/test/java/{package_path}/config",
-        f"application/src/test/java/{package_path}/integration",
-    ]
-    allowed = _work_unit_editable_paths(
-        run_root,
-        repair_paths,
-        [*editable_directories, "application/src/main/resources/application.yml"],
-    )
-    task_id = "implement-application-wiring"
-    deployment_context = _deployment_context(
-        spec, {spec.name, ir.application_class, *(item.name for item in ir.components)}
-    )
-    _requirements, use_cases, requirement_sources = _all_requirement_artifacts(spec)
-    use_case_ids = _artifact_ids(use_cases)
-    output = run_root / "reports" / "implementation-tasks"
-    output.mkdir(parents=True, exist_ok=True)
-    design_inputs = _materialize_design_inputs(
-        spec,
-        run_root,
-        {
-            "bceClass",
-            "bceModel",
-            "sequence",
-            "sequenceModel",
-            "apiModel",
-            "erdBceModel",
-            "erdLogicalModel",
-            "openapi",
-            "requirements",
-            "useCaseSpec",
-        },
-    )
-    source_paths = sorted(
-        path
-        for path in allowed
-        if (run_root / path).is_file()
-    )
-    source_index_path = output / "application-wiring.source-index.json"
-    source_index_path.write_text(
-        json.dumps(
-            {
-                "schemaVersion": "implementation-source-index/v1alpha1",
-                "taskId": task_id,
-                "startingSourcePaths": source_paths,
-                "designInputs": design_inputs,
-                "hintsOnly": True,
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-    context = {
-        "schemaVersion": "implementation-context/v1alpha2",
-        "taskId": task_id,
-        "taskType": "wiring",
-        "applicationClass": ir.application_class,
-        "useCaseIds": use_case_ids,
-        "designInputs": design_inputs,
-        "sourceIndexPath": _relative(run_root, source_index_path),
-        "readSourcePaths": sorted(
-            dict.fromkeys([_relative(run_root, source_index_path), *design_inputs.values()])
-        ),
-    }
-    if deployment_context:
-        context["deployment"] = deployment_context
-    context_path = output / "application-wiring.context.json"
-    context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
-    # 정상 경로에서는 실행하지 않는 작업이므로 전체 Java 계약을 미리 복사하지 않는다.
-    # 실제 실패가 생기면 apply_repair_directives가 오류, 관련 파일과 최근 시도만 담은 별도
-    # prompt를 만들고 runtime은 그 파일을 사용한다.
-    prompt = f"""# Spring application integration repair
-
-This task is dormant during normal generation. It runs only after a real compile, Spring
-context, HTTP, or container failure. Use the separate repair instructions created from that
-failure, preserve generated contracts, and do not reimplement completed business use cases.
-
-Application entry point: `{ir.application_class}`
-Relevant use-case IDs: {", ".join(use_case_ids) or "none"}
-
-The source index at `{_relative(run_root, source_index_path)}` and frozen design inputs are
-read-only investigation hints, not a hard read boundary. Preserve generated contracts and use
-the task's enforced editable/immutable paths.
-"""
-    prompt_path = output / "application-wiring.prompt.md"
-    prompt_path.write_text(prompt, encoding="utf-8")
-    task = TaskSpec(
-        task_id=task_id,
-        control="Spring application wiring",
-        prompt_file=_relative(run_root, prompt_path),
-        context_file=_relative(run_root, context_path),
-        allowed_write_paths=allowed,
-        # 정상 경로에서는 어떤 파일도 OpenHands가 새로 만들 필요가 없다. 실제 오류가
-        # 생기면 위 repair_paths가 수리 범위의 기준점으로 사용된다.
-        required_output_paths=[],
-        immutable_paths=[
-            f"application/src/main/java/{package_path}/bce",
-            f"application/src/main/java/{package_path}/api",
-            f"application/src/main/java/{package_path}/application",
-            f"application/src/main/java/{package_path}/adapter",
-            f"application/src/main/java/{package_path}/persistence",
-            "application/src/main/resources/db/migration",
-        ],
-        source_artifacts={
-            name: str(path)
-            for name, path in spec.inputs.items()
-            if name
-            in {
-                "bceModel",
-                "sequenceModel",
-                "apiModel",
-                "erdBceModel",
-                "deploymentBundle",
-                "cloud",
-                *requirement_sources,
-            }
-            and path.is_file()
-        },
-        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-        llm=llm_config(spec),
-        task_type="wiring",
-        # 최종 검증은 이 목록과 유스케이스 작업이 실제로 덮은 목록을 비교한다. 추적이
-        # 빠진 유스케이스가 있어도 일부 테스트만 통과해 릴리스되는 일을 막는다.
-        use_case_ids=use_case_ids,
-        required_test_paths=[],
-        source_refs=[
-            *_operation_source_refs(spec, set(use_case_ids)),
-            *_workload_source_refs(deployment_context),
-        ],
-        repair_only=True,
-    )
-    (output / "application-wiring.task.json").write_text(
-        json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return [task]
 
 
 def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
@@ -979,18 +640,14 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
         *[f"application/frontend/src/pages/{name}.tsx" for name in pages],
         "application/frontend/src/styles.css",
     ]
-    editable_directories = [
-        "application/frontend/src/components",
-        "application/frontend/src/pages",
-    ]
     allowed = _work_unit_editable_paths(
         run_root,
         required,
-        [
-            "application/frontend/src/App.tsx",
-            "application/frontend/src/styles.css",
-            *editable_directories,
-        ],
+        ["application/frontend"],
+    )
+    allowed = _without_immutable_paths(
+        allowed,
+        ["application/frontend/src/generated"],
     )
     task_id = "implement-frontend-application"
     client_index = _frontend_contract_index(run_root, openapi, pages, client_contracts)
@@ -1003,6 +660,8 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
         "schemaVersion": "frontend-implementation-context/v1alpha2",
         "taskId": task_id,
         "taskType": "frontend-implementation",
+        "owner": "frontend",
+        "dependsOn": ["implement-backend-application"],
         "pages": pages,
         "operationIds": operations,
         "boundaryProjection": boundary_projection,
@@ -1051,7 +710,8 @@ Rules:
 - `src/main.tsx` already provides the immutable `HashRouter` required for static hosting.
   `App.tsx` owns route declarations without creating another router, `AppShell.tsx` owns shared
   navigation/layout, and every contracted page must be reachable from the application.
-- Preserve all generated client/model files and project configuration exactly.
+- Preserve all generated client/model files. Project configuration and the lockfile belong to
+  this owner and may be corrected when the build requires it.
 - Create every contracted output and finish immediately. `npm run build` is the acceptance gate.
 - Production source must contain no `TODO`, `FIXME`, or `PLACEHOLDER` markers, including in
   comments or strings. Do not leave demo-only identities, empty handlers, or speculative
@@ -1082,14 +742,7 @@ Traceability references from the RTM are hints for navigation only:
 {_prompt_json([*(f"api:{operation_id}" for operation_id in operations), *_workload_source_refs(deployment_context)])}
 {_render_deployment_context(deployment_context)}
 """
-    prompt += "\n## Editable paths\n" + "\n".join(
-        f"- `{path}`"
-        for path in [
-            "application/frontend/src/App.tsx",
-            "application/frontend/src/styles.css",
-            *editable_directories,
-        ]
-    )
+    prompt += "\n## Frontend owner root\n- `application/frontend`"
     prompt += render_allowed_output_rules(required)
     prompt_path = output / "frontend-application.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
@@ -1102,11 +755,6 @@ Traceability references from the RTM are hints for navigation only:
         required_output_paths=required,
         immutable_paths=[
             "application/frontend/src/generated",
-            "application/frontend/package.json",
-            "application/frontend/tsconfig.json",
-            "application/frontend/vite.config.ts",
-            "application/frontend/src/config.ts",
-            "application/frontend/src/main.tsx",
         ],
         source_artifacts={
             **{
@@ -1118,11 +766,14 @@ Traceability references from the RTM are hints for navigation only:
         },
         prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
         llm=llm_config(spec),
+        owner="frontend",
         task_type="frontend-implementation",
+        depends_on=["implement-backend-application"],
         source_refs=[
             *(f"api:{operation_id}" for operation_id in operations),
             *_workload_source_refs(deployment_context),
         ],
+        allowed_write_roots=["application/frontend"],
     )
     (output / "frontend-application.task.json").write_text(
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1176,38 +827,6 @@ def llm_config(spec: JobSpec) -> dict[str, object]:
     }
 
 
-def write_spring_boot_entrypoint(run_root: Path, base_package: str, application_class: str) -> Path:
-    """업무 판단이 필요 없는 Spring Boot 시작 클래스를 정해진 형태로 만든다.
-
-    애플리케이션 이름과 Java package는 Job에서 이미 정해졌다. 따라서 이 파일을 wiring
-    대화에 맡기지 않아도 되고, 코딩 에이전트가 repository 탐색 설정을 실수로 바꿀 일도 없다.
-    """
-    target = (
-        run_root
-        / "application"
-        / "src"
-        / "main"
-        / "java"
-        / Path(*base_package.split("."))
-        / f"{application_class}.java"
-    )
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        f"""package {base_package};
-
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-
-@SpringBootApplication
-public class {application_class} {{
-    public static void main(String[] args) {{
-        SpringApplication.run({application_class}.class, args);
-    }}
-}}
-""",
-        encoding="utf-8",
-    )
-    return target
 
 
 def render_allowed_output_rules(allowed: list[str]) -> str:
@@ -1536,6 +1155,15 @@ def _work_unit_editable_paths(
                 path.relative_to(run_root).as_posix() for path in root.rglob("*") if path.is_file()
             )
     return sorted(paths)
+
+
+def _without_immutable_paths(paths: list[str], immutable: list[str]) -> list[str]:
+    roots = [path.replace("\\", "/").rstrip("/") for path in immutable]
+    return [
+        path
+        for path in paths
+        if not any(path == root or path.startswith(root + "/") for root in roots)
+    ]
 
 
 def _relative(root: Path, path: Path) -> str:

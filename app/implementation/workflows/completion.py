@@ -53,7 +53,7 @@ def audit_run_completion(run_root: Path) -> dict[str, object]:
                 {
                     "task_id": str(task["task_id"]),
                     "task_type": str(task.get("task_type", "")),
-                    "objective": "필수 구현 파일을 만들고 관련 build/test를 통과한다.",
+                    "objective": "Create the required implementation files and pass the relevant build and tests.",
                     "missing_outputs": missing,
                     "evidence": [
                         *[f"Missing required output: {path}" for path in missing],
@@ -74,9 +74,9 @@ def audit_run_completion(run_root: Path) -> dict[str, object]:
             "backlogTasks": len(backlog),
         },
         "completionCriteria": [
-            "모든 기능 작업의 필수 파일이 존재한다.",
-            "전체 backend와 frontend build/test는 다음 최종 검증에서 실행한다.",
-            "DB schema, HTTP 흐름과 container runtime은 각각 실제 실행 결과로 확인한다.",
+            "Every implementation owner produced its required files.",
+            "The complete backend and frontend builds continue in Testing.",
+            "Database schema, HTTP flows, and container runtime are verified with execution evidence.",
         ],
         "backlog": backlog,
     }

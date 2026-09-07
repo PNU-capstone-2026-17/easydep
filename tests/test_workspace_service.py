@@ -145,8 +145,9 @@ def test_testing_repair_without_progress_waits_instead_of_submitting_again(
         "blocking_findings": [
             {
                 "message": "AVD-AWS-0131 is still present",
-                "repairable": True,
-                "defect_class": "SUT_DEFECT",
+                        "repairable": True,
+                        "defect_class": "SUT_DEFECT",
+                        "implementation_owner": "backend",
             }
         ],
         "repair_state": {
@@ -244,7 +245,7 @@ def test_different_testing_candidate_with_same_finding_tries_another_repair(
 
 
 def test_testing_static_repair_request_keeps_exact_gate_scope() -> None:
-    selected, task_type, files, profile = WorkspaceService._testing_repair_request(
+    selected, owner, task_type, files, profile = WorkspaceService._testing_repair_request(
         "app-1",
         {
             "job": {
@@ -258,6 +259,7 @@ def test_testing_static_repair_request_keeps_exact_gate_scope() -> None:
             {
                 "code": "testing.static",
                 "repairable": True,
+                "implementation_owner": "backend",
                 "file_hints": ["application/deployment/tofu/main.tf"],
                 "evidence": {"gate": "static", "issues": ["AWS-0131"]},
             }
@@ -265,6 +267,7 @@ def test_testing_static_repair_request_keeps_exact_gate_scope() -> None:
     )
 
     assert selected[0]["code"] == "testing.static"
+    assert owner == "backend"
     assert task_type == "testing-static"
     assert files == ["application/deployment/tofu/main.tf"]
     assert profile["testing_input"]["implementation_job_id"] == "job-1"
@@ -345,6 +348,7 @@ def test_reconcile_implementation_command_closes_stale_running_command(
     )
     monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: updated)
     monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: events.append(kwargs))
+    monkeypatch.setattr(repository, "list_events", lambda _app_id: [])
     monkeypatch.setattr(
         repository,
         "now",
@@ -359,6 +363,12 @@ def test_reconcile_implementation_command_closes_stale_running_command(
 
     assert result["status"] == "COMPLETED"
     assert events[0]["metadata"]["status"] == "COMPLETED"
+    assert [event["metadata"]["step"] for event in events[1:]] == [
+        "phase-backend",
+        "phase-frontend",
+        "phase-integration",
+    ]
+    assert {event["metadata"]["progress_status"] for event in events[1:]} == {"completed"}
 
 
 def test_reconcile_implementation_command_restores_progress_after_restart(
@@ -409,6 +419,93 @@ def test_reconcile_implementation_command_restores_progress_after_restart(
     assert events[0]["metadata"]["progress_status"] == "running"
 
 
+def test_sync_implementation_progress_emits_changed_owner_file_only(monkeypatch) -> None:
+    labels = {
+        "phase-backend": "Backend implementation",
+        "phase-frontend": "Frontend implementation",
+        "phase-integration": "Integration verification",
+    }
+    previous_events = []
+    for step, label in labels.items():
+        status = "running" if step == "phase-backend" else "pending"
+        metadata = {
+            "step": step,
+            "progress_status": status,
+            "progress_step_label": label,
+            "progress_detail": (
+                "Backend implementation is in progress." if status == "running" else ""
+            ),
+            "repairing": False,
+        }
+        if step == "phase-backend":
+            metadata.update(
+                current_file="application/src/Old.java",
+                current_class="Old",
+            )
+        previous_events.append(
+            {
+                "command_id": "command-1",
+                "stage": "implementation",
+                "kind": "progress",
+                "metadata": metadata,
+            }
+        )
+    appended: list[dict] = []
+    monkeypatch.setattr(repository, "list_events", lambda _app_id: previous_events)
+    monkeypatch.setattr(
+        repository,
+        "append_event",
+        lambda *args, **kwargs: appended.append(kwargs),
+    )
+    monkeypatch.setattr(
+        WorkspaceService,
+        "_implementation_progress_snapshot",
+        staticmethod(
+            lambda _job: {
+                "progress_card_label": "Implementation progress",
+                "updates": [
+                    {
+                        "step": "phase-backend",
+                        "label": "Backend implementation",
+                        "status": "running",
+                        "detail": "Backend implementation is in progress.",
+                        "implementation_owner": "backend",
+                        "current_file": "application/src/New.java",
+                        "current_class": "New",
+                        "repairing": False,
+                    },
+                    {
+                        "step": "phase-frontend",
+                        "label": "Frontend implementation",
+                        "status": "pending",
+                        "detail": "",
+                        "implementation_owner": "frontend",
+                        "repairing": False,
+                    },
+                    {
+                        "step": "phase-integration",
+                        "label": "Integration verification",
+                        "status": "pending",
+                        "detail": "",
+                        "implementation_owner": "integration",
+                        "repairing": False,
+                    },
+                ],
+            }
+        ),
+    )
+
+    service = WorkspaceService()
+    try:
+        service._sync_implementation_progress("app-1", "command-1", {})
+    finally:
+        service.shutdown()
+
+    assert len(appended) == 1
+    assert appended[0]["metadata"]["step"] == "phase-backend"
+    assert appended[0]["metadata"]["current_file"] == "application/src/New.java"
+
+
 def test_reconcile_does_not_finish_testing_command_with_completed_repair_job(
     monkeypatch,
 ) -> None:
@@ -438,7 +535,11 @@ def test_reconcile_does_not_finish_testing_command_with_completed_repair_job(
 
 @pytest.mark.parametrize(
     ("command_status", "job_status"),
-    [("FAILED", "FAILED"), ("INTERRUPTED", "NEEDS_PLANNER")],
+    [
+        ("FAILED", "FAILED"),
+        ("INTERRUPTED", "NEEDS_PLANNER"),
+        ("RUNNING", "NEEDS_INPUT"),
+    ],
 )
 def test_reconcile_stopped_implementation_exposes_checkpoint_retry(
     monkeypatch,
@@ -1906,6 +2007,61 @@ def test_failed_testing_is_an_actionable_repair_gate(monkeypatch) -> None:
     assert result["job"]["implementation_job_id"] == "implementation-1"
 
 
+@pytest.mark.parametrize(
+    ("defect_class", "repair_owner", "blocking_route", "message_fragment"),
+    [
+        (
+            "ENVIRONMENT_DEFECT",
+            "environment",
+            "environment",
+            "runtime environment must be restored",
+        ),
+        (
+            "PLATFORM_DEFECT",
+            "platform",
+            "platform",
+            "failure is in the EasyDep platform",
+        ),
+        (
+            "PLATFORM_OR_DESIGN_DEFECT",
+            "platform-or-design",
+            "platform-or-design",
+            "deployment design and EasyDep platform evidence",
+        ),
+    ],
+)
+def test_unrepairable_testing_result_uses_explicit_failure_guidance(
+    defect_class: str,
+    repair_owner: str,
+    blocking_route: str,
+    message_fragment: str,
+) -> None:
+    service = WorkspaceService()
+    try:
+        result = service._testing_result(
+            {
+                "job_id": "testing-1",
+                "result": {
+                    "passed": False,
+                    "blocking_findings": [
+                        {
+                            "message": "gate failed",
+                            "repairable": False,
+                            "defect_class": defect_class,
+                            "repair_owner": repair_owner,
+                        }
+                    ],
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert result["can_delegate_repair"] is False
+    assert result["blocking_route"] == blocking_route
+    assert message_fragment in result["message"]
+
+
 def test_start_testing_persists_checkpoint_in_the_command(monkeypatch) -> None:
     """Testing 입력을 실행 전에 현재 Workspace command에 저장한다."""
     updates: list[dict] = []
@@ -2033,6 +2189,7 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
                     "message": "FR1 failed",
                     "repairable": True,
                     "defect_class": "SUT_DEFECT",
+                    "implementation_owner": "backend",
                     "target_ids": [
                         "api:submitRegistration",
                         "test:plan-digest:UC1",
@@ -2131,16 +2288,18 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
 
     monkeypatch.setattr(workspace_module, "ProjectTools", FakeProjectTools)
 
-    def create_feedback(*args, **kwargs):
-        observed["feedback"] = args[2]
-        observed["confirmed_target_refs"] = kwargs.get("confirmed_target_refs")
-        observed["verification_profile"] = kwargs.get("verification_profile")
-        return {"job_id": "implementation-2", "app_id": "app-1"}
+    def request_owner_repair(job_id, *, owner, evidence):
+        observed["owner"] = owner
+        observed["feedback"] = evidence["stderr"]
+        repair_context = json.loads(evidence["testResults"])
+        observed["confirmed_target_refs"] = repair_context["confirmedTargetRefs"]
+        observed["verification_profile"] = repair_context["verificationProfile"]
+        return {"job_id": job_id, "app_id": "app-1"}
 
     monkeypatch.setattr(
         workspace_module.implementation_worker,
-        "create_feedback_job",
-        create_feedback,
+        "request_owner_repair",
+        request_owner_repair,
     )
     jobs = {
         job_id: {
@@ -2256,15 +2415,16 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
         "file:application/src/RegistrationService.java",
         "task:implement-registration",
     ]
-    assert observed["payload"]["job_id"] == "implementation-2"
-    assert observed["implementation_job_id"] == "implementation-2"
+    assert observed["owner"] == "backend"
+    assert observed["payload"]["job_id"] == "implementation-1"
+    assert observed["implementation_job_id"] == "implementation-1"
     assert observed["previous_job"] == prior["result"]["job"]
     assert observed["preserve_test"] is True
     assert observed["repair_task_type"] == "testing-dynamic-functional"
     assert result["job"]["job_id"] == "repair-command"
 
 
-def test_implementation_progress_snapshot_uses_public_workflow_phases() -> None:
+def test_implementation_progress_snapshot_uses_owner_and_verifier_phases() -> None:
     service = WorkspaceService()
     try:
         progress = service._implementation_progress_snapshot(
@@ -2272,15 +2432,18 @@ def test_implementation_progress_snapshot_uses_public_workflow_phases() -> None:
                 "status": "RUNNING",
                 "workflow": {
                     "status": "RUNNING",
-                    "currentPhase": "persistence",
+                    "currentPhase": "backend",
                     "phases": [
-                        {"phaseId": "control", "status": "SUCCEEDED"},
-                        {"phaseId": "persistence", "status": "RUNNING"},
+                        {"phaseId": "backend", "status": "RUNNING"},
+                        {"phaseId": "frontend", "status": "PENDING"},
+                        {"phaseId": "integration", "status": "PENDING"},
                     ],
                     "tasks": [
                         {
-                            "taskId": "create-entity",
-                            "phase": "persistence",
+                            "taskId": "backend-owner",
+                            "taskType": "backend-implementation",
+                            "owner": "backend",
+                            "phase": "backend",
                             "status": "RUNNING",
                         }
                     ],
@@ -2291,8 +2454,10 @@ def test_implementation_progress_snapshot_uses_public_workflow_phases() -> None:
         service.shutdown()
 
     updates = {item["step"]: item for item in progress["updates"]}
+    assert list(updates) == ["phase-backend", "phase-frontend", "phase-integration"]
     assert updates["phase-backend"]["status"] == "running"
-    assert updates["sub-backend-persistence"]["status"] == "running"
+    assert updates["phase-frontend"]["status"] == "pending"
+    assert updates["phase-integration"]["status"] == "pending"
 
 
 def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
@@ -2306,20 +2471,18 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
         json.dumps(
             {
                 "status": "RUNNING",
-                "currentPhase": "use-cases",
+                "currentPhase": "backend",
                 "phases": [
-                    {"phaseId": "persistence", "status": "SUCCEEDED"},
-                    {"phaseId": "use-cases", "status": "RUNNING"},
+                    {"phaseId": "backend", "status": "RUNNING"},
+                    {"phaseId": "frontend", "status": "PENDING"},
+                    {"phaseId": "integration", "status": "PENDING"},
                 ],
                 "tasks": [
                     {
-                        "task_id": "repository-1",
-                        "phase": "persistence",
-                        "status": "SUCCEEDED",
-                    },
-                    {
-                        "task_id": "use-cases-1",
-                        "phase": "use-cases",
+                        "task_id": "backend-owner",
+                        "taskType": "backend-implementation",
+                        "owner": "backend",
+                        "phase": "backend",
                         "status": "RUNNING",
                     },
                 ],
@@ -2327,7 +2490,7 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
         ),
         encoding="utf-8",
     )
-    journal_path = event_dir / "boundary.events.jsonl"
+    journal_path = event_dir / "backend-owner.events.jsonl"
     journal_path.write_text(
         json.dumps(
             {
@@ -2349,16 +2512,17 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
         ),
         encoding="utf-8",
     )
-    (event_dir / "use-cases-1.result.json").write_text(
+    (event_dir / "backend-owner.result.json").write_text(
         json.dumps(
             {
-                "taskId": "use-cases-1",
-                "taskType": "use-case",
+                "taskId": "backend-owner",
+                "taskType": "backend-implementation",
+                "owner": "backend",
                 "status": "SUCCEEDED",
                 "changedFiles": ["application/src/main/java/BoundaryAdapter.java"],
-                "verification": {"exitCode": 0},
+                "verification": {"command": ["./gradlew", "test"], "exitCode": 0},
                 "repairHistory": {"attempts": []},
-                "eventJournal": "reports/agent-executions/boundary.events.jsonl",
+                "eventJournal": "reports/agent-executions/backend-owner.events.jsonl",
                 "rawResponse": "The boundary adapter implementation is complete.",
             }
         ),
@@ -2378,36 +2542,88 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
         service.shutdown()
 
     updates = {item["step"]: item for item in progress["updates"]}
+    assert list(updates) == ["phase-backend", "phase-frontend", "phase-integration"]
     assert updates["phase-backend"]["status"] == "running"
-    assert updates["sub-backend-use-cases"]["status"] == "running"
-    assert updates["implementation-file"]["detail"] == "Editing BoundaryAdapter.java"
+    assert updates["phase-backend"]["current_file"] == (
+        "application/src/main/java/BoundaryAdapter.java"
+    )
+    assert updates["phase-backend"]["recent_command"] == "./gradlew test"
+    assert updates["phase-backend"]["verification_status"] == "passed"
+    assert updates["phase-backend"]["detail"] == (
+        "Backend implementation is in progress. Last check passed: ./gradlew test."
+    )
     assert progress["current_file"] == ("application/src/main/java/BoundaryAdapter.java")
     assert progress["current_class"] == "BoundaryAdapter"
     assert progress["agent_results"] == [
         {
-            "task_id": "use-cases-1",
-            "task_type": "use-case",
+            "task_id": "backend-owner",
+            "task_type": "backend-implementation",
+            "owner": "backend",
             "status": "SUCCEEDED",
             "raw_response": "The boundary adapter implementation is complete.",
             "changed_files": ["application/src/main/java/BoundaryAdapter.java"],
-            "verification": {"exitCode": 0},
+            "verification": {"command": ["./gradlew", "test"], "exitCode": 0},
             "repair_history": {"attempts": []},
-            "event_journal": "reports/agent-executions/boundary.events.jsonl",
+            "event_journal": "reports/agent-executions/backend-owner.events.jsonl",
         }
     ]
 
 
-def test_implementation_progress_snapshot_marks_terminal_failure() -> None:
+def test_implementation_progress_snapshot_shows_integration_activity() -> None:
     service = WorkspaceService()
     try:
         progress = service._implementation_progress_snapshot(
             {
-                "status": "FAILED",
-                "error": "npm ci timed out",
+                "status": "FINALIZING",
                 "workflow": {
-                    "status": "RUNNING",
-                    "currentPhase": "persistence",
-                    "phases": [{"phaseId": "persistence", "status": "RUNNING"}],
+                    "status": "FINALIZING",
+                    "currentPhase": "integration",
+                    "phases": [
+                        {"phaseId": "backend", "status": "SUCCEEDED"},
+                        {"phaseId": "frontend", "status": "SUCCEEDED"},
+                        {"phaseId": "integration", "status": "RUNNING"},
+                    ],
+                    "tasks": [],
+                    "currentActivity": {
+                        "id": "completion-audit",
+                        "owner": "integration",
+                        "status": "RUNNING",
+                        "detail": "Checking the combined application.",
+                    },
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    updates = {item["step"]: item for item in progress["updates"]}
+    assert list(updates) == ["phase-backend", "phase-frontend", "phase-integration"]
+    assert updates["phase-integration"] == {
+        "step": "phase-integration",
+        "label": "Integration verification",
+        "status": "running",
+        "detail": "Checking the combined application.",
+        "implementation_owner": "integration",
+        "repairing": False,
+    }
+    assert "current_file" not in progress
+
+
+def test_implementation_progress_snapshot_shows_owner_repair_in_existing_phase() -> None:
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {
+                "status": "QUEUED",
+                "owner_repair": {"owner": "frontend"},
+                "workflow": {
+                    "status": "COMPLETE",
+                    "currentPhase": "integration",
+                    "phases": [
+                        {"phaseId": "backend", "status": "SUCCEEDED"},
+                        {"phaseId": "frontend", "status": "SUCCEEDED"},
+                        {"phaseId": "integration", "status": "SUCCEEDED"},
+                    ],
                     "tasks": [],
                 },
             }
@@ -2416,8 +2632,44 @@ def test_implementation_progress_snapshot_marks_terminal_failure() -> None:
         service.shutdown()
 
     updates = {item["step"]: item for item in progress["updates"]}
-    assert updates["phase-backend"]["status"] == "failed"
-    assert updates["implementation-result"]["status"] == "failed"
+    assert list(updates) == ["phase-backend", "phase-frontend", "phase-integration"]
+    assert updates["phase-backend"]["status"] == "completed"
+    assert updates["phase-frontend"]["status"] == "running"
+    assert updates["phase-frontend"]["repairing"] is True
+    assert updates["phase-frontend"]["detail"] == (
+        "Repairing with the existing frontend owner conversation."
+    )
+    assert updates["phase-integration"]["status"] == "pending"
+
+
+@pytest.mark.parametrize("job_status", ["FAILED", "NEEDS_INPUT", "NEEDS_PLANNER"])
+def test_implementation_progress_snapshot_marks_terminal_failure(job_status: str) -> None:
+    service = WorkspaceService()
+    try:
+        progress = service._implementation_progress_snapshot(
+            {
+                "status": job_status,
+                "error": "npm ci timed out",
+                "workflow": {
+                    "status": "RUNNING",
+                    "currentPhase": "integration",
+                    "phases": [
+                        {"phaseId": "backend", "status": "SUCCEEDED"},
+                        {"phaseId": "frontend", "status": "SUCCEEDED"},
+                        {"phaseId": "integration", "status": "RUNNING"},
+                    ],
+                    "tasks": [],
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    updates = {item["step"]: item for item in progress["updates"]}
+    assert list(updates) == ["phase-backend", "phase-frontend", "phase-integration"]
+    assert updates["phase-backend"]["status"] == "completed"
+    assert updates["phase-frontend"]["status"] == "completed"
+    assert updates["phase-integration"]["status"] == "failed"
     assert progress["progress_status"] == "failed"
     assert progress["progress_detail"] == "npm ci timed out"
 
@@ -2430,19 +2682,24 @@ def test_implementation_progress_snapshot_marks_completed_workflow() -> None:
                 "status": "COMPLETED",
                 "workflow": {
                     "status": "COMPLETE",
-                    "currentPhase": "frontend",
+                    "currentPhase": "integration",
                     "phases": [
-                        {"phaseId": "control", "status": "SUCCEEDED"},
+                        {"phaseId": "backend", "status": "SUCCEEDED"},
                         {"phaseId": "frontend", "status": "SUCCEEDED"},
+                        {"phaseId": "integration", "status": "SUCCEEDED"},
                     ],
                     "tasks": [
                         {
-                            "taskId": "control-1",
-                            "phase": "control",
+                            "taskId": "backend-owner",
+                            "taskType": "backend-implementation",
+                            "owner": "backend",
+                            "phase": "backend",
                             "status": "SUCCEEDED",
                         },
                         {
-                            "taskId": "frontend-1",
+                            "taskId": "frontend-owner",
+                            "taskType": "frontend-implementation",
+                            "owner": "frontend",
                             "phase": "frontend",
                             "status": "SUCCEEDED",
                         },
@@ -2454,7 +2711,8 @@ def test_implementation_progress_snapshot_marks_completed_workflow() -> None:
         service.shutdown()
 
     updates = {item["step"]: item for item in progress["updates"]}
-    assert updates["release-verification"]["status"] == "completed"
+    assert list(updates) == ["phase-backend", "phase-frontend", "phase-integration"]
+    assert {item["status"] for item in updates.values()} == {"completed"}
     assert progress["progress_status"] == "completed"
 
 

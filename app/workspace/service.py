@@ -62,6 +62,7 @@ from .actions import (
     StagePolicy,
     action_is_offered,
     action_spec,
+    blocking_findings_route,
     offered_actions,
     result_with_contract,
     validate_payload,
@@ -200,6 +201,7 @@ def _implementation_agent_results(run_path: Path) -> list[dict[str, Any]]:
             {
                 "task_id": str(payload.get("taskId") or path.name.removesuffix(".result.json")),
                 "task_type": str(payload.get("taskType") or ""),
+                "owner": str(payload.get("owner") or ""),
                 "status": str(payload.get("status") or ""),
                 "raw_response": str(payload.get("rawResponse") or ""),
                 "changed_files": list(payload.get("changedFiles") or []),
@@ -259,31 +261,13 @@ def _with_capability_handoff_questions(app_id: str, result: dict[str, Any]) -> d
     return enriched
 
 
-# The implementation worker has two distinct parts: initial deterministic
-# generation and the resumable agent workflow.  Keep their user-facing labels
-# here so the workspace can report the same stable milestones even when the
-# underlying task plan differs by application.
-_IMPLEMENTATION_GENERATION_STEPS = (
-    ("validate-input", "Verify input snapshot"),
-    ("generate-sources", "Generate base sources"),
-    ("prepare-build", "Prepare build environment"),
-    ("verify-generated", "Verify initial compilation"),
-    ("plan-workflow", "Plan implementation workflow"),
-)
-_IMPLEMENTATION_WORKFLOW_PHASES = (
-    ("persistence", "Persistence implementation"),
-    ("use-cases", "Use-case backend implementation"),
+# The implementation screen follows the two long-lived OpenHands owners and the
+# deterministic verifier. Internal generator checkpoints remain in the job log;
+# they are details of backend preparation, not additional user-facing work.
+_IMPLEMENTATION_PROGRESS_PHASES = (
+    ("backend", "Backend implementation"),
     ("frontend", "Frontend implementation"),
-    ("wiring", "Verify application wiring and HTTP flow"),
-)
-_IMPLEMENTATION_DISPLAY_PHASES = (
-    (
-        "backend",
-        "Backend implementation",
-        frozenset({"persistence", "use-cases"}),
-    ),
-    ("frontend", "Frontend implementation", frozenset({"frontend"})),
-    ("e2e", "Verify application execution", frozenset({"wiring"})),
+    ("integration", "Integration verification"),
 )
 
 
@@ -341,7 +325,7 @@ class WorkspaceService:
         # COMPLETED로 바꾼다. Workspace가 그 내부 규칙을 다시 구현하지 않는다.
         if job_status != "COMPLETED":
             self._sync_implementation_progress(app_id, str(command["command_id"]), job)
-            if job_status in {"FAILED", "NEEDS_PLANNER"}:
+            if job_status in TERMINAL_JOB_STATUSES:
                 result = {
                     **dict(command.get("result") or {}),
                     "job_id": job_id,
@@ -383,6 +367,10 @@ class WorkspaceService:
             text="Implementation completed.",
             metadata={"status": "COMPLETED", "job_id": job_id},
         )
+        # Publish the durable three-phase snapshot after the completion marker.
+        # ChatTimeline intentionally hides superseded implementation progress before
+        # that marker, so this ordering also restores the final card after a restart.
+        self._sync_implementation_progress(app_id, str(command["command_id"]), job)
         return updated
 
     def _sync_implementation_progress(
@@ -406,6 +394,11 @@ class WorkspaceService:
                         "progress_status",
                         "progress_step_label",
                         "progress_detail",
+                        "current_file",
+                        "current_class",
+                        "recent_command",
+                        "verification_status",
+                        "repairing",
                     )
                 )
         progress = self._implementation_progress_snapshot(job)
@@ -418,7 +411,20 @@ class WorkspaceService:
             label = str(update.get("label") or step)
             detail = str(update.get("detail") or "")
             status = str(update.get("status") or "running")
-            key = "|".join((status, label, detail))
+            key = "|".join(
+                (
+                    status,
+                    label,
+                    detail,
+                    *(str(update.get(field) or "") for field in (
+                        "current_file",
+                        "current_class",
+                        "recent_command",
+                        "verification_status",
+                        "repairing",
+                    )),
+                )
+            )
             if previous_updates.get(step) == key:
                 continue
             repository.append_event(
@@ -437,6 +443,18 @@ class WorkspaceService:
                     ),
                     "progress_detail": detail,
                     "progress_status": status,
+                    **{
+                        key: update[key]
+                        for key in (
+                            "implementation_owner",
+                            "current_file",
+                            "current_class",
+                            "recent_command",
+                            "verification_status",
+                            "repairing",
+                        )
+                        if key in update
+                    },
                 },
             )
 
@@ -1531,6 +1549,7 @@ class WorkspaceService:
                 if implementation_blockers:
                     (
                         selected_blockers,
+                        repair_owner,
                         repair_task_type,
                         repair_file_hints,
                         verification_profile,
@@ -1568,25 +1587,28 @@ class WorkspaceService:
                         selected_blockers,
                         repair_file_hints,
                     )
-                    repair_job = implementation_worker.create_feedback_job(
-                        str(command["app_id"]),
-                        cast(
-                            dict[str, Any],
-                            artifact_repository.load_state(str(command["app_id"])),
-                        ),
-                        feedback,
-                        str(original_implementation.get("base_package") or "com.easydep.app"),
-                        True,
-                        confirmed_target_refs=confirmed_target_refs,
-                        repair_task_type=repair_task_type,
-                        repair_file_hints=repair_file_hints,
-                        verification_profile=verification_profile,
+                    repair_job = implementation_worker.request_owner_repair(
+                        implementation_job_id,
+                        owner=repair_owner,
+                        evidence={
+                            "command": ["testing", repair_task_type],
+                            "stderr": feedback,
+                            "testResults": json.dumps(
+                                {
+                                    "confirmedTargetRefs": confirmed_target_refs,
+                                    "fileHints": repair_file_hints,
+                                    "verificationProfile": verification_profile,
+                                },
+                                ensure_ascii=False,
+                                sort_keys=True,
+                            ),
+                        },
                     )
                     repair_job_id = str(repair_job.get("job_id") or "")
                     if not repair_job_id:
-                        raise RuntimeError("Automatic implementation repair returned no job ID.")
-                    # 구현 worker가 실패하거나 서버가 재시작돼도 같은 checkpoint를 다시 찾을
-                    # 수 있도록 LLM 실행 전에 job ID를 command에 저장한다.
+                        raise RuntimeError("Automatic owner repair returned no job ID.")
+                    # 서버가 재시작돼도 같은 owner checkpoint를 다시 찾을 수 있도록 LLM
+                    # 실행 전에 원래 implementation job ID를 command에 저장한다.
                     repair_payload = {
                         **dict(command.get("payload") or {}),
                         "job_id": repair_job_id,
@@ -1605,7 +1627,7 @@ class WorkspaceService:
                         repaired.get("job_id") or repaired_job.get("job_id") or ""
                     )
                     if not repaired_job_id:
-                        raise RuntimeError("Automatic implementation repair returned no job ID.")
+                        raise RuntimeError("Automatic owner repair returned no job ID.")
                     return self._run_testing_command(
                         command,
                         repaired_job_id,
@@ -2984,20 +3006,27 @@ class WorkspaceService:
                 workflow = state
         agent_results = _implementation_agent_results(run_path) if run_path else []
 
-        updates: list[dict[str, str]] = []
+        updates: list[dict[str, Any]] = []
 
-        def add_update(step: str, label: str, status: str, detail: str = "") -> None:
+        def add_update(
+            step: str,
+            label: str,
+            status: str,
+            detail: str = "",
+            **metadata: object,
+        ) -> None:
             updates.append(
                 {
                     "step": step,
                     "label": label,
                     "status": status,
                     "detail": detail,
+                    **metadata,
                 }
             )
 
         job_status = str(job.get("status") or private_job.get("status") or "")
-        terminal_failure = job_status in {"FAILED", "CANCELLED", "REJECTED"}
+        terminal_failure = job_status in TERMINAL_JOB_STATUSES - {"COMPLETED"}
         failure_error = str(private_job.get("error") or job.get("error") or "").strip()
         failure_lines = [line.strip() for line in failure_error.splitlines() if line.strip()]
         meaningful_failure_lines = [
@@ -3011,237 +3040,238 @@ class WorkspaceService:
             else "The implementation job did not complete."
         )
         live_progress = job.get("progress")
-        progress_status = (
-            str(live_progress.get("status") or "") if isinstance(live_progress, dict) else ""
-        )
         progress_message = (
             str(live_progress.get("message") or "") if isinstance(live_progress, dict) else ""
         )
-        generation_status = (
-            "PLANNING" if job_status == "PLANNING" else progress_status or job_status
-        )
+        phase_state: dict[str, dict[str, Any]] = {
+            phase_id: {"status": "pending", "detail": ""}
+            for phase_id, _label in _IMPLEMENTATION_PROGRESS_PHASES
+        }
+        workflow_tasks: list[dict[str, Any]] = []
+        workflow_complete = job_status == "COMPLETED"
 
-        if generation_status in {
-            "QUEUED",
-            "VALIDATING_INPUT",
-            "GENERATING_SOURCES",
-            "PREPARING_BUILD",
-            "VERIFYING",
-            "PLANNING",
-        }:
-            add_update(
-                "prepare-job",
-                "Prepare implementation job",
-                "running",
-                "Preparing the implementation job.",
-            )
-        else:
-            # The job leaves the queue before its first generator checkpoint.
-            # Explicitly close this UI-only milestone so it cannot look like a
-            # long-running task while source generation or compilation proceeds.
-            add_update("prepare-job", "Prepare implementation job", "completed")
+        def normalized_status(value: object) -> str:
+            status = str(value or "").upper()
+            if status in {"SUCCEEDED", "COMPLETED", "COMPLETE"}:
+                return "completed"
+            if status in {"FAILED", "TIMEOUT", "CANCELLED", "REJECTED", "NEEDS_REVIEW"}:
+                return "failed"
+            if status in {"RUNNING", "FINALIZING", "VERIFYING"}:
+                return "running"
+            return "pending"
 
-        if generation_status in {
-            "VALIDATING_INPUT",
-            "GENERATING_SOURCES",
-            "PREPARING_BUILD",
-            "VERIFYING",
-            "PLANNING",
-            "SUCCEEDED",
-        }:
-            status_to_index = {
-                "VALIDATING_INPUT": 0,
-                "GENERATING_SOURCES": 1,
-                "PREPARING_BUILD": 2,
-                "VERIFYING": 3,
-                "PLANNING": 4,
-                "SUCCEEDED": len(_IMPLEMENTATION_GENERATION_STEPS),
-            }
-            active_index = status_to_index[generation_status]
-            for index, (step, label) in enumerate(_IMPLEMENTATION_GENERATION_STEPS):
-                if index < active_index:
-                    add_update(step, label, "completed")
-                elif index == active_index and generation_status != "SUCCEEDED":
-                    add_update(step, label, "running", progress_message)
-        elif generation_status == "REUSING_GENERATED_RUN":
-            add_update("validate-input", "Verify input snapshot", "completed")
-            add_update(
-                "reuse-generated-run",
-                "Reuse generated output",
-                "running",
-                progress_message,
-            )
-        elif generation_status == "PREPARING_FEEDBACK":
-            add_update("validate-input", "Verify input snapshot", "completed")
-            add_update("prepare-feedback", "Prepare feedback application", "running", progress_message)
-
-        workflow_complete = False
         if isinstance(workflow, dict):
-            workflow_status = str(workflow.get("status") or "")
+            workflow_status = str(workflow.get("status") or "").upper()
             current_phase = str(workflow.get("currentPhase") or "")
+            current_phases = {
+                str(value)
+                for value in workflow.get("currentPhases", [])
+                if isinstance(value, str)
+            }
+            if current_phase:
+                current_phases.add(current_phase)
             tasks = [item for item in workflow.get("tasks", []) if isinstance(item, dict)]
+            workflow_tasks = tasks
             phase_statuses = {
                 str(phase.get("phaseId") or ""): str(phase.get("status") or "").upper()
                 for phase in workflow.get("phases", [])
                 if isinstance(phase, dict)
             }
-            for display_id, label, phase_ids in _IMPLEMENTATION_DISPLAY_PHASES:
-                display_phases = [
-                    phase_id
-                    for phase_id, _phase_label in _IMPLEMENTATION_WORKFLOW_PHASES
-                    if phase_id in phase_ids
-                ]
-                display_tasks = [
-                    task for task in tasks if str(task.get("phase") or "") in phase_ids
-                ]
-                task_statuses = {str(task.get("status") or "").upper() for task in display_tasks}
-                has_phase_work = bool(display_tasks) or any(
-                    phase_statuses.get(phase_id) not in {None, "UNPLANNED"}
-                    for phase_id in display_phases
-                )
-                all_succeeded = has_phase_work and all(
-                    phase_statuses.get(phase_id) in {"SUCCEEDED", "COMPLETED", "UNPLANNED"}
-                    or (
-                        any(str(task.get("phase") or "") == phase_id for task in display_tasks)
-                        and all(
-                            str(task.get("status") or "").upper() in {"SUCCEEDED", "COMPLETED"}
-                            for task in display_tasks
-                            if str(task.get("phase") or "") == phase_id
-                        )
-                    )
-                    for phase_id in display_phases
-                )
-                if all_succeeded:
-                    add_update(f"phase-{display_id}", label, "completed")
-                elif (
-                    "FAILED" in task_statuses
-                    or any(
-                        phase_statuses.get(phase_id) in {"FAILED", "TIMEOUT"}
-                        for phase_id in display_phases
-                    )
-                    or (terminal_failure and current_phase in phase_ids)
+            for phase_id, _label in _IMPLEMENTATION_PROGRESS_PHASES:
+                evidence = []
+                if phase_id in phase_statuses and phase_statuses[phase_id] != "UNPLANNED":
+                    evidence.append(phase_statuses[phase_id])
+                for task in tasks:
+                    task_owner = str(task.get("owner") or task.get("phase") or "")
+                    task_type = str(task.get("taskType") or task.get("task_type") or "")
+                    if task_owner == phase_id or task_type == f"{phase_id}-implementation":
+                        evidence.append(str(task.get("status") or ""))
+                statuses = {normalized_status(value) for value in evidence}
+                if "failed" in statuses:
+                    phase_state[phase_id]["status"] = "failed"
+                elif "running" in statuses or (
+                    phase_id in current_phases and workflow_status == "RUNNING"
                 ):
-                    add_update(
-                        f"phase-{display_id}",
-                        label,
-                        "failed",
-                        failure_detail if terminal_failure else "",
-                    )
-                elif (
-                    workflow_status.upper() == "RUNNING" and current_phase in phase_ids
-                ) or "RUNNING" in task_statuses:
-                    add_update(
-                        f"phase-{display_id}",
-                        label,
-                        "running",
-                        f"{label} is in progress.",
-                    )
-                if display_id == "backend" and not all_succeeded:
-                    tasks_by_phase: dict[str, list[dict[str, Any]]] = {}
-                    for task in display_tasks:
-                        task_status = str(task.get("status") or "PENDING").lower()
-                        if task_status not in {
-                            "running",
-                            "succeeded",
-                            "completed",
-                            "failed",
-                            "timeout",
-                            "needs_review",
-                        }:
-                            continue
-                        tasks_by_phase.setdefault(str(task.get("phase") or ""), []).append(task)
-                    for task_phase, phase_tasks in tasks_by_phase.items():
-                        if current_phase and task_phase != current_phase:
-                            continue
-                        statuses = {
-                            str(task.get("status") or "PENDING").lower() for task in phase_tasks
-                        }
-                        if statuses & {"failed", "timeout", "needs_review"}:
-                            task_status = next(
-                                status
-                                for status in ("failed", "timeout", "needs_review")
-                                if status in statuses
-                            )
-                        elif statuses and statuses <= {"succeeded", "completed"}:
-                            task_status = "completed"
-                        elif "running" in statuses:
-                            task_status = "running"
-                        else:
-                            task_status = "pending"
-                        task_label = next(
-                            (
-                                phase_label
-                                for phase_id, phase_label in _IMPLEMENTATION_WORKFLOW_PHASES
-                                if phase_id == task_phase
-                            ),
-                            task_phase,
-                        )
-                        details = [str(task.get("detail") or "") for task in phase_tasks]
-                        detail = next((item for item in details if item), "")
-                        add_update(
-                            f"sub-backend-{task_phase}",
-                            task_label,
-                            task_status,
-                            detail,
-                        )
+                    phase_state[phase_id]["status"] = "running"
+                elif evidence and statuses <= {"completed"}:
+                    phase_state[phase_id]["status"] = "completed"
 
             workflow_complete = workflow_status == "COMPLETE" or (
                 workflow_status == "READY" and implementation_worker._workflow_is_complete(workflow)
             )
             activity = workflow.get("currentActivity")
-            if (
-                not terminal_failure
-                and not workflow_complete
-                and isinstance(activity, dict)
-                and str(activity.get("id") or "")
-            ):
-                activity_status = str(activity.get("status") or "running").lower()
-                if activity_status == "succeeded":
-                    activity_status = "completed"
-                activity_id = str(activity["id"])
-                activity_phase = activity_id.removeprefix("verify-").removeprefix("audit-")
-                if activity_phase == "backend":
-                    display_id, display_label = "backend", "Backend implementation"
-                else:
-                    display_id, display_label, _ = next(
-                        (
-                            item
-                            for item in _IMPLEMENTATION_DISPLAY_PHASES
-                            if activity_phase in item[2]
-                        ),
-                        ("implementation", "Backend implementation", frozenset()),
+            if isinstance(activity, dict) and str(activity.get("id") or ""):
+                activity_owner = str(activity.get("owner") or activity.get("phase") or "")
+                if activity_owner not in phase_state:
+                    # Older checkpoints did not persist activity ownership. Their
+                    # canonical currentPhase is a safe fallback; activity IDs are
+                    # free-form labels and must not be parsed as routing metadata.
+                    activity_owner = current_phase if current_phase in phase_state else ""
+                if activity_owner in phase_state:
+                    phase_state[activity_owner]["status"] = normalized_status(
+                        activity.get("status") or "RUNNING"
                     )
-                activity_suffix = (
-                    "build and unit tests"
-                    if activity_id.startswith("verify-")
-                    else "output review"
+                    phase_state[activity_owner]["detail"] = str(activity.get("detail") or "")
+
+            if workflow_status == "FINALIZING":
+                phase_state["integration"]["status"] = "running"
+        elif job_status in {
+            "RUNNING",
+            "PLANNING",
+            "VALIDATING_INPUT",
+            "GENERATING_SOURCES",
+            "PREPARING_BUILD",
+            "VERIFYING",
+            "REUSING_GENERATED_RUN",
+            "PREPARING_FEEDBACK",
+        }:
+            phase_state["backend"] = {
+                "status": "running",
+                "detail": progress_message or "Backend implementation is in progress.",
+            }
+
+        if workflow_complete:
+            for state in phase_state.values():
+                state["status"] = "completed"
+                state["detail"] = ""
+
+        repair = private_job.get("owner_repair")
+        repair_owner = str(repair.get("owner") or "") if isinstance(repair, dict) else ""
+        repairing = (
+            repair_owner in {"backend", "frontend"}
+            and not terminal_failure
+            and (
+                phase_state[repair_owner]["status"] != "completed"
+                or job_status in {"QUEUED", "PLANNING"}
+            )
+        )
+        if repairing:
+            workflow_complete = False
+            phase_state[repair_owner]["status"] = "running"
+            phase_state[repair_owner]["detail"] = (
+                f"Repairing with the existing {repair_owner} owner conversation."
+            )
+            phase_state["integration"].update(status="pending", detail="")
+
+        for result in agent_results:
+            result_owner = str(result.get("owner") or "")
+            task_type = str(result.get("task_type") or "")
+            if result_owner not in {"backend", "frontend"}:
+                if task_type == "backend-implementation":
+                    result_owner = "backend"
+                elif task_type == "frontend-implementation":
+                    result_owner = "frontend"
+            if result_owner not in {"backend", "frontend"}:
+                continue
+            verification = result.get("verification")
+            verification = verification if isinstance(verification, dict) else {}
+            raw_command = verification.get("command")
+            if isinstance(raw_command, list):
+                recent_command = " ".join(
+                    str(part) for part in raw_command[:12] if isinstance(part, (str, int, float))
+                )[:200]
+            elif isinstance(raw_command, str):
+                recent_command = raw_command.strip()[:200]
+            else:
+                recent_command = ""
+            raw_verification_status = str(
+                verification.get("status") or verification.get("gateStatus") or ""
+            ).upper()
+            exit_code = verification.get("exitCode")
+            if raw_verification_status in {"PASSED", "SUCCEEDED", "COMPLETED", "PASS"}:
+                verification_status = "passed"
+            elif raw_verification_status in {"FAILED", "FAIL", "ERROR"}:
+                verification_status = "failed"
+            elif isinstance(exit_code, int) and not isinstance(exit_code, bool):
+                verification_status = "passed" if exit_code == 0 else "failed"
+            else:
+                verification_status = ""
+            if recent_command:
+                phase_state[result_owner]["recent_command"] = recent_command
+            if verification_status:
+                phase_state[result_owner]["verification_status"] = verification_status
+                check_detail = f"Last check {verification_status}"
+                if recent_command:
+                    check_detail += f": {recent_command}"
+                check_detail += "."
+                existing_detail = str(phase_state[result_owner].get("detail") or "")
+                if not existing_detail and phase_state[result_owner]["status"] == "running":
+                    owner_label = dict(_IMPLEMENTATION_PROGRESS_PHASES)[result_owner]
+                    existing_detail = f"{owner_label} is in progress."
+                phase_state[result_owner]["detail"] = " ".join(
+                    item for item in (existing_detail, check_detail) if item
                 )
-                activity_label = f"{display_label}: {activity_suffix}"
-                if activity_id != "completion-audit" and display_id != "backend":
-                    add_update(
-                        "activity-" + display_id,
-                        activity_label,
-                        activity_status,
-                        str(activity.get("detail") or ""),
-                    )
-            elif workflow_complete:
-                add_update("release-verification", "Final release verification", "completed")
 
         if terminal_failure:
+            failed_phase = next(
+                (
+                    phase_id
+                    for phase_id, _label in _IMPLEMENTATION_PROGRESS_PHASES
+                    if phase_state[phase_id]["status"] == "running"
+                ),
+                next(
+                    (
+                        phase_id
+                        for phase_id, _label in _IMPLEMENTATION_PROGRESS_PHASES
+                        if phase_state[phase_id]["status"] != "completed"
+                    ),
+                    "integration",
+                ),
+            )
+            phase_state[failed_phase].update(status="failed", detail=failure_detail)
+
+        for phase_id, label in _IMPLEMENTATION_PROGRESS_PHASES:
+            state = phase_state[phase_id]
+            detail = state["detail"]
+            if state["status"] == "running" and not detail:
+                detail = f"{label} is in progress."
             add_update(
-                "implementation-result",
-                "Implementation job failed",
-                "failed",
-                failure_detail,
+                f"phase-{phase_id}",
+                label,
+                state["status"],
+                detail,
+                implementation_owner=phase_id,
+                repairing=bool(repairing and repair_owner == phase_id),
+                **{
+                    key: state[key]
+                    for key in ("recent_command", "verification_status")
+                    if state.get(key)
+                },
             )
 
         current_file: str | None = None
-        if workflow_complete or job_status in TERMINAL_JOB_STATUSES:
+        owner_is_editing = any(
+            phase_state[phase_id]["status"] == "running"
+            for phase_id in ("backend", "frontend")
+        )
+        if workflow_complete or job_status in TERMINAL_JOB_STATUSES or not owner_is_editing:
             run_path = None
         if run_path is not None:
             events_dir = run_path / "reports" / "agent-executions"
             latest_path: Path | None = None
-            for candidate in sorted(events_dir.glob("*.events.jsonl")):
+            active_owner = next(
+                (
+                    phase_id
+                    for phase_id in ("backend", "frontend")
+                    if phase_state[phase_id]["status"] == "running"
+                ),
+                "",
+            )
+            active_task_id = next(
+                (
+                    str(task.get("taskId") or task.get("task_id") or "")
+                    for task in workflow_tasks
+                    if str(task.get("owner") or task.get("phase") or "") == active_owner
+                    and normalized_status(task.get("status")) == "running"
+                ),
+                "",
+            )
+            candidates = (
+                events_dir.glob(f"{active_task_id}*.events.jsonl")
+                if active_task_id
+                else events_dir.glob("*.events.jsonl")
+            )
+            for candidate in sorted(candidates):
                 try:
                     if (
                         latest_path is None
@@ -3295,23 +3325,36 @@ class WorkspaceService:
                         current_file = "application/" + current_file.split(application_marker, 1)[1]
 
         if current_file:
-            file_name = Path(current_file).name
-            add_update(
-                "implementation-file",
-                "Current implementation file",
-                "running",
-                f"Editing {file_name}",
+            current_owner = next(
+                (
+                    phase_id
+                    for phase_id in ("backend", "frontend")
+                    if phase_state[phase_id]["status"] == "running"
+                ),
+                "",
             )
+            current_update = next(
+                (item for item in updates if item["step"] == f"phase-{current_owner}"),
+                None,
+            )
+            if current_update is not None:
+                file_name = Path(current_file).name
+                current_update["current_file"] = current_file
+                current_update["current_class"] = Path(file_name).stem
 
-        if not updates:
-            return {}
-        latest = updates[-1]
+        summary = next(
+            (item for item in updates if item["status"] == "failed"),
+            next(
+                (item for item in updates if item["status"] == "running"),
+                updates[-1],
+            ),
+        )
         snapshot: dict[str, Any] = {
             "updates": updates,
             "progress_card_label": "Implementation progress",
-            "text": latest["detail"] or latest["label"],
-            "progress_detail": latest["detail"] or latest["label"],
-            "progress_status": latest["status"],
+            "text": summary["detail"] or summary["label"],
+            "progress_detail": summary["detail"] or summary["label"],
+            "progress_status": summary["status"],
         }
         if current_file:
             file_name = Path(current_file).name
@@ -3392,7 +3435,7 @@ class WorkspaceService:
         app_id: str,
         result: dict[str, Any],
         blockers: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], str, list[str], dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], str, str, list[str], dict[str, Any]]:
         """같은 원인에 속한 finding을 한 구현 작업과 동일 재검사 입력으로 묶는다."""
 
         gate_order = {
@@ -3414,6 +3457,16 @@ class WorkspaceService:
             for item in blockers
             if str(item.get("code") or item.get("stage") or "") == code
         ] or [primary]
+        owners = {
+            str(item.get("implementation_owner") or "").strip()
+            for item in selected
+            if str(item.get("implementation_owner") or "").strip()
+        }
+        if len(owners) != 1:
+            raise ValueError(
+                "Testing repair evidence must declare exactly one implementation owner."
+            )
+        repair_owner = next(iter(owners))
         task_type = {
             "testing.static": "testing-static",
             "testing.package": "testing-package",
@@ -3473,7 +3526,7 @@ class WorkspaceService:
                 failed_step_id = str(evidence.get("failedStepId") or "").strip()
                 if failed_step_id:
                     profile["failed_step_id"] = failed_step_id
-        return selected, task_type, file_hints, profile
+        return selected, repair_owner, task_type, file_hints, profile
 
     @staticmethod
     def _testing_implementation_repair_targets(
@@ -3708,7 +3761,17 @@ class WorkspaceService:
                     if not step:
                         continue
                     progress_key = "|".join(
-                        str(update.get(field) or "") for field in ("status", "label", "detail")
+                        str(update.get(field) or "")
+                        for field in (
+                            "status",
+                            "label",
+                            "detail",
+                            "current_file",
+                            "current_class",
+                            "recent_command",
+                            "verification_status",
+                            "repairing",
+                        )
                     )
                     if last_progress.get(step) == progress_key:
                         continue
@@ -3733,9 +3796,16 @@ class WorkspaceService:
                             "progress_detail": str(update.get("detail") or ""),
                             "progress_status": str(update.get("status") or "running"),
                             **{
-                                key: progress[key]
-                                for key in ("current_file", "current_class")
-                                if isinstance(progress.get(key), str)
+                                key: update[key]
+                                for key in (
+                                    "implementation_owner",
+                                    "current_file",
+                                    "current_class",
+                                    "recent_command",
+                                    "verification_status",
+                                    "repairing",
+                                )
+                                if key in update
                             },
                         },
                     )
@@ -3878,18 +3948,39 @@ class WorkspaceService:
                 for blocker in blockers
                 if isinstance(blocker, dict)
             )
+            blocking_route = blocking_findings_route(
+                [blocker for blocker in blockers if isinstance(blocker, dict)]
+            )
+            if repairable:
+                guidance = (
+                    "EasyDep classified the failures and will continue the matching "
+                    "automatic repair path."
+                )
+            elif blocking_route == "environment":
+                guidance = (
+                    "The runtime environment must be restored before the same checks "
+                    "can continue."
+                )
+            elif blocking_route == "platform":
+                guidance = (
+                    "The failure is in the EasyDep platform and cannot be repaired from "
+                    "the generated application."
+                )
+            elif blocking_route == "design":
+                guidance = "Review the affected design before continuing."
+            elif blocking_route == "platform-or-design":
+                guidance = (
+                    "Review the deployment design and EasyDep platform evidence before "
+                    "continuing."
+                )
+            else:
+                guidance = "Review the blocking findings before continuing."
             return {
                 "awaiting_input": True,
                 "kind": "action_required",
                 "message": (
                     f"Testing found {len(blockers)} blocking failure(s). "
-                    + (
-                        "EasyDep classified the failures and will continue the "
-                        "matching automatic repair path."
-                        if repairable
-                        else "The runtime environment must be restored before the "
-                        "same checks can continue."
-                    )
+                    + guidance
                 ),
                 "requires_revision": True,
                 "blocking_findings": blockers,
@@ -3901,6 +3992,7 @@ class WorkspaceService:
                     "recent_attempts": [],
                 },
                 "can_delegate_repair": repairable,
+                "blocking_route": blocking_route,
                 "job_id": job_id,
                 "job": job,
             }

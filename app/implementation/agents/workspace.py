@@ -8,6 +8,10 @@ import tempfile
 from pathlib import Path
 
 from ..domain.implementation_ir import remove_readonly
+from ..runtime.linux_runner_transport import (
+    OWNER_CONTROL_ROOT_ENV,
+    OWNER_TERMINAL_USER_ENV,
+)
 
 _IGNORED_WORKSPACE_PARTS = {
     "build",
@@ -78,6 +82,7 @@ def prepare_agent_workspace(
     task: dict[str, object],
     *,
     preserve_failed_edits: bool = True,
+    persistent: bool = False,
 ) -> Path:
     """작업별 임시 공간을 만들고 현재 run source와 맞춘다.
 
@@ -89,11 +94,25 @@ def prepare_agent_workspace(
     # short directory name such as ``run``. Include the absolute root in the key so two
     # unrelated runs never inherit one another's failed candidate workspace.
     run_key = hashlib.sha256(str(run_root.resolve()).encode("utf-8")).hexdigest()[:12]
-    task_key = str(task["task_id"]).removeprefix("implement-")
+    task_key = f"{run_key}-{str(task['task_id']).removeprefix('implement-')}"
     # 작업 ID는 보고서에서 읽기 쉬운 전체 이름을 유지한다. 다만 Windows 임시 경로에 같은
     # 이름을 그대로 붙이면 persistence처럼 여러 Entity를 묶은 작업이 260자 제한에 닿는다.
     # 임시 폴더만 앞부분과 해시로 줄이면 충돌을 피하면서 어떤 작업인지도 알아볼 수 있다.
-    sandbox_parent = Path(tempfile.gettempdir()) / "easydep-agent-workspaces" / run_key
+    if persistent:
+        control_value = os.environ.get(OWNER_CONTROL_ROOT_ENV, "").strip()
+        if control_value:
+            control_root = Path(control_value).resolve()
+            resolved_run = run_root.resolve()
+            if control_root != resolved_run and control_root not in resolved_run.parents:
+                raise ValueError("Implementation run is outside the fixed runner control root")
+            # Keep the resumable candidate inside the job-only Docker bind, but not
+            # below the already deep generated run/report tree.  Windows hosts apply
+            # their path limit to that bind even though the owner runs in Linux.
+            sandbox_parent = control_root / "w"
+        else:
+            sandbox_parent = Path(tempfile.gettempdir()) / "easydep-owner-workspaces"
+    else:
+        sandbox_parent = Path(tempfile.gettempdir()) / "easydep-agent-workspaces"
     longest_output = max(
         (len(str(Path(str(path)))) for path in task["allowed_write_paths"]),
         default=0,
@@ -127,6 +146,7 @@ def prepare_agent_workspace(
         for path in task.get("immutable_paths", [])
     }
     if sandbox_application.is_dir():
+        _restore_coordinator_access(sandbox)
         _refresh_agent_workspace(
             run_root,
             source_application,
@@ -150,7 +170,162 @@ def prepare_agent_workspace(
         if os.name == "nt" and len(str(target.resolve())) > 240:
             raise ValueError(f"Agent write path exceeds safe Windows path budget: {target}")
     _copy_read_sources(run_root, sandbox, task)
+    _apply_fixed_runner_permissions(run_root, sandbox, task)
     return sandbox
+
+
+def _restore_coordinator_access(sandbox: Path) -> None:
+    """Reopen a stopped owner's sandbox before the coordinator refreshes it."""
+
+    user_name = os.environ.get(OWNER_TERMINAL_USER_ENV, "").strip()
+    if os.name != "posix" or not user_name or os.geteuid() != 0:
+        return
+    for directory, children, files in os.walk(sandbox.resolve()):
+        children[:] = [name for name in children if name not in _IGNORED_WORKSPACE_PARTS]
+        root = Path(directory)
+        os.chown(root, 0, 0)
+        root.chmod(0o755)
+        for name in files:
+            target = root / name
+            if target.is_symlink():
+                continue
+            os.chown(target, 0, 0)
+            target.chmod(0o644)
+
+
+def _apply_fixed_runner_permissions(
+    run_root: Path,
+    sandbox: Path,
+    task: dict[str, object],
+) -> None:
+    """Hand the disposable sandbox to the owner while control state stays root-only.
+
+    The fixed runner starts the coordinator as root and its standard terminal as a
+    dedicated unprivileged user.  File selection and contract guards belong to
+    promotion/editor logic, not Linux modes inside the disposable candidate tree.
+    Linux permissions only separate that whole tree from the original job, workflow
+    checkpoint, conversation state, and frozen inputs.
+    """
+
+    user_name = os.environ.get(OWNER_TERMINAL_USER_ENV, "").strip()
+    control_value = os.environ.get(OWNER_CONTROL_ROOT_ENV, "").strip()
+    if os.name != "posix" or not user_name or not control_value:
+        return
+    if os.geteuid() != 0:
+        raise RuntimeError("Owner workspace permissions require a root coordinator.")
+
+    import pwd
+
+    account = pwd.getpwnam(user_name)
+    control_root = Path(control_value).resolve()
+    resolved_run = run_root.resolve()
+    resolved_sandbox = sandbox.resolve()
+    if (
+        control_root != resolved_run
+        and control_root not in resolved_run.parents
+    ) or control_root not in resolved_sandbox.parents:
+        raise ValueError("Owner workspace is outside the fixed runner control root.")
+
+    # The owner must be able to use ordinary editor and build tooling anywhere in
+    # its disposable candidate.  This deliberately includes copied generated
+    # contracts, package caches, and build output directories.
+    _set_tree_permissions(
+        resolved_sandbox,
+        account.pw_uid,
+        account.pw_gid,
+        directory_mode=0o755,
+        file_mode=0o644,
+        # These directories are created by the owner itself and are not touched
+        # by refresh. Walking node_modules/.gradle again on every checkpoint
+        # resume is both unnecessary and very expensive on Docker Desktop.
+        excluded_directory_names=_IGNORED_WORKSPACE_PARTS,
+    )
+
+    _harden_control_tree(control_root, resolved_sandbox)
+
+
+def grant_owner_file_access(path: Path, sandbox: Path) -> None:
+    """Hand a file-editor result back to the unprivileged owner shell."""
+
+    user_name = os.environ.get(OWNER_TERMINAL_USER_ENV, "").strip()
+    if os.name != "posix" or not user_name or os.geteuid() != 0 or not path.exists():
+        return
+
+    import pwd
+
+    account = pwd.getpwnam(user_name)
+    resolved = path.resolve()
+    boundary = sandbox.resolve()
+    if resolved != boundary and boundary not in resolved.parents:
+        return
+
+    current = resolved
+    while True:
+        if not current.is_symlink():
+            os.chown(current, account.pw_uid, account.pw_gid)
+            current.chmod(0o755 if current.is_dir() else 0o644)
+        if current == boundary:
+            break
+        current = current.parent
+
+
+def _set_tree_permissions(
+    root: Path,
+    uid: int,
+    gid: int,
+    *,
+    directory_mode: int,
+    file_mode: int,
+    excluded_directory_names: set[str] | None = None,
+) -> None:
+    excluded = excluded_directory_names or set()
+    for directory, children, files in os.walk(root):
+        children[:] = [name for name in children if name not in excluded]
+        current = Path(directory)
+        if not current.is_symlink():
+            os.chown(current, uid, gid)
+            current.chmod(directory_mode)
+        for name in files:
+            path = current / name
+            if path.is_symlink():
+                continue
+            os.chown(path, uid, gid)
+            path.chmod(file_mode)
+
+
+def _harden_control_tree(control_root: Path, sandbox: Path) -> None:
+    """Make every current-job path outside the owner sandbox root-only."""
+
+    resolved_control = control_root.resolve()
+    resolved_sandbox = sandbox.resolve()
+    for directory, children, files in os.walk(resolved_control):
+        current = Path(directory).resolve()
+        if current == resolved_sandbox or resolved_sandbox in current.parents:
+            children.clear()
+            continue
+        children[:] = [
+            name
+            for name in children
+            if (current / name).resolve() != resolved_sandbox
+            and resolved_sandbox not in (current / name).resolve().parents
+        ]
+        if not current.is_symlink():
+            os.chown(current, 0, 0)
+            current.chmod(0o700)
+        for name in files:
+            path = current / name
+            if path.is_symlink():
+                continue
+            os.chown(path, 0, 0)
+            path.chmod(0o600)
+
+    # The shell needs execute-only traversal through these parents, but cannot
+    # list them.  The sandbox itself and its contents retain the modes above.
+    ancestor = resolved_sandbox.parent
+    while ancestor != resolved_control:
+        ancestor.chmod(0o711)
+        ancestor = ancestor.parent
+    resolved_control.chmod(0o711)
 
 
 def _copy_read_sources(
@@ -269,11 +444,18 @@ def path_is_editable(
     return any(path == root or path.startswith(root + "/") for root in roots)
 
 
-def cleanup_agent_workspace(sandbox: Path) -> None:
+def cleanup_agent_workspace(sandbox: Path, *, run_root: Path | None = None) -> None:
     """성공한 작업의 임시 공간만 안전하게 삭제한다."""
-    expected_root = (Path(tempfile.gettempdir()) / "easydep-agent-workspaces").resolve()
+    expected_roots = {
+        (Path(tempfile.gettempdir()) / "easydep-agent-workspaces").resolve(),
+        (Path(tempfile.gettempdir()) / "easydep-owner-workspaces").resolve(),
+    }
+    if run_root is not None:
+        control_value = os.environ.get(OWNER_CONTROL_ROOT_ENV, "").strip()
+        if control_value:
+            expected_roots.add((Path(control_value) / "w").resolve())
     resolved = sandbox.resolve()
-    if expected_root not in resolved.parents:
+    if not any(expected_root in resolved.parents for expected_root in expected_roots):
         raise ValueError(f"Refusing to remove a non-agent workspace: {resolved}")
     if resolved.exists():
         try:
@@ -289,7 +471,7 @@ def snapshot_files(root: Path) -> dict[str, str]:
     for path in root.rglob("*"):
         if path.is_file():
             relative = path.relative_to(root)
-            if path.name == "package-lock.json" or path.name.endswith(".tsbuildinfo"):
+            if path.name.endswith(".tsbuildinfo"):
                 continue
             if any(
                 part in {"build", ".gradle", "node_modules", "dist"}

@@ -163,25 +163,6 @@ def verify_agent_workspace(
         return evidence
     if task_type in {"frontend", "frontend-implementation"}:
         return verify_frontend_workspace(sandbox)
-    if task_type == "use-case":
-        broad_tests = _broad_feature_tests(sandbox, allowed_write_paths or [])
-        if broad_tests:
-            raise WorkspaceVerificationError(
-                {
-                    "command": ["feature-test-isolation"],
-                    "exitCode": 1,
-                    "durationMs": 0,
-                    "stdout": "",
-                    "stderr": (
-                        "A feature task must not start the whole application with "
-                        "@SpringBootTest because other feature beans are implemented in "
-                        "parallel. Replace it with a plain unit test or a narrow test slice: "
-                        + ", ".join(broad_tests)
-                    ),
-                    "testResults": "",
-                    "diagnosticPaths": [],
-                }
-            )
     command = task_verification_command(
         gradle_command(),
         task_type,
@@ -224,20 +205,6 @@ def verify_agent_workspace(
     if result.returncode != 0:
         raise WorkspaceVerificationError(evidence)
     return evidence
-
-
-def _broad_feature_tests(sandbox: Path, allowed_write_paths: list[str]) -> list[str]:
-    """독립 기능 작업에서 전체 Spring 애플리케이션을 띄우는 test를 찾는다."""
-
-    violations: list[str] = []
-    for relative in allowed_write_paths:
-        normalized = str(relative).replace("\\", "/")
-        if "/src/test/" not in "/" + normalized or not normalized.endswith(".java"):
-            continue
-        path = sandbox / relative
-        if path.is_file() and "@SpringBootTest" in path.read_text(encoding="utf-8"):
-            violations.append(normalized)
-    return violations
 
 
 def _store_failed_verification_output(
@@ -287,10 +254,9 @@ def task_verification_command(
         # 이어지는 Docker build가 배포할 bootJar를 실제로 만든다. 여기서는 전체 test만
         # 실행해 같은 jar packaging을 연속으로 두 번 하지 않는다.
         command = [*executable, "test", "--build-cache"]
-    elif task_type == "wiring":
-        # wiring은 서로 독립적으로 만든 기능을 모두 합친 뒤 Spring Bean, DB migration과
-        # 통합 흐름을 확인하는 단계다. 수정 가능 목록에는 아직 없는 테스트 파일도 후보로
-        # 들어갈 수 있으므로 파일 이름으로 Gradle filter를 만들지 않고 전체 test를 한 번 돈다.
+    elif task_type == "backend-implementation":
+        # The backend owner is responsible for the complete Spring application.
+        # Its independent acceptance check therefore executes the full backend test suite.
         command = [*executable, "test", "--build-cache"]
     else:
         test_names = sorted(
@@ -379,7 +345,7 @@ def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object
     planned = [
         task
         for task in manifest.get("implementation_tasks", [])
-        if isinstance(task, dict) and task.get("task_type") == "use-case"
+        if isinstance(task, dict) and task.get("task_type") == "backend-implementation"
     ]
     if not planned:
         return {"status": "NOT_APPLICABLE", "tasks": [], "findings": []}

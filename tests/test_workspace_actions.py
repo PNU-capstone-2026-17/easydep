@@ -106,6 +106,87 @@ def test_repair_action_is_the_only_auto_selectable_repair_offer() -> None:
     assert [item["auto_selectable"] for item in shaped["actions"]] == [False, True]
 
 
+@pytest.mark.parametrize(
+    ("finding", "wait_reason", "label", "action"),
+    [
+        (
+            {
+                "repairable": False,
+                "defect_class": "ENVIRONMENT_DEFECT",
+                "repair_owner": "environment",
+            },
+            "external_wait",
+            "Retry after environment recovery",
+            "retry_implementation",
+        ),
+        (
+            {
+                "repairable": False,
+                "defect_class": "PLATFORM_DEFECT",
+                "repair_owner": "platform",
+            },
+            "external_wait",
+            "Ask about this EasyDep platform issue",
+            "message",
+        ),
+        (
+            {
+                "repairable": False,
+                "defect_class": "PLATFORM_OR_DESIGN_DEFECT",
+                "repair_owner": "platform-or-design",
+            },
+            "repair",
+            "Review deployment design or platform issue",
+            "message",
+        ),
+    ],
+)
+def test_unrepairable_testing_findings_use_explicit_owner_route(
+    finding: dict,
+    wait_reason: str,
+    label: str,
+    action: str,
+) -> None:
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT", stage="testing"),
+        {
+            "requires_revision": True,
+            "can_delegate_repair": False,
+            "job_id": "testing-1",
+            "blocking_findings": [finding],
+        },
+    )
+
+    assert shaped["wait_reason"] == wait_reason
+    assert shaped["actions"] == [
+        {
+            "action": action,
+            "label": label,
+            "payload": {
+                "action_id": "command-1",
+                **({"job_id": "testing-1"} if action == "retry_implementation" else {}),
+            },
+            "auto_selectable": False,
+        }
+    ]
+
+
+def test_unclassified_unrepairable_finding_is_not_treated_as_environment() -> None:
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT", stage="testing"),
+        {
+            "requires_revision": True,
+            "can_delegate_repair": False,
+            "job_id": "testing-1",
+            "blocking_findings": [{"repairable": False}],
+        },
+    )
+
+    assert shaped["wait_reason"] == "repair"
+    assert [item["action"] for item in shaped["actions"]] == ["message"]
+    assert shaped["actions"][0]["label"] == "Send revision feedback"
+
+
 def test_status_not_a_stale_result_flag_controls_terminal_actions() -> None:
     shaped = result_with_contract(
         command(

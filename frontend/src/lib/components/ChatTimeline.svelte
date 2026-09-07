@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AlertTriangle, Bot, CheckCircle2, CircleHelp, LoaderCircle, UserRound } from '@lucide/svelte';
+  import { AlertTriangle, Bot, CheckCircle2, Circle, CircleHelp, LoaderCircle, UserRound } from '@lucide/svelte';
   import {
     hasPendingRevisionPlan,
     hasCompletedRevisionExecution,
@@ -86,7 +86,26 @@
       )?.event_id ?? 0
   );
   let implementationFocus = $derived.by(() => {
-    const metadata = latestProgress?.metadata ?? {};
+    if (latestProgress?.stage !== 'implementation') return null;
+    const latestOwnerEvents = new Map<string, WorkspaceEvent>();
+    for (const event of events) {
+      const step = String(event.metadata?.step ?? '');
+      if (
+        event.stage !== 'implementation' ||
+        event.kind !== 'progress' ||
+        event.command_id !== latestProgress.command_id ||
+        event.event_id < implementationTimelineResetId ||
+        !['phase-backend', 'phase-frontend'].includes(step)
+      ) {
+        continue;
+      }
+      const previous = latestOwnerEvents.get(step);
+      if (!previous || previous.event_id < event.event_id) latestOwnerEvents.set(step, event);
+    }
+    const activeOwnerEvent = [...latestOwnerEvents.values()]
+      .filter((event) => String(event.metadata?.progress_status ?? '') === 'running')
+      .sort((left, right) => right.event_id - left.event_id)[0];
+    const metadata = activeOwnerEvent?.metadata ?? {};
     const file = String(metadata.current_file ?? '');
     const className = String(metadata.current_class ?? '');
     if (!file && !className) return null;
@@ -130,24 +149,24 @@
       });
     }
     const order = (id: string): number => {
-      if (id === 'prepare-job') return 10;
-      if (id.startsWith('validate-') || id.startsWith('generate-') || id.startsWith('prepare-') || id.startsWith('verify-') || id === 'plan-workflow') return 20;
       if (id === 'phase-backend') return 100;
-      if (id.startsWith('sub-backend-')) return 110;
       if (id === 'phase-frontend') return 200;
-      if (id === 'phase-e2e') return 300;
+      if (id === 'phase-integration') return 300;
       return 400;
     };
     return [...steps.values()].sort((left, right) => order(left.id) - order(right.id));
   });
-  let backendSubtasks = $derived(
-    progressSteps.filter((step) => step.id.startsWith('sub-backend-'))
-  );
-  let preparationSubtasks = $derived(
-    progressSteps.filter((step) =>
-      ['validate-input', 'generate-sources', 'prepare-build', 'verify-generated', 'plan-workflow'].includes(step.id)
-    )
-  );
+  let visibleProgressSteps = $derived.by(() => {
+    if (latestProgress?.stage === 'implementation') {
+      return progressSteps.filter((step) =>
+        ['phase-backend', 'phase-frontend', 'phase-integration'].includes(step.id)
+      );
+    }
+    return progressSteps.filter(
+      (step) =>
+        !['validate-input', 'generate-sources', 'prepare-build', 'verify-generated', 'plan-workflow'].includes(step.id)
+    );
+  });
   let visibleEvents = $derived.by(() => {
     const lastProgressId = latestProgress?.event_id;
     return events.filter(
@@ -283,7 +302,9 @@
           <span class="font-semibold text-[#343831]">
             {isLlmMetrics
               ? 'LLM run history'
-              : String(event.metadata?.progress_card_label ?? 'Requirements analysis')}
+              : event.stage === 'implementation'
+                ? 'Implementation progress'
+                : String(event.metadata?.progress_card_label ?? 'Requirements analysis')}
           </span>
           <time class="text-[10px] text-[#a0a29a]">{formatTime(event.created_at)}</time>
         </div>
@@ -294,7 +315,7 @@
               eventId={event.event_id}
               count={Number(event.metadata?.llm_timing_count ?? 0)}
             />
-          {:else if progressSteps.length === 0}
+          {:else if visibleProgressSteps.length === 0}
             <div class="flex items-center gap-2">
               <LoaderCircle size={13} class="shrink-0 animate-spin text-[#2d7354]" />
               <span>{event.text}</span>
@@ -311,12 +332,14 @@
                 </div>
               </div>
             {/if}
-            {#each progressSteps.filter((step) => !step.id.startsWith('sub-backend-') && !['validate-input', 'generate-sources', 'prepare-build', 'verify-generated', 'plan-workflow'].includes(step.id)) as step (step.id)}
+            {#each visibleProgressSteps as step (step.id)}
               <div class="flex items-start gap-2">
                 {#if step.status === 'completed'}
                   <CheckCircle2 size={13} class="mt-0.5 shrink-0 text-[#5d806c]" />
                 {:else if step.status === 'failed' || step.status === 'timeout' || step.status === 'needs_review'}
                   <AlertTriangle size={13} class="mt-0.5 shrink-0 text-[#a8433a]" />
+                {:else if latestProgress?.stage === 'implementation' && step.status === 'pending'}
+                  <Circle size={13} class="mt-0.5 shrink-0 text-[#b1b4ac]" />
                 {:else}
                   <LoaderCircle size={13} class="mt-0.5 shrink-0 animate-spin text-[#2d7354]" />
                 {/if}
@@ -331,38 +354,6 @@
                         <li class="flex items-start gap-1.5">
                           <LoaderCircle size={10} class="mt-0.5 shrink-0 animate-spin text-[#2d7354]" />
                           <span><span class="font-mono">{task.id}</span> · {task.name}</span>
-                        </li>
-                      {/each}
-                    </ul>
-                  {/if}
-                  {#if step.id === 'phase-backend' && backendSubtasks.length}
-                    <ul class="mt-1.5 space-y-1 border-l-2 border-[#dce3dd] pl-3 text-[10px] leading-4 text-[#62675f]">
-                      {#each backendSubtasks as task (task.id)}
-                        <li class="flex items-start gap-1.5">
-                          {#if task.status === 'completed'}
-                            <CheckCircle2 size={11} class="mt-0.5 shrink-0 text-[#5d806c]" />
-                          {:else if task.status === 'failed' || task.status === 'timeout' || task.status === 'needs_review'}
-                            <AlertTriangle size={11} class="mt-0.5 shrink-0 text-[#a8433a]" />
-                          {:else}
-                            <LoaderCircle size={11} class="mt-0.5 shrink-0 animate-spin text-[#2d7354]" />
-                          {/if}
-                          <span>{task.label}</span>
-                        </li>
-                      {/each}
-                    </ul>
-                  {/if}
-                  {#if step.id === 'prepare-job' && preparationSubtasks.length}
-                    <ul class="mt-1.5 space-y-1 border-l-2 border-[#dce3dd] pl-3 text-[10px] leading-4 text-[#62675f]">
-                      {#each preparationSubtasks as task (task.id)}
-                        <li class="flex items-start gap-1.5">
-                          {#if task.status === 'completed'}
-                            <CheckCircle2 size={11} class="mt-0.5 shrink-0 text-[#5d806c]" />
-                          {:else if task.status === 'failed' || task.status === 'timeout' || task.status === 'needs_review'}
-                            <AlertTriangle size={11} class="mt-0.5 shrink-0 text-[#a8433a]" />
-                          {:else}
-                            <LoaderCircle size={11} class="mt-0.5 shrink-0 animate-spin text-[#2d7354]" />
-                          {/if}
-                          <span>{task.label}</span>
                         </li>
                       {/each}
                     </ul>

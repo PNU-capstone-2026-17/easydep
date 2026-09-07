@@ -1,8 +1,7 @@
-"""구현 검증 실패를 관련 기능 작업으로 다시 연결한다.
+"""Route implementation failures back to the owning implementation agent.
 
-예외 문구를 하나씩 외워 담당자를 고르지 않는다. compiler, test와 최종 검사가 알려 준
-source 경로를 우선 사용하고, 경로가 없으면 실패한 작업 또는 전체 연결을 담당하는 wiring
-작업에서 계속 수리한다. 모든 이력은 남기되 숫자 상한으로 중단하지 않는다.
+Repair ownership comes from structured evidence, the failed task, or declared write roots.
+Diagnostic wording is evidence for the owner, never a heuristic routing API.
 """
 
 from __future__ import annotations
@@ -20,26 +19,12 @@ REPAIR_PROMPT_HEADING = "## Automatic repair task"
 REPAIR_PROMPT_START = "<!-- easydep:repair-directives:start -->"
 REPAIR_PROMPT_END = "<!-- easydep:repair-directives:end -->"
 
-# 현재 구현 흐름의 네 작업 종류와 피드백 수정 작업만 단계에 연결한다. 이전 구현 run은
-# 지원하지 않으므로 과거 파일별 task 이름을 계속 번역하지 않는다.
-TASK_PHASES = {
-    "persistence": "persistence",
-    "use-case": "use-cases",
-    "frontend-implementation": "frontend",
-    "wiring": "wiring",
-    # 자연어 피드백으로 기존 application source를 고치는 현재 작업이다.
-    "control": "use-cases",
-}
-
-
 def schedule_cross_phase_repair(
     run_root: Path,
     failed_task_id: str,
     evidence: dict[str, object],
-    *,
-    failed_task_type: str | None = None,
 ) -> dict[str, object] | None:
-    """실패 경로를 편집할 수 있는 가장 작은 기능 작업을 다시 예약한다."""
+    """Schedule repair with the explicitly declared implementation owner."""
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = _read_json(manifest_path)
     tasks = [
@@ -51,33 +36,26 @@ def schedule_cross_phase_repair(
         return None
 
     paths = referenced_source_paths(evidence)
-    owner_ids = _owners_for_paths(tasks, paths)
     failed = next(
         (task for task in tasks if str(task.get("task_id")) == failed_task_id),
         None,
     )
 
-    # 최종 검증에서 발견됐다는 이유만으로 wiring이 모든 업무 코드를 소유하지 않는다.
-    # 경로가 있으면 먼저 그 파일을 원래 만들었던 기능 작업으로 돌려보낸다. 서로 다른
-    # 작업의 파일이 함께 실패했을 때에만 wiring이 그 파일 목록만 통합해서 고친다.
-    covering = _covering_task(tasks, paths)
-    if covering is not None:
-        owner_ids = {str(covering["task_id"])}
-    elif len(owner_ids) > 1:
-        integration = _integration_task(tasks)
-        owner_ids = {str(integration["task_id"])} if integration else owner_ids
-    elif failed is not None and not owner_ids and not paths:
-        owner_ids = {failed_task_id}
-    elif not owner_ids and failed_task_type and not paths:
-        owner_ids = {
-            str(task["task_id"])
-            for task in tasks
-            if str(task.get("task_type")) == failed_task_type
-        }
-    if not owner_ids:
-        fallback = _integration_task(tasks)
-        if fallback is not None:
-            owner_ids = {str(fallback["task_id"])}
+    explicit_owner = evidence.get("owner")
+    owner = (
+        explicit_owner.strip()
+        if isinstance(explicit_owner, str) and explicit_owner.strip()
+        else ""
+    )
+    if not owner and failed is not None:
+        owner = str(failed.get("owner", "")).strip()
+    if not owner:
+        owner = _owner_for_paths(tasks, paths)
+    owner_ids = {
+        str(task["task_id"])
+        for task in tasks
+        if owner and str(task.get("owner", "")) == owner
+    }
     if not owner_ids:
         return None
 
@@ -94,7 +72,10 @@ def schedule_cross_phase_repair(
         if isinstance(entry, dict) and entry.get("failedTaskId") == failed_task_id
     ]
     repair_paths = _repair_paths(tasks, owner_ids, paths)
-    source_digest = _source_digest(run_root, repair_paths)
+    source_digest = _source_digest(
+        run_root,
+        repair_paths or _owner_digest_paths(tasks, owner_ids),
+    )
     failure_digest = hashlib.sha256(current_text.encode("utf-8")).hexdigest()
     same_failure_count = sum(
         1
@@ -106,8 +87,8 @@ def schedule_cross_phase_repair(
     now = datetime.now(UTC).isoformat()
     entry = {
         "failedTaskId": failed_task_id,
+        "owner": owner,
         "ownerTaskIds": sorted(owner_ids),
-        "revalidationTaskIds": _later_task_ids(tasks, owner_ids),
         "outcome": "scheduled",
         "evidence": _bounded_evidence(current_text),
         "relatedPaths": paths,
@@ -144,6 +125,7 @@ def schedule_source_conformance_repair(
     if not violations:
         return None
     evidence = {
+        "owner": "backend",
         "command": ["source-design-conformance"],
         "stderr": json.dumps(violations, ensure_ascii=False, indent=2),
     }
@@ -151,7 +133,6 @@ def schedule_source_conformance_repair(
         run_root,
         "source-design-conformance",
         evidence,
-        failed_task_type="wiring",
     )
 
 
@@ -206,7 +187,7 @@ def apply_repair_directives(run_root: Path) -> None:
             if execution_history:
                 history += "\n\n### Previous changes and verification results\n\n" + execution_history
             source_hints = "\n".join(
-                f"- `{path}`" for path in current.get("repairPaths", [])
+                f"- `{path}`" for path in current.get("relatedPaths", [])
             ) or "- Start with the source paths from the task definition"
             immutable = "\n".join(
                 f"- `{path}`" for path in task.get("immutable_paths", [])
@@ -216,8 +197,8 @@ def apply_repair_directives(run_root: Path) -> None:
                 "Resolve the technical failure below. Choose the "
                 "implementation, tests, and edit order autonomously. Do not change unrelated "
                 "features or generated public contracts. Read needed source with the file editor.\n\n"
-                "Run `run_task_check` once first to reproduce the failure against the current "
-                "source. The history below may describe source that has already changed; do not "
+                "Use the terminal to reproduce the failure against the current source before "
+                "editing. The history below may describe source that has already changed; do not "
                 "waste time searching for names absent from the current check and files.\n\n"
                 f"## Current approach\n\n{current.get('strategy', 'focused-fix')}\n\n"
                 "## Starting source hints\n\n"
@@ -228,8 +209,8 @@ def apply_repair_directives(run_root: Path) -> None:
                 f"## Previous failed approaches\n\n{history}\n\n"
                 "## Current failure\n\n```text\n"
                 f"{current.get('evidence', '')}\n```\n\n"
-                "After editing, run `run_task_check`. If it fails, inspect the cause and continue "
-                "repairing in this conversation.\n"
+                "After editing, rerun the relevant build or test in the terminal. If it fails, "
+                "inspect the cause and continue repairing in this conversation.\n"
             )
             repair_prompt_path.write_text(repair_prompt, encoding="utf-8")
             task["repair_prompt_file"] = str(
@@ -301,7 +282,7 @@ def referenced_source_paths(evidence: dict[str, object]) -> list[str]:
     text = _evidence_text(evidence).replace("\\", "/")
     paths = re.findall(
         r"(application/(?:src|frontend|terraform)/[A-Za-z0-9_./@+-]+"
-        r"\.(?:java|kt|ts|tsx|js|jsx|svelte|sql|ya?ml|json|tf))",
+        r"\.(?:java|kt|tsx|ts|jsx|js|svelte|sql|ya?ml|json|tf))",
         text,
         flags=re.IGNORECASE,
     )
@@ -318,41 +299,91 @@ def repair_rounds(plan: dict[str, object]) -> int:
     return max(revisions, default=0)
 
 
-def _owners_for_paths(
+def _owner_for_paths(
     tasks: list[dict[str, object]], paths: list[str]
-) -> set[str]:
+) -> str:
+    """Return one unambiguous owner whose declared scope contains all paths."""
+    if not paths:
+        return ""
     owners: set[str] = set()
     for task in tasks:
-        editable = {
+        exact_paths = {
             str(path).replace("\\", "/")
             for path in task.get("allowed_write_paths", [])
         }
-        if editable.intersection(paths):
-            owners.add(str(task["task_id"]))
-    return owners
+        roots = [
+            str(path).replace("\\", "/").rstrip("/")
+            for path in task.get("allowed_write_roots", [])
+        ]
+        if all(
+            path in exact_paths
+            or any(path == root or path.startswith(root + "/") for root in roots)
+            for path in paths
+        ):
+            owner = str(task.get("owner", ""))
+            if owner:
+                owners.add(owner)
+    return next(iter(owners)) if len(owners) == 1 else ""
 
 
 def _repair_paths(
     tasks: list[dict[str, object]], owner_ids: set[str], evidence_paths: list[str]
 ) -> list[str]:
-    """작업 내부 자율성을 유지하되 통합 수리는 실제 오류 파일로만 좁힌다."""
+    """Return evidence hints already inside the owner's immutable-safe base scope.
+
+    ``repairPaths`` is consumed by the runtime, so it must never grant a permission the
+    original task did not have. ``relatedPaths`` retains the complete evidence for navigation.
+    """
     owner_tasks = [
         task for task in tasks if str(task.get("task_id")) in owner_ids
     ]
-    if len(owner_tasks) == 1:
-        task = owner_tasks[0]
-        task_paths = [
+    return list(
+        dict.fromkeys(
+            path
+            for path in evidence_paths
+            if any(_path_in_base_write_scope(task, path) for task in owner_tasks)
+        )
+    )
+
+
+def _owner_digest_paths(
+    tasks: list[dict[str, object]], owner_ids: set[str]
+) -> list[str]:
+    """Use existing owner files to notice progress when evidence names no source file."""
+    return sorted(
+        {
             str(path).replace("\\", "/")
+            for task in tasks
+            if str(task.get("task_id")) in owner_ids
             for path in task.get("allowed_write_paths", [])
-        ]
-        # 하나의 기능 작업 안에서는 test에서 드러난 원인을 Service나 Entity에서 고칠 수
-        # 있어야 한다. wiring이 여러 기능을 대신 고칠 때만 실제 오류 파일로 제한한다.
-        if str(task.get("task_type")) == "wiring" and evidence_paths:
-            outside = [path for path in evidence_paths if path not in task_paths]
-            if outside:
-                return list(dict.fromkeys(evidence_paths))
-        return task_paths
-    return list(dict.fromkeys(evidence_paths))
+            if _path_in_base_write_scope(task, str(path).replace("\\", "/"))
+        }
+    )
+
+
+def _path_in_base_write_scope(task: dict[str, object], path: str) -> bool:
+    normalized = path.replace("\\", "/").strip("/")
+    immutable = {
+        str(value).replace("\\", "/").strip("/")
+        for value in task.get("immutable_paths", [])
+    }
+    if any(
+        normalized == root or normalized.startswith(root + "/")
+        for root in immutable
+    ):
+        return False
+    exact = {
+        str(value).replace("\\", "/").strip("/")
+        for value in task.get("allowed_write_paths", [])
+    }
+    roots = {
+        str(value).replace("\\", "/").strip("/")
+        for value in task.get("allowed_write_roots", [])
+    }
+    return normalized in exact or any(
+        normalized == root or normalized.startswith(root + "/")
+        for root in roots
+    )
 
 
 def _source_digest(run_root: Path, paths: list[str]) -> str:
@@ -432,53 +463,6 @@ def _representative_diagnostic(value: str, limit: int = 320) -> str:
         lines[0] if lines else "",
     )
     return selected[:limit]
-
-
-def _covering_task(
-    tasks: list[dict[str, object]], paths: list[str]
-) -> dict[str, object] | None:
-    if not paths:
-        return None
-    required = set(paths)
-    candidates = []
-    for task in tasks:
-        editable = {
-            str(path).replace("\\", "/")
-            for path in task.get("allowed_write_paths", [])
-        }
-        if required.issubset(editable):
-            candidates.append((len(editable), task))
-    return min(candidates, key=lambda item: item[0])[1] if candidates else None
-
-
-def _integration_task(tasks: list[dict[str, object]]) -> dict[str, object] | None:
-    preferred = ("wiring", "use-case")
-    for task_type in preferred:
-        match = next(
-            (task for task in tasks if str(task.get("task_type")) == task_type),
-            None,
-        )
-        if match is not None:
-            return match
-    return tasks[-1] if tasks else None
-
-
-def _later_task_ids(
-    tasks: list[dict[str, object]], owner_ids: set[str]
-) -> list[str]:
-    indexes = [
-        index
-        for index, task in enumerate(tasks)
-        if str(task.get("task_id")) in owner_ids
-    ]
-    if not indexes:
-        return []
-    first = min(indexes)
-    return [
-        str(task["task_id"])
-        for task in tasks[first + 1 :]
-        if str(task.get("task_id")) not in owner_ids
-    ]
 
 
 def _bounded_evidence(value: str, limit: int = 8000) -> str:

@@ -56,6 +56,17 @@ _GATE_STAGE = {
     "iac": "testing.iac",
     "dynamicFunctional": "testing.dynamic-functional",
 }
+_DELIVERY_GATE_BOUNDARY = {
+    # These gates inspect deterministic EasyDep delivery projections, not files
+    # owned by the generated application's backend agent. OpenTofu may also expose
+    # a frozen ResourcePlan/SKU problem, which requires a design decision rather
+    # than source repair. Keep the distinction structural by gate, not by parsing
+    # provider error strings.
+    "static": ("PLATFORM_DEFECT", "platform"),
+    "package": ("PLATFORM_DEFECT", "platform"),
+    "iac": ("PLATFORM_OR_DESIGN_DEFECT", "platform-or-design"),
+}
+_DYNAMIC_IMPLEMENTATION_OWNER = "backend"
 
 
 def _gate_scope_for_repair(repair_task_type: str | None) -> set[str] | None:
@@ -420,12 +431,23 @@ def _blocking_findings(
         stage = _GATE_STAGE[name]
         status = gate_status(child)
         is_dynamic = name == "dynamicFunctional"
-        defect_class = dynamic_class if is_dynamic else "SUT_DEFECT"
-        owner = dynamic_owner if is_dynamic else "implementation"
+        if is_dynamic:
+            defect_class = dynamic_class
+            owner = dynamic_owner
+            repairable = defect_class != "ENVIRONMENT_DEFECT"
+            implementation_owner = (
+                _DYNAMIC_IMPLEMENTATION_OWNER if owner == "implementation" else None
+            )
+        else:
+            defect_class, owner = _DELIVERY_GATE_BOUNDARY[name]
+            repairable = False
+            implementation_owner = None
         if status == "INCONCLUSIVE" and not (
             is_dynamic and dynamic_class == "UPSTREAM_AMBIGUITY"
         ):
             defect_class, owner = "ENVIRONMENT_DEFECT", "environment"
+            repairable = False
+            implementation_owner = None
         evidence = _evidence_for_gate(
             name,
             child,
@@ -446,9 +468,10 @@ def _blocking_findings(
                 "target_ids": dynamic_ids if is_dynamic else [],
                 "message": issues[0] if issues else f"{name} gate did not pass",
                 "severity": "error",
-                "repairable": defect_class != "ENVIRONMENT_DEFECT",
+                "repairable": repairable,
                 "defect_class": defect_class,
                 "repair_owner": owner,
+                "implementation_owner": implementation_owner,
                 "preserve_tests": (
                     dynamic_defect.get("preserveTests", dynamic_class != "TEST_DEFECT")
                     if is_dynamic
@@ -843,14 +866,13 @@ def run_testing(
                 or previous_result.get("passed") is not False
             ):
                 raise ValueError("Only a completed failing Testing result can be repaired.")
-            same_implementation = previous_job.get("implementation_job_id") == implementation_job_id
             repair_history = dict(previous_job.get("repair_history") or repair_history)
             previous_findings = _finding_keys(previous_result)
             previous_input = previous_job.get("testing_input")
+            same_candidate = False
             if previous_input is not None:
                 fixed_previous_input = TestingInput.model_validate(previous_input)
-                if same_implementation and fixed_previous_input != testing_input:
-                    raise ValueError("A Testing repair must use the same implementation artifacts.")
+                same_candidate = fixed_previous_input == testing_input
                 # 구현 수리는 새 파일 버전을 만드는 것이 정상이다. 이전 Testing 입력에
                 # 계약이 실제로 기록돼 있었다면 그 계약만 유지됐는지 확인한다. 오래된 작업처럼
                 # 계약이 비어 있으면 비교할 근거가 없으므로 새 구현의 고정 입력을 사용한다.
@@ -861,7 +883,7 @@ def run_testing(
                     mode="json", exclude_none=True
                 )
                 if (
-                    not same_implementation
+                    not same_candidate
                     and previous_contracts
                     and not same_implementation_contracts(
                         previous_contracts, current_contracts
@@ -906,7 +928,7 @@ def run_testing(
                         and str((item.get("result") or {}).get("gateStatus") or "").upper()
                         == "PASS"
                     ]
-                    if same_implementation and isinstance(workflows, list)
+                    if same_candidate and isinstance(workflows, list)
                     else []
                 )
 

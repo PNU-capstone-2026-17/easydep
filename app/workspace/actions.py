@@ -202,6 +202,41 @@ def _answer_offers(command_id: str, result: dict[str, Any]) -> list[ActionOffer]
     ]
 
 
+def blocking_findings_route(blockers: list[dict[str, Any]]) -> str:
+    """Return a user-action route from explicit Testing classification metadata."""
+
+    owner_routes = {
+        "environment": "environment",
+        "platform": "platform",
+        "design": "design",
+        "requirements-or-design": "design",
+        "platform-or-design": "platform-or-design",
+    }
+    defect_routes = {
+        "ENVIRONMENT_DEFECT": "environment",
+        "PLATFORM_DEFECT": "platform",
+        "UPSTREAM_AMBIGUITY": "design",
+        "PLATFORM_OR_DESIGN_DEFECT": "platform-or-design",
+    }
+    routes: set[str] = set()
+    for blocker in blockers:
+        owner = str(blocker.get("repair_owner") or "")
+        defect_class = str(blocker.get("defect_class") or "")
+        route = owner_routes.get(owner) or defect_routes.get(defect_class)
+        if not route:
+            return ""
+        routes.add(route)
+    if routes == {"environment"}:
+        return "environment"
+    if routes == {"platform"}:
+        return "platform"
+    if routes == {"design"}:
+        return "design"
+    if routes and routes <= {"platform", "design", "platform-or-design"}:
+        return "platform-or-design"
+    return ""
+
+
 def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
     """대기 중인 명령의 필수 상호작용 계약을 만든다."""
 
@@ -252,15 +287,11 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
         )
 
     blockers = [item for item in result.get("blocking_findings") or [] if isinstance(item, dict)]
-    environment_wait = bool(blockers) and all(
-        item.get("repairable") is False
-        or item.get("defect_class") == "ENVIRONMENT_DEFECT"
-        for item in blockers
-    )
+    blocking_route = str(result.get("blocking_route") or blocking_findings_route(blockers))
     repair_job_id = str(
         result.get("job_id") or (command.get("payload") or {}).get("job_id") or ""
     )
-    if environment_wait and repair_job_id:
+    if blocking_route == "environment" and repair_job_id:
         return AwaitingOutcome(
             wait_reason=WaitReason.EXTERNAL_WAIT,
             actions=[
@@ -270,6 +301,27 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
                     {**common, "job_id": repair_job_id},
                 )
             ],
+        )
+    if blocking_route == "platform":
+        return AwaitingOutcome(
+            wait_reason=WaitReason.EXTERNAL_WAIT,
+            actions=[
+                _offer(
+                    WorkspaceAction.MESSAGE,
+                    "Ask about this EasyDep platform issue",
+                    common,
+                )
+            ],
+        )
+    if blocking_route in {"design", "platform-or-design"}:
+        label = (
+            "Send design revision feedback"
+            if blocking_route == "design"
+            else "Review deployment design or platform issue"
+        )
+        return AwaitingOutcome(
+            wait_reason=WaitReason.REPAIR,
+            actions=[_offer(WorkspaceAction.MESSAGE, label, common)],
         )
 
     if result.get("requires_revision"):

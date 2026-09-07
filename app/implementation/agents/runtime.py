@@ -7,8 +7,8 @@ import shutil
 import tempfile
 import threading
 import time
+import uuid
 import warnings
-from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +17,12 @@ from app.llm_connection import LlmConnection
 from app.llm_profiles import profile_for
 from app.metrics import langsmith as langsmith_metrics
 
+from ..runtime.linux_runner_transport import (
+    LLM_CREDENTIAL_ENVIRONMENT,
+    OWNER_NPM_CACHE,
+    OWNER_TERMINAL_HOME,
+    OWNER_TERMINAL_SHELL_ENV,
+)
 from ..workflows.repair import active_repair_for_task
 from .provider import (
     configured_max_output_tokens,
@@ -36,6 +42,7 @@ from .verification.frontend import store_frontend_build
 from .workspace import (
     changed_files,
     cleanup_agent_workspace,
+    grant_owner_file_access,
     load_task,
     missing_required_outputs,
     path_is_editable,
@@ -45,8 +52,101 @@ from .workspace import (
 
 # OpenHands owns the tool/action loop. This only bounds one task conversation.
 MAX_AGENT_TURN_ITERATIONS = 32
+# The failed real-app baseline spent 238 tool calls without completing after the
+# useful first draft was already present around call 28.  A clean real-app run
+# reached its first complete implementation at call 61, so 96 leaves one local
+# build-and-repair pass without inheriting OpenHands' 500 iteration default.  A
+# retry resumes the same persisted conversation.
+OWNER_TURN_ITERATIONS = 96
+OWNER_TASK_TYPES = frozenset({"backend-implementation", "frontend-implementation"})
+OWNER_CONTINUATION_MESSAGE = (
+    "Continue from the current candidate; do not restart repository discovery. Run the "
+    "canonical verification command now, inspect only its concrete compiler or test failures, "
+    "fix them, rerun verification, and call finish when it passes."
+)
+OWNER_STUCK_RECOVERY_MESSAGE = (
+    "OpenHands detected a repeated-action loop. Continue in this same conversation with a "
+    "different action. Use the absolute project path from the workspace facts, run the "
+    "canonical verification command, and fix only its concrete failures."
+)
 _SANDBOX_TOOLS_REGISTERED = False
 _SANDBOX_TOOLS_REGISTRATION_LOCK = threading.Lock()
+
+
+class OwnerConversationIncomplete(WorkspaceVerificationError):
+    """An owner stopped at an SDK execution boundary, not a source-code gate."""
+
+
+def _is_owner_task(task_type: str) -> bool:
+    return task_type in OWNER_TASK_TYPES
+
+
+def _owner_conversation_identity(run_root: Path, task_id: str) -> tuple[Path, uuid.UUID]:
+    """Return stable OpenHands persistence coordinates for one implementation owner."""
+
+    try:
+        job_id = run_root.parents[2].name
+    except IndexError:
+        job_id = run_root.parent.name
+    conversation_id = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"easydep://implementation/{job_id}/{run_root.name}/{task_id}",
+    )
+    return run_root / "reports" / "openhands-conversations", conversation_id
+
+
+def _owner_message_required(
+    *,
+    resumed: bool,
+    conversation: object,
+    prompt: str,
+) -> bool:
+    """Return whether the current task message is absent from persisted history."""
+
+    if not resumed:
+        return True
+    from openhands.sdk.event import MessageEvent
+    from openhands.sdk.llm import content_to_str
+
+    events = conversation.state.events
+    for index in range(len(events) - 1, -1, -1):
+        event = events[index]
+        if not isinstance(event, MessageEvent) or event.source != "user":
+            continue
+        if "".join(content_to_str(event.llm_message.content)) == prompt:
+            return False
+    return True
+
+
+def _owner_continuation_required(
+    *,
+    resumed: bool,
+    conversation: object,
+    prompt: str,
+) -> bool:
+    """Continue a completed owner turn whose deterministic verification failed."""
+
+    if not resumed:
+        return False
+    from openhands.sdk.event import ActionEvent, MessageEvent
+    from openhands.sdk.llm import content_to_str
+
+    events = conversation.state.events
+    matching_user_index: int | None = None
+    for index in range(len(events) - 1, -1, -1):
+        event = events[index]
+        if not isinstance(event, MessageEvent) or event.source != "user":
+            continue
+        if "".join(content_to_str(event.llm_message.content)) == prompt:
+            matching_user_index = index
+            break
+    if matching_user_index is None:
+        return False
+    for index in range(matching_user_index + 1, len(events)):
+        event = events[index]
+        if isinstance(event, (ActionEvent, MessageEvent)) and event.source == "agent":
+            return True
+    return False
 
 
 def _configure_openhands_profile_store() -> None:
@@ -63,6 +163,7 @@ def _configure_openhands_profile_store() -> None:
 
     profile_dir = Path(tempfile.gettempdir()) / f"easydep-openhands-profiles-{os.getpid()}"
     profile_dir.mkdir(parents=True, exist_ok=True)
+    profile_dir.chmod(0o700)
     llm_profile_store._DEFAULT_PROFILE_DIR = profile_dir
 
 
@@ -111,6 +212,109 @@ class EventJournal:
         self.event_count += 1
 
 
+class NoActionResponseGuard:
+    """Close the SDK gap where corrective nudges hide repeated empty responses.
+
+    OpenHands already classifies model responses and supplies the canonical stuck
+    threshold.  EasyDep observes those typed events only; it does not inspect model
+    text or provider error strings.
+    """
+
+    def __init__(self) -> None:
+        from openhands.sdk.conversation.types import StuckDetectionThresholds
+
+        self.threshold = StuckDetectionThresholds().monologue
+        self.consecutive_count = 0
+        self.max_consecutive_count = 0
+        self.triggered = False
+        self._conversation: object | None = None
+
+    def bind(self, conversation: object) -> None:
+        self._conversation = conversation
+
+    def reset(self) -> None:
+        self.consecutive_count = 0
+        self.triggered = False
+
+    def __call__(self, event: object) -> None:
+        from openhands.sdk.agent.response_dispatch import (
+            LLMResponseType,
+            classify_response,
+        )
+        from openhands.sdk.conversation.state import ConversationExecutionStatus
+        from openhands.sdk.event import ActionEvent, MessageEvent
+
+        if isinstance(event, ActionEvent) and event.source == "agent":
+            self.consecutive_count = 0
+            return
+        if not isinstance(event, MessageEvent) or event.source != "agent":
+            return
+        response_type = classify_response(event.llm_message)
+        if response_type not in {
+            LLMResponseType.EMPTY,
+            LLMResponseType.REASONING_ONLY,
+        }:
+            self.consecutive_count = 0
+            return
+        self.consecutive_count += 1
+        self.max_consecutive_count = max(
+            self.max_consecutive_count,
+            self.consecutive_count,
+        )
+        if self.consecutive_count < self.threshold or self._conversation is None:
+            return
+        self.triggered = True
+        self._conversation.state.execution_status = ConversationExecutionStatus.STUCK
+
+
+def _owner_workspace_guidance(
+    task_type: str,
+    sandbox: Path,
+    owner_roots: list[str],
+) -> str:
+    """Return stable runner facts, not implementation instructions."""
+
+    workspace = sandbox.resolve()
+    common = [
+        "## EasyDep implementation workspace",
+        "",
+        f"- Workspace and terminal starting directory: `{sandbox.resolve()}`",
+        "- The terminal session preserves `cd` and environment changes between calls.",
+        "- Use `file_editor` for source edits and `terminal` for inspection, search, build, and tests.",
+        "- Source locations and RTM references are investigation hints, not a required edit list.",
+        "- Candidate contract copies may be inspected, but promotion rejects changes to generated contracts.",
+        "- The task message already contains the relevant requirements, scenarios, and HTTP hints; open raw design inputs only for a concrete contract gap.",
+        "- Start from the source index, batch related source reads into as few terminal calls as practical, and use build/test results rather than file counts as completion evidence.",
+        "- After an edit batch, run the canonical verification once. If it fails, inspect that output and its existing diagnostic files before rerunning; do not rerun only to obtain more detail.",
+        "- When canonical verification passes, finish immediately. Do not disable tests or alter test reporting to hide a failure.",
+        "- Prefer the lowest-cost test level that proves the behavior; avoid restarting a full application context for every assertion.",
+        "- Use English for source comments and user-visible text.",
+    ]
+    if task_type == "backend-implementation":
+        common.extend(
+            [
+                "- Backend project root: `application`.",
+                "- Gradle is installed as `gradle`; this project has no Gradle wrapper.",
+                f"- Canonical backend verification: `cd {workspace / 'application'} && gradle test --build-cache`.",
+                "- The terminal exports `SPRING_PROFILES_ACTIVE=test` and Gradle uses the shared `GRADLE_USER_HOME` cache.",
+            ]
+        )
+    elif task_type == "frontend-implementation":
+        common.extend(
+            [
+                "- Frontend project root: `application/frontend`.",
+                "- If dependencies are absent, run `npm ci --ignore-scripts --no-audit --no-fund --prefer-offline` once.",
+                f"- Canonical frontend verification: `cd {workspace / 'application' / 'frontend'} && npm run build`.",
+                f"- npm uses the shared cache at `{OWNER_NPM_CACHE}`.",
+            ]
+        )
+    common.extend(["", "Owner source roots:"])
+    common.extend(f"- `{root}`" for root in owner_roots)
+    if not owner_roots:
+        common.append("- none")
+    return "\n".join(common)
+
+
 def write_execution_plan(
     run_root: Path,
     tasks: list[dict[str, object]],
@@ -157,7 +361,7 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
 
 
 def _promote_changed_files(sandbox: Path, run_root: Path, changed: set[str]) -> None:
-    """검증된 source 내용만 run으로 옮긴다.
+    """검증된 candidate manifest를 run으로 옮긴다.
 
     run 폴더는 Windows host와 Linux toolchain 사이의 공유 경로일 수 있다. ``copy2``는
     내용 뒤에 Linux 권한과 시간 정보까지 쓰려 하므로 정상적으로 복사한 뒤에도 EPERM을
@@ -165,27 +369,28 @@ def _promote_changed_files(sandbox: Path, run_root: Path, changed: set[str]) -> 
     """
     for relative in sorted(changed):
         source = sandbox / relative
-        if not source.is_file():
-            # An agent may delete a file after the snapshot used to calculate
-            # ``changed``.  Do not turn that race into an unrelated WinError 2;
-            # the required-output/reconciliation gates will report the missing
-            # artifact with its owning task.
-            continue
         target = run_root / relative
+        if not source.is_file():
+            # Deletion is part of the verified candidate manifest.  Silently
+            # retaining the accepted copy would publish a tree different from
+            # the one that passed verification.
+            if target.is_file():
+                target.unlink()
+            continue
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
 
 
-def _restore_unauthorized_files(sandbox: Path, run_root: Path, unauthorized: list[str]) -> None:
-    """Restore files written outside a task's ownership boundary."""
-    for relative in unauthorized:
-        sandbox_path = sandbox / relative
-        baseline = run_root / relative
-        if baseline.is_file():
-            sandbox_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(baseline, sandbox_path)
-        elif sandbox_path.exists():
-            sandbox_path.unlink()
+def _candidate_application_changes(sandbox: Path, run_root: Path) -> set[str]:
+    """Return every source add, modification, and deletion in the candidate."""
+
+    return {
+        f"application/{path}"
+        for path in changed_files(
+            snapshot_files(run_root / "application"),
+            snapshot_files(sandbox / "application"),
+        )
+    }
 
 
 def _owned_directory_roots(paths: list[str]) -> list[str]:
@@ -219,9 +424,18 @@ def _active_repair_scope(
     오류에서 확인한 ``repairPaths``만 추가한다.
     """
     base_paths = [str(path).replace("\\", "/") for path in task.get("allowed_write_paths", [])]
+    base_roots = [
+        str(path).replace("\\", "/")
+        for path in task.get("allowed_write_roots", [])
+    ]
     immutable = {
         str(path).replace("\\", "/") for path in task.get("immutable_paths", [])
     }
+    # Owner repair paths are RTM/failure navigation hints. The backend and
+    # frontend owners already have broad source roots, so repair evidence must
+    # never grant new write authority or unfreeze a generated contract.
+    if _is_owner_task(str(task.get("task_type", ""))):
+        return base_paths, base_roots, sorted(immutable)
     requested_paths = [
         str(path).replace("\\", "/")
         for path in active_repair.get("repairPaths", [])
@@ -249,10 +463,7 @@ def _active_repair_scope(
         for path in immutable
         if not any(_path_is_immutable(repair_path, {path}) for repair_path in repair_paths)
     }
-    roots = [
-        str(path).replace("\\", "/")
-        for path in task.get("allowed_write_roots", [])
-    ]
+    roots = base_roots
     if str(task.get("task_type")) == "wiring":
         roots = _owned_directory_roots(base_paths)
     return editable, roots, sorted(immutable)
@@ -280,6 +491,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
 
     task = load_task(run_root, task_id)
     task_type = str(task.get("task_type", ""))
+    owner_task = _is_owner_task(task_type)
+    if owner_task and os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") != "1":
+        raise RuntimeError(
+            "Autonomous OpenHands owners require the isolated EasyDep Linux runner."
+        )
     active_repair = active_repair_for_task(run_root, task_id)
     editable_paths, editable_roots, immutable = _task_execution_scope(task, active_repair)
     required_paths = [str(path) for path in task.get("required_output_paths", editable_paths)]
@@ -303,6 +519,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         run_root,
         task,
         preserve_failed_edits=True,
+        persistent=owner_task,
     )
     before = snapshot_files(sandbox)
     prompt_file = task.get("repair_prompt_file") if active_repair is not None else task.get("prompt_file")
@@ -327,22 +544,29 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     writable_files = [str((sandbox / path).resolve()) for path in editable_paths]
     writable_roots = [str((sandbox / root).resolve()) for root in editable_roots]
     immutable_absolute = [str((sandbox / path).resolve()) for path in immutable]
-    prompt += (
-        "\n\n## EasyDep task constraints\n\n"
-        "Use the provided source locations as investigation hints, not edit limits. "
-        "Keep generated contracts unchanged. Work only inside the sandbox and writable roots. "
-        "Run run_task_check until it passes before finish. Use English for source comments "
-        "and user-visible text.\n\nWritable task files:\n"
-        + ("\n".join(f"- `{path}`" for path in writable_files) or "- none")
-        + "\n\nAdditional writable roots:\n"
-        + ("\n".join(f"- `{path}`" for path in writable_roots) or "- none")
-    )
-    if immutable_absolute:
+    if owner_task:
+        prompt += "\n\n" + _owner_workspace_guidance(
+            task_type,
+            sandbox,
+            editable_roots,
+        )
+    else:
+        prompt += (
+            "\n\n## EasyDep task constraints\n\n"
+            "Use the provided source locations as investigation hints, not edit limits. "
+            "Keep generated contracts unchanged. Work only inside the sandbox and writable roots. "
+            "Run run_task_check until it passes before finish. Use English for source comments "
+            "and user-visible text.\n\nWritable task files:\n"
+            + ("\n".join(f"- `{path}`" for path in writable_files) or "- none")
+            + "\n\nAdditional writable roots:\n"
+            + ("\n".join(f"- `{path}`" for path in writable_roots) or "- none")
+        )
+    if immutable_absolute and not owner_task:
         prompt += (
             "\n\nGenerated contracts are readable but write-protected by the sandbox. "
             "Inspect them on demand instead of copying their contents into the conversation."
         )
-    if read_hints:
+    if read_hints and not owner_task:
         prompt += "\n\nSuggested source hints:\n" + "\n".join(
             f"- `{path}`" for path in read_hints
         )
@@ -350,9 +574,19 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     execution_dir = run_root / "reports" / "agent-executions"
     attempt = execution_attempt(run_root, task_id)
     journal = EventJournal(execution_dir / f"{task_id}.attempt-{attempt:03d}.events.jsonl")
+    no_action_guard = NoActionResponseGuard() if owner_task else None
+    stuck_recovery_used = False
     started = time.monotonic()
     conversation = None
     agent = None
+    persistence_dir: Path | None = None
+    conversation_id: uuid.UUID | None = None
+    resumed_conversation = False
+    if owner_task:
+        persistence_dir, conversation_id = _owner_conversation_identity(run_root, task_id)
+        resumed_conversation = (
+            persistence_dir / conversation_id.hex / "base_state.json"
+        ).is_file()
     try:
         reasoning_effort = os.environ.get(
             "OPENHANDS_REASONING_EFFORT",
@@ -368,14 +602,44 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             editable_files=writable_files,
             editable_roots=writable_roots,
             immutable_paths=immutable_absolute,
-            callbacks=[journal],
-            max_iterations=MAX_AGENT_TURN_ITERATIONS,
+            callbacks=[journal, *([no_action_guard] if no_action_guard else [])],
+            max_iterations=(
+                OWNER_TURN_ITERATIONS if owner_task else MAX_AGENT_TURN_ITERATIONS
+            ),
             reasoning_effort=reasoning_effort,
+            native_owner_tools=owner_task,
+            enable_native_terminal=owner_task,
+            persistence_dir=persistence_dir,
+            conversation_id=conversation_id,
         )
-        conversation.send_message(prompt)
+        if no_action_guard is not None:
+            no_action_guard.bind(conversation)
+        # The SDK loads persisted events when the stable conversation exists.
+        # Compare the exact user message in that public event history: a new
+        # repair is appended, while a crash after event persistence resumes
+        # without duplicating the potentially large task message.
+        message_required = _owner_message_required(
+            resumed=resumed_conversation,
+            conversation=conversation,
+            prompt=prompt,
+        )
+        if message_required:
+            conversation.send_message(prompt)
+        elif _owner_continuation_required(
+            resumed=resumed_conversation,
+            conversation=conversation,
+            prompt=prompt,
+        ):
+            conversation.send_message(OWNER_CONTINUATION_MESSAGE)
         conversation.run()
+        if owner_task and _conversation_is_stuck(conversation):
+            stuck_recovery_used = True
+            if no_action_guard is not None:
+                no_action_guard.reset()
+            conversation.send_message(OWNER_STUCK_RECOVERY_MESSAGE)
+            conversation.run()
         if _conversation_terminal_failure(conversation):
-            raise WorkspaceVerificationError(
+            raise OwnerConversationIncomplete(
                 {
                     "command": ["openhands", "conversation"],
                     "exitCode": 1,
@@ -395,25 +659,38 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     "testResults": "",
                 }
             )
-        changed = changed_files(before, snapshot_files(sandbox))
-        unauthorized = [
-            path
-            for path in changed
-            if not path_is_editable(path, editable_paths, editable_roots, immutable)
-        ]
+        attempt_changes = changed_files(before, snapshot_files(sandbox))
+        candidate_changes = _candidate_application_changes(sandbox, run_root)
+        unauthorized = sorted(
+            {
+                path
+                for path in candidate_changes
+                if not path_is_editable(path, editable_paths, editable_roots, immutable)
+            }
+            | {
+                path
+                for path in attempt_changes
+                if not path.startswith("application/")
+            }
+        )
         if unauthorized:
-            _restore_unauthorized_files(sandbox, run_root, unauthorized)
             raise WorkspaceVerificationError(
                 {
-                    "command": ["implementation-write-boundary"],
+                    "command": ["implementation-promotion-boundary"],
                     "exitCode": 1,
                     "stdout": "",
-                    "stderr": "Writes outside the task's implementation roots: " + ", ".join(sorted(unauthorized)),
+                    "stderr": "Candidate changes outside the owner's promotion boundary: "
+                    + ", ".join(unauthorized),
                     "testResults": "",
+                    "unauthorizedChanges": unauthorized,
                 }
             )
-        verification = consume_successful_task_check(
-            sandbox, task_type, editable_paths, verification_profile
+        verification = (
+            None
+            if owner_task
+            else consume_successful_task_check(
+                sandbox, task_type, editable_paths, verification_profile
+            )
         ) or verify_agent_workspace(sandbox, task_type, editable_paths, verification_profile)
     except Exception as error:
         if conversation is not None:
@@ -421,6 +698,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         failure = {
             "taskId": task_id,
             "taskType": task_type,
+            "owner": str(task.get("owner") or ""),
             "promptSha256": task.get("prompt_sha256"),
             "status": "FAILED",
             "effectiveModel": connection.litellm_model(),
@@ -431,6 +709,25 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             "toolCounts": journal.tool_counts,
             "eventJournal": str(journal.path.relative_to(run_root)).replace("\\", "/"),
             "rawResponse": journal.latest_agent_message,
+            "conversationId": str(conversation_id) if conversation_id else None,
+            "conversationCheckpoint": (
+                str(persistence_dir.relative_to(run_root)).replace("\\", "/")
+                if persistence_dir is not None
+                else None
+            ),
+            "resumedConversation": resumed_conversation,
+            "executionStatus": _conversation_execution_status(conversation),
+            "terminationReason": (
+                "consecutive_no_action_responses"
+                if no_action_guard is not None and no_action_guard.triggered
+                else None
+            ),
+            "maxConsecutiveNoActionResponses": (
+                no_action_guard.max_consecutive_count
+                if no_action_guard is not None
+                else 0
+            ),
+            "stuckRecoveryUsed": stuck_recovery_used,
         }
         if isinstance(error, WorkspaceVerificationError):
             failure["verificationEvidence"] = error.evidence
@@ -439,14 +736,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         shutil.copyfile(journal.path, execution_dir / f"{task_id}.events.jsonl")
         raise
     conversation.close()
-    changed = {
-        f"application/{path}"
-        for path in changed_files(
-            snapshot_files(run_root / "application"),
-            snapshot_files(sandbox / "application"),
-        )
-        if path_is_editable(f"application/{path}", editable_paths, editable_roots, immutable)
-    }
+    changed = candidate_changes
     promoted_files = changed | {path for path in required_paths if (sandbox / path).is_file()}
     _promote_changed_files(sandbox, run_root, promoted_files)
     if task_type == "frontend-implementation":
@@ -454,6 +744,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     result = {
         "taskId": task_id,
         "taskType": task_type,
+        "owner": str(task.get("owner") or ""),
         "promptSha256": task.get("prompt_sha256"),
         "effectiveModel": connection.litellm_model(),
         "changedFiles": sorted(changed),
@@ -465,22 +756,59 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         "toolCounts": journal.tool_counts,
         "eventJournal": str(journal.path.relative_to(run_root)).replace("\\", "/"),
         "rawResponse": journal.latest_agent_message,
+        "conversationId": str(conversation_id) if conversation_id else None,
+        "conversationCheckpoint": (
+            str(persistence_dir.relative_to(run_root)).replace("\\", "/")
+            if persistence_dir is not None
+            else None
+        ),
+        "resumedConversation": resumed_conversation,
+        "executionStatus": _conversation_execution_status(conversation),
+        "terminationReason": None,
+        "maxConsecutiveNoActionResponses": (
+            no_action_guard.max_consecutive_count if no_action_guard is not None else 0
+        ),
+        "stuckRecoveryUsed": stuck_recovery_used,
         "conversationStats": _conversation_stats_snapshot(conversation),
         "status": "SUCCEEDED",
     }
     write_execution_result(execution_dir, task_id, attempt, result)
     shutil.copyfile(journal.path, execution_dir / f"{task_id}.events.jsonl")
-    cleanup_agent_workspace(sandbox)
+    cleanup_agent_workspace(sandbox, run_root=run_root if owner_task else None)
     return result
 
 
+def _conversation_execution_status(conversation: object | None) -> str | None:
+    if conversation is None:
+        return None
+    status = getattr(getattr(conversation, "state", None), "execution_status", None)
+    value = getattr(status, "value", None)
+    return str(value) if value is not None else None
+
+
+def _conversation_is_stuck(conversation: object) -> bool:
+    from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+    return (
+        getattr(getattr(conversation, "state", None), "execution_status", None)
+        is ConversationExecutionStatus.STUCK
+    )
+
+
 def _conversation_terminal_failure(conversation: object) -> bool:
-    """OpenHands owns recovery; EasyDep only records a terminal state."""
+    """OpenHands owns recovery; EasyDep only consumes its typed terminal state."""
+
+    from openhands.sdk.conversation.state import ConversationExecutionStatus
 
     state = getattr(conversation, "state", None)
+    if state is None:
+        return False
     status = getattr(state, "execution_status", None)
-    value = getattr(status, "value", status)
-    return str(value or "").rsplit(".", 1)[-1].upper() not in {"FINISHED", ""}
+    if status is None:
+        return False
+    if not isinstance(status, ConversationExecutionStatus):
+        raise TypeError("OpenHands conversation returned an untyped execution status")
+    return status is not ConversationExecutionStatus.FINISHED
 
 
 def _tool_validation_message(error_text: str) -> str | None:
@@ -576,140 +904,6 @@ def write_execution_result(
     (execution_dir / f"{task_id}.result.json").write_text(content, encoding="utf-8")
 
 
-def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object]:
-    """Initialize the real SDK and sandboxed standard tools without an LLM request."""
-    task = load_task(run_root, task_id)
-    connection = openhands_connection()
-    compatibility = openhands_compatibility(connection)
-    missing = [
-        key
-        for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled")
-        if not compatibility[key]
-    ]
-    if missing:
-        raise RuntimeError("OpenHands SDK prerequisites are missing: " + ", ".join(missing))
-    task_type = str(task.get("task_type", ""))
-    raw_verification_profile = task.get("verification_profile")
-    verification_profile = (
-        dict(raw_verification_profile)
-        if isinstance(raw_verification_profile, dict) and raw_verification_profile
-        else None
-    )
-    active_repair = active_repair_for_task(run_root, task_id)
-    validation_allowed, validation_roots, validation_immutable = _task_execution_scope(
-        task, active_repair
-    )
-    task = {
-        **task,
-        "allowed_write_paths": validation_allowed,
-        "allowed_write_roots": validation_roots,
-        "immutable_paths": validation_immutable,
-    }
-    sandbox = prepare_agent_workspace(run_root, task)
-    allowed = [str((sandbox / path).resolve()) for path in validation_allowed]
-    allowed_roots = [str((sandbox / path).resolve()) for path in validation_roots]
-    immutable = [str((sandbox / path).resolve()) for path in validation_immutable]
-    validation_journal = EventJournal(
-        run_root / "reports" / f"agent-validation-{task_id}.events.jsonl"
-    )
-    conversation, agent = create_openhands_conversation(
-        sandbox,
-        # 준비 검사는 네트워크를 호출하지 않는다. 실제 key를 SDK 객체 안에 복사할
-        # 이유가 없으므로 provider·URL·모델은 그대로 두고 key만 검사값으로 바꾼다.
-        replace(connection, api_key="validation-only-key"),
-        task["llm"],
-        task_type=task_type,
-        verification_paths=[str(path) for path in task.get("allowed_write_paths", [])],
-        verification_profile=verification_profile,
-        editable_files=allowed,
-        editable_roots=allowed_roots,
-        immutable_paths=immutable,
-        callbacks=[validation_journal],
-    )
-    try:
-        conversation.send_message("Initialize this validation conversation; do not run it.")
-        tools = sorted(agent._tools)
-        file_editor = agent._tools.get("file_editor")
-        enforced = bool(
-            file_editor
-            and file_editor.executor
-            and getattr(file_editor.executor, "writable_files", None)
-            == {Path(path).resolve() for path in allowed}
-            and getattr(file_editor.executor, "writable_roots", None)
-            == {Path(path).resolve() for path in allowed_roots}
-        )
-        from openhands.tools.file_editor import FileEditorAction
-
-        blocked_observation = file_editor.executor(
-            FileEditorAction(
-                command="create",
-                path=str((sandbox / "application" / "unauthorized.java").resolve()),
-                file_text="should not be written",
-            )
-        )
-        unauthorized_blocked = bool(blocked_observation.is_error)
-        probe_path = Path(allowed[0])
-        probe_observation = file_editor.executor(
-            FileEditorAction(
-                command="str_replace",
-                path=str(probe_path),
-                old_str=probe_path.read_text(encoding="utf-8"),
-                new_str="/* sandbox editor validation probe */\n",
-            )
-        )
-        allowed_write_succeeded = not probe_observation.is_error and probe_path.is_file()
-        if probe_path.exists():
-            probe_path.unlink()
-    finally:
-        conversation.close()
-    if (
-        set(tools) != {"file_editor", "grep", TASK_CHECK_TOOL_NAME, "finish"}
-        or not enforced
-        or not unauthorized_blocked
-        or not allowed_write_succeeded
-    ):
-        raise RuntimeError("Sandboxed standard OpenHands tools were not initialized correctly")
-    profile = profile_for(
-        connection.model,
-        fallback_temperature=settings.implementation_agent_temperature,
-        fallback_max_tokens=settings.implementation_agent_max_output_tokens,
-    )
-    task_llm = task.get("llm")
-    configured_reasoning = (
-        task_llm.get("reasoningEffort", settings.implementation_reasoning_effort)
-        if isinstance(task_llm, dict)
-        else settings.implementation_reasoning_effort
-    )
-    result = {
-        "taskId": task_id,
-        "status": "READY",
-        "workspace": str(sandbox),
-        "tools": tools,
-        "writeBoundaryEnforced": enforced,
-        "unauthorizedWriteBlocked": unauthorized_blocked,
-        "allowedWriteSucceeded": allowed_write_succeeded,
-        "canonicalEditor": "file_editor",
-        "maxConversationToolTurns": MAX_AGENT_TURN_ITERATIONS,
-        "stuckDetection": True,
-        "contextCondenser": "openhands-default",
-        "reasoningBudget": profile.reported_reasoning_budget(connection.provider),
-        "reasoningEffort": profile.resolve_reasoning(str(configured_reasoning)),
-        "temperature": profile.temperature,
-        "maxOutputTokens": profile.completion_limit(
-            settings.implementation_agent_max_output_tokens
-        ),
-        "systemPrompt": "openhands-default",
-        "validationEventCount": validation_journal.event_count,
-        "allowedWritePaths": allowed,
-        "modelCallMade": False,
-        "effectiveModel": connection.litellm_model(),
-        "llm": task["llm"],
-    }
-    report = run_root / "reports" / f"agent-validation-{task_id}.json"
-    report.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    return result
-
-
 def create_openhands_conversation(
     sandbox: Path,
     connection: LlmConnection,
@@ -724,6 +918,10 @@ def create_openhands_conversation(
     callbacks: list[object] | None = None,
     max_iterations: int = MAX_AGENT_TURN_ITERATIONS,
     reasoning_effort: str = "medium",
+    native_owner_tools: bool = False,
+    enable_native_terminal: bool = False,
+    persistence_dir: Path | None = None,
+    conversation_id: uuid.UUID | None = None,
 ):
     global _SANDBOX_TOOLS_REGISTERED
 
@@ -738,9 +936,25 @@ def create_openhands_conversation(
     from openhands.tools.file_editor.impl import FileEditorExecutor
     from openhands.tools.grep import GrepObservation, GrepTool
     from openhands.tools.grep.impl import GrepExecutor
+    from openhands.tools.terminal import TerminalTool
     from pydantic import SecretStr
 
     _configure_openhands_profile_store()
+    owner_terminal_shell: str | None = None
+    if enable_native_terminal:
+        owner_terminal_shell = os.environ.get(OWNER_TERMINAL_SHELL_ENV, "").strip()
+        if not owner_terminal_shell:
+            raise RuntimeError(
+                f"Autonomous OpenHands terminal requires {OWNER_TERMINAL_SHELL_ENV}."
+            )
+        exposed_credentials = [
+            name for name in LLM_CREDENTIAL_ENVIRONMENT if os.environ.get(name)
+        ]
+        if exposed_credentials:
+            raise RuntimeError(
+                "OpenHands terminal credential environment was not scrubbed: "
+                + ", ".join(exposed_credentials)
+            )
 
     def raise_provider_tool_validation(error: LLMBadRequestError) -> None:
         message = _tool_validation_message(str(error))
@@ -773,12 +987,14 @@ def create_openhands_conversation(
             writable_files: list[str],
             writable_roots: list[str],
             immutable: list[str],
+            enforce_write_scope: bool,
         ):
             super().__init__(workspace_root=workspace_root)
             self.workspace_root = Path(workspace_root).resolve()
             self.writable_files = {Path(path).resolve() for path in writable_files}
             self.writable_roots = {Path(path).resolve() for path in writable_roots}
             self.immutable = {Path(path).resolve() for path in immutable}
+            self.enforce_write_scope = enforce_write_scope
 
         def __call__(self, action, conversation=None):
             supplied = Path(action.path)
@@ -795,7 +1011,7 @@ def create_openhands_conversation(
                     command=action.command,
                     is_error=True,
                 )
-            if action.command != "view":
+            if action.command != "view" and self.enforce_write_scope:
                 if any(target == path or path in target.parents for path in self.immutable):
                     return FileEditorObservation.from_text(
                         text=f"Generated contract is read-only: {target}",
@@ -810,13 +1026,23 @@ def create_openhands_conversation(
                         command=action.command,
                         is_error=True,
                     )
-            return super().__call__(action, conversation)
+            observation = super().__call__(action, conversation)
+            if action.command != "view" and not getattr(observation, "is_error", False):
+                grant_owner_file_access(target, self.workspace_root)
+            return observation
 
     class SandboxFileEditorTool(FileEditorTool):
         name = "file_editor"
 
         @classmethod
-        def create(cls, conv_state, writable_files, writable_roots, immutable_paths):
+        def create(
+            cls,
+            conv_state,
+            writable_files,
+            writable_roots,
+            immutable_paths,
+            enforce_write_scope,
+        ):
             return [
                 instance.model_copy(
                     update={
@@ -825,6 +1051,7 @@ def create_openhands_conversation(
                             writable_files,
                             writable_roots,
                             immutable_paths,
+                            enforce_write_scope,
                         )
                     }
                 )
@@ -874,7 +1101,6 @@ def create_openhands_conversation(
                 register_tool(editor_registry_name, SandboxFileEditorTool)
                 register_tool(grep_registry_name, SandboxGrepTool)
                 _SANDBOX_TOOLS_REGISTERED = True
-    task_check_tool_name = register_task_check_tool()
     model = connection.litellm_model()
     raw_temperature = llm_config["temperature"]
     raw_max_output = llm_config["maxOutputTokens"]
@@ -911,15 +1137,42 @@ def create_openhands_conversation(
         module=r"openhands\.sdk\.llm\.utils\.telemetry",
     )
     llm = ProviderToolValidationLLM(**llm_options)
-    agent = Agent(
-        llm=llm,
-        tools=[
+    if native_owner_tools:
+        tools = [
             Tool(
                 name=editor_registry_name,
                 params={
                     "writable_files": editable_files or [],
                     "writable_roots": editable_roots or [],
                     "immutable_paths": immutable_paths or [],
+                    "enforce_write_scope": False,
+                },
+            ),
+        ]
+        if enable_native_terminal:
+            tools.append(
+                Tool(
+                    name=TerminalTool.name,
+                    params={
+                        "terminal_type": "subprocess",
+                        "shell_path": owner_terminal_shell,
+                        "env": {
+                            "HOME": OWNER_TERMINAL_HOME,
+                            "npm_config_cache": OWNER_NPM_CACHE,
+                        },
+                    },
+                )
+            )
+    else:
+        task_check_tool_name = register_task_check_tool()
+        tools = [
+            Tool(
+                name=editor_registry_name,
+                params={
+                    "writable_files": editable_files or [],
+                    "writable_roots": editable_roots or [],
+                    "immutable_paths": immutable_paths or [],
+                    "enforce_write_scope": True,
                 },
             ),
             Tool(name=grep_registry_name, params={}),
@@ -931,7 +1184,10 @@ def create_openhands_conversation(
                     "verification_profile": verification_profile or {},
                 },
             ),
-        ],
+        ]
+    agent = Agent(
+        llm=llm,
+        tools=tools,
         include_default_tools=["FinishTool"],
         # Do not override OpenHands' built-in system behavior. EasyDep's
         # task-specific constraints are appended to the user task message.
@@ -947,6 +1203,9 @@ def create_openhands_conversation(
             max_iteration_per_run=max_iterations,
             stuck_detection=True,
             visualizer=None,
+            persistence_dir=persistence_dir,
+            conversation_id=conversation_id,
+            delete_on_close=False,
         ),
         agent,
     )

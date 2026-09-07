@@ -15,17 +15,20 @@ from app.config import settings
 from app.design.contracts import bind_runtime_contract, build_provider_resource_plan
 from app.metrics import langsmith as langsmith_metrics
 
-from ..agents.runtime import execute_openhands_task
+from ..agents.runtime import (
+    OwnerConversationIncomplete,
+    execute_openhands_task,
+    write_execution_plan,
+)
 from ..agents.verification.build import WorkspaceVerificationError, verify_run_workspace
 from ..delivery.container import render_local_container
 from ..delivery.terraform import render_iac
 from ..domain.implementation_ir import build_implementation_ir
 from ..domain.models import JobSpec
 from ..generation.orchestrator import (
-    plan_api_adapter_tasks,
+    plan_backend_owner_task,
     plan_frontend_tasks,
     plan_persistence_tasks,
-    plan_wiring_tasks,
 )
 from ..runtime.observations import observe_runtime_contract
 from .completion import audit_run_completion
@@ -43,35 +46,27 @@ from .traceability import build_rtm_traceability_map
 
 WORKFLOW_SCHEMA = "implementation-workflow/v1alpha1"
 PHASES = (
-    ("persistence", (), {"persistence"}),
-    # ``control`` remains only for the existing feedback-revision task; newly
-    # planned implementation work always uses the broader ``use-case`` type.
     (
-        "use-cases",
-        ("persistence",),
+        "backend",
+        (),
         {
-            "use-case",
+            "backend-implementation",
             "control",
-            # Testing에서 되돌아온 수리도 일반 구현 task와 같은 OpenHands 실행기를
-            # 사용한다. 별도 phase를 만들지 않고 기존 피드백 작업이 속하던 이 phase에
-            # 연결하여, 실패한 검사 종류별 run_task_check가 실제로 실행되게 한다.
             "testing-static",
             "testing-package",
             "testing-iac",
             "testing-dynamic-functional",
         },
     ),
-    # generated OpenAPI client는 workflow planning 전에 이미 만들어진다. frontend source는
-    # backend source와 경로도 겹치지 않으므로 두 작업은 persistence 준비 뒤 함께 실행한다.
-    ("frontend", ("persistence",), {"frontend-implementation"}),
-    ("wiring", ("use-cases", "frontend"), {"wiring"}),
+    ("frontend", ("backend",), {"frontend-implementation"}),
+    # Integration is an EasyDep verifier phase. It deliberately owns no LLM task.
+    ("integration", ("frontend",), set()),
 )
 
 PHASE_LABELS = {
-    "persistence": "공통 Persistence",
-    "use-cases": "유스케이스 Backend",
-    "wiring": "Application Setup",
-    "frontend": "Frontend",
+    "backend": "Backend implementation",
+    "frontend": "Frontend implementation",
+    "integration": "Integration verification",
 }
 
 
@@ -85,10 +80,21 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     erd_model_path = spec.inputs.get("erdBceModel")
     if erd_model_path is not None:
         plan_persistence_tasks(spec, run_root)
-    plan_api_adapter_tasks(spec, run_root)
-    plan_wiring_tasks(spec, run_root)
-    if (run_root / "application" / "frontend" / "src" / "generated").is_dir():
-        plan_frontend_tasks(spec, run_root)
+    plan_backend_owner_task(spec, run_root)
+    plan_frontend_tasks(spec, run_root)
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = _read_json(manifest_path)
+    tasks = [
+        task
+        for task in manifest.get("implementation_tasks", [])
+        if isinstance(task, dict)
+    ]
+    manifest["agent_execution"] = write_execution_plan(
+        run_root,
+        tasks,
+        spec.agent_mode,
+    )
+    _write_json_atomic(manifest_path, manifest)
     build_rtm_traceability_map(spec, run_root)
     apply_repair_directives(run_root)
     return reconcile_workflow_state(run_root)
@@ -114,10 +120,8 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         required_outputs = task.get("required_output_paths", task.get("allowed_write_paths", []))
         output_hashes = _output_hashes(run_root, required_outputs)
         complete_outputs = len(output_hashes) == len(required_outputs)
-        # 여러 유스케이스 작업이 Controller나 Boundary adapter를 순서대로 보완한다.
-        # 따라서 뒤 작업이 공유 파일을 정상적으로 수정한 뒤에는 앞 작업의 output hash가
-        # 달라지는 것이 자연스럽다. 이미 성공한 작업은 필요한 파일이 남아 있는지만
-        # 확인하고 재사용한다. 최종 내용의 정확성은 마지막 scenario와 build가 검사한다.
+        # A successful owner is reusable while its required outputs remain and its
+        # task prompt is unchanged. Final conformance and Testing verify their content.
         result_matches = (
             result.get("status") == "SUCCEEDED"
             and complete_outputs
@@ -154,10 +158,9 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             {
                 "task_id": task_id,
                 "taskType": str(task.get("task_type", "control")),
+                "owner": str(task.get("owner", "")),
                 "phase": phase,
-                # 같은 phase 안에서도 여러 유스케이스가 같은 Control이나 adapter 파일을
-                # 고칠 수 있다. planner가 남긴 순서와 편집 범위를 실행 상태에도 보존해야
-                # coordinator가 충돌하는 작업을 동시에 실행하지 않는다.
+                # Preserve the explicit owner dependency in the durable checkpoint.
                 "dependsOn": [
                     str(item) for item in task.get("depends_on", task.get("dependsOn", []))
                 ],
@@ -174,7 +177,10 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             }
         )
 
-    phases = _phase_states(tasks)
+    phases = _phase_states(
+        tasks,
+        [phase for phase in previous.get("phases", []) if isinstance(phase, dict)],
+    )
     current = next(
         (
             phase["phaseId"]
@@ -187,8 +193,13 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         ),
     )
     pending = [task for task in tasks if task["status"] != "SUCCEEDED"]
+    integration_complete = next(
+        phase["status"] for phase in phases if phase["phaseId"] == "integration"
+    ) == "SUCCEEDED"
     status = (
-        "FAILED"
+        "COMPLETE"
+        if not pending and integration_complete and previous.get("status") == "COMPLETE"
+        else "FAILED"
         if any(task["status"] == "FAILED" for task in pending)
         else ("READY" if pending else "READY_TO_FINALIZE")
     )
@@ -292,13 +303,11 @@ def _run_workflow(
         if not runnable_tasks:
             break
 
-        # backend와 frontend가 함께 실행될 때도 기존 UI가 이해하는 첫 phase를 대표값으로
-        # 둔다. 개별 phase와 task의 RUNNING 상태는 아래 checkpoint에 그대로 기록된다.
+        # The dependency graph makes one owner phase runnable at a time.
         state["currentPhase"] = runnable_phases[0]
         state["currentPhases"] = runnable_phases
         worker_limit = max(1, int(settings.implementation_task_parallelism))
-        # planner의 task dependency와 편집 경로 충돌을 한 번에 검사한다. frontend와 backend는
-        # 경로가 분리되어 있으므로 같은 batch가 되고, 충돌하는 backend 작업은 계속 직렬화된다.
+        # A batch helper still checkpoints the single runnable owner consistently.
         for task_batch in _phase_task_batches("parallel", runnable_tasks):
             failures = _execute_task_batch(
                 run_root,
@@ -309,6 +318,17 @@ def _run_workflow(
             )
             if failures:
                 task, error = failures[0]
+                if isinstance(error, OwnerConversationIncomplete):
+                    # The candidate and SDK checkpoint are already preserved.
+                    # This is an execution budget/stuck boundary, not evidence
+                    # for creating another source-repair prompt.
+                    paused_state = plan_workflow(run_root, spec)
+                    paused_state["blockingReason"] = str(error)
+                    _write_json_atomic(
+                        run_root / "reports" / "workflow-state.json",
+                        paused_state,
+                    )
+                    return paused_state
                 if isinstance(error, WorkspaceVerificationError):
                     repair = schedule_cross_phase_repair(
                         run_root, str(task["task_id"]), error.evidence
@@ -331,9 +351,7 @@ def _run_workflow(
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
     state.pop("currentPhases", None)
 
-    # 방금 끝난 작업의 결과와 수리 지시를 checkpoint에 반영한다.
-    # wiring은 실패가 있을 때만 짧은 별도 수리 prompt를 받으므로 전체 source 계약을 여기서
-    # 다시 직렬화하지 않는다.
+    # Reconcile the completed owner result and any short repair directive.
     final_state = plan_workflow(run_root, spec)
     if final_state.get("nextRunnableTasks"):
         # Every work unit performs its own focused verification.  Do not scan
@@ -367,12 +385,16 @@ def _finalize_workflow(
     한 번 다시 통과한 뒤 Testing으로 넘긴다.
     """
     state["status"] = "FINALIZING"
+    state["currentPhase"] = "integration"
+    _set_phase_status(state, "integration", "RUNNING")
     state["blockingReason"] = None
     state["currentActivity"] = {
-        "id": "completion-audit",
-        "label": "최종 구현 결과 확인",
+        "id": "integration",
+        "owner": "integration",
+        "phase": "integration",
+        "label": "Integration verification",
         "status": "RUNNING",
-        "detail": "완료된 작업과 Testing에 전달할 산출물을 확인하고 있습니다.",
+        "detail": "Checking owner outputs and preparing the Testing handoff.",
     }
     _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
 
@@ -407,9 +429,11 @@ def _finalize_workflow(
     ):
         state["currentActivity"] = {
             "id": "feedback-regression",
-            "label": "수정 후 단위 테스트",
+            "owner": "integration",
+            "phase": "integration",
+            "label": "Post-revision unit tests",
             "status": "RUNNING",
-            "detail": "수정된 코드가 기존 단위·작은 통합 테스트를 깨뜨리지 않았는지 확인합니다.",
+            "detail": "Checking that the revision preserves existing unit and focused integration tests.",
         }
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         try:
@@ -428,12 +452,15 @@ def _finalize_workflow(
         state["feedbackRegression"] = "reports/feedback-regression.json"
 
     _complete_implementation(run_root, spec, state, conformance)
+    _set_phase_status(state, "integration", "SUCCEEDED")
     state["blockingReason"] = None
     state["currentActivity"] = {
-        "id": "implementation-artifacts",
-        "label": "구현 산출물 준비",
+        "id": "integration",
+        "owner": "integration",
+        "phase": "integration",
+        "label": "Integration verification",
         "status": "SUCCEEDED",
-        "detail": "정적·동적 검사는 다음 Testing 단계에서 실행합니다.",
+        "detail": "Owner outputs are complete; static and dynamic gates continue in Testing.",
     }
     _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
     return state
@@ -612,7 +639,9 @@ def _record_workflow_failure(run_root: Path, state: dict[str, object], error: Ex
     activity = state.get("currentActivity")
     failed_activity = dict(activity) if isinstance(activity, dict) else {}
     activity_id = str(failed_activity.get("id") or "")
-    phase_id = activity_id.removeprefix("verify-").removeprefix("audit-")
+    phase_id = str(failed_activity.get("phase") or "")
+    if not phase_id:
+        phase_id = activity_id.removeprefix("verify-").removeprefix("audit-")
     if phase_id in PHASE_LABELS:
         for phase in state.get("phases", []):
             if isinstance(phase, dict) and phase.get("phaseId") == phase_id:
@@ -620,13 +649,15 @@ def _record_workflow_failure(run_root: Path, state: dict[str, object], error: Ex
                 break
 
     detail = (str(error).strip() or type(error).__name__)[-1000:]
-    label = str(failed_activity.get("label") or "구현 결과 확인")
+    label = str(failed_activity.get("label") or "Implementation verification")
     failed_activity.update(
         {
             "id": activity_id or "workflow-verification",
+            "owner": str(failed_activity.get("owner") or phase_id or "integration"),
+            "phase": phase_id or "integration",
             "label": label,
             "status": "FAILED",
-            "detail": f"{label} 실패: {detail}",
+            "detail": f"{label} failed: {detail}",
         }
     )
     state["currentActivity"] = failed_activity
@@ -898,6 +929,7 @@ def _complete_implementation(
         build_rtm_traceability_map(spec, run_root)
     except Exception as error:
         state["status"] = "FAILED"
+        _set_phase_status(state, "integration", "FAILED")
         state["blockingReason"] = str(error)
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         raise
@@ -951,11 +983,25 @@ def phase_for_task(task_type: str) -> str:
     raise ValueError(f"Unknown implementation task type: {task_type}")
 
 
-def _phase_states(tasks: list[dict[str, object]]) -> list[dict[str, object]]:
+def _phase_states(
+    tasks: list[dict[str, object]],
+    previous: list[dict[str, object]] | None = None,
+) -> list[dict[str, object]]:
+    previous_statuses = {
+        str(phase.get("phaseId")): str(phase.get("status"))
+        for phase in previous or []
+    }
     phases: list[dict[str, object]] = []
     for phase_id, dependencies, _ in PHASES:
         phase_tasks = [task for task in tasks if task["phase"] == phase_id]
-        if not phase_tasks:
+        if phase_id == "integration":
+            status = (
+                "SUCCEEDED"
+                if previous_statuses.get(phase_id) == "SUCCEEDED"
+                and all(task["status"] == "SUCCEEDED" for task in tasks)
+                else "PENDING"
+            )
+        elif not phase_tasks:
             status = "UNPLANNED"
         elif all(task["status"] == "SUCCEEDED" for task in phase_tasks):
             status = "SUCCEEDED"
@@ -974,6 +1020,15 @@ def _phase_states(tasks: list[dict[str, object]]) -> list[dict[str, object]]:
             }
         )
     return phases
+
+
+def _set_phase_status(
+    state: dict[str, object], phase_id: str, status: str
+) -> None:
+    for phase in state.get("phases", []):
+        if isinstance(phase, dict) and phase.get("phaseId") == phase_id:
+            phase["status"] = status
+            return
 
 
 def _next_runnable_tasks(

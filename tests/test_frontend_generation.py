@@ -762,7 +762,7 @@ def test_frontend_snapshot_ignores_build_metadata(tmp_path: Path) -> None:
     snapshot = snapshot_files(tmp_path)
 
     assert "application/frontend/src.tsx" in snapshot
-    assert "application/frontend/package-lock.json" not in snapshot
+    assert "application/frontend/package-lock.json" in snapshot
     assert "application/frontend/tsconfig.tsbuildinfo" not in snapshot
 
 

@@ -183,97 +183,9 @@ def register_task_check_tool() -> str:
         if _REGISTERED:
             return TASK_CHECK_TOOL_NAME
 
-        from collections.abc import Sequence
-        from typing import Self
+        from openhands.sdk.tool import register_tool
 
-        from openhands.sdk.tool import (
-            Action,
-            DeclaredResources,
-            Observation,
-            ToolAnnotations,
-            ToolDefinition,
-            ToolExecutor,
-            register_tool,
-        )
-
-        class TaskCheckAction(Action):
-            """인자가 없는 검사 요청이다."""
-
-        class TaskCheckObservation(Observation):
-            """실행 명령과 compiler/test 결과를 담는 일반 텍스트 응답이다."""
-
-        class TaskCheckExecutor(ToolExecutor):
-            def __init__(
-                self,
-                sandbox: Path,
-                task_type: str,
-                allowed_write_paths: list[str],
-                verification_profile: dict[str, object] | None = None,
-            ) -> None:
-                self.session = TaskCheckSession(
-                    sandbox,
-                    task_type,
-                    list(allowed_write_paths),
-                    dict(verification_profile) if verification_profile else None,
-                )
-
-            def __call__(self, _action, conversation=None):  # noqa: ANN001, ARG002
-                passed, output = self.session.run()
-                return TaskCheckObservation.from_text(
-                    text=output,
-                    is_error=not passed,
-                )
-
-        class TaskCheckTool(ToolDefinition[TaskCheckAction, TaskCheckObservation]):
-            name = TASK_CHECK_TOOL_NAME
-
-            def declared_resources(self, _action: Action) -> DeclaredResources:
-                # 같은 작업 공간에서 Gradle 검사가 동시에 실행되지 않게 한다. 서로 다른
-                # 작업 공간은 별도 key를 사용하므로 독립 작업까지 막지는 않는다.
-                workspace = str((self.meta or {}).get("workspace", "unknown"))
-                return DeclaredResources(
-                    keys=(f"implementation-check:{workspace}",),
-                    declared=True,
-                )
-
-            @classmethod
-            def create(
-                cls,
-                conv_state,
-                *,
-                task_type: str,
-                allowed_write_paths: list[str],
-                verification_profile: dict[str, object] | None = None,
-            ) -> Sequence[Self]:
-                sandbox = Path(conv_state.workspace.working_dir).resolve()
-                executor = TaskCheckExecutor(
-                    sandbox,
-                    task_type,
-                    allowed_write_paths,
-                    verification_profile,
-                )
-                return [
-                    cls(
-                        description=(
-                            "Run the focused compile or test already assigned to this "
-                            "implementation task. This tool takes no arguments and cannot "
-                            "run arbitrary shell commands. Read a failed result, edit the "
-                            "source, and run this check again. Call finish only after it "
-                            "passes."
-                        ),
-                        action_type=TaskCheckAction,
-                        observation_type=TaskCheckObservation,
-                        executor=executor,
-                        annotations=ToolAnnotations(
-                            title=TASK_CHECK_TOOL_NAME,
-                            readOnlyHint=False,
-                            destructiveHint=False,
-                            idempotentHint=True,
-                            openWorldHint=False,
-                        ),
-                        meta={"workspace": str(sandbox)},
-                    )
-                ]
+        from .task_check_tool import TaskCheckTool
 
         register_tool(TASK_CHECK_TOOL_NAME, TaskCheckTool)
         _REGISTERED = True

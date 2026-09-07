@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 import json
+import tempfile
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
+import app.implementation.agents.workspace as workspace_module
 from app.design.services.erd.mapping import build_logical_model
 from app.implementation.agents import execute_openhands_task
 from app.implementation.agents.runtime import (
+    OWNER_TURN_ITERATIONS,
+    NoActionResponseGuard,
+    OwnerConversationIncomplete,
+    _conversation_terminal_failure,
+    _owner_continuation_required,
+    _owner_message_required,
+    _owner_workspace_guidance,
+    _task_execution_scope,
     create_openhands_conversation,
-    validate_openhands_adapter,
 )
 from app.implementation.agents.task_check import (
     TaskCheckSession,
@@ -27,12 +37,16 @@ from app.implementation.agents.verification.build import (
     verify_use_case_scenarios,
 )
 from app.implementation.agents.workspace import (
+    _apply_fixed_runner_permissions,
+    _harden_control_tree,
     cleanup_agent_workspace,
+    grant_owner_file_access,
     path_is_editable,
     prepare_agent_workspace,
 )
 from app.implementation.delivery.terraform import render_iac
 from app.implementation.domain.models import JobSpec
+from app.implementation.runtime.linux_runner_transport import OWNER_CONTROL_ROOT_ENV
 from app.implementation.workflows.completion import audit_run_completion
 from app.implementation.workflows.conformance import (
     SourceDesignConformanceError,
@@ -119,21 +133,14 @@ def test_one_scenario_method_can_cover_multiple_use_cases(tmp_path: Path) -> Non
             {
                 "implementation_tasks": [
                     {
-                        "task_id": "implement-use-cases-uc1-uc2-uc3",
-                        "task_type": "use-case",
+                        "task_id": "implement-backend-application",
+                        "task_type": "backend-implementation",
+                        "owner": "backend",
                         "use_case_ids": ["UC1", "UC2", "UC3"],
                         "required_test_paths": [
-                            "application/src/test/java/com/example/UseCaseBundleTest.java"
+                            "application/src/test/java/com/example/BackendApplicationTest.java"
                         ],
-                    },
-                    {
-                        "task_id": "implement-application-wiring",
-                        "task_type": "wiring",
-                        "use_case_ids": ["UC1", "UC2", "UC3"],
-                        "required_test_paths": [
-                            "application/src/test/java/com/example/ApplicationFlowTest.java"
-                        ],
-                    },
+                    }
                 ]
             }
         ),
@@ -143,8 +150,7 @@ def test_one_scenario_method_can_cover_multiple_use_cases(tmp_path: Path) -> Non
     junit.parent.mkdir(parents=True)
     junit.write_text(
         """<testsuite tests="2" failures="0" errors="0" skipped="0">
-<testcase classname="com.example.UseCaseBundleTest" name="fullBundleFlow"/>
-<testcase classname="com.example.ApplicationFlowTest" name="fullApplicationFlow"/>
+<testcase classname="com.example.BackendApplicationTest" name="fullApplicationFlow"/>
 </testsuite>""",
         encoding="utf-8",
     )
@@ -169,7 +175,9 @@ def test_agent_workspace_refresh_preserves_ignored_build_outputs(
     with patch(
         "app.implementation.agents.workspace.tempfile.gettempdir",
         return_value=str(tmp_path / "temp"),
-    ):
+    ), patch(
+        "app.implementation.agents.workspace._restore_coordinator_access"
+    ) as restore_access:
         sandbox = prepare_agent_workspace(run, task)
         build_output = sandbox / "application/build/test-results/test/binary/output.bin"
         build_output.parent.mkdir(parents=True)
@@ -180,15 +188,206 @@ def test_agent_workspace_refresh_preserves_ignored_build_outputs(
         refreshed = prepare_agent_workspace(run, task)
 
     assert refreshed == sandbox
+    restore_access.assert_called_once_with(sandbox)
     assert build_output.read_bytes() == b"test output"
     assert not stale_source.exists()
+
+
+def test_fixed_runner_hands_the_whole_disposable_sandbox_to_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    control_root = tmp_path / "job"
+    run = control_root / "generated/runs/run_123"
+    sandbox = run / "reports/agent-workspaces/backend"
+    ordinary = sandbox / "application/src/main/java/example/Service.java"
+    generated = sandbox / "application/src/main/java/example/api/Contract.java"
+    build_output = sandbox / "application/build/classes/Service.class"
+    for path in (ordinary, generated, build_output):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("content", encoding="utf-8")
+    (control_root / "job.json").write_text("{}", encoding="utf-8")
+
+    ownership: list[tuple[Path, int, int]] = []
+    modes: list[tuple[Path, int]] = []
+    hardened: list[tuple[Path, Path]] = []
+    native_walk = workspace_module.os.walk
+    fake_os = SimpleNamespace(
+        name="posix",
+        environ={
+            "EASYDEP_OWNER_TERMINAL_USER": "appuser",
+            "EASYDEP_OWNER_CONTROL_ROOT": str(control_root),
+        },
+        geteuid=lambda: 0,
+        walk=native_walk,
+        chown=lambda path, uid, gid: ownership.append((Path(path).resolve(), uid, gid)),
+    )
+    monkeypatch.setattr(workspace_module, "os", fake_os)
+    monkeypatch.setattr(
+        Path,
+        "chmod",
+        lambda self, mode: modes.append((self.resolve(), mode)),
+    )
+    monkeypatch.setattr(
+        workspace_module,
+        "_harden_control_tree",
+        lambda root, candidate: hardened.append((root, candidate)),
+    )
+
+    with patch.dict(
+        "sys.modules",
+        {"pwd": SimpleNamespace(getpwnam=lambda _name: SimpleNamespace(pw_uid=1001, pw_gid=1002))},
+    ):
+        _apply_fixed_runner_permissions(
+            run,
+            sandbox,
+            {
+                "allowed_write_paths": [ordinary.relative_to(sandbox).as_posix()],
+                "immutable_paths": [generated.relative_to(sandbox).as_posix()],
+            },
+        )
+
+    sandbox_paths = {
+        sandbox.resolve(),
+        *(
+            path.resolve()
+            for path in sandbox.rglob("*")
+            if not any(part in {"build", ".gradle", "node_modules", "dist"} for part in path.parts)
+        ),
+    }
+    assert {path for path, _uid, _gid in ownership} == sandbox_paths
+    assert {(uid, gid) for _path, uid, gid in ownership} == {(1001, 1002)}
+    assert (generated.resolve(), 0o644) in modes
+    assert build_output.resolve() not in {path for path, _mode in modes}
+    assert (sandbox.resolve(), 0o755) in modes
+    assert (control_root / "job.json").resolve() not in {
+        path for path, _uid, _gid in ownership
+    }
+    assert hardened == [(control_root.resolve(), sandbox.resolve())]
+
+
+def test_persistent_owner_workspace_uses_short_control_root_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Windows-hosted retry name must not exhaust the owner source path budget."""
+    with tempfile.TemporaryDirectory(prefix="easydep-owner-path-") as temporary:
+        control = Path(temporary) / "implementation-runs" / ("a" * 36)
+        run = control / "generated" / "runs" / "run_123456789abc_retry_1"
+        source = run / "application/src/main/java/com/easydep/app/LongService.java"
+        source.parent.mkdir(parents=True)
+        source.write_text("class LongService {}", encoding="utf-8")
+        monkeypatch.setenv(OWNER_CONTROL_ROOT_ENV, str(control))
+        task = {
+            "task_id": "implement-backend-application",
+            "allowed_write_paths": [
+                "application/src/main/java/com/easydep/app/application/impl/"
+                "VeryLongGeneratedApplicationService.java"
+            ],
+            "allowed_write_roots": ["application/src/main/java/com/easydep/app"],
+            "immutable_paths": [],
+        }
+
+        sandbox = prepare_agent_workspace(run, task, persistent=True)
+
+        assert sandbox.parent == (control / "w").resolve()
+        assert (sandbox / source.relative_to(run)).is_file()
+        cleanup_agent_workspace(sandbox, run_root=run)
+
+
+def test_control_tree_is_root_owned_outside_owner_sandbox(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    control_root = (tmp_path / "job").resolve()
+    sandbox = control_root / "generated/runs/run_123/reports/agent-workspaces/backend"
+    candidate = sandbox / "application/src/Main.java"
+    secret = control_root / "control/private.json"
+    for path in (candidate, secret):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("content", encoding="utf-8")
+
+    ownership: list[tuple[Path, int, int]] = []
+    final_modes: dict[Path, int] = {}
+    native_walk = workspace_module.os.walk
+    fake_os = SimpleNamespace(
+        walk=native_walk,
+        chown=lambda path, uid, gid: ownership.append((Path(path).resolve(), uid, gid)),
+    )
+    monkeypatch.setattr(workspace_module, "os", fake_os)
+    monkeypatch.setattr(
+        Path,
+        "chmod",
+        lambda self, mode: final_modes.__setitem__(self.resolve(), mode),
+    )
+
+    _harden_control_tree(control_root, sandbox)
+
+    touched = {path for path, _uid, _gid in ownership}
+    assert all((uid, gid) == (0, 0) for _path, uid, gid in ownership)
+    assert secret.resolve() in touched
+    assert final_modes[secret.resolve()] == 0o600
+    assert final_modes[secret.parent.resolve()] == 0o700
+    assert final_modes[control_root] == 0o711
+    assert final_modes[sandbox.parent.resolve()] == 0o711
+    assert sandbox.resolve() not in touched
+    assert candidate.resolve() not in touched
+    assert sandbox.resolve() not in final_modes
+    assert candidate.resolve() not in final_modes
+
+
+def test_editor_result_is_handed_back_only_within_owner_sandbox(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sandbox = (tmp_path / "sandbox").resolve()
+    generated = sandbox / "application/generated/Contract.java"
+    generated.parent.mkdir(parents=True)
+    generated.write_text("contract", encoding="utf-8")
+    outside = tmp_path / "job.json"
+    outside.write_text("{}", encoding="utf-8")
+
+    ownership: list[tuple[Path, int, int]] = []
+    modes: list[tuple[Path, int]] = []
+    fake_os = SimpleNamespace(
+        name="posix",
+        environ={"EASYDEP_OWNER_TERMINAL_USER": "appuser"},
+        geteuid=lambda: 0,
+        chown=lambda path, uid, gid: ownership.append((Path(path).resolve(), uid, gid)),
+    )
+    monkeypatch.setattr(workspace_module, "os", fake_os)
+    monkeypatch.setattr(
+        Path,
+        "chmod",
+        lambda self, mode: modes.append((self.resolve(), mode)),
+    )
+
+    with patch.dict(
+        "sys.modules",
+        {"pwd": SimpleNamespace(getpwnam=lambda _name: SimpleNamespace(pw_uid=1001, pw_gid=1002))},
+    ):
+        grant_owner_file_access(generated, sandbox)
+        granted_count = len(ownership)
+        grant_owner_file_access(outside, sandbox)
+
+    expected = {
+        generated.resolve(),
+        generated.parent.resolve(),
+        generated.parent.parent.resolve(),
+        sandbox.resolve(),
+    }
+    assert {path for path, _uid, _gid in ownership} == expected
+    assert len(ownership) == granted_count
+    assert {(uid, gid) for _path, uid, gid in ownership} == {(1001, 1002)}
+    assert (generated.resolve(), 0o644) in modes
+    assert (sandbox.resolve(), 0o755) in modes
+    assert outside.resolve() not in {path for path, _uid, _gid in ownership}
 
 
 def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None:
     """작업 검증은 관련 test 하나를 직접 실행해 중복 compile 단계를 줄인다."""
     assert task_verification_command(
         ["gradlew"],
-        "use-case",
+        "control",
         ["application/src/test/java/com/example/OrderScenarioTest.java"],
     ) == ["gradlew", "test", "--tests", "*OrderScenarioTest", "--build-cache"]
     assert task_verification_command(["gradlew"]) == [
@@ -198,33 +397,9 @@ def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None
     ]
     assert task_verification_command(
         ["gradlew"],
-        "wiring",
-        ["application/src/test/java/com/example/NotCreatedYetTest.java"],
+        "backend-implementation",
+        ["application/src/test/java/com/example/BackendApplicationTest.java"],
     ) == ["gradlew", "test", "--build-cache"]
-
-
-def test_feature_check_rejects_a_whole_application_test_before_gradle(
-    tmp_path: Path,
-) -> None:
-    """병렬 기능 작업은 아직 없는 다른 기능 Bean 때문에 전체 앱을 띄우지 않는다."""
-    test_path = "application/src/test/java/com/example/FeatureTest.java"
-    source = tmp_path / test_path
-    source.parent.mkdir(parents=True)
-    source.write_text(
-        "import org.springframework.boot.test.context.SpringBootTest;\n"
-        "@SpringBootTest\nclass FeatureTest {}\n",
-        encoding="utf-8",
-    )
-
-    with (
-        patch("app.implementation.agents.verification.build.subprocess.run") as run,
-        pytest.raises(WorkspaceVerificationError) as caught,
-    ):
-        verify_agent_workspace(tmp_path, "use-case", [test_path])
-
-    assert caught.value.evidence["command"] == ["feature-test-isolation"]
-    assert "plain unit test or a narrow test slice" in str(caught.value)
-    run.assert_not_called()
 
 
 def test_dynamic_testing_repair_reruns_preserved_arazzo_workflow(
@@ -459,32 +634,6 @@ def _write_minimal_agent_task(tmp_path: Path) -> tuple[Path, str, str, Path]:
     return run, task_id, source_path, source
 
 
-def test_validate_openhands_adapter_uses_the_central_connection(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """네트워크 없는 SDK 준비 검사도 문자열 key 대신 공통 연결 계약을 사용한다."""
-    run, task_id, _source_path, _source = _write_minimal_agent_task(tmp_path)
-    connection = LlmConnection(
-        provider="openrouter",
-        api_key="configured-key",
-        base_url="https://openrouter.ai/api/v1",
-        model="openai/gpt-oss-20b",
-        litellm_provider="openrouter",
-    )
-    monkeypatch.setattr(
-        "app.implementation.agents.runtime.openhands_connection",
-        lambda: connection,
-    )
-
-    result = validate_openhands_adapter(run, task_id)
-    try:
-        assert result["status"] == "READY"
-        assert result["effectiveModel"] == "openrouter/openai/gpt-oss-20b"
-        assert result["modelCallMade"] is False
-    finally:
-        cleanup_agent_workspace(Path(str(result["workspace"])))
-
-
 def test_runner_does_not_duplicate_openhands_provider_retries(
     tmp_path: Path,
 ) -> None:
@@ -664,6 +813,97 @@ def test_failed_verification_is_not_promoted_and_keeps_the_sandbox(
     }
 
 
+def test_owner_candidate_contract_change_is_rejected_before_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    contract_path = "application/src/main/java/com/example/api/OrdersApi.java"
+    contract = run / contract_path
+    contract.parent.mkdir(parents=True)
+    contract.write_text("interface OrdersApi {}", encoding="utf-8")
+    task.update(
+        {
+            "task_type": "backend-implementation",
+            "owner": "backend",
+            "allowed_write_roots": [str(Path(source_path).parent.as_posix())],
+            "immutable_paths": ["application/src/main/java/com/example/api"],
+        }
+    )
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+
+    sandboxes: list[Path] = []
+
+    class FakeConversation:
+        def __init__(self, sandbox: Path) -> None:
+            self.sandbox = sandbox
+            sandboxes.append(sandbox)
+
+        def send_message(self, _message: str) -> None:
+            pass
+
+        def run(self) -> None:
+            (self.sandbox / source_path).write_text(
+                "class OrderService { int candidate; }",
+                encoding="utf-8",
+            )
+            (self.sandbox / contract_path).write_text(
+                "interface OrdersApi { void changed(); }",
+                encoding="utf-8",
+            )
+
+        def close(self) -> None:
+            pass
+
+    with (
+        patch(
+            "app.implementation.agents.runtime.openhands_compatibility",
+            return_value={
+                "pythonCompatible": True,
+                "sdkInstalled": True,
+                "toolsInstalled": True,
+                "apiKeyConfigured": True,
+            },
+        ),
+        patch(
+            "app.implementation.agents.runtime.openhands_connection",
+            return_value=SimpleNamespace(
+                api_key="approved-key",
+                provider="openrouter",
+                model="openai/gpt-4o-mini",
+                litellm_model=lambda: "openrouter/openai/gpt-4o-mini",
+            ),
+        ),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            side_effect=lambda sandbox, *_args, **_kwargs: (
+                FakeConversation(sandbox),
+                SimpleNamespace(_tools={}),
+            ),
+        ),
+        patch(
+            "app.implementation.agents.runtime.verify_agent_workspace"
+        ) as verify,
+        pytest.raises(WorkspaceVerificationError),
+    ):
+        execute_openhands_task(run, task_id)
+
+    verify.assert_not_called()
+    assert source.read_text(encoding="utf-8") == "class OrderService {}"
+    assert contract.read_text(encoding="utf-8") == "interface OrdersApi {}"
+    failure = json.loads(
+        (run / f"reports/agent-executions/{task_id}.result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["verificationEvidence"]["unauthorizedChanges"] == [contract_path]
+    candidate = sandboxes[0] / contract_path
+    assert "void changed" in candidate.read_text(encoding="utf-8")
+
+
 def test_testing_repair_uses_one_openhands_run(tmp_path: Path) -> None:
     """EasyDep does not add a second repair loop around OpenHands."""
 
@@ -832,10 +1072,73 @@ def test_successful_retry_promotes_changes_preserved_from_failed_sandbox(
     assert {source_path, helper_path} <= set(result["changedFiles"])
 
 
+def test_verified_candidate_deletion_is_promoted(tmp_path: Path) -> None:
+    run, task_id, source_path, _source = _write_minimal_agent_task(tmp_path)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    source_root = Path(source_path).parent.as_posix()
+    obsolete_path = f"{source_root}/ObsoleteHelper.java"
+    obsolete = run / obsolete_path
+    obsolete.write_text("class ObsoleteHelper {}", encoding="utf-8")
+    task["allowed_write_roots"] = [source_root]
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+
+    class FakeConversation:
+        def __init__(self, sandbox: Path) -> None:
+            self.sandbox = sandbox
+
+        def send_message(self, _message: str) -> None:
+            pass
+
+        def run(self) -> None:
+            (self.sandbox / obsolete_path).unlink()
+
+        def close(self) -> None:
+            pass
+
+    with (
+        patch(
+            "app.implementation.agents.runtime.openhands_compatibility",
+            return_value={
+                "pythonCompatible": True,
+                "sdkInstalled": True,
+                "toolsInstalled": True,
+                "apiKeyConfigured": True,
+            },
+        ),
+        patch(
+            "app.implementation.agents.runtime.openhands_connection",
+            return_value=SimpleNamespace(
+                provider="openrouter",
+                model="openai/gpt-4o-mini",
+                litellm_model=lambda: "openrouter/openai/gpt-4o-mini",
+            ),
+        ),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            side_effect=lambda sandbox, *_args, **_kwargs: (
+                FakeConversation(sandbox),
+                SimpleNamespace(_tools={}),
+            ),
+        ),
+        patch(
+            "app.implementation.agents.runtime.verify_agent_workspace",
+            return_value={"command": ["gradle", "test"], "exitCode": 0},
+        ),
+    ):
+        result = execute_openhands_task(run, task_id)
+
+    assert result["status"] == "SUCCEEDED"
+    assert obsolete_path in result["changedFiles"]
+    assert obsolete.exists() is False
+
+
 def test_terminal_openhands_failure_is_persisted_without_a_fresh_conversation(
     tmp_path: Path,
 ) -> None:
     """OpenHands terminal state is checkpointed without an EasyDep restart heuristic."""
+    from openhands.sdk.conversation.state import ConversationExecutionStatus
+
     run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
 
     class FakeConversation:
@@ -845,7 +1148,9 @@ def test_terminal_openhands_failure_is_persisted_without_a_fresh_conversation(
             self.messages: list[str] = []
             self.run_count = 0
             self.close_count = 0
-            self.state = SimpleNamespace(execution_status="IDLE")
+            self.state = SimpleNamespace(
+                execution_status=ConversationExecutionStatus.IDLE
+            )
 
         def send_message(self, message: str) -> None:
             self.messages.append(message)
@@ -855,13 +1160,13 @@ def test_terminal_openhands_failure_is_persisted_without_a_fresh_conversation(
             if self.number == 1:
                 # 실제 OpenHands SDK는 한도 도달을 예외로 던지지 않고 ERROR 상태로
                 # 기록한 뒤 run()을 반환한다.
-                self.state.execution_status = "ERROR"
+                self.state.execution_status = ConversationExecutionStatus.ERROR
                 return
             (self.sandbox / source_path).write_text(
                 "class OrderService { int repairedInFreshContext; }",
                 encoding="utf-8",
             )
-            self.state.execution_status = "FINISHED"
+            self.state.execution_status = ConversationExecutionStatus.FINISHED
 
         def close(self) -> None:
             self.close_count += 1
@@ -931,6 +1236,96 @@ def test_terminal_openhands_failure_is_persisted_without_a_fresh_conversation(
         "openhands",
         "conversation",
     ]
+
+
+def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+    run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task.update(
+        {
+            "task_type": "backend-implementation",
+            "owner": "backend",
+            "allowed_write_roots": [Path(source_path).parent.as_posix()],
+        }
+    )
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+
+    class FakeConversation:
+        def __init__(self, sandbox: Path) -> None:
+            self.sandbox = sandbox
+            self.messages: list[str] = []
+            self.run_count = 0
+            self.state = SimpleNamespace(
+                execution_status=ConversationExecutionStatus.IDLE
+            )
+
+        def send_message(self, message: str) -> None:
+            self.messages.append(message)
+
+        def run(self) -> None:
+            self.run_count += 1
+            if self.run_count == 1:
+                self.state.execution_status = ConversationExecutionStatus.STUCK
+                return
+            (self.sandbox / source_path).write_text(
+                "class OrderService { int completedAfterStuck; }",
+                encoding="utf-8",
+            )
+            self.state.execution_status = ConversationExecutionStatus.FINISHED
+
+        def close(self) -> None:
+            pass
+
+    conversation: FakeConversation | None = None
+
+    def create_conversation(sandbox: Path, *_args, **_kwargs):
+        nonlocal conversation
+        conversation = FakeConversation(sandbox)
+        return conversation, SimpleNamespace(_tools={})
+
+    with (
+        patch(
+            "app.implementation.agents.runtime.openhands_compatibility",
+            return_value={
+                "pythonCompatible": True,
+                "sdkInstalled": True,
+                "toolsInstalled": True,
+                "apiKeyConfigured": True,
+            },
+        ),
+        patch(
+            "app.implementation.agents.runtime.openhands_connection",
+            return_value=SimpleNamespace(
+                provider="openrouter",
+                model="openai/gpt-4o-mini",
+                litellm_model=lambda: "openrouter/openai/gpt-4o-mini",
+            ),
+        ),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            side_effect=create_conversation,
+        ),
+        patch(
+            "app.implementation.agents.runtime.verify_agent_workspace",
+            return_value={"command": ["gradle", "test"], "exitCode": 0},
+        ),
+    ):
+        result = execute_openhands_task(run, task_id)
+
+    assert conversation is not None
+    assert conversation.run_count == 2
+    assert len(conversation.messages) == 2
+    assert "repeated-action loop" in conversation.messages[-1]
+    assert result["stuckRecoveryUsed"] is True
+    assert result["executionStatus"] == "finished"
+    assert "completedAfterStuck" in source.read_text(encoding="utf-8")
 
 
 def test_openhands_conversation_enables_stuck_detection_and_condensation(
@@ -1085,8 +1480,213 @@ def test_canonical_editor_uses_standard_action_schema(tmp_path: Path) -> None:
     assert "수강 편성 정보" in str(observation)
 
 
-def test_canonical_editor_applies_only_workspace_and_contract_guards(
+def test_live_owner_terminal_requires_the_isolated_runner_shell(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.delenv("EASYDEP_OWNER_TERMINAL_SHELL", raising=False)
+
+    with pytest.raises(RuntimeError, match="EASYDEP_OWNER_TERMINAL_SHELL"):
+        create_openhands_conversation(
+            tmp_path,
+            LlmConnection(
+                provider="openrouter",
+                api_key="validation-only-key",
+                base_url="https://openrouter.ai/api/v1",
+                model="openai/gpt-oss-20b",
+                litellm_provider="openrouter",
+            ),
+            {"temperature": 0.2, "maxOutputTokens": 1024},
+            editable_roots=[str(tmp_path.resolve())],
+            native_owner_tools=True,
+            enable_native_terminal=True,
+        )
+
+
+def test_owner_conversation_reopens_the_same_openhands_checkpoint(tmp_path: Path) -> None:
+    persistence = tmp_path / "conversations"
+    conversation_id = uuid.uuid4()
+    connection = LlmConnection(
+        provider="openrouter",
+        api_key="validation-only-key",
+        base_url="https://openrouter.ai/api/v1",
+        model="openai/gpt-oss-20b",
+        litellm_provider="openrouter",
+    )
+    options = {
+        "editable_roots": [str(tmp_path.resolve())],
+        "native_owner_tools": True,
+        "enable_native_terminal": False,
+        "persistence_dir": persistence,
+        "conversation_id": conversation_id,
+    }
+    first, _agent = create_openhands_conversation(
+        tmp_path,
+        connection,
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        **options,
+    )
+    first.send_message("Keep this owner checkpoint.")
+    first.close()
+
+    resumed, _agent = create_openhands_conversation(
+        tmp_path,
+        connection,
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        **options,
+    )
+    try:
+        assert resumed.state.id == conversation_id
+        assert (persistence / conversation_id.hex / "base_state.json").is_file()
+        assert not _owner_message_required(
+            resumed=True,
+            conversation=resumed,
+            prompt="Keep this owner checkpoint.",
+        )
+        assert _owner_message_required(
+            resumed=True,
+            conversation=resumed,
+            prompt="A newly assigned repair message.",
+        )
+    finally:
+        resumed.close()
+
+
+def test_owner_retry_continues_after_a_completed_unverified_turn(tmp_path: Path) -> None:
+    from openhands.sdk.event import MessageEvent
+    from openhands.sdk.llm import Message, TextContent
+
+    prompt = "Keep working on the owner task."
+    user_event = MessageEvent(
+        source="user",
+        llm_message=Message(role="user", content=[TextContent(text=prompt)]),
+    )
+    agent_event = MessageEvent(
+        source="agent",
+        llm_message=Message(
+            role="assistant",
+            content=[TextContent(text="I could not finish the verification.")],
+        ),
+    )
+    conversation = SimpleNamespace(
+        state=SimpleNamespace(events=[user_event, agent_event])
+    )
+
+    assert not _owner_message_required(
+        resumed=True,
+        conversation=conversation,
+        prompt=prompt,
+    )
+    assert _owner_continuation_required(
+        resumed=True,
+        conversation=conversation,
+        prompt=prompt,
+    )
+
+
+def test_owner_retry_sends_task_message_when_checkpoint_has_no_user_event(
     tmp_path: Path,
+) -> None:
+    conversation, _agent = create_openhands_conversation(
+        tmp_path,
+        LlmConnection(
+            provider="openrouter",
+            api_key="validation-only-key",
+            base_url="https://openrouter.ai/api/v1",
+            model="openai/gpt-oss-20b",
+            litellm_provider="openrouter",
+        ),
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        editable_roots=[str(tmp_path.resolve())],
+        native_owner_tools=True,
+        enable_native_terminal=False,
+    )
+    try:
+        assert _owner_message_required(
+            resumed=True,
+            conversation=conversation,
+            prompt="Task message not yet persisted.",
+        )
+    finally:
+        conversation.close()
+
+
+def test_owner_repair_paths_do_not_expand_write_scope() -> None:
+    task = {
+        "task_type": "backend-implementation",
+        "allowed_write_paths": ["application/src/main/java/example/Owned.java"],
+        "allowed_write_roots": ["application/src/test/java/example"],
+        "immutable_paths": ["application/src/main/java/example/api"],
+    }
+    repair = {
+        "repairPaths": [
+            "application/src/main/java/other/Unowned.java",
+            "application/src/main/java/example/api/FrozenApi.java",
+        ]
+    }
+
+    assert _task_execution_scope(task, repair) == (
+        ["application/src/main/java/example/Owned.java"],
+        ["application/src/test/java/example"],
+        ["application/src/main/java/example/api"],
+    )
+
+
+def test_owner_workspace_guidance_states_runner_facts_without_error_history(
+    tmp_path: Path,
+) -> None:
+    guidance = _owner_workspace_guidance(
+        "backend-implementation",
+        tmp_path,
+        ["application/src/main/java/com/example"],
+    )
+
+    assert f"`{tmp_path.resolve()}`" in guidance
+    assert "Backend project root: `application`" in guidance
+    assert f"cd {tmp_path.resolve() / 'application'} && gradle test --build-cache" in guidance
+    assert "SPRING_PROFILES_ACTIVE=test" in guidance
+    assert "run the canonical verification once" in guidance
+    assert "Do not disable tests or alter test reporting" in guidance
+    assert "permission denied" not in guidance.casefold()
+    assert OWNER_TURN_ITERATIONS < 500
+
+
+def test_repeated_typed_no_action_responses_stop_at_openhands_threshold() -> None:
+    from openhands.sdk.conversation.state import ConversationExecutionStatus
+    from openhands.sdk.conversation.types import StuckDetectionThresholds
+    from openhands.sdk.event import MessageEvent
+    from openhands.sdk.llm import Message, TextContent
+
+    guard = NoActionResponseGuard()
+    conversation = SimpleNamespace(
+        state=SimpleNamespace(execution_status=ConversationExecutionStatus.RUNNING)
+    )
+    guard.bind(conversation)
+    empty = MessageEvent(
+        source="agent",
+        llm_message=Message(role="assistant", content=[]),
+    )
+    corrective_user_message = MessageEvent(
+        source="user",
+        llm_message=Message(
+            role="user",
+            content=[TextContent(text="SDK corrective feedback")],
+        ),
+    )
+
+    for _ in range(StuckDetectionThresholds().monologue):
+        guard(empty)
+        guard(corrective_user_message)
+
+    assert guard.triggered is True
+    assert guard.max_consecutive_count == StuckDetectionThresholds().monologue
+    assert conversation.state.execution_status is ConversationExecutionStatus.STUCK
+    assert _conversation_terminal_failure(conversation) is True
+
+
+def test_scoped_editor_applies_workspace_and_contract_guards(
+    tmp_path: Path,
+    monkeypatch,
 ) -> None:
     """Unlisted source stays editable while workspace escape and contracts stay blocked."""
     source_root = tmp_path / "application/src/main/java/example"
@@ -1096,6 +1696,11 @@ def test_canonical_editor_applies_only_workspace_and_contract_guards(
     immutable.write_text("interface OrdersApi {}", encoding="utf-8")
     exact_file = tmp_path / "application/src/test/java/example/ScenarioTest.java"
     exact_file.parent.mkdir(parents=True)
+    granted: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        "app.implementation.agents.runtime.grant_owner_file_access",
+        lambda path, allowed: granted.append((path, allowed)),
+    )
     connection = LlmConnection(
         provider="openrouter",
         api_key="validation-only-key",
@@ -1158,10 +1763,75 @@ def test_canonical_editor_applies_only_workspace_and_contract_guards(
     assert related.is_file()
     assert created_exact.is_error is False
     assert exact_file.is_file()
+    assert [path for path, _allowed in granted] == [related.resolve(), exact_file.resolve()]
+    assert granted[0][1] == tmp_path.resolve()
+    assert granted[1][1] == tmp_path.resolve()
     assert blocked_sibling.is_error is True
     assert blocked_contract.is_error is True
     assert immutable.read_text(encoding="utf-8") == "interface OrdersApi {}"
     assert blocked_escape.is_error is True
+
+
+def test_owner_editor_allows_candidate_changes_but_blocks_workspace_escape(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "application/src/main/java/example"
+    immutable = source_root / "api/OrdersApi.java"
+    immutable.parent.mkdir(parents=True)
+    immutable.write_text("interface OrdersApi {}", encoding="utf-8")
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        LlmConnection(
+            provider="openrouter",
+            api_key="validation-only-key",
+            base_url="https://openrouter.ai/api/v1",
+            model="openai/gpt-oss-20b",
+            litellm_provider="openrouter",
+        ),
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        editable_roots=[str(source_root.resolve())],
+        immutable_paths=[str(immutable.parent.resolve())],
+        native_owner_tools=True,
+        enable_native_terminal=False,
+    )
+    try:
+        from openhands.tools.file_editor import FileEditorAction
+
+        conversation.send_message("Initialize tools without running the model.")
+        editor = agent._tools["file_editor"].executor
+        outside_owner_root = tmp_path / "application/frontend/src/App.tsx"
+        outside_owner_root.parent.mkdir(parents=True)
+        changed_candidate = editor(
+            FileEditorAction(
+                command="create",
+                path=str(outside_owner_root.resolve()),
+                file_text="export default function App() { return null; }",
+            )
+        )
+        changed_contract = editor(
+            FileEditorAction(
+                command="str_replace",
+                path=str(immutable.resolve()),
+                old_str="interface OrdersApi {}",
+                new_str="interface OrdersApi { void changed(); }",
+            )
+        )
+        outside = tmp_path.parent / f"{tmp_path.name}-outside.java"
+        escaped = editor(
+            FileEditorAction(
+                command="create",
+                path=str(outside.resolve()),
+                file_text="class Outside {}",
+            )
+        )
+    finally:
+        conversation.close()
+
+    assert editor.enforce_write_scope is False
+    assert changed_candidate.is_error is False
+    assert changed_contract.is_error is False
+    assert escaped.is_error is True
+    assert outside.exists() is False
 
 
 def test_canonical_editor_has_no_build_directory_heuristic(tmp_path: Path) -> None:
@@ -1258,7 +1928,7 @@ def test_resume_keeps_previous_success_after_shared_file_changes(
     shared = tmp_path / "application/src/main/java/com/example/SharedAdapter.java"
     shared.parent.mkdir(parents=True)
     shared.write_text("class SharedAdapter { void laterChange() {} }", encoding="utf-8")
-    task_id = "implement-first-use-case"
+    task_id = "implement-backend-application"
     relative = shared.relative_to(tmp_path).as_posix()
     (reports / "run-manifest.json").write_text(
         json.dumps(
@@ -1266,7 +1936,8 @@ def test_resume_keeps_previous_success_after_shared_file_changes(
                 "implementation_tasks": [
                     {
                         "task_id": task_id,
-                        "task_type": "use-case",
+                        "task_type": "backend-implementation",
+                        "owner": "backend",
                         "prompt_sha256": "prompt-v1",
                         "required_output_paths": [relative],
                         "allowed_write_paths": [relative],
@@ -1585,7 +2256,7 @@ class Order <<Entity>> { - id: UUID }
     manifest = json.loads((run / "reports/run-manifest.json").read_text(encoding="utf-8"))
     tasks = manifest["implementation_tasks"]
     task_types = {task["task_type"] for task in tasks}
-    assert task_types == {"use-case", "frontend-implementation", "wiring"}
+    assert task_types == {"backend-implementation", "frontend-implementation"}
     assert (
         run / "application/src/main/java/com/example/orders/persistence/entity/OrderEntity.java"
     ).is_file()
@@ -1600,78 +2271,59 @@ class Order <<Entity>> { - id: UUID }
     for task in tasks:
         assert set(task["required_output_paths"]) <= set(task["allowed_write_paths"])
 
-    use_cases = [task for task in tasks if task["task_type"] == "use-case"]
-    wiring = next(task for task in tasks if task["task_type"] == "wiring")
-    assert len(use_cases) == 2
+    backend = next(task for task in tasks if task["owner"] == "backend")
+    frontend = next(task for task in tasks if task["owner"] == "frontend")
+    assert len(tasks) == 2
     assert not any(task["task_id"] == "implement-use-cases-stale-common" for task in tasks)
-    assert set(wiring["use_case_ids"]) == {"UC1", "UC2"}
-    assert wiring["repair_only"] is True
-    assert wiring["required_output_paths"] == []
-    assert "implement-application-wiring" not in state["nextRunnableTasks"]
-    expected_parallel_tasks = {
-        task["task_id"]
-        for task in tasks
-        if task["task_type"] in {"use-case", "frontend-implementation"}
-    }
-    assert set(state["nextRunnableTasks"]) == expected_parallel_tasks
-    contexts = [
-        json.loads((run / task["context_file"]).read_text(encoding="utf-8")) for task in use_cases
-    ]
-    expected_requirements = {"UC1": {"FR-ORDER"}, "UC2": {"FR-CANCEL"}}
-    partitions = [set(context["useCaseIds"]) for context in contexts]
-    assert set().union(*partitions) == set(expected_requirements)
-    assert partitions == [{"UC1"}, {"UC2"}]
-    assert all(
-        left.isdisjoint(right)
-        for index, left in enumerate(partitions)
-        for right in partitions[index + 1 :]
-    )
-    for context in contexts:
-        assert set(context["requirementIds"]) == set().union(
-            *(expected_requirements[use_case_id] for use_case_id in context["useCaseIds"])
-        )
-    assert any(
-        "application/src/main/java/com/example/orders/bce/Order.java"
-        in set(task["allowed_write_paths"])
-        for task in use_cases
+    assert backend["task_id"] == "implement-backend-application"
+    assert set(backend["use_case_ids"]) == {"UC1", "UC2"}
+    assert frontend["depends_on"] == ["implement-backend-application"]
+    assert state["nextRunnableTasks"] == ["implement-backend-application"]
+    context = json.loads((run / backend["context_file"]).read_text(encoding="utf-8"))
+    assert set(context["useCaseIds"]) == {"UC1", "UC2"}
+    assert set(context["requirementIds"]) == {"FR-ORDER", "FR-CANCEL"}
+    assert "application/src/main/java/com/example/orders/bce/Order.java" in set(
+        backend["allowed_write_paths"]
     )
     generated_api = {
         "application/src/main/java/com/example/orders/api/OrdersApi.java",
         "application/src/main/java/com/example/orders/api/CancelApi.java",
     }
-    assert all(
-        not set(task["allowed_write_paths"]).intersection(generated_api) for task in use_cases
-    )
+    assert not set(backend["allowed_write_paths"]).intersection(generated_api)
     immutable_bce = {
         "application/src/main/java/com/example/orders/bce/OrderBoundary.java",
         "application/src/main/java/com/example/orders/bce/OrderControl.java",
         "application/src/main/java/com/example/orders/bce/CancelControl.java",
     }
+    assert not set(backend["allowed_write_paths"]).intersection(immutable_bce)
+    persistence_root = (
+        "application/src/main/java/com/example/orders/persistence"
+    )
+    assert persistence_root in backend["immutable_paths"]
+    assert "application/src/main/resources/db/migration" in backend["immutable_paths"]
+    assert not any(
+        path == persistence_root or path.startswith(persistence_root + "/")
+        for path in backend["allowed_write_paths"]
+    )
+    assert backend["allowed_write_roots"]
+    assert frontend["allowed_write_roots"] == ["application/frontend"]
+    source_index = json.loads(
+        (run / context["sourceIndexPath"]).read_text(encoding="utf-8")
+    )
+    assert source_index["hintsOnly"] is True
+    assert source_index["startingSourcePaths"]
+    assert context["sourceIndexPath"] in context["readSourcePaths"]
     assert all(
-        not set(task["allowed_write_paths"]).intersection(immutable_bce) for task in use_cases
+        path not in context["readSourcePaths"]
+        for path in source_index["startingSourcePaths"]
     )
-    assert use_cases[0]["allowed_write_roots"]
-    assert all("application/src/main/java" not in task["allowed_write_roots"] for task in use_cases)
-    uc1_task = next(task for task in use_cases if task["use_case_ids"] == ["UC1"])
-    uc1_context = json.loads((run / uc1_task["context_file"]).read_text(encoding="utf-8"))
-    uc1_index = json.loads(
-        (run / uc1_context["sourceIndexPath"]).read_text(encoding="utf-8")
-    )
-    assert uc1_index["hintsOnly"] is True
-    assert uc1_index["startingSourcePaths"]
-    assert uc1_context["sourceIndexPath"] in uc1_context["readSourcePaths"]
-    assert all(
-        path not in uc1_context["readSourcePaths"]
-        for path in uc1_index["startingSourcePaths"]
-    )
-    assert {"api:placeOrder", "operation:stale-control-id"} <= set(uc1_task["source_refs"])
-    uc1_prompt = (run / uc1_task["prompt_file"]).read_text(encoding="utf-8")
-    assert "The customer can place an order." in uc1_prompt
-    assert '"call_id"' in uc1_prompt
-    assert '"control_binding"' in uc1_prompt
-    assert "INTERNAL-REPAIR-MARKER" not in uc1_prompt
-    assert "INTERNAL-USE-CASE-REPAIR" not in uc1_prompt
-    assert "Write the focused JUnit scenario first" not in uc1_prompt
+    assert {"api:placeOrder", "api:cancelOrder"} <= set(backend["source_refs"])
+    prompt = (run / backend["prompt_file"]).read_text(encoding="utf-8")
+    assert "The customer can place an order." in prompt
+    assert '"call_id"' in prompt
+    assert '"control_binding"' in prompt
+    assert "INTERNAL-REPAIR-MARKER" not in prompt
+    assert "INTERNAL-USE-CASE-REPAIR" not in prompt
 
 
 def test_completed_workflow_hands_full_verification_to_testing(
@@ -1725,6 +2377,66 @@ def test_completed_workflow_hands_full_verification_to_testing(
     assert (run / "application/Dockerfile").is_file()
     assert not (reports / "final-verification.json").exists()
     assert not (reports / "container-runtime-smoke.json").exists()
+
+
+def test_owner_execution_boundary_preserves_checkpoint_without_source_repair(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Iteration/stuck 중단은 코드 결함 증거가 아니므로 수리 prompt를 만들지 않는다."""
+    run = tmp_path / "run"
+    (run / "reports").mkdir(parents=True)
+    task = {
+        "task_id": "implement-backend-application",
+        "task_type": "backend-implementation",
+        "phase": "backend",
+        "status": "PENDING",
+        "attempts": 0,
+    }
+    initial_state = {
+        "status": "READY",
+        "tasks": [dict(task)],
+        "phases": [{"phaseId": "backend", "status": "PENDING"}],
+        "nextRunnableTasks": [task["task_id"]],
+    }
+    paused_state = {
+        "status": "FAILED",
+        "tasks": [{**task, "status": "FAILED", "attempts": 1}],
+        "phases": [{"phaseId": "backend", "status": "FAILED"}],
+        "nextRunnableTasks": [task["task_id"]],
+    }
+    plan_calls = 0
+
+    def plan(_run: Path, _spec: object) -> dict[str, object]:
+        nonlocal plan_calls
+        plan_calls += 1
+        return dict(initial_state if plan_calls == 1 else paused_state)
+
+    repair_calls: list[object] = []
+    monkeypatch.setattr("app.implementation.workflows.coordinator.plan_workflow", plan)
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.schedule_cross_phase_repair",
+        lambda *_args, **_kwargs: repair_calls.append(_args),
+    )
+
+    def stop_at_execution_boundary(_run: Path, _task_id: str) -> dict[str, object]:
+        raise OwnerConversationIncomplete(
+            {
+                "exitCode": 1,
+                "stderr": "The owner conversation did not finish before its execution boundary.",
+            }
+        )
+
+    result = run_workflow(
+        run,
+        SimpleNamespace(app_id="app-1", inputs={}, job_type="INITIAL_IMPLEMENTATION"),
+        executor=stop_at_execution_boundary,
+    )
+
+    assert result["status"] == "FAILED"
+    assert "execution boundary" in result["blockingReason"]
+    assert repair_calls == []
+    assert not (run / "reports/repair-plan.json").exists()
 
 
 def test_feedback_revision_runs_one_full_backend_test_gate_before_complete(
@@ -1875,18 +2587,20 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
     source = run / source_path
     source.parent.mkdir(parents=True)
     source.write_text("class ApplicationConfiguration { /* accepted */ }", encoding="utf-8")
-    prompt_path = task_dir / "wiring.md"
+    prompt_path = task_dir / "backend.md"
     initial_prompt = "INITIAL IMPLEMENTATION CONTEXT\n" + ("all requirements\n" * 100)
     prompt_path.write_text(initial_prompt, encoding="utf-8")
     task = {
-        "task_id": "implement-application-wiring",
-        "task_type": "wiring",
+        "task_id": "implement-backend-application",
+        "task_type": "backend-implementation",
+        "owner": "backend",
         "prompt_file": str(prompt_path.relative_to(run)).replace("\\", "/"),
         "allowed_write_paths": [source_path],
+        "allowed_write_roots": ["application/src/main/java/com/example"],
         "required_output_paths": [source_path],
-        "immutable_paths": [],
+        "immutable_paths": ["application/src/main/java/com/example/api"],
     }
-    (task_dir / "wiring.task.json").write_text(json.dumps(task), encoding="utf-8")
+    (task_dir / "backend.task.json").write_text(json.dumps(task), encoding="utf-8")
     (reports / "run-manifest.json").write_text(
         json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
     )
@@ -1895,15 +2609,23 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
         run,
         "verify-container-runtime",
         {
+            "owner": "backend",
             "command": ["docker", "runtime-smoke"],
-            "stderr": "frontend HTTP probe failed: HTTP 401 Unauthorized",
+            "stderr": (
+                "application/src/main/java/com/example/ApplicationConfiguration.java: "
+                "HTTP 401 Unauthorized; inspect "
+                "application/src/main/java/com/example/api/Contract.java and "
+                "application/frontend/src/App.tsx"
+            ),
         },
-        failed_task_type="wiring",
     )
     assert entry is not None
+    assert entry["repairPaths"] == [source_path]
+    assert "application/src/main/java/com/example/api/Contract.java" in entry["relatedPaths"]
+    assert "application/frontend/src/App.tsx" in entry["relatedPaths"]
     execution_dir = reports / "agent-executions"
     execution_dir.mkdir()
-    (execution_dir / "implement-application-wiring.result.json").write_text(
+    (execution_dir / "implement-backend-application.result.json").write_text(
         json.dumps(
             {
                 "repairHistory": {
@@ -1929,22 +2651,27 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
             run,
             "verify-container-runtime",
             {
+                "owner": "backend",
                 "command": ["docker", "runtime-smoke"],
-                "stderr": "frontend HTTP probe failed: HTTP 401 Unauthorized",
+                "stderr": (
+                    "application/src/main/java/com/example/ApplicationConfiguration.java: "
+                    "HTTP 401 Unauthorized; inspect "
+                    "application/src/main/java/com/example/api/Contract.java and "
+                    "application/frontend/src/App.tsx"
+                ),
             },
-            failed_task_type="wiring",
         )
         assert repeated is not None
         repeated_entries.append(repeated)
     apply_repair_directives(run)
 
-    stored_task = json.loads((task_dir / "wiring.task.json").read_text(encoding="utf-8"))
+    stored_task = json.loads((task_dir / "backend.task.json").read_text(encoding="utf-8"))
     repair_prompt = (run / stored_task["repair_prompt_file"]).read_text(encoding="utf-8")
     assert prompt_path.read_text(encoding="utf-8") == initial_prompt
     assert "INITIAL IMPLEMENTATION CONTEXT" not in repair_prompt
     assert "401 Unauthorized" in repair_prompt
     assert "SecurityConfiguration.java was changed, but HTTP 401 persists" in repair_prompt
-    assert "Run `run_task_check` once first" in repair_prompt
+    assert "Use the terminal to reproduce the failure" in repair_prompt
     assert "State new diagnostic hypothesis 2" in repair_prompt
     assert len({item["strategy"] for item in repeated_entries}) == 6
     assert source_path in repair_prompt

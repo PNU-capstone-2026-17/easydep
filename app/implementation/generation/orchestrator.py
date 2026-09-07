@@ -29,9 +29,8 @@ from ..domain.implementation_ir import (
 from ..domain.models import CommandEvidence, Diagnostic, JobSpec, RunManifest
 from ..planning.design_context import (
     TaskSpec,
-    generate_api_adapter_tasks,
+    generate_backend_owner_tasks,
     generate_frontend_tasks,
-    generate_wiring_tasks,
     llm_config,
 )
 from ..workflows.conformance import capture_generated_contracts
@@ -455,6 +454,12 @@ class PrototypeOrchestrator:
             # 피드백 작업도 최초 구현과 같은 실행 설정을 사용한다. 일부 값만 복사하면
             # OpenHands가 대화를 시작하기 전에 필수 설정을 찾지 못해 실패할 수 있다.
             llm=llm_config(self.spec),
+            owner=(
+                "frontend"
+                if editable
+                and all(path.replace("\\", "/").startswith("application/frontend/") for path in editable)
+                else "backend"
+            ),
             task_type=task_type,
             verification_profile=verification_profile,
         )
@@ -1114,22 +1119,14 @@ def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> None:
     _merge_implementation_tasks(run_root, [], replace_types=persistence_task_types)
 
 
-def plan_api_adapter_tasks(spec: JobSpec, run_root: Path) -> None:
-    """Add generated OpenAPI adapter tasks to an existing run manifest."""
+def plan_backend_owner_task(spec: JobSpec, run_root: Path) -> None:
+    """Replace prior backend work units with one application owner task."""
     run_root = run_root.resolve()
-    # checkpoint를 다시 계획할 때 새 기준에서 사라진 예전 use-case task도 함께 제거한다.
-    # 같은 ID만 덮어쓰면 더는 필요하지 않은 ``common`` 작업이 manifest에 남아 재실행된다.
     _merge_implementation_tasks(
         run_root,
-        generate_api_adapter_tasks(spec, run_root),
-        replace_types={"use-case"},
+        generate_backend_owner_tasks(spec, run_root),
+        replace_types={"use-case", "wiring", "backend-implementation"},
     )
-
-
-def plan_wiring_tasks(spec: JobSpec, run_root: Path) -> None:
-    """Add the Spring application wiring task to an existing run manifest."""
-    run_root = run_root.resolve()
-    _merge_implementation_tasks(run_root, generate_wiring_tasks(spec, run_root))
 
 
 def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> None:

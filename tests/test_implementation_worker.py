@@ -11,12 +11,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.implementation.agents.runtime import _owner_conversation_identity
 from app.implementation.agents.workspace import (
     cleanup_agent_workspace,
     prepare_agent_workspace,
 )
 from app.implementation.application.feedback import resolve_feedback_targets
-from app.implementation.application.jobs import ImplementationWorker
+from app.implementation.application.jobs import ImplementationWorker, InvalidJobState
 from app.implementation.application.prototype import PrototypeClient, PrototypeExecutionError
 from app.implementation.config import ImplementationSettings
 from app.implementation.generation.orchestrator import PrototypeOrchestrator, load_job
@@ -39,7 +40,7 @@ def test_testing_repair_tasks_are_connected_to_an_executable_phase(
 ) -> None:
     """Testing 수리 task가 계획만 남고 실행에서 빠지는 회귀를 막는다."""
 
-    assert phase_for_task(task_type) == "use-cases"
+    assert phase_for_task(task_type) == "backend"
 
 
 def test_unknown_implementation_task_type_is_rejected() -> None:
@@ -47,6 +48,95 @@ def test_unknown_implementation_task_type_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="Unknown implementation task type"):
         phase_for_task("unregistered-task")
+
+
+def test_testing_repair_reuses_the_declared_owner_job_and_checkpoint(
+    tmp_path: Path,
+) -> None:
+    worker = ImplementationWorker(settings(tmp_path))
+    job_id = "a" * 32
+    job_root = worker.settings.work_root / job_id
+    run_root = job_root / "generated" / "runs" / "run_owner"
+    reports = run_root / "reports"
+    reports.mkdir(parents=True)
+    job_path = job_root / "job.json"
+    job_path.write_text("{}", encoding="utf-8")
+    source = run_root / "application/src/main/java/com/example/Service.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class Service {}", encoding="utf-8")
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_id": "implement-backend-application",
+                        "task_type": "backend-implementation",
+                        "owner": "backend",
+                        "allowed_write_paths": [
+                            "application/src/main/java/com/example/Service.java"
+                        ],
+                    },
+                    {
+                        "task_id": "implement-frontend-application",
+                        "task_type": "frontend-implementation",
+                        "owner": "frontend",
+                        "allowed_write_paths": [],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (reports / "workflow-state.json").write_text(
+        json.dumps({"status": "COMPLETE"}), encoding="utf-8"
+    )
+    worker._write(
+        {
+            "job_id": job_id,
+            "app_id": "app-1",
+            "status": "COMPLETED",
+            "job_path": str(job_path),
+            "run_root": str(run_root),
+            "created_at": "now",
+            "updated_at": "now",
+        }
+    )
+
+    evidence = {
+        "command": ["testing", "testing-dynamic-functional"],
+        "stderr": "application/src/main/java/com/example/Service.java failed",
+    }
+    with patch.object(worker.executor, "submit") as submit:
+        with pytest.raises(InvalidJobState, match="no reusable OpenHands conversation"):
+            worker.request_owner_repair(
+                job_id,
+                owner="backend",
+                evidence=evidence,
+            )
+        submit.assert_not_called()
+
+        persistence_dir, conversation_id = _owner_conversation_identity(
+            run_root,
+            "implement-backend-application",
+        )
+        checkpoint = persistence_dir / conversation_id.hex / "base_state.json"
+        checkpoint.parent.mkdir(parents=True)
+        checkpoint.write_text("{}", encoding="utf-8")
+        result = worker.request_owner_repair(
+            job_id,
+            owner="backend",
+            evidence=evidence,
+        )
+    try:
+        plan = json.loads((reports / "repair-plan.json").read_text(encoding="utf-8"))
+    finally:
+        worker.shutdown()
+
+    assert result["job_id"] == job_id
+    assert result["status"] == "QUEUED"
+    assert result["owner_repair"]["owner"] == "backend"
+    assert plan["entries"][-1]["ownerTaskIds"] == ["implement-backend-application"]
+    submit.assert_called_once()
 
 
 def test_initial_job_allows_void_control_with_transport_error_outcomes(
@@ -472,8 +562,10 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     client = PrototypeClient(settings(tmp_path))
-    run_root = tmp_path / ".easydep" / "run_123"
-    job_path = tmp_path / ".easydep" / "job" / "job.json"
+    (tmp_path / "app").mkdir()
+    job_root = tmp_path / ".easydep" / "implementation-runs" / "job"
+    run_root = job_root / "generated" / "runs" / "run_123"
+    job_path = job_root / "job.json"
     for path in (run_root, job_path.parent):
         path.mkdir(parents=True, exist_ok=True)
     job_path.write_text("{}", encoding="utf-8")
@@ -519,8 +611,8 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
     assert command[-5:] == [
         "cli",
         "run-workflow",
-        "/easydep-workspace/.easydep/run_123",
-        "/easydep-workspace/.easydep/job/job.json",
+        "/easydep-workspace/.easydep/implementation-runs/job/generated/runs/run_123",
+        "/easydep-workspace/.easydep/implementation-runs/job/job.json",
         "--retry-failed",
     ]
     assert observed["operation_id"] == "job"

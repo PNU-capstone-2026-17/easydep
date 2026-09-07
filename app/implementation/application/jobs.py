@@ -698,22 +698,114 @@ class ImplementationWorker:
         record["checkpoint_retryable"] = False
         return self.public_record(record)
 
+    def request_owner_repair(
+        self,
+        job_id: str,
+        *,
+        owner: str,
+        evidence: dict[str, object],
+    ) -> dict[str, Any]:
+        """Resume a completed implementation with its existing owner conversation.
+
+        Testing has already classified the failing gate and declares its implementation
+        owner. The evidence is appended to that owner's repair history in the original
+        run, so neither a source-snapshot job nor a new OpenHands conversation is created.
+        """
+        if owner not in {"backend", "frontend"}:
+            raise ValueError(f"Unknown implementation repair owner: {owner}")
+        record = self._read(job_id)
+        if record.get("status") != "COMPLETED":
+            raise InvalidJobState(
+                "Only a completed implementation can accept a Testing repair: "
+                f"{record.get('status')}"
+            )
+        if not self._execution_checkpoint_exists(record):
+            raise InvalidJobState(
+                "The implementation has no reusable owner checkpoint."
+            )
+
+        run_root = Path(str(record["run_root"]))
+        manifest_path = run_root / "reports" / "run-manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        owner_tasks = [
+            task
+            for task in manifest.get("implementation_tasks", [])
+            if isinstance(task, dict) and task.get("owner") == owner
+        ]
+        if len(owner_tasks) != 1:
+            raise InvalidJobState(
+                f"Implementation owner {owner} does not have exactly one resumable task."
+            )
+
+        # Reuse the runtime's stable identity calculation instead of reconstructing the
+        # OpenHands storage layout here. A manifest/workflow checkpoint is not enough:
+        # without the SDK base state the runtime would silently create a new conversation.
+        from ..agents.runtime import _owner_conversation_identity
+
+        owner_task_id = str(owner_tasks[0]["task_id"])
+        persistence_dir, conversation_id = _owner_conversation_identity(
+            run_root,
+            owner_task_id,
+        )
+        conversation_checkpoint = (
+            persistence_dir / conversation_id.hex / "base_state.json"
+        )
+        if not conversation_checkpoint.is_file():
+            raise InvalidJobState(
+                f"Implementation owner {owner} has no reusable OpenHands conversation "
+                "checkpoint; start a new implementation run instead."
+            )
+
+        from ..workflows.repair import schedule_cross_phase_repair
+
+        repair_evidence = dict(evidence)
+        repair_evidence["owner"] = owner
+        repair = schedule_cross_phase_repair(
+            run_root,
+            owner_task_id,
+            repair_evidence,
+        )
+        if repair is None:
+            raise InvalidJobState(
+                f"Could not schedule a repair for implementation owner {owner}."
+            )
+
+        record["status"] = "QUEUED"
+        record["updated_at"] = _now()
+        record["owner_repair"] = {
+            "owner": owner,
+            "repair_plan": "reports/repair-plan.json",
+            "requested_at": record["updated_at"],
+        }
+        record.pop("error", None)
+        record.pop("blocking_details", None)
+        self._write(record)
+        self.executor.submit(
+            langsmith_metrics.bind_context(self._run),
+            job_id,
+            True,
+        )
+        return self.public_record(record)
+
+    @staticmethod
+    def _execution_checkpoint_exists(record: dict[str, Any]) -> bool:
+        job_path_value = record.get("job_path")
+        run_root_value = record.get("run_root")
+        if not isinstance(job_path_value, str) or not isinstance(run_root_value, str):
+            return False
+        run_root = Path(run_root_value)
+        return (
+            Path(job_path_value).is_file()
+            and (run_root / "reports" / "run-manifest.json").is_file()
+            and (run_root / "reports" / "workflow-state.json").is_file()
+        )
+
     @staticmethod
     def _checkpoint_retryable(record: dict[str, Any]) -> bool:
         """실행 checkpoint를 같은 Job에서 안전하게 재사용할 수 있는지 확인한다."""
         if record.get("status") not in {"FAILED", "NEEDS_PLANNER"}:
             return False
-        job_path_value = record.get("job_path")
-        run_root_value = record.get("run_root")
-        if not isinstance(job_path_value, str) or not isinstance(run_root_value, str):
-            return False
-        job_path = Path(job_path_value)
-        run_root = Path(run_root_value)
-        return (
-            job_path.is_file()
-            and (run_root / "reports" / "run-manifest.json").is_file()
-            and (run_root / "reports" / "workflow-state.json").is_file()
-        )
+        return ImplementationWorker._execution_checkpoint_exists(record)
 
     def get_testing_input(self, job_id: str) -> dict[str, Any]:
         """Testing API가 버전이 고정된 입력을 만들 때 필요한 정보를 반환한다.
