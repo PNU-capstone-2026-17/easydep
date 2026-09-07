@@ -5,6 +5,7 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from urllib.parse import unquote
 
 from app.artifact_trace import TraceRef
 from app.artifact_trace_projection import project_artifact_trace
@@ -20,9 +21,9 @@ from ..domain.implementation_ir import (
     build_implementation_ir,
 )
 from ..domain.models import JobSpec
-from ..generation.frontend_scaffold import frontend_page_names, operation_ids
+from ..generation.frontend_scaffold import operation_ids
 from ..generation.java_scaffold import controller_body_marker
-from .frontend_contracts import GeneratedClientContracts
+from .frontend_contracts import GeneratedClientContracts, GeneratedClientOperation
 from .method_projection import MethodProjection, MethodProjectionResult, project_method_calls
 
 
@@ -503,10 +504,12 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
         else []
     )
     bce_names = {str(item["className"]) for item in classes if item.get("className")}
-    pages = frontend_page_names(openapi)
     operations = operation_ids(openapi)
     client_contracts = GeneratedClientContracts.discover(generated)
-    call_skeleton, projected_operations = client_contracts.render_call_skeleton(operations)
+    generated_operations = client_contracts.resolve_operations(operations)
+    call_skeleton, projected_operations = client_contracts.render_call_skeleton(
+        operations, generated_operations
+    )
     call_skeleton_path = frontend / "src" / "api.ts"
     call_skeleton_path.write_text(call_skeleton, encoding="utf-8", newline="\n")
 
@@ -520,8 +523,6 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
     required = [
         "application/frontend/src/App.tsx",
         "application/frontend/src/api.ts",
-        "application/frontend/src/components/AppShell.tsx",
-        *[f"application/frontend/src/pages/{name}.tsx" for name in pages],
         "application/frontend/src/styles.css",
     ]
     allowed = _work_unit_editable_paths(
@@ -534,8 +535,15 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
         ["application/frontend/src/generated"],
     )
     task_id = "implement-frontend-application"
-    client_index = _frontend_contract_index(run_root, openapi, pages, client_contracts)
+    client_index, operation_context_paths = _frontend_contract_index(
+        run_root,
+        openapi,
+        client_contracts,
+        generated_operations,
+        required,
+    )
     client_index["callSkeletonPath"] = _relative(run_root, call_skeleton_path)
+    client_index["fallbackSources"] = design_inputs
     client_index["projectedOperations"] = projected_operations
     client_index["unresolvedOperations"] = sorted(set(operations) - set(projected_operations))
     client_index_path = output / "frontend-generated-client-index.json"
@@ -544,16 +552,16 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
         encoding="utf-8",
     )
     context = {
-        "schemaVersion": "frontend-implementation-context/v1alpha2",
+        "schemaVersion": "frontend-implementation-context/v1alpha3",
         "taskId": task_id,
         "taskType": "frontend-implementation",
         "owner": "frontend",
         "dependsOn": ["implement-backend-application"],
-        "pages": pages,
         "operationIds": operations,
         "generatedImportRoot": client_contracts.import_root,
         "callSkeletonPath": _relative(run_root, call_skeleton_path),
         "clientIndexPath": _relative(run_root, client_index_path),
+        "operationContextPaths": operation_context_paths,
         "designInputs": design_inputs,
         "requiredOutputs": required,
         "readSourcePaths": sorted(
@@ -561,6 +569,7 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
                 [
                     *design_inputs.values(),
                     _relative(run_root, client_index_path),
+                    *operation_context_paths,
                 ]
             )
         ),
@@ -570,28 +579,27 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
         context["deployment"] = deployment_context
     context_path = output / "frontend-application.context.json"
     context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
-    page_list = "\n".join(f"- `{name}`" for name in pages)
     prompt = f"""# Frontend implementation task: {spec.name}
 
 Complete the React application using the exact generated-client calls already wired in
 `application/frontend/src/api.ts`.
 
 - Preserve `{client_contracts.import_root}` and use `apiCalls`; never hand-write HTTP calls or paths.
-- Resolve every `EASYDEP-IMPLEMENT` marker. Use the client index first, then read only the smallest
-  relevant frozen design input if the local projection exposes a contract gap.
+- Start with the compact client index. Read an operation context only when implementing that
+  operation; do not recursively inventory the workspace unless an unresolved contract requires it.
+- Resolve every `EASYDEP-IMPLEMENT` marker. Read only the smallest relevant frozen design input if
+  an operation context exposes a contract gap.
 - Source-index and RTM references are navigation hints, never read or edit limits.
-- Keep the existing `HashRouter`, make every contracted page reachable, and cover loading, empty,
-  success, validation, and API-error states with accessible responsive UI.
+- Keep the existing `HashRouter`, choose page boundaries based on the user experience rather than
+  OpenAPI tags, and cover loading, empty, success, validation, and API-error states with accessible
+  responsive UI.
 - Leave no empty handler, demo fallback, TODO, FIXME, or placeholder, and add no dependency unless
   the existing build requires it.
 - Use English for source comments, validation messages, documentation, and user-visible text.
 
-## Contracted pages
-{page_list}
-
 ## On-demand client context
 - Exact call skeleton: `{_relative(run_root, call_skeleton_path)}`
-- Client index: `{_relative(run_root, client_index_path)}`
+- Compact index: `{_relative(run_root, client_index_path)}`
 """
     prompt += "\n## Frontend owner root\n- `application/frontend`"
     prompt += render_allowed_output_rules(required)
@@ -1036,22 +1044,17 @@ def _method_context_evidence(
 def _frontend_contract_index(
     run_root: Path,
     openapi: dict[str, object],
-    pages: list[str],
     contracts: GeneratedClientContracts,
-) -> dict[str, object]:
-    """Build a compact page/operation/generated-source index."""
-    files: list[dict[str, object]] = []
-    for path in contracts.files:
-        relative = path.relative_to(run_root).as_posix()
-        generated_relative = path.relative_to(contracts.generated_root).as_posix()
-        files.append(
-            {
-                "path": relative,
-                "import": f"../generated/{generated_relative.removesuffix('.ts')}",
-            }
-        )
+    generated_operations: dict[str, GeneratedClientOperation],
+    required_outputs: list[str],
+) -> tuple[dict[str, object], list[str]]:
+    """Write a small root index and lazily readable operation contracts."""
 
+    output = run_root / "reports" / "implementation-tasks"
+    context_dir = output / "frontend-operation-context"
+    context_dir.mkdir(parents=True, exist_ok=True)
     operation_entries: list[dict[str, object]] = []
+    operation_context_paths: list[str] = []
     paths = openapi.get("paths", {}) if isinstance(openapi, dict) else {}
     methods = {"get", "post", "put", "patch", "delete", "head", "options", "trace"}
     if isinstance(paths, dict):
@@ -1062,36 +1065,177 @@ def _frontend_contract_index(
                 if method.casefold() not in methods or not isinstance(operation, dict):
                     continue
                 operation_id = str(operation.get("operationId") or f"{method.upper()} {path}")
-                tags = operation.get("tags") if isinstance(operation.get("tags"), list) else []
-                tag = str(tags[0]) if tags else "Overview"
-                page = "".join(
-                    word[:1].upper() + word[1:]
-                    for word in re.findall(r"[A-Za-z0-9]+", tag)
-                ) or "Overview"
-                page += "Page"
+                ordinal = len(operation_entries) + 1
+                slug = re.sub(r"[^A-Za-z0-9._-]+", "-", operation_id).strip("-.")
+                filename = f"{ordinal:04d}-{(slug or 'operation')[:64]}.json"
+                context_path = context_dir / filename
+                relative_context_path = _relative(run_root, context_path)
+                generated = generated_operations.get(operation_id)
+                operation_context = _frontend_operation_context(
+                    run_root,
+                    openapi,
+                    path_item,
+                    str(path),
+                    method,
+                    operation_id,
+                    operation,
+                    generated,
+                )
+                context_path.write_text(
+                    json.dumps(operation_context, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                operation_context_paths.append(relative_context_path)
                 operation_entries.append(
                     {
-                        "page": page if page in pages else (pages[0] if pages else page),
                         "operationId": operation_id,
-                        "method": method.upper(),
-                        "path": path,
-                        "sourceInventory": "generatedApiFiles",
+                        "summary": str(operation.get("summary") or ""),
+                        "contextPath": relative_context_path,
+                        "generatedClientResolved": generated is not None,
                     }
                 )
-    api_files = [
-        item
-        for item in files
-        if "/apis/" in f"/{item['path']}" or "/api/" in f"/{item['path']}"
+    entrypoints = [
+        "application/frontend/src/App.tsx",
+        "application/frontend/src/api.ts",
+        "application/frontend/src/main.tsx",
+        "application/frontend/src/config.ts",
+        "application/frontend/src/styles.css",
     ]
-    return {
-        "schemaVersion": "frontend-client-index/v1alpha1",
+    index = {
+        "schemaVersion": "frontend-client-index/v1alpha2",
+        "frontendRoot": "application/frontend",
+        "entrypoints": [path for path in entrypoints if (run_root / path).is_file()],
+        "missingRequiredOutputs": [
+            path for path in required_outputs if not (run_root / path).is_file()
+        ],
+        "verification": {
+            "workingDirectory": "application/frontend",
+            "command": "npm run build",
+        },
         "importRoot": contracts.import_root,
-        "files": files,
-        "generatedApiFiles": api_files,
         "operations": operation_entries,
         "indexPath": "reports/implementation-tasks/frontend-generated-client-index.json",
         "hintsOnly": True,
     }
+    return index, operation_context_paths
+
+
+def _frontend_operation_context(
+    run_root: Path,
+    openapi: dict[str, object],
+    path_item: dict[str, object],
+    path: str,
+    method: str,
+    operation_id: str,
+    operation: dict[str, object],
+    generated: GeneratedClientOperation | None,
+) -> dict[str, object]:
+    """Project only the explicit contract for one frontend API operation."""
+
+    operation_surface = {
+        key: operation[key]
+        for key in ("summary", "description", "parameters", "requestBody", "responses")
+        if key in operation
+    }
+    if "parameters" in path_item:
+        operation_surface["pathItemParameters"] = path_item["parameters"]
+    referenced_components, unresolved_refs = _referenced_openapi_components(
+        openapi, operation_surface
+    )
+    use_case_ids = _string_ids(operation.get("x-easydep-use-case-ids"))
+    scenario_step_refs = _string_ids(
+        operation.get("x-easydep-scenario-step-refs")
+    )
+    if generated is None:
+        generated_client: dict[str, object] = {
+            "resolved": False,
+            "call": None,
+            "requestType": None,
+            "responseType": None,
+            "generatedMethodPath": None,
+        }
+    else:
+        request_argument = "request" if generated.request_type else ""
+        generated_client = {
+            "resolved": True,
+            "call": f"apiCalls.{operation_id}({request_argument})",
+            "requestType": generated.request_type,
+            "responseType": generated.response_type,
+            "generatedMethodPath": _relative(run_root, generated.source_path),
+        }
+    return {
+        "schemaVersion": "frontend-operation-context/v1alpha1",
+        "operationId": operation_id,
+        "http": {
+            "method": method.upper(),
+            "path": path,
+            **operation_surface,
+        },
+        "generatedClient": generated_client,
+        "referencedComponents": referenced_components,
+        "unresolvedComponentRefs": unresolved_refs,
+        "traceHints": {
+            "useCaseIds": use_case_ids,
+            "scenarioStepRefs": scenario_step_refs,
+        },
+        "refs": [
+            f"api:{operation_id}",
+            *(f"use_case:{value}" for value in use_case_ids),
+            *(f"step:{value}" for value in scenario_step_refs),
+        ],
+        "hintsOnly": True,
+    }
+
+
+def _referenced_openapi_components(
+    openapi: dict[str, object], value: object
+) -> tuple[dict[str, object], list[str]]:
+    """Resolve exact top-level schema refs reached from one operation."""
+
+    components = openapi.get("components")
+    schemas = components.get("schemas") if isinstance(components, dict) else None
+    schemas = schemas if isinstance(schemas, dict) else {}
+    prefix = "#/components/schemas/"
+    missing = object()
+    pending = sorted(_json_refs(value))
+    resolved: dict[str, object] = {}
+    unresolved: set[str] = set()
+    while pending:
+        ref = pending.pop(0)
+        if ref in resolved or ref in unresolved:
+            continue
+        encoded_name = ref.removeprefix(prefix)
+        if not ref.startswith(prefix) or "/" in encoded_name:
+            unresolved.add(ref)
+            continue
+        schema_name = unquote(encoded_name).replace("~1", "/").replace("~0", "~")
+        target = schemas.get(schema_name, missing)
+        if target is missing:
+            unresolved.add(ref)
+            continue
+        resolved[ref] = target
+        pending.extend(
+            nested
+            for nested in sorted(_json_refs(target))
+            if nested not in resolved and nested not in unresolved
+        )
+    return resolved, sorted(unresolved)
+
+
+def _json_refs(value: object) -> set[str]:
+    if isinstance(value, dict):
+        refs: set[str] = set()
+        for key, item in value.items():
+            if key == "$ref" and isinstance(item, str) and item:
+                refs.add(item)
+            refs.update(_json_refs(item))
+        return refs
+    if isinstance(value, list):
+        refs: set[str] = set()
+        for item in value:
+            refs.update(_json_refs(item))
+        return refs
+    return set()
 
 
 def _work_unit_editable_paths(

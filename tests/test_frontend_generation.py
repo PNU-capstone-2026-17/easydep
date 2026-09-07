@@ -28,7 +28,6 @@ from app.implementation.generation.frontend import (
     repair_typescript_fetch_export_collisions,
 )
 from app.implementation.generation.frontend_scaffold import (
-    frontend_page_names,
     openapi_typescript_fetch_command,
     react_scaffold_files,
     resolve_api_base_url,
@@ -125,12 +124,9 @@ def test_react_scaffold_contains_no_hardcoded_operation_implementation() -> None
         "src/vite-env.d.ts",
     } <= set(files)
     assert "getOrder" not in "\n".join(files.values())
+    assert "EASYDEP-IMPLEMENT" in files["src/App.tsx"]
     assert "OpenAPI Generator" in files["README.md"]
     assert "HashRouter" in files["src/main.tsx"]
-
-
-def test_empty_openapi_has_no_frontend_pages_without_revalidating_design() -> None:
-    assert frontend_page_names({"openapi": "3.0.3", "paths": {}}) == []
 
 
 def test_resolves_api_base_url_from_openapi_server_without_inventing_prefix() -> None:
@@ -196,16 +192,40 @@ def test_renders_exact_generated_client_request_wrapper(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    source, projected = GeneratedClientContracts.discover(
-        generated
-    ).render_call_skeleton(["createOrder"])
+    contracts = GeneratedClientContracts.discover(generated)
+    source, projected = contracts.render_call_skeleton(["createOrder"])
+    operation = contracts.resolve_operations(["createOrder"])["createOrder"]
 
     assert projected == ["createOrder"]
+    assert operation.class_name == "OrdersApi"
+    assert operation.request_type == "CreateOrderRequest"
+    assert operation.response_type == "void"
+    assert operation.source_path == api.resolve()
     assert "CreateOrderRequest," in source
     assert (
         "createOrder: (request: CreateOrderRequest) => "
         "ordersApi.createOrder(request)" in source
     )
+
+
+def test_does_not_resolve_an_ambiguous_generated_operation(tmp_path: Path) -> None:
+    generated = tmp_path / "src/generated"
+    for class_name in ("OrdersApi", "AdminApi"):
+        api = generated / "apis" / f"{class_name}.ts"
+        api.parent.mkdir(parents=True, exist_ok=True)
+        api.write_text(
+            f"export class {class_name} {{\n"
+            "  async getOrder(): Promise<void> { return Promise.resolve(); }\n"
+            "}\n",
+            encoding="utf-8",
+        )
+
+    contracts = GeneratedClientContracts.discover(generated)
+
+    assert contracts.resolve_operations(["getOrder"]) == {}
+    source, projected = contracts.render_call_skeleton(["getOrder"])
+    assert projected == []
+    assert "frontend-generated-client-index.json for api:getOrder" in source
 
 
 def test_rejects_generated_contracts_over_budget_without_partial_output(
@@ -400,7 +420,22 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     bce_model = tmp_path / "class-model.json"
     sequence = tmp_path / "sequence.puml"
     sequence_model = tmp_path / "sequence-model.json"
-    openapi.write_text(json.dumps(OPENAPI), encoding="utf-8")
+    task_openapi = json.loads(json.dumps(OPENAPI))
+    get_order = task_openapi["paths"]["/orders/{orderId}"]["get"]
+    get_order["x-easydep-use-case-ids"] = ["UC_ORDER"]
+    get_order["x-easydep-scenario-step-refs"] = ["UC_ORDER:main:1"]
+    task_openapi["paths"]["/orders"]["post"][
+        "x-easydep-scenario-step-refs"
+    ] = ["UC_CREATE:main:1"]
+    get_order["parameters"][1]["schema"] = {
+        "$ref": "#/components/schemas/ExpandMode"
+    }
+    task_openapi["components"] = {
+        "schemas": {
+            "ExpandMode": {"type": "string", "enum": ["SUMMARY", "FULL"]}
+        }
+    }
+    openapi.write_text(json.dumps(task_openapi), encoding="utf-8")
     bce.write_text("class OrderScreen <<Boundary>> {}", encoding="utf-8")
     bce_model.write_text(
         json.dumps(
@@ -479,33 +514,56 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     assert phase_for_task(task.task_type) == "frontend"
     assert set(task.source_artifacts) == {"bceModel", "sequenceModel", "openapi"}
     assert "requirements" not in context
-    assert context["schemaVersion"] == "frontend-implementation-context/v1alpha2"
+    assert context["schemaVersion"] == "frontend-implementation-context/v1alpha3"
     assert context["designInputs"]["bceModel"].endswith("design-inputs/bceModel.json")
     assert context["designInputs"]["sequenceModel"].endswith("design-inputs/sequenceModel.json")
     assert context["designInputs"]["openapi"].endswith("design-inputs/openapi.json")
     assert context["clientIndexPath"] in context["readSourcePaths"]
     index = json.loads((run / context["clientIndexPath"]).read_text(encoding="utf-8"))
     operation = next(item for item in index["operations"] if item["operationId"] == "getOrder")
-    assert operation["page"] == "OrdersPage"
-    assert operation["sourceInventory"] == "generatedApiFiles"
+    assert index["schemaVersion"] == "frontend-client-index/v1alpha2"
+    assert index["fallbackSources"] == context["designInputs"]
+    assert "files" not in index and "generatedApiFiles" not in index
+    assert "page" not in operation and "sourceInventory" not in operation
+    assert operation["generatedClientResolved"] is True
     expected_api_path = (
         "application/frontend/src/generated/src/apis/DefaultApi.ts"
         if nested
         else "application/frontend/src/generated/apis/DefaultApi.ts"
     )
-    expected_api_import = (
-        "../generated/src/apis/DefaultApi"
-        if nested
-        else "../generated/apis/DefaultApi"
+    operation_context = json.loads(
+        (run / operation["contextPath"]).read_text(encoding="utf-8")
     )
-    assert index["generatedApiFiles"] == [
-        {"path": expected_api_path, "import": expected_api_import}
-    ]
-    assert any(
-        item["path"] == "application/frontend/src/generated/index.ts"
-        and item["import"] == "../generated/index"
-        for item in index["files"]
+    assert operation_context["generatedClient"] == {
+        "resolved": True,
+        "call": "apiCalls.getOrder()",
+        "requestType": None,
+        "responseType": "void",
+        "generatedMethodPath": expected_api_path,
+    }
+    assert operation_context["traceHints"] == {
+        "useCaseIds": ["UC_ORDER"],
+        "scenarioStepRefs": ["UC_ORDER:main:1"],
+    }
+    assert operation_context["referencedComponents"] == {
+        "#/components/schemas/ExpandMode": {
+            "type": "string",
+            "enum": ["SUMMARY", "FULL"],
+        }
+    }
+    assert operation_context["unresolvedComponentRefs"] == []
+    create_order = next(
+        item for item in index["operations"] if item["operationId"] == "createOrder"
     )
+    create_order_context = json.loads(
+        (run / create_order["contextPath"]).read_text(encoding="utf-8")
+    )
+    assert create_order_context["generatedClient"]["resolved"] is False
+    assert create_order_context["generatedClient"]["generatedMethodPath"] is None
+    assert create_order_context["traceHints"] == {
+        "useCaseIds": [],
+        "scenarioStepRefs": ["UC_CREATE:main:1"],
+    }
     assert "deployment" not in context
     assert "design-inputs/bceModel.json" not in prompt
     assert "boundaryProjection" not in context and "sequenceProjection" not in context
@@ -520,7 +578,12 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     assert "Typed BCE class model" not in prompt
     assert "OpenAPI contract" not in prompt
     assert "todo" in prompt.casefold() and "placeholder" in prompt.casefold()
-    assert "application/frontend/src/pages/OrdersPage.tsx" in task.allowed_write_paths
+    assert "Contracted pages" not in prompt
+    assert "application/frontend/src/pages/OrdersPage.tsx" not in task.required_output_paths
+    assert set(context["operationContextPaths"]) == {
+        item["contextPath"] for item in index["operations"]
+    }
+    assert set(context["operationContextPaths"]).issubset(context["readSourcePaths"])
     sandbox = prepare_agent_workspace(run, task.to_dict())
     try:
         assert all((sandbox / path).is_file() for path in context["readSourcePaths"])
@@ -528,6 +591,9 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
         assert (sandbox / expected_api_path).is_file()
         assert (sandbox / context["designInputs"]["openapi"]).read_text(encoding="utf-8") == (
             openapi.read_text(encoding="utf-8")
+        )
+        assert all(
+            (sandbox / path).is_file() for path in context["operationContextPaths"]
         )
     finally:
         cleanup_agent_workspace(sandbox)

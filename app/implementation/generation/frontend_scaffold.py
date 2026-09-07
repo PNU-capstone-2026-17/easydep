@@ -221,7 +221,11 @@ import './styles.css';
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><HashRouter><App /></HashRouter></React.StrictMode>);
 """,
         "src/config.ts": f"export const API_BASE_URL=(import.meta.env.VITE_API_BASE_URL??{base_url}).replace(/\\/$/,'');\n",
-        "src/App.tsx": f"export default function App(){{return <main><h1>{{{title}}}</h1><p>Waiting for the frontend implementation agent.</p></main>;}}\n",
+        "src/App.tsx": (
+            "// EASYDEP-IMPLEMENT: replace this shell with the accessible application UI.\n"
+            f"export default function App(){{return <main><h1>{{{title}}}</h1>"
+            "<p>Waiting for the frontend implementation agent.</p></main>;}\n"
+        ),
         "src/styles.css": "body{margin:0;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:#f4f7fb;color:#172033}*{box-sizing:border-box}\n@media (max-width:40rem){table{display:block;max-width:100%;overflow-x:auto}}\n",
         "README.md": f"""# {application_name.strip() or 'EasyDep Application'} frontend
 
@@ -230,19 +234,6 @@ components are owned by the EasyDep frontend implementation agent and verified w
 `npm run build`.
 """,
     }
-
-
-def frontend_page_names(api_spec: dict[str, Any]) -> list[str]:
-    tags: set[str] = set()
-    paths = api_spec.get("paths") if isinstance(api_spec, dict) else None
-    for path_item in (paths.values() if isinstance(paths, dict) else ()):
-        if not isinstance(path_item, dict):
-            continue
-        for method, operation in path_item.items():
-            if method not in HTTP_METHODS or not isinstance(operation, dict):
-                continue
-            tags.add(str((operation.get("tags") or ["Overview"])[0]))
-    return sorted({_component_name(tag) + "Page" for tag in tags})
 
 
 def operation_ids(api_spec: dict[str, Any]) -> list[str]:
@@ -254,8 +245,3 @@ def operation_ids(api_spec: dict[str, Any]) -> list[str]:
             if method in HTTP_METHODS and isinstance(operation, dict):
                 result.append(str(operation.get("operationId") or f"{method.upper()} {path}"))
     return sorted(result)
-
-
-def _component_name(value: str) -> str:
-    words = re.findall(r"[A-Za-z0-9]+", value)
-    return "".join(word[:1].upper() + word[1:] for word in words) or "Overview"

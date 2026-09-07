@@ -12,6 +12,15 @@ class FrontendContractBudgetExceeded(ValueError):
 
 
 @dataclass(frozen=True)
+class GeneratedClientOperation:
+    operation_id: str
+    class_name: str
+    request_type: str | None
+    response_type: str
+    source_path: Path
+
+
+@dataclass(frozen=True)
 class GeneratedClientContracts:
     generated_root: Path
     source_root: Path
@@ -85,12 +94,14 @@ class GeneratedClientContracts:
             )
         return chunks
 
-    def render_call_skeleton(self, operation_ids: list[str]) -> tuple[str, list[str]]:
-        """Render wrappers only for exact methods exported by the generated client."""
+    def resolve_operations(
+        self, operation_ids: list[str]
+    ) -> dict[str, GeneratedClientOperation]:
+        """Resolve exact generated methods without guessing from similar names."""
 
-        calls: list[tuple[str, str, str | None]] = []
+        resolved: dict[str, GeneratedClientOperation] = {}
         for operation_id in sorted(set(operation_ids)):
-            matches: list[tuple[str, str | None]] = []
+            matches: list[GeneratedClientOperation] = []
             for path in self.files:
                 if path.parent.name != "apis" or path.name == "index.ts":
                     continue
@@ -98,7 +109,7 @@ class GeneratedClientContracts:
                 class_match = re.search(r"\bexport class ([A-Za-z_][A-Za-z0-9_]*)\b", source)
                 signature = re.search(
                     rf"\basync\s+{re.escape(operation_id)}\(([^\r\n]*)\)"
-                    r"\s*:\s*Promise<[^\r\n]+>\s*\{",
+                    r"\s*:\s*Promise<([^\r\n]+)>\s*\{",
                     source,
                 )
                 if class_match is None or signature is None:
@@ -108,18 +119,34 @@ class GeneratedClientContracts:
                     r"requestParameters:\s*([A-Za-z_][A-Za-z0-9_]*)",
                     parameters,
                 )
+                request_type = request_match.group(1) if request_match else None
                 matches.append(
-                    (
-                        class_match.group(1),
-                        request_match.group(1) if request_match else None,
+                    GeneratedClientOperation(
+                        operation_id=operation_id,
+                        class_name=class_match.group(1),
+                        request_type=request_type,
+                        response_type=signature.group(2).strip(),
+                        source_path=path,
                     )
                 )
             if len(matches) == 1:
-                calls.append((operation_id, *matches[0]))
+                resolved[operation_id] = matches[0]
+        return resolved
+
+    def render_call_skeleton(
+        self,
+        operation_ids: list[str],
+        resolved: dict[str, GeneratedClientOperation] | None = None,
+    ) -> tuple[str, list[str]]:
+        """Render wrappers only for exact methods exported by the generated client."""
+
+        if resolved is None:
+            resolved = self.resolve_operations(operation_ids)
+        calls = [resolved[operation_id] for operation_id in sorted(resolved)]
 
         imports = {"Configuration"}
-        imports.update(class_name for _operation, class_name, _request in calls)
-        imports.update(request for _operation, _class, request in calls if request)
+        imports.update(call.class_name for call in calls)
+        imports.update(call.request_type for call in calls if call.request_type)
         relative_source = self.source_root.relative_to(self.generated_root).as_posix()
         generated_import = (
             "./generated"
@@ -133,7 +160,7 @@ class GeneratedClientContracts:
             "import { API_BASE_URL } from './config';",
             "",
         ]
-        class_names = sorted({class_name for _operation, class_name, _request in calls})
+        class_names = sorted({call.class_name for call in calls})
         for class_name in class_names:
             lines.append(
                 f"const {_client_name(class_name)} = new {class_name}("
@@ -141,7 +168,7 @@ class GeneratedClientContracts:
             )
         if class_names:
             lines.append("")
-        unresolved = sorted(set(operation_ids) - {item[0] for item in calls})
+        unresolved = sorted(set(operation_ids) - set(resolved))
         for operation_id in unresolved:
             lines.append(
                 "// EASYDEP-IMPLEMENT: inspect reports/implementation-tasks/"
@@ -151,16 +178,17 @@ class GeneratedClientContracts:
         if unresolved:
             lines.append("")
         lines.append("export const apiCalls = {")
-        for operation_id, class_name, request_type in calls:
-            invocation = f"{_client_name(class_name)}.{operation_id}"
-            if request_type:
+        for call in calls:
+            invocation = f"{_client_name(call.class_name)}.{call.operation_id}"
+            if call.request_type:
                 lines.append(
-                    f"  {operation_id}: (request: {request_type}) => {invocation}(request),"
+                    f"  {call.operation_id}: (request: {call.request_type}) => "
+                    f"{invocation}(request),"
                 )
             else:
-                lines.append(f"  {operation_id}: () => {invocation}(),")
+                lines.append(f"  {call.operation_id}: () => {invocation}(),")
         lines.append("};")
-        return "\n".join(lines) + "\n", [item[0] for item in calls]
+        return "\n".join(lines) + "\n", [call.operation_id for call in calls]
 
 
 def _discover_source_root(
