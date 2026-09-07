@@ -1362,6 +1362,41 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
         assert agent.condenser.max_size == 80
         assert agent.condenser.keep_first == 4
         assert agent.llm.usage_id == "implementation_agent"
+        assert set(conversation.llm_registry.list_usage_ids()) == {
+            "implementation_agent",
+            "implementation_condenser",
+        }
+        assert (
+            conversation.conversation_stats.usage_to_metrics["implementation_agent"]
+            is agent.llm.metrics
+        )
+        assert (
+            conversation.conversation_stats.usage_to_metrics["implementation_condenser"]
+            is agent.condenser.llm.metrics
+        )
+        agent.llm.metrics.add_token_usage(
+            prompt_tokens=101,
+            completion_tokens=23,
+            cache_read_tokens=17,
+            cache_write_tokens=5,
+            reasoning_tokens=11,
+            context_window=131072,
+            response_id="provider-response",
+        )
+        usage = conversation.conversation_stats.model_dump(
+            mode="json", context={"use_snapshot": True}
+        )["usage_to_metrics"]["implementation_agent"]["accumulated_token_usage"]
+        assert usage == {
+            "model": model,
+            "prompt_tokens": 101,
+            "completion_tokens": 23,
+            "cache_read_tokens": 17,
+            "cache_write_tokens": 5,
+            "reasoning_tokens": 11,
+            "context_window": 131072,
+            "per_turn_token": 124,
+            "response_id": "",
+        }
         # OpenHands의 공개 LLM 설정이 중앙 연결의 모델·URL·key를 그대로 사용한다.
         # OpenRouter 경로에는 NVIDIA 전용 extra body를 섞지 않는다.
         assert agent.llm.model == model

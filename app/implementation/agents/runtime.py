@@ -856,6 +856,35 @@ def _conversation_stats_snapshot(conversation: object | None) -> dict[str, objec
     return snapshot if isinstance(snapshot, dict) else None
 
 
+def _register_native_llm_usage(conversation: object, agent: object) -> None:
+    """Register EasyDep LLM subclasses with OpenHands' native metrics registry.
+
+    OpenHands SDK 1.36 only discovers objects whose concrete type is its base
+    ``LLM`` class. EasyDep's provider-error adapter subclasses that class, so
+    register the existing SDK LLMs explicitly instead of duplicating token
+    accounting outside OpenHands.
+    """
+
+    registry = getattr(conversation, "llm_registry", None)
+    stats = getattr(conversation, "conversation_stats", None)
+    subscribe = getattr(registry, "subscribe", None)
+    add = getattr(registry, "add", None)
+    list_usage_ids = getattr(registry, "list_usage_ids", None)
+    register_llm = getattr(stats, "register_llm", None)
+    if not all(callable(item) for item in (subscribe, add, list_usage_ids, register_llm)):
+        return
+
+    subscribe(register_llm)
+    registered = set(list_usage_ids())
+    condenser = getattr(agent, "condenser", None)
+    for llm in (getattr(agent, "llm", None), getattr(condenser, "llm", None)):
+        usage_id = getattr(llm, "usage_id", None)
+        if not isinstance(usage_id, str) or not usage_id or usage_id in registered:
+            continue
+        add(llm)
+        registered.add(usage_id)
+
+
 def _run_app_id(run_root: Path) -> str | None:
     """구현 실행에 저장된 변경되지 않는 앱 ID를 읽는다."""
 
@@ -1195,20 +1224,19 @@ def create_openhands_conversation(
             llm=llm.model_copy(update={"usage_id": "implementation_condenser"}),
         ),
     )
-    return (
-        Conversation(
-            agent=agent,
-            workspace=str(sandbox),
-            callbacks=callbacks,
-            max_iteration_per_run=max_iterations,
-            stuck_detection=True,
-            visualizer=None,
-            persistence_dir=persistence_dir,
-            conversation_id=conversation_id,
-            delete_on_close=False,
-        ),
-        agent,
+    conversation = Conversation(
+        agent=agent,
+        workspace=str(sandbox),
+        callbacks=callbacks,
+        max_iteration_per_run=max_iterations,
+        stuck_detection=True,
+        visualizer=None,
+        persistence_dir=persistence_dir,
+        conversation_id=conversation_id,
+        delete_on_close=False,
     )
+    _register_native_llm_usage(conversation, conversation.agent)
+    return conversation, conversation.agent
 
 
 def _path_is_immutable(path: str, immutable_paths: set[str]) -> bool:
