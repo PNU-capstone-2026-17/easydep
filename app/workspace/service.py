@@ -3287,10 +3287,7 @@ class WorkspaceService:
                     )
                     if not isinstance(path_value, str) or not path_value.strip():
                         continue
-                    if "file_editor" not in tool_name and tool_name not in {
-                        "restricted_file_editor",
-                        "file_editor",
-                    }:
+                    if "file_editor" not in tool_name:
                         continue
                     current_file = path_value.strip().replace("\\", "/")
                     application_marker = "/application/"

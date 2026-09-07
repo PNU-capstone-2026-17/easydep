@@ -47,21 +47,20 @@ Testing에서 돌아온 수리는 별도 검사 종류를 가진다. RTM 파일 
 코드부터 조사한다. 수정 뒤에는 보존된 Arazzo workflow와 입력을 `run_task_check`에서 다시
 실행한다. 통과하면 바깥 Testing 단계가 같은 checkpoint에서 나머지 workflow와 gate를 이어서
 검사한다. Terraform 같은 정적 수리도 원래 실패한 gate를 같은 작업에서 다시 확인한다.
-검사 실패 시 JUnit XML과 Gradle HTML 전체를 에이전트에게 열어 주지 않는다. 검증기가 대표
-실패와 가장 안쪽 원인을 먼저 추출해 ``run_task_check`` 결과로 돌려주며, 원본 보고서는 사람이
-실행 이력을 조사할 때만 사용한다. 이렇게 하면 에이전트가 수십만 자짜리 같은 보고서를 반복해
-읽지 않고 곧바로 관련 source를 고칠 수 있다.
-`grep`도 현재 작업 공간의 source만 검색하며 `build`, `.gradle`, `node_modules`, `dist`와
-다른 작업의 임시 폴더는 보지 못한다. 아직 만들지 않은 필수 출력 파일명을 검색하면 파일이
-없다는 사실을 반복해서 확인하는 대신, 그 파일을 생성하라는 짧은 안내를 반환한다.
+검증기는 대표 실패와 가장 안쪽 원인을 먼저 추출해 ``run_task_check`` 결과로 돌려준다. 원본
+JUnit XML, Gradle HTML과 runtime log도 실행 이력에 보존하므로 요약만으로 원인을 확정할 수 없을
+때 OpenHands가 필요한 부분을 추가로 조사할 수 있다. `grep`은 OpenHands의 표준 검색 의미를
+유지하고 현재 작업 공간 밖의 경로만 차단한다. 검색 도구가 누락 파일의 생성 여부나 다음 구현
+행동을 대신 판단하지 않는다.
 
-한 요청이 너무 오래 멈추지 않도록 요청 시간과 tool turn에는 안전 한도를 둘 수 있지만, 한
-run의 전체 repair 횟수에는 숫자 상한을 두지 않는다. NIM 연결이 끊기거나 한 대화의 안전
-한도에 도달했을 때만 현재 오류와 변경 파일을 짧게 요약해 같은 작업 공간에서 새 대화를
-이어 간다. OpenHands SDK의 반복 감지와 대화 요약도 함께 사용해 같은 조회·편집과 오래된 전체
-로그가 계속 쌓이지 않게 한다. compiler와 test가 파일을 알려 주면 그 기능 작업으로 돌아가고,
-서로 다른 기능의 파일이 실제로 함께 실패한 경우에만 wiring 작업이 그 파일들을 통합해 고친다.
-구현을 시작하면 계획된 작업과 수리는 사용자 승인 없이 같은 실행에서 이어진다.
+한 요청이 너무 오래 멈추지 않도록 tool turn에는 안전 한도를 둘 수 있지만, 한 run의 전체
+repair 횟수에는 숫자 상한을 두지 않는다. provider 전송 재시도, 반복 감지와 대화 요약은
+OpenHands SDK가 소유한다. EasyDep은 같은 오류에 대해 별도의 전송 재시도나 임의의 새 대화를
+겹쳐 만들지 않는다. 기존 history를 계속할 수 없다는 SDK의 명시적인 실패가 있을 때에만 현재
+workspace와 checkpoint를 보존한 재개를 검토한다. compiler와 test가 파일을 알려 주면 그 기능
+작업으로 돌아가고, 서로 다른 기능의 파일이 실제로 함께 실패한 경우에만 wiring 작업이 그
+파일들을 통합해 고친다. 구현을 시작하면 계획된 작업과 수리는 사용자 승인 없이 같은 실행에서
+이어진다.
 
 ## 작업별 소유 계약
 
@@ -74,28 +73,25 @@ run의 전체 repair 횟수에는 숫자 상한을 두지 않는다. NIM 연결�
 - frontend 작업은 API client, 화면과 사용자 흐름을 함께 구현한다.
 - Spring 설정은 생성기가 만들고, wiring 작업은 실제 연결 오류가 생겼을 때만 수리한다.
 
-생성된 BCE·Java·OpenAPI 공개 계약은 읽기 전용이다. 한 기능만 사용하는 package에서는
-OpenHands가 새 helper 파일도 만들 수 있다. 여러 작업이 같은 package를 공유하면 각 작업에
-기록된 파일만 수정해 병렬 실행 충돌을 막는다. Entity에는 기존 메서드를 보존하면서 생성자,
+생성된 BCE·Java·OpenAPI 공개 계약은 읽기 전용이다. OpenHands는 작업 sandbox의 구현 source
+root 안에서 관련 source를 조사하고 필요한 helper 파일도 만들 수 있다. RTM과 작업에 기록된
+파일은 우선 조사할 힌트이지 완전한 수정 allowlist가 아니다. 병렬 작업 충돌은 작업 계획의
+package 소유권과 승격 전 검증으로 막는다. Entity에는 기존 메서드를 보존하면서 생성자,
 persistence 변환과 내부 helper를 추가할 수 있다. 생성된 계약 자체의 변경이 필요하면 구현
 repair가 아니라 설계 입력을 다시 만든다.
 
-EasyDep은 목표, 관련 설계, 편집 범위, 사용할 도구와 완료 검사를 전달한다. source 조사,
-기능 코드 수정과 테스트 작성 중 무엇을 먼저 할지는 OpenHands가 현재 코드에 맞게 선택한다.
-수리할 때도 단일 기능은 그 기능이 소유한 관련 파일과 전용 package를 계속 사용할 수 있다.
-없애는 것은 `main/java` 전체 권한과 오류에 관계없는 다른 기능 수정이다.
+EasyDep은 목표, 관련 설계와 RTM 힌트, 불변 계약과 완료 검사를 전달한다. source 조사, 기능 코드
+수정과 테스트 작성 중 무엇을 먼저 할지는 OpenHands가 현재 코드에 맞게 선택한다. 파일 도구는
+OpenHands의 표준 이름과 schema를 유지하며 EasyDep은 sandbox와 불변 경로 경계만 덧붙인다.
 
 ## typed 설계와 runtime 입력
 
 구현 작업의 기준 입력은 `bceModel`, `sequenceModel`, `apiModel`, `erdBceModel`과
-`deploymentBundle`이다. 표시용 PlantUML과 OpenAPI는 화면·다운로드와 외부 코드 생성기에만
-사용하며 구현 계획이 다시 정규식으로 읽지 않는다. 작업 context의
-`sequence[]`는 유스케이스(`use_case_id`), `Participants`, `Messages`를 묶어
-전달하며, 각 message의 `arguments`, `call_id`, `reply_to`, `fragments`를 그대로 보존한다.
-따라서 Control·Boundary·API·Frontend가 같은 호출 인자와 호출/반환 연결을 읽는다.
-각 유스케이스 작업에는 ERD의 table·column·relation 지도도 함께 제공한다. 하나의 Entity
-operation이 여러 Repository를 조합해야 할 때 에이전트는 이 지도에서 후보를 고르고, 필요한
-Java 선언만 조회한다.
+`deploymentBundle`이다. 표시용 PlantUML을 다시 정규식으로 해석하지 않는다. 큰 typed model,
+OpenAPI와 생성 계약 본문을 매 prompt에 복제하지 않고 frozen artifact와 작은 source/symbol
+index를 작업 sandbox에 둔다. 최초 task brief에는 관련 requirement·use-case·operation ID,
+element ref와 우선 볼 경로만 포함하며, OpenHands가 정확한 원본에서 필요한 선언을 읽는다.
+source index의 `hintsOnly` 표시는 그 목록이 접근 제한이 아님을 뜻한다.
 
 배포 실행 정보는 필요한 작업에만 `deployment`로 투영한다. 투영에는 `workloads[].id`,
 `interfaces`, `configuration`, `storage`와 연결된 `connections`만 들어가며, 전체 CSP 계획이나

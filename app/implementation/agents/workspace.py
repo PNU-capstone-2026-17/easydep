@@ -81,12 +81,14 @@ def prepare_agent_workspace(
 ) -> Path:
     """작업별 임시 공간을 만들고 현재 run source와 맞춘다.
 
-    한 대화 안에서는 OpenHands가 자유롭게 여러 번 수정한다. 프로세스가 끝난 뒤 시작하는
-    자동 수리는 ``preserve_failed_edits=False``를 사용해 실패한 후보를 버리고, 마지막으로
-    검사를 통과해 run에 반영된 source에서 새로 시작한다. build와 package cache는 복사하지
-    않는다.
+    한 대화 안에서는 OpenHands가 자유롭게 여러 번 수정한다. 실패한 작업을 재개할 때에는
+    기본적으로 sandbox의 편집 내용을 보존하고, 정식 run source의 변경 사항과 불변 계약만
+    다시 동기화한다. build와 package cache는 복사하지 않는다.
     """
-    run_key = run_root.name.removeprefix("run_")[:12]
+    # Real runs normally have UUID-like names, but tests and imported runs may reuse a
+    # short directory name such as ``run``. Include the absolute root in the key so two
+    # unrelated runs never inherit one another's failed candidate workspace.
+    run_key = hashlib.sha256(str(run_root.resolve()).encode("utf-8")).hexdigest()[:12]
     task_key = str(task["task_id"]).removeprefix("implement-")
     # 작업 ID는 보고서에서 읽기 쉬운 전체 이름을 유지한다. 다만 Windows 임시 경로에 같은
     # 이름을 그대로 붙이면 persistence처럼 여러 Entity를 묶은 작업이 260자 제한에 닿는다.

@@ -205,29 +205,31 @@ def apply_repair_directives(run_root: Path) -> None:
             history = plan_history
             if execution_history:
                 history += "\n\n### Previous changes and verification results\n\n" + execution_history
-            editable = "\n".join(
+            source_hints = "\n".join(
                 f"- `{path}`" for path in current.get("repairPaths", [])
-            ) or "- Existing editable files from the task definition"
+            ) or "- Start with the source paths from the task definition"
             immutable = "\n".join(
                 f"- `{path}`" for path in task.get("immutable_paths", [])
             ) or "- None"
             repair_prompt = (
                 f"# {REPAIR_PROMPT_HEADING.removeprefix('## ')}\n\n"
-                "Resolve the technical failure below. Within the assigned files, choose the "
+                "Resolve the technical failure below. Choose the "
                 "implementation, tests, and edit order autonomously. Do not change unrelated "
                 "features or generated public contracts. Read needed source with the file editor.\n\n"
                 "Run `run_task_check` once first to reproduce the failure against the current "
                 "source. The history below may describe source that has already changed; do not "
                 "waste time searching for names absent from the current check and files.\n\n"
                 f"## Current approach\n\n{current.get('strategy', 'focused-fix')}\n\n"
-                f"## Editable files\n\n{editable}\n\n"
+                "## Starting source hints\n\n"
+                f"{source_hints}\n\n"
+                "These paths come from failure evidence and traceability. They are investigation "
+                "hints, not an exhaustive list of relevant source.\n\n"
                 f"## Read-only public contracts\n\n{immutable}\n\n"
                 f"## Previous failed approaches\n\n{history}\n\n"
                 "## Current failure\n\n```text\n"
                 f"{current.get('evidence', '')}\n```\n\n"
                 "After editing, run `run_task_check`. If it fails, inspect the cause and continue "
-                "repairing in this conversation. If the same source produces the same failure, "
-                "EasyDep will start a fresh conversation from the last accepted source.\n"
+                "repairing in this conversation.\n"
             )
             repair_prompt_path.write_text(repair_prompt, encoding="utf-8")
             task["repair_prompt_file"] = str(
@@ -366,7 +368,7 @@ def _source_digest(run_root: Path, paths: list[str]) -> str:
 
 
 def _repair_strategy(repeated_count: int) -> str:
-    """같은 기준 source에서도 바로 전과 다른 방식으로 새 대화를 시작한다."""
+    """같은 실패가 반복되면 이전 증거와 다른 진단 관점을 제안한다."""
     strategies = (
         "Edit the files named by the failure using the verification result",
         "Reproduce the failure, trace the call path, diagnose the cause, and then edit",
@@ -383,7 +385,7 @@ def _repair_strategy(repeated_count: int) -> str:
             f"State new diagnostic hypothesis {repeated_count - len(strategies) + 1}, "
             "verify evidence not covered by prior changes, and then edit"
         )
-    return f"{strategy} (fresh conversation {repeated_count + 1})"
+    return strategy
 
 
 def _recent_execution_history(run_root: Path, task_id: str) -> str:

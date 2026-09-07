@@ -9,7 +9,6 @@ import pytest
 
 from app.design.services.erd.mapping import build_logical_model
 from app.implementation.agents import execute_openhands_task
-from app.implementation.agents.provider import retryable_tool_protocol_error
 from app.implementation.agents.runtime import (
     create_openhands_conversation,
     validate_openhands_adapter,
@@ -55,6 +54,13 @@ from tests.class_design_fixtures import (
     typed_class_model_payload,
     typed_sequence_model_payload,
 )
+
+
+class _FakeConversationStats:
+    def model_dump(self, *, mode: str, context: dict[str, object]) -> dict[str, object]:
+        assert mode == "json"
+        assert context == {"use_snapshot": True}
+        return {"usage": {"promptTokens": 21, "completionTokens": 8}}
 
 
 def test_final_workspace_verification_publishes_success_report(
@@ -479,22 +485,7 @@ def test_validate_openhands_adapter_uses_the_central_connection(
         cleanup_agent_workspace(Path(str(result["workspace"])))
 
 
-def test_only_tool_protocol_bad_requests_are_retryable() -> None:
-    rejected_tool_call = RuntimeError(
-        "BadRequestError: Tool call validation failed: attempted to call tool "
-        "'made_up_tool' which was not in request.tools"
-    )
-
-    assert retryable_tool_protocol_error(rejected_tool_call) is True
-    assert (
-        retryable_tool_protocol_error(
-            RuntimeError("BadRequestError: Error code 400: invalid request body")
-        )
-        is False
-    )
-
-
-def test_invalid_tool_call_restarts_conversation_and_recovers_automatically(
+def test_runner_does_not_duplicate_openhands_provider_retries(
     tmp_path: Path,
 ) -> None:
     run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
@@ -561,21 +552,28 @@ def test_invalid_tool_call_restarts_conversation_and_recovers_automatically(
             "app.implementation.agents.runtime.verify_agent_workspace",
             return_value={"command": ["gradlew", "compileJava"], "exitCode": 0},
         ),
+        pytest.raises(RuntimeError, match="made_up_tool"),
     ):
-        result = execute_openhands_task(run, task_id)
+        execute_openhands_task(run, task_id)
 
-    assert result["status"] == "SUCCEEDED"
-    assert len(created) == 2
-    assert [item.run_count for item in created] == [1, 1]
-    assert [item.close_count for item in created] == [1, 1]
-    assert "Tool protocol retry" in created[1].messages[0]
-    assert "recovered" in source.read_text(encoding="utf-8")
+    assert len(created) == 1
+    assert created[0].run_count == 1
+    assert created[0].close_count == 1
+    assert len(created[0].messages) == 1
+    assert not source.exists()
+    failure = json.loads(
+        (run / f"reports/agent-executions/{task_id}.result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure["status"] == "FAILED"
+    assert failure["conversationStats"] is None
 
 
-def test_verification_failure_continues_the_same_openhands_conversation(
+def test_failed_verification_is_not_promoted_and_keeps_the_sandbox(
     tmp_path: Path,
 ) -> None:
-    """일반적인 focused 검사 실패는 현재 대화에서 바로 고친다."""
+    """A failed final guard keeps the accepted source and resumable sandbox separate."""
     run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
 
     class FakeConversation:
@@ -584,15 +582,16 @@ def test_verification_failure_continues_the_same_openhands_conversation(
             self.messages: list[str] = []
             self.run_count = 0
             self.close_count = 0
+            self.conversation_stats = _FakeConversationStats()
 
         def send_message(self, message: str) -> None:
             self.messages.append(message)
 
         def run(self) -> None:
             self.run_count += 1
-            if self.run_count == 2:
+            if self.run_count == 1:
                 (self.sandbox / source_path).write_text(
-                    "class OrderService { int repaired; }",
+                    "class OrderService { int brokenCandidate; }",
                     encoding="utf-8",
                 )
 
@@ -639,24 +638,34 @@ def test_verification_failure_continues_the_same_openhands_conversation(
         ) as create,
         patch(
             "app.implementation.agents.runtime.verify_agent_workspace",
-            side_effect=[
-                failure,
-                {"command": ["gradlew", "compileJava"], "exitCode": 0},
-            ],
+            side_effect=failure,
         ),
+        pytest.raises(WorkspaceVerificationError),
     ):
-        result = execute_openhands_task(run, task_id)
+        execute_openhands_task(run, task_id)
 
-    assert result["status"] == "SUCCEEDED"
     assert create.call_count == 1
-    assert len(created[0].messages) == 2
-    assert created[0].run_count == 2
+    assert len(created[0].messages) == 1
+    assert created[0].run_count == 1
     assert created[0].close_count == 1
-    assert "int repaired" in source.read_text(encoding="utf-8")
+    assert source.read_text(encoding="utf-8") == "class OrderService {}"
+    assert "brokenCandidate" in (created[0].sandbox / source_path).read_text(
+        encoding="utf-8"
+    )
+    failure_result = json.loads(
+        (run / f"reports/agent-executions/{task_id}.result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure_result["status"] == "FAILED"
+    assert failure_result["verificationEvidence"]["exitCode"] == 1
+    assert failure_result["conversationStats"] == {
+        "usage": {"promptTokens": 21, "completionTokens": 8}
+    }
 
 
-def test_testing_repair_cannot_complete_without_a_source_change(tmp_path: Path) -> None:
-    """기존 compile 성공만으로 Testing 수리를 완료하지 못하게 한다."""
+def test_testing_repair_uses_one_openhands_run(tmp_path: Path) -> None:
+    """EasyDep does not add a second repair loop around OpenHands."""
 
     run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
     task_path = run / "reports/implementation-tasks/order.task.json"
@@ -669,6 +678,7 @@ def test_testing_repair_cannot_complete_without_a_source_change(tmp_path: Path) 
             self.sandbox = sandbox
             self.messages: list[str] = []
             self.run_count = 0
+            self.conversation_stats = _FakeConversationStats()
 
         def send_message(self, message: str) -> None:
             self.messages.append(message)
@@ -724,16 +734,108 @@ def test_testing_repair_cannot_complete_without_a_source_change(tmp_path: Path) 
 
     assert result["status"] == "SUCCEEDED"
     assert conversation is not None
-    assert conversation.run_count == 2
-    assert "made no source change" in conversation.messages[1]
+    assert conversation.run_count == 1
+    assert len(conversation.messages) == 1
     verify.assert_called_once()
-    assert "repairedRuntimePath" in source.read_text(encoding="utf-8")
+    assert source.read_text(encoding="utf-8") == "class OrderService {}"
+    assert result["conversationStats"] == {
+        "usage": {"promptTokens": 21, "completionTokens": 8}
+    }
 
 
-def test_exhausted_openhands_conversation_restarts_with_the_same_workspace(
+def test_successful_retry_promotes_changes_preserved_from_failed_sandbox(
     tmp_path: Path,
 ) -> None:
-    """iteration 한도에 닿은 대화는 닫고 짧은 수리 대화를 새로 연다."""
+    """A later successful check promotes unchanged edits retained from the failed attempt."""
+    run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    source_root = Path(source_path).parent.as_posix()
+    task["allowed_write_roots"] = [source_root]
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    helper_path = f"{source_root}/OptionalHelper.java"
+
+    class FakeConversation:
+        def __init__(self, sandbox: Path, attempt: int) -> None:
+            self.sandbox = sandbox
+            self.attempt = attempt
+
+        def send_message(self, _message: str) -> None:
+            pass
+
+        def run(self) -> None:
+            if self.attempt == 1:
+                (self.sandbox / source_path).write_text(
+                    "class OrderService { OptionalHelper helper; }",
+                    encoding="utf-8",
+                )
+                (self.sandbox / helper_path).write_text(
+                    "class OptionalHelper {}",
+                    encoding="utf-8",
+                )
+
+        def close(self) -> None:
+            pass
+
+    created: list[FakeConversation] = []
+
+    def create_conversation(sandbox: Path, *_args, **_kwargs):
+        conversation = FakeConversation(sandbox, len(created) + 1)
+        created.append(conversation)
+        return conversation, SimpleNamespace(_tools={})
+
+    failed_check = WorkspaceVerificationError(
+        {"command": ["gradlew", "test"], "exitCode": 1, "stderr": "first attempt"}
+    )
+    with (
+        patch(
+            "app.implementation.agents.runtime.openhands_compatibility",
+            return_value={
+                "pythonCompatible": True,
+                "sdkInstalled": True,
+                "toolsInstalled": True,
+                "apiKeyConfigured": True,
+            },
+        ),
+        patch(
+            "app.implementation.agents.runtime.openhands_connection",
+            return_value=SimpleNamespace(
+                api_key="approved-key",
+                provider="openrouter",
+                model="openai/gpt-4o-mini",
+                display_name=lambda: "OpenRouter",
+                litellm_model=lambda: "openrouter/openai/gpt-4o-mini",
+            ),
+        ),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            side_effect=create_conversation,
+        ),
+        patch(
+            "app.implementation.agents.runtime.verify_agent_workspace",
+            side_effect=[
+                failed_check,
+                {"command": ["gradlew", "test"], "exitCode": 0},
+            ],
+        ),
+    ):
+        with pytest.raises(WorkspaceVerificationError):
+            execute_openhands_task(run, task_id)
+        assert source.read_text(encoding="utf-8") == "class OrderService {}"
+        result = execute_openhands_task(run, task_id)
+
+    assert result["status"] == "SUCCEEDED"
+    assert source.read_text(encoding="utf-8") == (
+        "class OrderService { OptionalHelper helper; }"
+    )
+    assert (run / helper_path).read_text(encoding="utf-8") == "class OptionalHelper {}"
+    assert {source_path, helper_path} <= set(result["changedFiles"])
+
+
+def test_terminal_openhands_failure_is_persisted_without_a_fresh_conversation(
+    tmp_path: Path,
+) -> None:
+    """OpenHands terminal state is checkpointed without an EasyDep restart heuristic."""
     run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
 
     class FakeConversation:
@@ -808,16 +910,27 @@ def test_exhausted_openhands_conversation_restarts_with_the_same_workspace(
                 failure,
                 {"command": ["gradlew", "compileJava"], "exitCode": 0},
             ],
-        ),
+        ) as verify,
+        pytest.raises(WorkspaceVerificationError, match="did not finish"),
     ):
-        result = execute_openhands_task(run, task_id)
+        execute_openhands_task(run, task_id)
 
-    assert result["status"] == "SUCCEEDED"
-    assert len(created) == 2
-    assert [item.run_count for item in created] == [1, 1]
-    assert [item.close_count for item in created] == [1, 1]
-    assert "cannot find symbol" in created[1].messages[0]
-    assert "repairedInFreshContext" in source.read_text(encoding="utf-8")
+    assert len(created) == 1
+    assert created[0].run_count == 1
+    assert created[0].close_count == 1
+    assert len(created[0].messages) == 1
+    verify.assert_not_called()
+    assert source.read_text(encoding="utf-8") == "class OrderService {}"
+    failure_result = json.loads(
+        (run / f"reports/agent-executions/{task_id}.result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert failure_result["status"] == "FAILED"
+    assert failure_result["verificationEvidence"]["command"] == [
+        "openhands",
+        "conversation",
+    ]
 
 
 def test_openhands_conversation_enables_stuck_detection_and_condensation(
@@ -826,7 +939,6 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
     """공식 SDK의 반복 감지와 context condenser를 기본 실행에 연결한다."""
     source = tmp_path / "OrderService.java"
     source.write_text("class OrderService {}", encoding="utf-8")
-    missing_source = tmp_path / "RequiredService.java"
     llm = {
         "temperature": 0.2,
         "maxOutputTokens": 1024,
@@ -840,9 +952,11 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
         litellm_provider="openrouter",
     )
     model = connection.litellm_model()
+    from openhands.sdk.llm.utils.model_features import SEND_REASONING_CONTENT_MODELS
+
+    reasoning_models_before = tuple(SEND_REASONING_CONTENT_MODELS)
     conversation, agent = create_openhands_conversation(
         tmp_path,
-        [str(source.resolve()), str(missing_source.resolve())],
         connection,
         llm,
     )
@@ -850,15 +964,18 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
         conversation.send_message("Initialize tools without running the model.")
         assert conversation.stuck_detector is not None
         assert agent.condenser.__class__.__name__ == "LLMSummarizingCondenser"
+        assert agent.condenser.max_size == 80
+        assert agent.condenser.keep_first == 4
+        assert agent.llm.usage_id == "implementation_agent"
         # OpenHands의 공개 LLM 설정이 중앙 연결의 모델·URL·key를 그대로 사용한다.
         # OpenRouter 경로에는 NVIDIA 전용 extra body를 섞지 않는다.
         assert agent.llm.model == model
         assert agent.llm.base_url == "https://openrouter.ai/api/v1"
         assert agent.llm.api_key.get_secret_value() == "approved-key"
         assert agent.llm.litellm_extra_body == {}
-        from openhands.sdk.llm.utils.model_features import get_features
-
-        assert get_features(model).send_reasoning_content is True
+        assert tuple(SEND_REASONING_CONTENT_MODELS) == reasoning_models_before
+        assert "file_editor" in agent._tools
+        assert "restricted_file_editor" not in agent._tools
         assert "grep" in agent._tools
         from openhands.tools.grep import GrepAction
 
@@ -872,14 +989,13 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
         missing_observation = agent._tools["grep"].executor(
             GrepAction(pattern="RequiredService", path=str(tmp_path.resolve()))
         )
-        assert missing_observation.is_error is True
-        assert "contracted output" in missing_observation.text
+        assert "contracted output" not in missing_observation.text
     finally:
         conversation.close()
 
 
-def test_restricted_editor_reads_utf8_korean_source_as_text(tmp_path: Path) -> None:
-    """한글 주석이 많은 Java source를 binary로 오인하지 않는다."""
+def test_canonical_editor_uses_standard_action_schema(tmp_path: Path) -> None:
+    """The model sees OpenHands' standard file_editor schema, not aliases."""
     source = tmp_path / "Offering.java"
     source.write_text(
         "// 수강 편성 정보를 나타내는 엔티티다.\nclass Offering {}\n",
@@ -891,7 +1007,6 @@ def test_restricted_editor_reads_utf8_korean_source_as_text(tmp_path: Path) -> N
     }
     conversation, agent = create_openhands_conversation(
         tmp_path,
-        [str(source.resolve())],
         LlmConnection(
             provider="openrouter",
             api_key="validation-only-key",
@@ -905,22 +1020,103 @@ def test_restricted_editor_reads_utf8_korean_source_as_text(tmp_path: Path) -> N
         from openhands.tools.file_editor import FileEditorAction
 
         conversation.send_message("Initialize tools without running the model.")
-        observation = agent._tools["restricted_file_editor"].executor(
+        assert "file_editor" in agent._tools
+        assert "restricted_file_editor" not in agent._tools
+        observation = agent._tools["file_editor"].executor(
             FileEditorAction(command="view", path=str(source.resolve()))
         )
-        relative_observation = agent._tools["restricted_file_editor"].executor(
-            FileEditorAction(command="view", path="Offering.java")
-        )
+        with pytest.raises(Exception):
+            agent._tools["file_editor"].action_type.model_validate(
+                {"command": "view", "file_path": str(source.resolve())}
+            )
     finally:
         conversation.close()
 
     assert observation.is_error is False
     assert "수강 편성 정보" in str(observation)
-    assert relative_observation.is_error is False
 
 
-def test_restricted_editor_rejects_generated_build_reports(tmp_path: Path) -> None:
-    """코딩 에이전트가 큰 Gradle 보고서를 문맥에 다시 싣지 못하게 한다."""
+def test_canonical_editor_applies_only_workspace_and_contract_guards(
+    tmp_path: Path,
+) -> None:
+    """Unlisted source stays editable while workspace escape and contracts stay blocked."""
+    source_root = tmp_path / "application/src/main/java/example"
+    generated = source_root / "generated"
+    generated.mkdir(parents=True)
+    immutable = generated / "OrdersApi.java"
+    immutable.write_text("interface OrdersApi {}", encoding="utf-8")
+    exact_file = tmp_path / "application/src/test/java/example/ScenarioTest.java"
+    exact_file.parent.mkdir(parents=True)
+    connection = LlmConnection(
+        provider="openrouter",
+        api_key="validation-only-key",
+        base_url="https://openrouter.ai/api/v1",
+        model="openai/gpt-oss-20b",
+        litellm_provider="openrouter",
+    )
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        connection,
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        editable_files=[str(exact_file.resolve())],
+        editable_roots=[str(source_root.resolve())],
+        immutable_paths=[str(generated.resolve())],
+    )
+    try:
+        from openhands.tools.file_editor import FileEditorAction
+
+        conversation.send_message("Initialize tools without running the model.")
+        editor = agent._tools["file_editor"].executor
+        related = source_root / "RelatedService.java"
+        created = editor(
+            FileEditorAction(
+                command="create",
+                path=str(related.resolve()),
+                file_text="class RelatedService {}",
+            )
+        )
+        created_exact = editor(
+            FileEditorAction(
+                command="create",
+                path=str(exact_file.resolve()),
+                file_text="class ScenarioTest {}",
+            )
+        )
+        blocked_sibling = editor(
+            FileEditorAction(
+                command="create",
+                path=str((exact_file.parent / "SiblingTest.java").resolve()),
+                file_text="class SiblingTest {}",
+            )
+        )
+        blocked_contract = editor(
+            FileEditorAction(
+                command="str_replace",
+                path=str(immutable.resolve()),
+                old_str="interface OrdersApi {}",
+                new_str="interface OrdersApi { void changed(); }",
+            )
+        )
+        outside = tmp_path.parent / "outside.java"
+        outside.write_text("class Outside {}", encoding="utf-8")
+        blocked_escape = editor(
+            FileEditorAction(command="view", path=str(outside.resolve()))
+        )
+    finally:
+        conversation.close()
+
+    assert created.is_error is False
+    assert related.is_file()
+    assert created_exact.is_error is False
+    assert exact_file.is_file()
+    assert blocked_sibling.is_error is True
+    assert blocked_contract.is_error is True
+    assert immutable.read_text(encoding="utf-8") == "interface OrdersApi {}"
+    assert blocked_escape.is_error is True
+
+
+def test_canonical_editor_has_no_build_directory_heuristic(tmp_path: Path) -> None:
+    """The adapter does not add content-selection heuristics to OpenHands tools."""
     report = tmp_path / "application/build/reports/problems/problems-report.html"
     report.parent.mkdir(parents=True)
     report.write_text("x" * 100_000, encoding="utf-8")
@@ -933,7 +1129,6 @@ def test_restricted_editor_rejects_generated_build_reports(tmp_path: Path) -> No
     }
     conversation, agent = create_openhands_conversation(
         tmp_path,
-        [str(source.resolve())],
         LlmConnection(
             provider="openrouter",
             api_key="validation-only-key",
@@ -947,15 +1142,13 @@ def test_restricted_editor_rejects_generated_build_reports(tmp_path: Path) -> No
         from openhands.tools.file_editor import FileEditorAction
 
         conversation.send_message("Initialize tools without running the model.")
-        observation = agent._tools["restricted_file_editor"].executor(
+        observation = agent._tools["file_editor"].executor(
             FileEditorAction(command="view", path=str(report.resolve()))
         )
     finally:
         conversation.close()
 
-    assert observation.is_error is True
-    assert "run_task_check" in str(observation)
-    assert "x" * 100 not in str(observation)
+    assert "run_task_check" not in str(observation)
 
 
 def test_completion_audit_rejects_an_unfinished_controller_body(
@@ -1411,6 +1604,17 @@ class Order <<Entity>> { - id: UUID }
     assert use_cases[0]["allowed_write_roots"]
     assert all("application/src/main/java" not in task["allowed_write_roots"] for task in use_cases)
     uc1_task = next(task for task in use_cases if task["use_case_ids"] == ["UC1"])
+    uc1_context = json.loads((run / uc1_task["context_file"]).read_text(encoding="utf-8"))
+    uc1_index = json.loads(
+        (run / uc1_context["sourceIndexPath"]).read_text(encoding="utf-8")
+    )
+    assert uc1_index["hintsOnly"] is True
+    assert uc1_index["startingSourcePaths"]
+    assert uc1_context["sourceIndexPath"] in uc1_context["readSourcePaths"]
+    assert all(
+        path not in uc1_context["readSourcePaths"]
+        for path in uc1_index["startingSourcePaths"]
+    )
     assert {"api:placeOrder", "operation:stale-control-id"} <= set(uc1_task["source_refs"])
     uc1_prompt = (run / uc1_task["prompt_file"]).read_text(encoding="utf-8")
     assert "The customer can place an order." in uc1_prompt

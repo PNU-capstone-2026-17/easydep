@@ -68,8 +68,6 @@ class Settings(BaseSettings):
 
     # OpenHands / Implementation Provider Settings
     openhands_max_output_tokens: int | None = None
-    openhands_provider_retry_base_seconds: float = 1.0
-    openhands_provider_retry_max_seconds: float = 30.0
 
     # Database Settings
     db_host: str = "127.0.0.1"

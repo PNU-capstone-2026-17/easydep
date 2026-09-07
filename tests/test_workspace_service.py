@@ -2331,7 +2331,7 @@ def test_implementation_progress_snapshot_reads_live_workflow_and_current_file(
     journal_path.write_text(
         json.dumps(
             {
-                "tool": "restricted_file_editor",
+                "tool": "file_editor",
                 "event": {
                     "action": {
                         "path": str(

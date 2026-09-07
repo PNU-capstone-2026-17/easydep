@@ -16,7 +16,11 @@ from app.implementation.agents.verification.frontend import (
     run_frontend_verification,
     store_frontend_build,
 )
-from app.implementation.agents.workspace import snapshot_files
+from app.implementation.agents.workspace import (
+    cleanup_agent_workspace,
+    prepare_agent_workspace,
+    snapshot_files,
+)
 from app.implementation.application.jobs import ImplementationWorker
 from app.implementation.config import ImplementationSettings
 from app.implementation.domain.models import CommandEvidence
@@ -356,8 +360,10 @@ def test_backend_openapi_generation_uses_a_pinned_docker_image(tmp_path: Path) -
     }
 
 
+@pytest.mark.parametrize("nested", [False, True], ids=["flat", "nested"])
 def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     tmp_path: Path,
+    nested: bool,
 ) -> None:
     from app.implementation.domain.models import JobSpec
     from app.implementation.workflows.coordinator import phase_for_task
@@ -403,10 +409,15 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
         ],
     }]}), encoding="utf-8")
     run = tmp_path / "run"
-    generated = run / "application/frontend/src/generated/apis"
+    generated_root = run / "application/frontend/src/generated"
+    generated = generated_root / ("src/apis" if nested else "apis")
     generated.mkdir(parents=True)
     (generated / "DefaultApi.ts").write_text(
         "export class DefaultApi { getOrder(): Promise<void> { return Promise.resolve(); } }",
+        encoding="utf-8",
+    )
+    (generated_root / "index.ts").write_text(
+        "export * from './apis/DefaultApi';\n",
         encoding="utf-8",
     )
     spec = JobSpec(
@@ -437,28 +448,54 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
 
     assert task.task_type == "frontend-implementation"
     assert phase_for_task(task.task_type) == "frontend"
-    assert set(task.source_artifacts) == {
-        "bceModel",
-        "sequenceModel",
-        "openapi",
-        "generatedClientContracts",
-    }
+    assert set(task.source_artifacts) == {"bceModel", "sequenceModel", "openapi"}
     assert "requirements" not in context
-    diagram = next(
-        item for item in context["sequence"]
-        if item.get("use_case_id") == "UC_ORDER"
+    assert context["schemaVersion"] == "frontend-implementation-context/v1alpha2"
+    assert context["designInputs"]["bceModel"].endswith("design-inputs/bceModel.json")
+    assert context["designInputs"]["sequenceModel"].endswith("design-inputs/sequenceModel.json")
+    assert context["designInputs"]["openapi"].endswith("design-inputs/openapi.json")
+    assert context["clientIndexPath"] in context["readSourcePaths"]
+    index = json.loads((run / context["clientIndexPath"]).read_text(encoding="utf-8"))
+    operation = next(item for item in index["operations"] if item["operationId"] == "getOrder")
+    assert operation["page"] == "OrdersPage"
+    assert operation["sourceInventory"] == "generatedApiFiles"
+    expected_api_path = (
+        "application/frontend/src/generated/src/apis/DefaultApi.ts"
+        if nested
+        else "application/frontend/src/generated/apis/DefaultApi.ts"
     )
-    messages = diagram["Messages"]
-    assert any(message.get("arguments") for message in messages)
-    assert any(message.get("reply_to") for message in messages)
-    assert any(message.get("fragments") for message in messages)
+    expected_api_import = (
+        "../generated/src/apis/DefaultApi"
+        if nested
+        else "../generated/apis/DefaultApi"
+    )
+    assert index["generatedApiFiles"] == [
+        {"path": expected_api_path, "import": expected_api_import}
+    ]
+    assert any(
+        item["path"] == "application/frontend/src/generated/index.ts"
+        and item["import"] == "../generated/index"
+        for item in index["files"]
+    )
     assert "deployment" not in context
-    assert "OrderScreen" in prompt and "getOrder" in prompt
+    assert "design-inputs/bceModel.json" in prompt and "getOrder" in prompt
     assert "src/generated" in prompt
-    assert context["generatedImportRoot"] == "src/generated"
-    assert "../generated/apis" in prompt
+    assert context["generatedImportRoot"] == ("src/generated/src" if nested else "src/generated")
+    assert "Exact OpenAPI Generator TypeScript contracts" not in prompt
+    assert "Typed BCE class model" not in prompt
+    assert "OpenAPI contract" not in prompt
     assert "TODO" in prompt and "PLACEHOLDER" in prompt
     assert "application/frontend/src/pages/OrdersPage.tsx" in task.allowed_write_paths
+    sandbox = prepare_agent_workspace(run, task.to_dict())
+    try:
+        assert all((sandbox / path).is_file() for path in context["readSourcePaths"])
+        assert expected_api_path not in context["readSourcePaths"]
+        assert (sandbox / expected_api_path).is_file()
+        assert (sandbox / context["designInputs"]["openapi"]).read_text(encoding="utf-8") == (
+            openapi.read_text(encoding="utf-8")
+        )
+    finally:
+        cleanup_agent_workspace(sandbox)
 
 
 def test_frontend_contract_rejects_direct_http_and_requires_generated_client(

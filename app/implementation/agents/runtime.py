@@ -13,27 +13,14 @@ from typing import Any
 
 from app.config import settings
 from app.llm_connection import LlmConnection
-from app.llm_profiles import canonical_model_id, profile_for
+from app.llm_profiles import profile_for
 from app.metrics import langsmith as langsmith_metrics
-from app.validation import RepairAttempt, RepairLedger, stable_digest
 
-from ..workflows.conformance import entity_public_signature_violations
 from ..workflows.repair import active_repair_for_task
-from .prompts import (
-    FRONTEND_SYSTEM_PROMPT,
-    IMPLEMENTATION_SYSTEM_PROMPT,
-    render_frontend_verification_feedback,
-    render_verification_feedback,
-)
 from .provider import (
-    MAX_PROVIDER_RETRIES,
-    MAX_TOOL_PROTOCOL_RETRIES,
     configured_max_output_tokens,
     openhands_compatibility,
     openhands_connection,
-    provider_retry_delay,
-    retryable_tool_protocol_error,
-    transient_provider_error,
 )
 from .task_check import (
     TASK_CHECK_TOOL_NAME,
@@ -42,7 +29,6 @@ from .task_check import (
 )
 from .verification.build import (
     WorkspaceVerificationError,
-    compact_verification_evidence,
     verify_agent_workspace,
 )
 from .verification.frontend import store_frontend_build
@@ -56,13 +42,10 @@ from .workspace import (
     snapshot_files,
 )
 
-# 하나의 기능 작업은 여러 파일을 함께 만들므로 한 번의 Conversation run이 의미 있는 편집과
-# focused 검사까지 진행할 만큼의 tool turn을 준다. 이 값은 전체 수리 횟수 상한이 아니다.
-# 한도나 context에 닿으면 workspace는 유지하고 짧은 인계문으로 새 Conversation을 연다.
+# OpenHands owns the tool/action loop. This only bounds one task conversation.
 MAX_AGENT_TURN_ITERATIONS = 32
-_RESTRICTED_EDITOR_REGISTERED = False
-_RESTRICTED_GREP_REGISTERED = False
-_RESTRICTED_EDITOR_REGISTRATION_LOCK = threading.Lock()
+_SANDBOX_TOOLS_REGISTERED = False
+_SANDBOX_TOOLS_REGISTRATION_LOCK = threading.Lock()
 
 
 def _configure_openhands_profile_store() -> None:
@@ -172,47 +155,6 @@ def execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         return _execute_openhands_task(run_root, task_id)
 
 
-def _render_missing_output_repair_prompt(
-    missing_outputs: list[str],
-) -> str:
-    """Keep missing-output retries small enough for agents that stopped silently."""
-    missing_test = any("/src/test/" in path.replace("\\", "/") for path in missing_outputs)
-    if missing_test:
-        task_hint = (
-            "Create the missing focused test from the existing application and generated "
-            "contracts. Assert observable behavior; do not copy a prompt or private helper."
-        )
-    else:
-        task_hint = (
-            "Use the existing generated application contract; do not inspect or list directories."
-        )
-    files = "\n".join(f"- `{path}`" for path in missing_outputs)
-    return (
-        "The previous agent round did not create the required output files. "
-        "Use the file editor's create operation now with the exact absolute paths below; "
-        "do not reply with an explanation. "
-        "Create only the missing files, preserve all existing files, then run "
-        "run_task_check and repair any reported error before finishing. "
-        "Parent directories already exist. "
-        "Do not use /workspace, /application, relative paths, view, or directory-listing tools.\n\n"
-        + task_hint
-        + "\n\nRequired missing outputs (absolute paths):\n"
-        + files
-    )
-
-
-def _render_tool_protocol_retry_prompt(prompt: str) -> str:
-    """Add a provider-neutral reminder when restarting a malformed tool call."""
-
-    return (
-        prompt
-        + "\n\n## Tool protocol retry\n\n"
-        "A previous execution attempt was discarded because its tool call was invalid. "
-        "Use only a registered tool name exactly as provided, without annotations or "
-        "formatting in the tool name. Continue the assigned task from the current files."
-    )
-
-
 def _promote_changed_files(sandbox: Path, run_root: Path, changed: set[str]) -> None:
     """검증된 source 내용만 run으로 옮긴다.
 
@@ -243,33 +185,6 @@ def _restore_unauthorized_files(sandbox: Path, run_root: Path, unauthorized: lis
             shutil.copy2(baseline, sandbox_path)
         elif sandbox_path.exists():
             sandbox_path.unlink()
-
-
-def _repeated_failure(
-    ledger: RepairLedger,
-    candidate_digest: str,
-    finding_keys: tuple[str, ...],
-) -> bool:
-    """같은 source와 같은 검사 오류를 이미 수리하려 했는지 확인한다."""
-    return any(
-        attempt.candidate_digest == candidate_digest and attempt.finding_keys_before == finding_keys
-        for attempt in ledger.attempts
-        if attempt.candidate_digest
-    )
-
-
-def _repair_restart_evidence(
-    evidence: dict[str, object], candidate_digest: str
-) -> dict[str, object]:
-    """coordinator가 성공 source에서 새 대화를 열 수 있는 근거를 덧붙인다."""
-    return {
-        **evidence,
-        "repairControl": {
-            "action": "restart_from_accepted_source",
-            "reason": "same_failure_and_source",
-            "rejectedCandidateDigest": candidate_digest,
-        },
-    }
 
 
 def _owned_directory_roots(paths: list[str]) -> list[str]:
@@ -360,20 +275,19 @@ def _task_execution_scope(
 
 
 def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
+    """Run one OpenHands conversation and keep EasyDep at the safety boundary."""
+
     task = load_task(run_root, task_id)
     task_type = str(task.get("task_type", ""))
-    app_id = _run_app_id(run_root)
     active_repair = active_repair_for_task(run_root, task_id)
     editable_paths, editable_roots, immutable = _task_execution_scope(task, active_repair)
     required_paths = [str(path) for path in task.get("required_output_paths", editable_paths)]
-    immutable_paths = set(immutable)
     task = {
         **task,
         "allowed_write_paths": editable_paths,
         "allowed_write_roots": editable_roots,
         "immutable_paths": immutable,
     }
-
     connection = openhands_connection()
     compatibility = openhands_compatibility(connection)
     missing = [
@@ -387,481 +301,125 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     sandbox = prepare_agent_workspace(
         run_root,
         task,
-        # 실패한 임시 파일은 아직 승인된 source가 아니다. 새 수리 대화는 마지막으로
-        # 검사를 통과해 run에 반영된 source에서 시작한다.
-        preserve_failed_edits=active_repair is None,
+        preserve_failed_edits=True,
     )
     before = snapshot_files(sandbox)
-    missing_at_start = missing_required_outputs(sandbox, required_paths)
-    # 새 파일 자체가 빠진 경우에는 짧은 오류 문장만으로 구현을 다시 시작할 수 없다.
-    # 원래 작업 설명에는 요구사항, 정확한 Java 계약과 저장소 선언이 들어 있으므로 이를
-    # 다시 제공한다. 이미 존재하는 파일의 compile/test 오류를 고칠 때만 짧은 수리 설명을
-    # 사용해 불필요하게 큰 문맥을 반복하지 않는다.
-    prompt_file = (
-        task.get("prompt_file")
-        if active_repair is None or missing_at_start
-        else task.get("repair_prompt_file")
-    )
+    prompt_file = task.get("repair_prompt_file") if active_repair is not None else task.get("prompt_file")
     if not isinstance(prompt_file, str) or not (run_root / prompt_file).is_file():
         prompt_file = str(task["prompt_file"])
     prompt = (run_root / prompt_file).read_text(encoding="utf-8")
-    if active_repair is not None and missing_at_start:
-        prompt += (
-            "\n\n## Retry focus\n\n"
-            "A previous round stopped before creating these contracted outputs. "
-            "Create them before optional exploration, then run the focused task check:\n"
-            + "\n".join(f"- `{path}`" for path in missing_at_start)
-        )
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
-    raw_verification_profile = task.get("verification_profile")
+    verification_profile = task.get("verification_profile")
     verification_profile = (
-        dict(raw_verification_profile)
-        if isinstance(raw_verification_profile, dict) and raw_verification_profile
+        dict(verification_profile)
+        if isinstance(verification_profile, dict) and verification_profile
         else None
     )
-    read_source_paths = context.get("readSourcePaths", [])
-    readable_absolute: list[str] = []
-    if isinstance(read_source_paths, list):
-        sandbox_root = sandbox.resolve()
-        for value in read_source_paths:
-            if not isinstance(value, str):
-                continue
-            candidate = (sandbox / value).resolve()
-            try:
-                candidate.relative_to(sandbox_root)
-            except ValueError:
-                continue
-            if candidate.exists():
-                readable_absolute.append(str(candidate))
-    allowed_absolute = [str((sandbox / path).resolve()) for path in editable_paths]
-    editable_root_absolute = [str((sandbox / path).resolve()) for path in editable_roots]
-    immutable_absolute = [str((sandbox / path).resolve()) for path in sorted(immutable_paths)]
-    prompt += "\n\n## Enforced absolute write paths\n\n" + "\n".join(
-        f"- `{path}`" for path in allowed_absolute
+    sandbox_root = sandbox.resolve()
+    read_hints = [
+        str((sandbox / value).resolve())
+        for value in context.get("readSourcePaths", [])
+        if isinstance(value, str)
+        and (sandbox / value).resolve().is_relative_to(sandbox_root)
+        and (sandbox / value).exists()
+    ]
+    writable_files = [str((sandbox / path).resolve()) for path in editable_paths]
+    writable_roots = [str((sandbox / root).resolve()) for root in editable_roots]
+    immutable_absolute = [str((sandbox / path).resolve()) for path in immutable]
+    prompt += (
+        "\n\n## EasyDep task constraints\n\n"
+        "Use the provided source locations as investigation hints, not edit limits. "
+        "Keep generated contracts unchanged. Work only inside the sandbox and writable roots. "
+        "Run run_task_check until it passes before finish. Use English for source comments "
+        "and user-visible text.\n\nWritable task files:\n"
+        + ("\n".join(f"- `{path}`" for path in writable_files) or "- none")
+        + "\n\nAdditional writable roots:\n"
+        + ("\n".join(f"- `{path}`" for path in writable_roots) or "- none")
     )
-    if editable_root_absolute:
-        prompt += "\n\n## Enforced writable implementation roots\n\n" + "\n".join(
-            f"- `{path}`" for path in editable_root_absolute
-        )
-    if immutable_absolute and task_type != "use-case":
-        prompt += "\n\n## Read-only generated contract paths\n\n" + "\n".join(
-            f"- `{path}`" for path in immutable_absolute
-        )
-    elif immutable_absolute:
-        # 실제 편집기는 아래 경로를 계속 차단한다. 기능 task에는 관련 계약이 이미 본문에
-        # 있으므로 모든 금지 파일명을 나열해 불필요한 탐색 후보를 늘리지 않는다.
+    if immutable_absolute:
         prompt += (
-            "\n\nOther generated API and BCE contracts are read-only. "
-            "Do not search for unrelated implementations.\n"
+            "\n\nGenerated contracts are readable but write-protected by the sandbox. "
+            "Inspect them on demand instead of copying their contents into the conversation."
         )
-    if readable_absolute:
-        # 선행 작업이 만든 실제 source는 프롬프트에 오래된 사본으로 넣지 않는다. 실행
-        # workspace의 위치만 알려 주면 OpenHands가 view로 최신 선언을 읽고 구현을 정한다.
-        prompt += "\n\n## Inspect these current sources before editing\n\n" + "\n".join(
-            f"- `{path}`" for path in readable_absolute
+    if read_hints:
+        prompt += "\n\nSuggested source hints:\n" + "\n".join(
+            f"- `{path}`" for path in read_hints
         )
 
     execution_dir = run_root / "reports" / "agent-executions"
     attempt = execution_attempt(run_root, task_id)
     journal = EventJournal(execution_dir / f"{task_id}.attempt-{attempt:03d}.events.jsonl")
     started = time.monotonic()
-    agent = None
-    conversation_warning: str | None = None
-    # 같은 작업이 다른 담당 오류 때문에 다시 실행되더라도 이전 수리 실패를 잊지 않는다.
-    # 별도 저장 형식을 만들지 않고 이미 남긴 최신 실행 결과의 repairHistory를 재사용한다.
-    repair_ledger = load_repair_ledger(execution_dir, task_id)
     conversation = None
+    agent = None
     try:
-        round_prompt = prompt
-        round_allowed = allowed_absolute
-        provider_retries = 0
-        tool_protocol_retries = 0
-        repair_attempt = 0
         reasoning_effort = os.environ.get(
             "OPENHANDS_REASONING_EFFORT",
-            str(
-                task["llm"].get(
-                    "reasoningEffort",
-                    settings.implementation_reasoning_effort,
-                )
-            ),
+            str(task["llm"].get("reasoningEffort", settings.implementation_reasoning_effort)),
         )
-        def open_conversation():
-            """현재 workspace를 유지한 채 독립된 OpenHands 대화를 연다."""
-
-            return create_openhands_conversation(
-                sandbox,
-                allowed_absolute,
-                connection,
-                task["llm"],
-                task_type=task_type,
-                verification_paths=editable_paths,
-                verification_profile=verification_profile,
-                editable_roots=editable_root_absolute,
-                immutable_paths=immutable_absolute,
-                callbacks=[journal],
-                max_iterations=MAX_AGENT_TURN_ITERATIONS,
-                reasoning_effort=reasoning_effort,
-                system_prompt=(
-                    FRONTEND_SYSTEM_PROMPT
-                    if task_type == "frontend-implementation"
-                    else IMPLEMENTATION_SYSTEM_PROMPT
-                ),
-            )
-
-        while True:
-            if conversation is None:
-                conversation, agent = open_conversation()
-            _extend_conversation_write_files(agent, round_allowed)
-            restart_after_verification = False
-            # A transient provider failure is a transport concern, not a source
-            # verification failure. 같은 Conversation의 현재 메시지부터 재개해 이미 읽은
-            # source와 판단을 버리지 않는다.
-            message_sent = False
-            conversation_prompt = round_prompt
-            while True:
-                conversation_error: Exception | None = None
-                usage_before = _conversation_token_usage(conversation) or (0, 0)
-                connection = openhands_connection()
-                with langsmith_metrics.trace_scope(
-                    "easydep.implementation.openhands_conversation",
-                    run_type="llm",
-                    metadata={
-                        "agent": "implementation",
-                        "operation": "openhands_conversation",
-                        "run_id": run_root.name,
-                        "task_id": task_id,
-                        "app_id": app_id,
-                        "repair_attempt": repair_attempt,
-                        "tool_protocol_retry_attempt": tool_protocol_retries,
-                        "ls_provider": connection.provider,
-                        "ls_model_name": connection.model,
-                    },
-                ) as trace:
-                    try:
-                        if not message_sent:
-                            conversation.send_message(conversation_prompt)
-                            message_sent = True
-                        conversation.run()
-                        # OpenHands 1.36은 iteration 한도와 반복 감지를 예외로 던지지
-                        # 않고 Conversation 상태만 ERROR로 바꾼 뒤 run()을 반환한다.
-                        # 이 상태를 놓치면 다음 수리 문장을 같은 긴 대화에 붙이게 된다.
-                        if _conversation_finished_with_error(conversation):
-                            restart_after_verification = True
-                    except Exception as error:
-                        # A provider can reject the final turn after the agent has
-                        # already written every contracted output. Keep the warning
-                        # for the successful result, but retry transient failures
-                        # before consulting output or build verification.
-                        conversation_error = error
-                        conversation_warning = f"{error.__class__.__name__}: {error}"
-                    finally:
-                        usage = _conversation_token_usage(conversation)
-                        if usage is not None:
-                            trace.set_usage(
-                                input_tokens=max(0, usage[0] - usage_before[0]),
-                                output_tokens=max(0, usage[1] - usage_before[1]),
-                            )
-                if conversation_error is None:
-                    provider_retries = 0
-                    break
-                if retryable_tool_protocol_error(conversation_error):
-                    # The model, not the user or generated source, chose an invalid tool
-                    # protocol. Preserve any files already written, but discard the broken
-                    # conversation state before asking a fresh agent to continue.
-                    if not missing_required_outputs(sandbox, required_paths):
-                        restart_after_verification = True
-                        break
-                    tool_protocol_retries += 1
-                    if tool_protocol_retries > MAX_TOOL_PROTOCOL_RETRIES:
-                        raise RuntimeError(
-                            f"{connection.display_name()} returned invalid tool calls after "
-                            f"{MAX_TOOL_PROTOCOL_RETRIES} automatic retries"
-                        ) from conversation_error
-                    conversation.close()
-                    conversation, agent = open_conversation()
-                    _extend_conversation_write_files(agent, round_allowed)
-                    conversation_prompt = _render_tool_protocol_retry_prompt(round_prompt)
-                    message_sent = False
-                    continue
-                if not transient_provider_error(conversation_error):
-                    # iteration/context/stuck 오류가 난 Conversation에는 메시지를 더 넣지 않는다.
-                    # 이미 작성한 source가 있으면 아래 결정론적 검사로 살릴 수 있는지 먼저 보고,
-                    # 수리가 필요할 때 같은 workspace에서 새 Conversation을 연다.
-                    if _conversation_needs_fresh_context(conversation_error):
-                        restart_after_verification = True
-                        break
-                    if not missing_required_outputs(sandbox, required_paths):
-                        restart_after_verification = True
-                        break
-                    raise conversation_error
-                # A provider may fail while emitting its final response after
-                # the agent has already written every contracted file. In that
-                # case do not repeat the generation and risk overwriting valid
-                # work; continue to deterministic verification instead.
-                if not missing_required_outputs(sandbox, required_paths):
-                    restart_after_verification = True
-                    break
-                provider_retries += 1
-                if provider_retries > MAX_PROVIDER_RETRIES:
-                    raise RuntimeError(
-                        f"{connection.display_name()} remained unavailable after "
-                        f"{MAX_PROVIDER_RETRIES} transport retries"
-                    ) from conversation_error
-                time.sleep(provider_retry_delay(provider_retries))
-
-            missing_outputs = missing_required_outputs(sandbox, required_paths)
-            if missing_outputs:
-                finding_keys = tuple(f"missing:{path}" for path in missing_outputs)
-                candidate_digest = stable_digest(snapshot_files(sandbox))
-                repeated = repair_attempt > 0 and _repeated_failure(
-                    repair_ledger,
-                    candidate_digest,
-                    finding_keys,
-                )
-                repair_ledger.record(
-                    RepairAttempt(
-                        stage=f"implementation.{task_type}",
-                        target_ids=tuple(missing_outputs),
-                        strategy_key=(
-                            "initial_generation"
-                            if repair_attempt == 0
-                            else "create_missing_outputs"
-                        ),
-                        input_digest=stable_digest(
-                            {
-                                "task": task_id,
-                                "candidate": candidate_digest,
-                                "findings": finding_keys,
-                            }
-                        ),
-                        candidate_digest=candidate_digest,
-                        finding_keys_before=finding_keys,
-                        finding_keys_after=finding_keys,
-                        outcome="repeated_candidate" if repeated else "no_improvement",
-                        detail="Missing required outputs: " + ", ".join(missing_outputs),
-                    )
-                )
-                if repeated:
-                    raise WorkspaceVerificationError(
-                        _repair_restart_evidence(
-                            {
-                                "command": ["required-task-outputs"],
-                                "exitCode": 1,
-                                "stderr": "Missing required outputs: " + ", ".join(missing_outputs),
-                            },
-                            candidate_digest,
-                        )
-                    )
-                round_allowed = [str((sandbox / path).resolve()) for path in missing_outputs]
-                round_prompt = _render_missing_output_repair_prompt(
-                    round_allowed,
-                )
-                round_prompt += (
-                    "\n\n## Accumulated repair history\n\n"
-                    + _implementation_repair_history(repair_ledger)
-                )
-                repair_attempt += 1
-                if restart_after_verification:
-                    conversation.close()
-                    conversation = None
-                    agent = None
-                continue
-
-            changed = changed_files(before, snapshot_files(sandbox))
-            unauthorized = sorted(
-                path
-                for path in changed
-                if not path_is_editable(
-                    path,
-                    editable_paths,
-                    editable_roots,
-                    immutable_paths,
-                )
-            )
-            if unauthorized:
-                _restore_unauthorized_files(sandbox, run_root, unauthorized)
-                changed = {
-                    path
-                    for path in changed
-                    if path_is_editable(
-                        path,
-                        editable_paths,
-                        editable_roots,
-                        immutable_paths,
-                    )
+        conversation, agent = create_openhands_conversation(
+            sandbox,
+            connection,
+            task["llm"],
+            task_type=task_type,
+            verification_paths=editable_paths,
+            verification_profile=verification_profile,
+            editable_files=writable_files,
+            editable_roots=writable_roots,
+            immutable_paths=immutable_absolute,
+            callbacks=[journal],
+            max_iterations=MAX_AGENT_TURN_ITERATIONS,
+            reasoning_effort=reasoning_effort,
+        )
+        conversation.send_message(prompt)
+        conversation.run()
+        if _conversation_terminal_failure(conversation):
+            raise WorkspaceVerificationError(
+                {
+                    "command": ["openhands", "conversation"],
+                    "exitCode": 1,
+                    "stdout": "",
+                    "stderr": journal.latest_agent_message or "OpenHands conversation did not finish.",
+                    "testResults": "",
                 }
-            try:
-                if task_type.startswith("testing-") and not changed:
-                    raise WorkspaceVerificationError(
-                        {
-                            "command": ["testing-repair-source-change"],
-                            "exitCode": 1,
-                            "durationMs": 0,
-                            "stdout": "",
-                            "stderr": (
-                                "Testing repair made no source change. Inspect the preserved "
-                                "failure evidence, edit at least one allowed implementation "
-                                "file, and then run the focused check."
-                            ),
-                            "testResults": "",
-                        }
-                    )
-                # EasyDep은 source를 정규식으로 고치지 않는다. OpenHands가 현재 파일과
-                # compiler/test 결과를 보고 수정하며, 공개 계약은 최종 conformance 검사에서
-                # 별도로 보호한다. 실제 HTTP 흐름 검사는 wiring 작업의 FlowTest에 포함된다.
-                controller_paths = context.get("controllerPaths", [])
-                controller_markers = context.get("controllerBodyMarkers", [])
-                controller_sources = (
-                    {
-                        path: (sandbox / path).read_text(encoding="utf-8")
-                        for path in controller_paths
-                        if isinstance(path, str) and (sandbox / path).is_file()
-                    }
-                    if isinstance(controller_paths, list)
-                    else {}
-                )
-                unfinished_controllers = (
-                    [
-                        (marker, path)
-                        for marker in controller_markers
-                        if isinstance(marker, str)
-                        for path, source in controller_sources.items()
-                        if marker in source
-                    ]
-                    if isinstance(controller_markers, list)
-                    else []
-                )
-                if unfinished_controllers:
-                    raise WorkspaceVerificationError(
-                        {
-                            "command": ["controller-body-completion"],
-                            "exitCode": 1,
-                            "durationMs": 0,
-                            "stdout": "",
-                            "stderr": "\n".join(
-                                f"Unimplemented Controller body {marker}: {path}"
-                                for marker, path in unfinished_controllers
-                            ),
-                            "testResults": "",
-                        }
-                    )
-                editable_entities = [
-                    path
-                    for path in changed
-                    if "/bce/" in "/" + path.replace("\\", "/") and path.endswith(".java")
-                ]
-                signature_violations = (
-                    entity_public_signature_violations(run_root, sandbox, editable_entities)
-                    if editable_entities
-                    else []
-                )
-                if signature_violations:
-                    raise WorkspaceVerificationError(
-                        {
-                            "command": ["generated-entity-public-contract"],
-                            "exitCode": 1,
-                            "durationMs": 0,
-                            "stdout": "",
-                            "stderr": "\n".join(signature_violations),
-                            "testResults": "",
-                        }
-                    )
-                # OpenHands가 방금 같은 source에서 run_task_check를 통과했다면 Gradle을
-                # 즉시 한 번 더 실행하지 않는다. 검사 뒤 source가 바뀐 경우에는 cache가
-                # 일치하지 않아 아래 실제 검사가 실행된다.
-                verification = consume_successful_task_check(
-                    sandbox,
-                    task_type,
-                    editable_paths,
-                    verification_profile,
-                ) or verify_agent_workspace(
-                    sandbox,
-                    task_type,
-                    editable_paths,
-                    verification_profile,
-                )
-                changed = changed_files(before, snapshot_files(sandbox))
-                break
-            except WorkspaceVerificationError as error:
-                diagnostic = compact_verification_evidence(
-                    error.evidence,
-                    max_chars=4000,
-                )
-                evidence_digest = stable_digest(
-                    {
-                        "command": error.evidence.get("command"),
-                        "exitCode": error.evidence.get("exitCode"),
-                        "diagnostic": diagnostic,
-                    }
-                )
-                finding_keys = (f"verification:{evidence_digest}",)
-                candidate_digest = stable_digest(snapshot_files(sandbox))
-                repeated = repair_attempt > 0 and _repeated_failure(
-                    repair_ledger,
-                    candidate_digest,
-                    finding_keys,
-                )
-                repair_ledger.record(
-                    RepairAttempt(
-                        stage=f"implementation.{task_type}",
-                        target_ids=tuple(editable_paths),
-                        strategy_key=(
-                            "initial_generation"
-                            if repair_attempt == 0
-                            else "verification_correction"
-                        ),
-                        input_digest=stable_digest(
-                            {
-                                "task": task_id,
-                                "candidate": candidate_digest,
-                                "findings": finding_keys,
-                            }
-                        ),
-                        candidate_digest=candidate_digest,
-                        finding_keys_before=finding_keys,
-                        finding_keys_after=finding_keys,
-                        outcome="repeated_candidate" if repeated else "no_improvement",
-                        detail=diagnostic,
-                    )
-                )
-                if repeated:
-                    # 같은 대화에 경고만 추가하면 모델 상태와 source가 그대로라 같은 실패가
-                    # 계속된다. coordinator로 근거를 돌려보내 새 대화와 승인 source 복구를
-                    # 실제로 실행하게 한다.
-                    raise WorkspaceVerificationError(
-                        _repair_restart_evidence(error.evidence, candidate_digest)
-                    ) from error
-                # 같은 대화는 이미 현재 작업의 편집 범위를 가지고 있다. 오류 문자열로
-                # 파일을 다시 좁히지 않고 그 범위 안에서 실제 원인을 찾게 한다.
-                repair_paths = list(editable_paths)
-                round_allowed = [str((sandbox / path).resolve()) for path in repair_paths]
-                feedback_renderer = (
-                    render_frontend_verification_feedback
-                    if task_type == "frontend-implementation"
-                    else render_verification_feedback
-                )
-                round_prompt = feedback_renderer(
-                    error.evidence,
-                    repair_paths,
-                )
-                round_prompt += (
-                    "\n\n## Accumulated repair history\n\n"
-                    + _implementation_repair_history(repair_ledger)
-                )
-                repair_attempt += 1
-                if restart_after_verification:
-                    conversation.close()
-                    conversation = None
-                    agent = None
-        conversation.close()
-        conversation = None
+            )
+        missing_outputs = missing_required_outputs(sandbox, required_paths)
+        if missing_outputs:
+            raise WorkspaceVerificationError(
+                {
+                    "command": ["required-task-outputs"],
+                    "exitCode": 1,
+                    "stdout": "",
+                    "stderr": "Missing required outputs: " + ", ".join(missing_outputs),
+                    "testResults": "",
+                }
+            )
+        changed = changed_files(before, snapshot_files(sandbox))
+        unauthorized = [
+            path
+            for path in changed
+            if not path_is_editable(path, editable_paths, editable_roots, immutable)
+        ]
+        if unauthorized:
+            _restore_unauthorized_files(sandbox, run_root, unauthorized)
+            raise WorkspaceVerificationError(
+                {
+                    "command": ["implementation-write-boundary"],
+                    "exitCode": 1,
+                    "stdout": "",
+                    "stderr": "Writes outside the task's implementation roots: " + ", ".join(sorted(unauthorized)),
+                    "testResults": "",
+                }
+            )
+        verification = consume_successful_task_check(
+            sandbox, task_type, editable_paths, verification_profile
+        ) or verify_agent_workspace(sandbox, task_type, editable_paths, verification_profile)
     except Exception as error:
         if conversation is not None:
             conversation.close()
         failure = {
             "taskId": task_id,
-            "taskType": task.get("task_type", "control"),
+            "taskType": task_type,
             "promptSha256": task.get("prompt_sha256"),
             "status": "FAILED",
             "effectiveModel": connection.litellm_model(),
@@ -875,23 +433,26 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         }
         if isinstance(error, WorkspaceVerificationError):
             failure["verificationEvidence"] = error.evidence
-        if repair_ledger.attempts:
-            failure["repairHistory"] = repair_ledger.model_dump(mode="json")
+        failure["conversationStats"] = _conversation_stats_snapshot(conversation)
         write_execution_result(execution_dir, task_id, attempt, failure)
         shutil.copyfile(journal.path, execution_dir / f"{task_id}.events.jsonl")
         raise
-    # 실패 뒤 재사용한 임시 작업 공간에는 필수 결과가 이미 존재할 수 있다. 그런 파일은
-    # 이번 대화 시작 시점과 비교하면 changed가 아니지만, 실제 run에는 아직 없을 수 있다.
-    # 성공한 작업의 계약 결과는 항상 run으로 복사해 체크포인트와 source를 일치시킨다.
+    conversation.close()
+    changed = {
+        f"application/{path}"
+        for path in changed_files(
+            snapshot_files(run_root / "application"),
+            snapshot_files(sandbox / "application"),
+        )
+        if path_is_editable(f"application/{path}", editable_paths, editable_roots, immutable)
+    }
     promoted_files = changed | {path for path in required_paths if (sandbox / path).is_file()}
     _promote_changed_files(sandbox, run_root, promoted_files)
     if task_type == "frontend-implementation":
-        # task 검사가 만든 production bundle은 현재 source와 함께 검증됐다. run에 한 번만
-        # 보존하면 최종 검사와 통합 Docker image가 같은 npm build를 반복하지 않는다.
         store_frontend_build(run_root, sandbox, verification)
     result = {
         "taskId": task_id,
-        "taskType": task.get("task_type", "control"),
+        "taskType": task_type,
         "promptSha256": task.get("prompt_sha256"),
         "effectiveModel": connection.litellm_model(),
         "changedFiles": sorted(changed),
@@ -903,117 +464,38 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         "toolCounts": journal.tool_counts,
         "eventJournal": str(journal.path.relative_to(run_root)).replace("\\", "/"),
         "rawResponse": journal.latest_agent_message,
+        "conversationStats": _conversation_stats_snapshot(conversation),
         "status": "SUCCEEDED",
     }
-    if repair_ledger.attempts:
-        repair_ledger.status = "COMPLETED"
-        result["repairHistory"] = repair_ledger.model_dump(mode="json")
-    if conversation_warning is not None:
-        result["conversationWarning"] = conversation_warning
     write_execution_result(execution_dir, task_id, attempt, result)
     shutil.copyfile(journal.path, execution_dir / f"{task_id}.events.jsonl")
     cleanup_agent_workspace(sandbox)
     return result
 
 
-def _conversation_token_usage(conversation) -> tuple[int, int] | None:
-    """작업 흐름에는 영향을 주지 않고 OpenHands의 누적 token 사용량을 읽는다."""
-
-    try:
-        metrics = conversation.conversation_stats.get_combined_metrics()
-        usage = metrics.accumulated_token_usage
-        if usage is None:
-            return None
-        return (
-            max(0, int(getattr(usage, "prompt_tokens", 0) or 0)),
-            max(0, int(getattr(usage, "completion_tokens", 0) or 0)),
-        )
-    except Exception:  # noqa: BLE001 - observability is optional
-        return None
-
-
-def _conversation_needs_fresh_context(error: Exception) -> bool:
-    """같은 OpenHands Conversation에서 재실행하면 안 되는 오류인지 확인한다.
-
-    네트워크 오류는 provider retry가 담당한다. 반면 iteration/context/stuck 오류는 대화 기록
-    자체가 이미 한계에 닿았다는 뜻이므로 같은 객체에 메시지를 추가할수록 악화된다. 오류 class는
-    SDK와 LiteLLM 버전에 따라 달라질 수 있어 안정적으로 노출되는 문구만 사용한다.
-    """
-
-    text = f"{error.__class__.__name__}: {error}".lower()
-    return any(
-        marker in text
-        for marker in (
-            "maximum iteration",
-            "max iterations",
-            "context window",
-            "maximum context length",
-            "max_tokens must be at least 1",
-            "token limit",
-            "agent is stuck",
-            "execution status is stuck",
-            "no tool call and no content",
-        )
-    )
-
-
-def _conversation_finished_with_error(conversation: object) -> bool:
-    """SDK가 예외 없이 끝낸 실패 대화인지 확인한다.
-
-    OpenHands의 로컬 Conversation은 iteration 한도나 stuck detector가 동작하면
-    ``run()``을 정상 반환하면서 ``execution_status``만 ``ERROR``로 기록한다. SDK
-    enum을 모듈 import 시점에 의존하지 않고 값만 읽어, 테스트용 대화와 호스트의
-    선택적 OpenHands 설치도 그대로 지원한다.
-    """
+def _conversation_terminal_failure(conversation: object) -> bool:
+    """OpenHands owns recovery; EasyDep only records a terminal state."""
 
     state = getattr(conversation, "state", None)
     status = getattr(state, "execution_status", None)
     value = getattr(status, "value", status)
-    return str(value or "").rsplit(".", 1)[-1].upper() == "ERROR"
+    return str(value or "").rsplit(".", 1)[-1].upper() not in {"FINISHED", ""}
 
 
-def _implementation_repair_history(ledger: RepairLedger) -> str:
-    """현재 진단을 가리지 않을 정도로만 이전 수리 결과를 요약한다.
+def _conversation_stats_snapshot(conversation: object | None) -> dict[str, object] | None:
+    """Persist OpenHands' own metrics without inventing unavailable values."""
 
-    compiler와 test 원문은 실행 결과 JSON에 남는다. 대화에는 후보와 결과, 대표 진단만 넣어
-    이미 고친 과거 오류를 다시 추적하거나 같은 긴 로그를 token으로 반복 소비하지 않는다.
-    """
-    if not ledger.attempts:
-        return "No previous repair attempt."
-    lines: list[str] = []
-    first = max(0, len(ledger.attempts) - 3)
-    for index, attempt in enumerate(ledger.attempts[-3:], start=first + 1):
-        detail = _representative_repair_diagnostic(
-            attempt.detail.strip() or ", ".join(attempt.finding_keys_before)
-        )
-        lines.append(
-            f"Attempt {index}: result={attempt.outcome}, "
-            f"candidate={attempt.candidate_digest[:12]}, diagnostic={detail}"
-        )
-    if first:
-        lines.insert(0, f"{first} older attempt(s) omitted.")
-    return "\n".join(lines)
-
-
-def _representative_repair_diagnostic(value: str, limit: int = 320) -> str:
-    """이전 검사 원문에서 다음 시도에 유용한 실패 한 줄만 고른다."""
-    lines = [" ".join(line.split()) for line in value.splitlines() if line.strip()]
-    markers = ("error:", "failed", "failure", "expected:", "violation", "missing")
-    selected = next(
-        (line for line in lines if any(marker in line.lower() for marker in markers)),
-        lines[0] if lines else "no diagnostic",
-    )
-    return selected[:limit]
-
-
-def _extend_conversation_write_files(agent, absolute_paths: list[str]) -> None:
-    """같은 대화의 편집기에 새로 확인된 작업 파일을 추가한다."""
-    tools = getattr(agent, "_tools", {})
-    editor = tools.get("restricted_file_editor") if isinstance(tools, dict) else None
-    executor = getattr(editor, "executor", None)
-    allowed = getattr(executor, "allowed_edits_files", None)
-    if isinstance(allowed, set):
-        allowed.update(Path(path).resolve() for path in absolute_paths)
+    stats = getattr(conversation, "conversation_stats", None)
+    if stats is None:
+        return None
+    try:
+        snapshot = stats.model_dump(mode="json", context={"use_snapshot": True})
+    except (AttributeError, TypeError, ValueError):
+        try:
+            snapshot = stats.model_dump()
+        except (AttributeError, TypeError, ValueError):
+            return None
+    return snapshot if isinstance(snapshot, dict) else None
 
 
 def _run_app_id(run_root: Path) -> str | None:
@@ -1050,34 +532,6 @@ def execution_attempt(run_root: Path, task_id: str) -> int:
     )
 
 
-def load_repair_ledger(execution_dir: Path, task_id: str) -> RepairLedger:
-    """이전 실행 결과에 저장된 같은 작업의 수리 이력을 이어서 사용한다."""
-
-    candidates = [execution_dir / f"{task_id}.result.json"]
-    candidates.extend(
-        sorted(
-            execution_dir.glob(f"{task_id}.attempt-*.result.json"),
-            reverse=True,
-        )
-    )
-    for path in candidates:
-        if not path.is_file():
-            continue
-        try:
-            result = json.loads(path.read_text(encoding="utf-8"))
-            history = result.get("repairHistory")
-            if not isinstance(history, dict):
-                continue
-            ledger = RepairLedger.model_validate(history)
-        except (OSError, json.JSONDecodeError, ValueError):
-            continue
-        ledger.status = "ACTIVE"
-        ledger.stall_reason = ""
-        ledger.next_retry_at = None
-        return ledger
-    return RepairLedger()
-
-
 def write_execution_result(
     execution_dir: Path,
     task_id: str,
@@ -1093,7 +547,7 @@ def write_execution_result(
 
 
 def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object]:
-    """Initialize the real SDK and restricted tool without making an LLM request."""
+    """Initialize the real SDK and sandboxed standard tools without an LLM request."""
     task = load_task(run_root, task_id)
     connection = openhands_connection()
     compatibility = openhands_compatibility(connection)
@@ -1130,7 +584,6 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
     )
     conversation, agent = create_openhands_conversation(
         sandbox,
-        allowed,
         # 준비 검사는 네트워크를 호출하지 않는다. 실제 key를 SDK 객체 안에 복사할
         # 이유가 없으므로 provider·URL·모델은 그대로 두고 key만 검사값으로 바꾼다.
         replace(connection, api_key="validation-only-key"),
@@ -1138,29 +591,23 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         task_type=task_type,
         verification_paths=[str(path) for path in task.get("allowed_write_paths", [])],
         verification_profile=verification_profile,
+        editable_files=allowed,
         editable_roots=allowed_roots,
         immutable_paths=immutable,
         callbacks=[validation_journal],
-        system_prompt=(
-            FRONTEND_SYSTEM_PROMPT
-            if task.get("task_type") == "frontend-implementation"
-            else IMPLEMENTATION_SYSTEM_PROMPT
-        ),
     )
     try:
         conversation.send_message("Initialize this validation conversation; do not run it.")
         tools = sorted(agent._tools)
-        file_editor = agent._tools.get("restricted_file_editor")
+        file_editor = agent._tools.get("file_editor")
         enforced = bool(
             file_editor
             and file_editor.executor
-            and getattr(file_editor.executor, "allowed_edits_files", None)
+            and getattr(file_editor.executor, "writable_files", None)
             == {Path(path).resolve() for path in allowed}
+            and getattr(file_editor.executor, "writable_roots", None)
+            == {Path(path).resolve() for path in allowed_roots}
         )
-        alias_action = file_editor.action_type.model_validate(
-            {"command": "view", "file_path": allowed[0]}
-        )
-        file_path_alias_accepted = alias_action.path == allowed[0]
         from openhands.tools.file_editor import FileEditorAction
 
         blocked_observation = file_editor.executor(
@@ -1174,37 +621,24 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         probe_path = Path(allowed[0])
         probe_observation = file_editor.executor(
             FileEditorAction(
-                command="create",
+                command="str_replace",
                 path=str(probe_path),
-                file_text="/* restricted editor validation probe */\n",
+                old_str=probe_path.read_text(encoding="utf-8"),
+                new_str="/* sandbox editor validation probe */\n",
             )
         )
         allowed_write_succeeded = not probe_observation.is_error and probe_path.is_file()
-        overwrite_observation = file_editor.executor(
-            FileEditorAction(
-                command="create",
-                path=str(probe_path),
-                file_text="/* restricted editor overwrite probe */\n",
-            )
-        )
-        allowed_overwrite_succeeded = bool(
-            not overwrite_observation.is_error
-            and probe_path.read_text(encoding="utf-8")
-            == "/* restricted editor overwrite probe */\n"
-        )
         if probe_path.exists():
             probe_path.unlink()
     finally:
         conversation.close()
     if (
-        set(tools) != {"restricted_file_editor", "grep", TASK_CHECK_TOOL_NAME, "finish"}
+        set(tools) != {"file_editor", "grep", TASK_CHECK_TOOL_NAME, "finish"}
         or not enforced
         or not unauthorized_blocked
         or not allowed_write_succeeded
-        or not allowed_overwrite_succeeded
-        or not file_path_alias_accepted
     ):
-        raise RuntimeError("Restricted FileEditorTool was not initialized with the exact allowlist")
+        raise RuntimeError("Sandboxed standard OpenHands tools were not initialized correctly")
     profile = profile_for(
         connection.model,
         fallback_temperature=settings.implementation_agent_temperature,
@@ -1221,26 +655,20 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
         "status": "READY",
         "workspace": str(sandbox),
         "tools": tools,
-        "allowlistEnforced": enforced,
+        "writeBoundaryEnforced": enforced,
         "unauthorizedWriteBlocked": unauthorized_blocked,
         "allowedWriteSucceeded": allowed_write_succeeded,
-        "allowedOverwriteSucceeded": allowed_overwrite_succeeded,
-        "filePathAliasAccepted": file_path_alias_accepted,
+        "canonicalEditor": "file_editor",
         "maxConversationToolTurns": MAX_AGENT_TURN_ITERATIONS,
         "stuckDetection": True,
-        "contextCondenser": "LLMSummarizingCondenser",
-        "verificationRepairPolicy": "history-and-progress/v1",
+        "contextCondenser": "openhands-default",
         "reasoningBudget": profile.reported_reasoning_budget(connection.provider),
         "reasoningEffort": profile.resolve_reasoning(str(configured_reasoning)),
         "temperature": profile.temperature,
         "maxOutputTokens": profile.completion_limit(
             settings.implementation_agent_max_output_tokens
         ),
-        "systemPrompt": (
-            "focused-frontend-implementation"
-            if task.get("task_type") == "frontend-implementation"
-            else "focused-java-implementation"
-        ),
+        "systemPrompt": "openhands-default",
         "validationEventCount": validation_journal.event_count,
         "allowedWritePaths": allowed,
         "modelCallMade": False,
@@ -1254,330 +682,143 @@ def validate_openhands_adapter(run_root: Path, task_id: str) -> dict[str, object
 
 def create_openhands_conversation(
     sandbox: Path,
-    allowed_files: list[str],
     connection: LlmConnection,
     llm_config: dict[str, object],
     *,
     task_type: str = "",
     verification_paths: list[str] | None = None,
     verification_profile: dict[str, object] | None = None,
+    editable_files: list[str] | None = None,
     editable_roots: list[str] | None = None,
     immutable_paths: list[str] | None = None,
     callbacks: list[object] | None = None,
     max_iterations: int = MAX_AGENT_TURN_ITERATIONS,
     reasoning_effort: str = "medium",
-    system_prompt: str = IMPLEMENTATION_SYSTEM_PROMPT,
 ):
-    global _RESTRICTED_EDITOR_REGISTERED, _RESTRICTED_GREP_REGISTERED
+    global _SANDBOX_TOOLS_REGISTERED
 
     from openhands.sdk import LLM, Agent, Conversation, Tool, register_tool
-    from openhands.sdk.context.condenser import LLMSummarizingCondenser
-    from openhands.tools.file_editor import FileEditorAction, FileEditorTool
+    from openhands.sdk.context.condenser import default_condenser
+    from openhands.tools.file_editor import FileEditorTool
     from openhands.tools.file_editor.definition import FileEditorObservation
-    from openhands.tools.file_editor.exceptions import ToolError
     from openhands.tools.file_editor.impl import FileEditorExecutor
     from openhands.tools.grep import GrepObservation, GrepTool
     from openhands.tools.grep.impl import GrepExecutor
-    from pydantic import AliasChoices, Field, SecretStr
+    from pydantic import SecretStr
 
     _configure_openhands_profile_store()
 
-    class CompatibleFileEditorAction(FileEditorAction):
-        """Accept the common file_path spelling without advertising it to the LLM."""
+    class SandboxFileEditorExecutor(FileEditorExecutor):
+        """Apply only EasyDep's filesystem boundary to the canonical editor."""
 
-        path: str = Field(
-            description=(
-                "Path inside the assigned workspace. Prefer an absolute path from the "
-                "prompt and use the argument name path."
-            ),
-            validation_alias=AliasChoices("path", "file_path"),
-            serialization_alias="path",
-        )
-
-    class ReplaceableFileEditorExecutor(FileEditorExecutor):
         def __init__(
             self,
-            workspace_root,
-            allowed_edits_files,
-            allowed_edit_roots,
-            immutable_edit_paths,
+            workspace_root: str,
+            writable_files: list[str],
+            writable_roots: list[str],
+            immutable: list[str],
         ):
-            # SDK의 기본 executor는 파일 목록만 지원한다. 실제 편집 호출은 아래에서
-            # 검사하므로 부모에는 제한을 넘기지 않고, 검증 보고서용 속성은 유지한다.
             super().__init__(workspace_root=workspace_root)
-            self.allowed_edits_files = {Path(path).resolve() for path in allowed_edits_files}
-            self.allowed_edit_roots = {Path(path).resolve() for path in allowed_edit_roots}
-            self.immutable_edit_paths = {Path(path).resolve() for path in immutable_edit_paths}
-            self.easydep_workspace_root = Path(workspace_root).resolve()
-
-        def _can_edit(self, target: Path) -> bool:
-            if any(target == path or path in target.parents for path in self.immutable_edit_paths):
-                return False
-            return target in (self.allowed_edits_files or set()) or any(
-                target == root or root in target.parents for root in self.allowed_edit_roots
-            )
+            self.workspace_root = Path(workspace_root).resolve()
+            self.writable_files = {Path(path).resolve() for path in writable_files}
+            self.writable_roots = {Path(path).resolve() for path in writable_roots}
+            self.immutable = {Path(path).resolve() for path in immutable}
 
         def __call__(self, action, conversation=None):
             supplied = Path(action.path)
             target = (
                 supplied.resolve()
                 if supplied.is_absolute()
-                else (self.easydep_workspace_root / supplied).resolve()
+                else (self.workspace_root / supplied).resolve()
             )
             try:
-                relative = target.relative_to(self.easydep_workspace_root)
+                target.relative_to(self.workspace_root)
             except ValueError:
                 return FileEditorObservation.from_text(
                     text=f"Path is outside the assigned workspace: {target}",
                     command=action.command,
                     is_error=True,
                 )
-            if action.command == "view" and any(
-                part in {"build", ".gradle", "node_modules", "dist"}
-                for part in relative.parts
-            ):
-                return FileEditorObservation.from_text(
-                    text=(
-                        "Generated build and dependency outputs are not source context. "
-                        "Use the concise result returned by run_task_check, inspect the "
-                        "named source files, and repair those files instead."
-                    ),
-                    command="view",
-                    is_error=True,
-                )
-            if action.command != "view" and not self._can_edit(target):
-                return FileEditorObservation.from_text(
-                    text=(
-                        f"Operation '{action.command}' is not allowed on '{target}'. "
-                        "Edit only the assigned files or implementation roots and do "
-                        "not change generated contract paths."
-                    ),
-                    command=action.command,
-                    is_error=True,
-                )
-            can_replace = bool(
-                action.command == "create"
-                and action.file_text is not None
-                and target.is_file()
-                and self._can_edit(target)
-            )
-            if can_replace:
-                try:
-                    old_content = target.read_text(encoding="utf-8")
-                    target.write_text(action.file_text, encoding="utf-8")
-                except OSError as error:
+            if action.command != "view":
+                if any(target == path or path in target.parents for path in self.immutable):
                     return FileEditorObservation.from_text(
-                        text=f"Could not replace editable file: {error}",
-                        command="create",
+                        text=f"Generated contract is read-only: {target}",
+                        command=action.command,
                         is_error=True,
                     )
-                return FileEditorObservation.from_text(
-                    text=f"Editable file replaced successfully at: {target}",
-                    command="create",
-                    is_error=False,
-                ).model_copy(
-                    update={
-                        "path": str(target),
-                        "prev_exist": True,
-                        "old_content": old_content,
-                        "new_content": action.file_text,
-                    }
-                )
-
-            # OpenHands 기본 편집기의 binary 판별은 UTF-8 한글 주석이 많은 Java 파일을
-            # binary로 오인할 수 있다. EasyDep이 만든 source는 UTF-8 계약이므로 파일
-            # 조회만 직접 처리한다. 실제 binary나 잘못된 인코딩은 decode 단계에서 그대로
-            # 거절하고, 디렉터리 목록과 편집 명령은 SDK 기본 구현을 계속 사용한다.
-            if action.command == "view" and target.is_file():
-                try:
-                    content = target.read_text(encoding="utf-8")
-                except (OSError, UnicodeDecodeError) as error:
+                if target not in self.writable_files and not any(
+                    target == root or root in target.parents for root in self.writable_roots
+                ):
                     return FileEditorObservation.from_text(
-                        text=f"Could not read UTF-8 text file: {error}",
-                        command="view",
+                        text=f"Write is outside the assigned implementation roots: {target}",
+                        command=action.command,
                         is_error=True,
                     )
-                lines = content.splitlines()
-                start = 1
-                end = len(lines)
-                if action.view_range:
-                    start = max(1, int(action.view_range[0]))
-                    requested_end = int(action.view_range[1])
-                    end = len(lines) if requested_end == -1 else min(len(lines), requested_end)
-                numbered = "\n".join(
-                    f"{number:6}\t{lines[number - 1]}"
-                    for number in range(start, end + 1)
-                )
-                return FileEditorObservation.from_text(
-                    text=(
-                        f"Here's the UTF-8 text in {target} "
-                        f"(lines {start}-{end}):\n{numbered}"
-                    ),
-                    command="view",
-                    is_error=False,
-                ).model_copy(update={"path": str(target)})
+            return super().__call__(action, conversation)
 
-            try:
-                return self.editor(
-                    command=action.command,
-                    path=action.path,
-                    file_text=action.file_text,
-                    view_range=action.view_range,
-                    old_str=action.old_str,
-                    new_str=action.new_str,
-                    insert_line=action.insert_line,
-                )
-            except ToolError as error:
-                return FileEditorObservation.from_text(
-                    text=error.message,
-                    command=action.command,
-                    is_error=True,
-                )
+    class SandboxFileEditorTool(FileEditorTool):
+        name = "file_editor"
 
-    class RestrictedFileEditorTool(FileEditorTool):
         @classmethod
-        def create(
-            cls,
-            conv_state,
-            allowed_edits_files,
-            allowed_edit_roots,
-            immutable_edit_paths,
-        ):
-            instances = super().create(conv_state)
+        def create(cls, conv_state, writable_files, writable_roots, immutable_paths):
             return [
                 instance.model_copy(
                     update={
-                        "executor": ReplaceableFileEditorExecutor(
-                            workspace_root=conv_state.workspace.working_dir,
-                            allowed_edits_files=allowed_edits_files,
-                            allowed_edit_roots=allowed_edit_roots,
-                            immutable_edit_paths=immutable_edit_paths,
-                        ),
-                        "action_type": CompatibleFileEditorAction,
-                        "description": (
-                            "Create or edit text files inside the assigned file list or "
-                            "implementation roots. Read-only generated contract paths are "
-                            "always rejected. The view command may inspect the current files "
-                            "and directories listed in the prompt; descend into a listed "
-                            "directory when you need a declaration. Generated build, Gradle, "
-                            "dependency, and distribution outputs cannot be viewed; use the "
-                            "concise run_task_check result instead. Use absolute paths from the "
-                            "user prompt. Create may replace an existing editable file."
-                        ),
+                        "executor": SandboxFileEditorExecutor(
+                            conv_state.workspace.working_dir,
+                            writable_files,
+                            writable_roots,
+                            immutable_paths,
+                        )
                     }
                 )
-                for instance in instances
+                for instance in super().create(conv_state)
             ]
 
-    class WorkspaceGrepExecutor(GrepExecutor):
-        """검색 범위를 이 작업의 임시 workspace 안으로 제한한다."""
-
-        def __init__(self, working_dir, missing_output_paths):
-            super().__init__(working_dir=working_dir)
-            self.missing_output_paths = {
-                Path(path).resolve() for path in missing_output_paths
-            }
-
+    class SandboxGrepExecutor(GrepExecutor):
         def __call__(self, action, conversation=None):
-            search_path = Path(action.path).resolve() if action.path else self.working_dir
+            supplied = Path(action.path) if action.path else None
+            target = (
+                supplied.resolve()
+                if supplied is not None and supplied.is_absolute()
+                else (self.working_dir / supplied).resolve()
+                if supplied is not None
+                else self.working_dir
+            )
             try:
-                relative = search_path.relative_to(self.working_dir)
+                target.relative_to(self.working_dir)
             except ValueError:
                 return GrepObservation.from_text(
-                    text=(
-                        "Search outside the assigned workspace is not allowed. "
-                        "Use the current task prompt and source paths."
-                    ),
+                    text=f"Search path is outside the assigned workspace: {target}",
                     matches=[],
                     pattern=action.pattern,
-                    search_path=str(search_path),
-                    include_pattern=action.include,
-                    is_error=True,
-                )
-            pattern = action.pattern.casefold()
-            missing_target = next(
-                (
-                    path
-                    for path in self.missing_output_paths
-                    if not path.is_file()
-                    and (
-                        path.name.casefold() in pattern
-                        or path.stem.casefold() in pattern
-                    )
-                ),
-                None,
-            )
-            if missing_target is not None:
-                return GrepObservation.from_text(
-                    text=(
-                        f"{missing_target.name} is a contracted output and does not exist "
-                        "yet. Do not search for it. Create it with restricted_file_editor "
-                        "after reading the embedded contracts and named source files."
-                    ),
-                    matches=[],
-                    pattern=action.pattern,
-                    search_path=str(search_path),
-                    include_pattern=action.include,
-                    is_error=True,
-                )
-            if any(
-                part in {"build", ".gradle", "node_modules", "dist"}
-                for part in relative.parts
-            ):
-                return GrepObservation.from_text(
-                    text=(
-                        "Generated build and dependency outputs are not searchable source "
-                        "context. Use the concise run_task_check result instead."
-                    ),
-                    matches=[],
-                    pattern=action.pattern,
-                    search_path=str(search_path),
+                    search_path=str(target),
                     include_pattern=action.include,
                     is_error=True,
                 )
             return super().__call__(action, conversation)
 
-    class RestrictedGrepTool(GrepTool):
-        # registry 이름은 충돌을 피하기 위해 별도 값을 쓰지만, LLM에는 익숙한 ``grep``
-        # 하나만 보인다. 도구 이름을 새로 가르칠 필요가 없어 prompt도 짧게 유지된다.
+    class SandboxGrepTool(GrepTool):
         name = "grep"
 
         @classmethod
-        def create(cls, conv_state, missing_output_paths):
-            instances = super().create(conv_state)
+        def create(cls, conv_state):
             return [
                 instance.model_copy(
-                    update={
-                        "executor": WorkspaceGrepExecutor(
-                            working_dir=conv_state.workspace.working_dir,
-                            missing_output_paths=missing_output_paths,
-                        ),
-                        "description": (
-                            "Search source text only inside the assigned workspace. "
-                            "Generated build, Gradle, dependency, and distribution "
-                            "directories are excluded. Use an absolute directory path from "
-                            "the current task prompt."
-                        ),
-                    }
+                    update={"executor": SandboxGrepExecutor(conv_state.workspace.working_dir)}
                 )
-                for instance in instances
+                for instance in super().create(conv_state)
             ]
 
-    registry_name = "easydep_restricted_file_editor"
-    if not _RESTRICTED_EDITOR_REGISTERED:
-        with _RESTRICTED_EDITOR_REGISTRATION_LOCK:
-            if not _RESTRICTED_EDITOR_REGISTERED:
-                register_tool(registry_name, RestrictedFileEditorTool)
-                _RESTRICTED_EDITOR_REGISTERED = True
-    grep_registry_name = "easydep_restricted_grep"
-    if not _RESTRICTED_GREP_REGISTERED:
-        with _RESTRICTED_EDITOR_REGISTRATION_LOCK:
-            if not _RESTRICTED_GREP_REGISTERED:
-                register_tool(grep_registry_name, RestrictedGrepTool)
-                _RESTRICTED_GREP_REGISTERED = True
+    editor_registry_name = "easydep_sandbox_file_editor"
+    grep_registry_name = "easydep_sandbox_grep"
+    if not _SANDBOX_TOOLS_REGISTERED:
+        with _SANDBOX_TOOLS_REGISTRATION_LOCK:
+            if not _SANDBOX_TOOLS_REGISTERED:
+                register_tool(editor_registry_name, SandboxFileEditorTool)
+                register_tool(grep_registry_name, SandboxGrepTool)
+                _SANDBOX_TOOLS_REGISTERED = True
     task_check_tool_name = register_task_check_tool()
-    # OpenHands/LiteLLM만 adapter 접두사가 붙은 이름을 사용한다. profile과 실행
-    # 기록은 같은 중앙 연결의 원본 model ID를 기준으로 계산한다.
     model = connection.litellm_model()
     raw_temperature = llm_config["temperature"]
     raw_max_output = llm_config["maxOutputTokens"]
@@ -1590,26 +831,17 @@ def create_openhands_conversation(
         fallback_temperature=float(raw_temperature),
         fallback_max_tokens=int(raw_max_output),
     )
-    if profile.preserve_reasoning_on_tool_turn:
-        # OpenHands는 지원 모델의 assistant reasoning_content를 다음 tool turn에 다시
-        # 싣는 기능이 있지만, proxy 접두사가 붙은 최신 모델 ID는 내장 목록에 늦게 반영될
-        # 수 있다. 실제 요청 모델은 바꾸지 않고 정확한 canonical ID만 기능 목록에 보탠다.
-        from openhands.sdk.llm.utils.model_features import SEND_REASONING_CONTENT_MODELS
-
-        reasoning_model = canonical_model_id(connection.model)
-        if reasoning_model not in SEND_REASONING_CONTENT_MODELS:
-            SEND_REASONING_CONTENT_MODELS.append(reasoning_model)
-    requested_output = configured_max_output_tokens(int(raw_max_output))
     llm_options: dict[str, Any] = {
         "model": model,
+        "usage_id": "implementation_agent",
         "api_key": SecretStr(connection.api_key),
         "base_url": connection.base_url,
         "extra_headers": connection.default_headers(),
         "temperature": profile.temperature,
-        "max_output_tokens": profile.completion_limit(requested_output),
+        "max_output_tokens": profile.completion_limit(
+            configured_max_output_tokens(int(raw_max_output))
+        ),
     }
-    # Cloudflare의 serializer처럼 endpoint에만 필요한 옵션은 중앙 연결 객체가
-    # 소유한다. OpenRouter와 일반 OpenAI 호환 endpoint에는 전달되지 않는다.
     llm_options.update(connection.openhands_options())
     if profile.top_p is not None:
         llm_options["top_p"] = profile.top_p
@@ -1622,42 +854,19 @@ def create_openhands_conversation(
         message=r"Cost calculation failed:.*",
         module=r"openhands\.sdk\.llm\.utils\.telemetry",
     )
-    llm_class = LLM
-    if connection.requires_openhands_message_normalization:
-
-        class ProviderCompatibleLLM(LLM):
-            """선택 provider가 요구하는 OpenHands 메시지 형식만 적용한다."""
-
-            def format_messages_for_llm(self, messages):
-                formatted = super().format_messages_for_llm(messages)
-                return connection.format_openhands_messages(formatted)
-
-            async def aformat_messages_for_llm(self, messages):
-                formatted = await super().aformat_messages_for_llm(messages)
-                return connection.format_openhands_messages(formatted)
-
-        llm_class = ProviderCompatibleLLM
-
-    llm = llm_class(**llm_options)
+    llm = LLM(**llm_options)
     agent = Agent(
         llm=llm,
         tools=[
             Tool(
-                name=registry_name,
+                name=editor_registry_name,
                 params={
-                    "allowed_edits_files": allowed_files,
-                    "allowed_edit_roots": editable_roots or [],
-                    "immutable_edit_paths": immutable_paths or [],
+                    "writable_files": editable_files or [],
+                    "writable_roots": editable_roots or [],
+                    "immutable_paths": immutable_paths or [],
                 },
             ),
-            Tool(
-                name=grep_registry_name,
-                params={
-                    "missing_output_paths": [
-                        path for path in allowed_files if not Path(path).is_file()
-                    ]
-                },
-            ),
+            Tool(name=grep_registry_name, params={}),
             Tool(
                 name=task_check_tool_name,
                 params={
@@ -1668,24 +877,23 @@ def create_openhands_conversation(
             ),
         ],
         include_default_tools=["FinishTool"],
-        system_prompt=system_prompt,
-        # OpenHands가 오래된 도구 기록을 요약하도록 공식 condenser를 그대로 사용한다.
-        # 별도 요약 상태를 만들지 않으며 최초 지시와 최근 작업은 SDK 기본값으로 보존한다.
-        condenser=LLMSummarizingCondenser(
+        # Do not override OpenHands' built-in system behavior. EasyDep's
+        # task-specific constraints are appended to the user task message.
+        condenser=default_condenser(
             llm=llm.model_copy(update={"usage_id": "implementation_condenser"}),
         ),
     )
-    conversation = Conversation(
-        agent=agent,
-        workspace=str(sandbox),
-        callbacks=callbacks,
-        max_iteration_per_run=max_iterations,
-        # 반복 action/error와 같은 파일 편집 루프는 SDK가 먼저 감지한다. 전체 자동 수리
-        # 횟수와는 별개이며, 감지 뒤에는 위 실행부가 새 Conversation으로 작업을 인계한다.
-        stuck_detection=True,
-        visualizer=None,
+    return (
+        Conversation(
+            agent=agent,
+            workspace=str(sandbox),
+            callbacks=callbacks,
+            max_iteration_per_run=max_iterations,
+            stuck_detection=True,
+            visualizer=None,
+        ),
+        agent,
     )
-    return conversation, agent
 
 
 def _path_is_immutable(path: str, immutable_paths: set[str]) -> bool:
