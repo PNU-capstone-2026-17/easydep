@@ -511,7 +511,7 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     assert "boundaryProjection" not in context and "sequenceProjection" not in context
     api_source = (run / context["callSkeletonPath"]).read_text(encoding="utf-8")
     assert "getOrder: () => defaultApi.getOrder()" in api_source
-    assert "EASYDEP-IMPLEMENT: generated client has no unique exact export for api:createOrder" in api_source
+    assert "frontend-generated-client-index.json for api:createOrder" in api_source
     assert index["projectedOperations"] == ["getOrder"]
     assert index["unresolvedOperations"] == ["createOrder"]
     assert "src/generated" in prompt

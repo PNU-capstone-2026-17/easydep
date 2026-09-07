@@ -58,7 +58,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 final class BackendApplicationTest {{
     @Test
     void implementsTheContractedScenarios() {{
-        fail("{IMPLEMENTATION_MARKER}: replace this shell with assertions from the method contexts");
+        fail("{IMPLEMENTATION_MARKER}: read reports/implementation-tasks/implement-backend-application.source-index.json and replace this shell with contracted assertions");
     }}
 }}
 """
@@ -163,9 +163,14 @@ def _render_method(
             if projection is not None
             else operation.stable_id or operation.operation_id
         )
+        context_path = (
+            "reports/implementation-tasks/method-context/"
+            f"{stable_id}.json"
+        )
         lines.extend(
             [
                 f"        // {IMPLEMENTATION_MARKER}: complete {stable_id}",
+                f"        // Context: {context_path}",
                 "        throw new UnsupportedOperationException("
                 f'"{IMPLEMENTATION_MARKER}:{stable_id}");',
             ]

@@ -2358,6 +2358,11 @@ class Order <<Entity>> { - id: UUID }
         (run / item["path"]).is_file()
         for item in source_index["methodContexts"]
     )
+    method_context = json.loads(
+        (run / source_index["methodContexts"][0]["path"]).read_text(encoding="utf-8")
+    )
+    assert method_context["refs"]
+    assert method_context["designInputs"] == source_index["designInputs"]
     assert context["sourceIndexPath"] in context["readSourcePaths"]
     assert all(
         path not in context["readSourcePaths"]

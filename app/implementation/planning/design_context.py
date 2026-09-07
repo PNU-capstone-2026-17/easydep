@@ -10,7 +10,7 @@ from app.artifact_trace import TraceRef
 from app.artifact_trace_projection import project_artifact_trace
 from app.config import settings
 from app.design.schemas.class_model import BCEModel
-from app.design.services.sequence_diagram.projection import SequenceCollection
+from app.design.schemas.sequence_model import SequenceCollection
 from app.llm_connection import build_llm_connection
 
 from ..domain.implementation_ir import (
@@ -23,7 +23,7 @@ from ..domain.models import JobSpec
 from ..generation.frontend_scaffold import frontend_page_names, operation_ids
 from ..generation.java_scaffold import controller_body_marker
 from .frontend_contracts import GeneratedClientContracts
-from .method_projection import MethodProjectionResult, project_method_calls
+from .method_projection import MethodProjection, MethodProjectionResult, project_method_calls
 
 
 @dataclass(frozen=True)
@@ -255,6 +255,10 @@ def _build_backend_owner_task(
         output,
         package_path,
         method_projection,
+        requirements=requirements,
+        use_cases=use_cases,
+        endpoints=list(bundle.endpoints),
+        design_inputs=design_inputs,
     )
     # The application tree is already copied into every agent sandbox. Keep only a small set of
     # starting paths in the index; do not copy or enumerate the whole Java tree as read sources.
@@ -330,6 +334,8 @@ Control service and test shells; their typed calls are already projected from th
 - Preserve frozen BCE/API declarations, persistence projections, repositories, and migrations.
 - Resolve every `EASYDEP-IMPLEMENT` and named Controller marker with contracted behavior and
   meaningful assertions. Do not replace them with empty, demo, or always-passing behavior.
+- Before repository-wide search, batch-read each marker's `Context` path and its listed source
+  paths. The marker ID maps directly to `method-context/<ID>.json`.
 - Use existing repositories for persistent behavior and constructor injection for Spring beans.
 - Generated web Controllers already call their typed Control binding; do not duplicate HTTP or
   Boundary adapters.
@@ -854,13 +860,29 @@ def _materialize_method_contexts(
     output: Path,
     package_path: str,
     projection: MethodProjectionResult,
+    *,
+    requirements: list[dict[str, object]],
+    use_cases: list[dict[str, object]],
+    endpoints: list[dict[str, object]],
+    design_inputs: dict[str, str],
 ) -> list[dict[str, object]]:
     """Write one small, on-demand context file per exact BCE operation."""
 
     context_root = output / "method-context"
     context_root.mkdir(parents=True, exist_ok=True)
+    requirements_by_id = {
+        str(value["id"]): value
+        for value in requirements
+        if isinstance(value.get("id"), str) and value["id"]
+    }
     entries: list[dict[str, object]] = []
     for item in projection.methods:
+        evidence = _method_context_evidence(
+            item,
+            requirements_by_id=requirements_by_id,
+            use_cases=use_cases,
+            endpoints=endpoints,
+        )
         source_paths = {
             f"application/src/main/java/{package_path}/bce/{item.method.class_name}.java"
         }
@@ -889,6 +911,8 @@ def _materialize_method_contexts(
                     "method": asdict(item.method),
                     "generation": item.generation,
                     "reasons": list(item.reasons),
+                    **evidence,
+                    "designInputs": design_inputs,
                     "slices": [asdict(value) for value in item.slices],
                     "sourcePaths": sorted(
                         value for value in source_paths if (run_root / value).is_file()
@@ -904,10 +928,109 @@ def _materialize_method_contexts(
                 "operationId": item.method.operation_id,
                 "stableId": item.method.stable_id,
                 "path": _relative(run_root, path),
+                "refs": evidence["refs"],
                 "sourcePaths": sorted(source_paths),
             }
         )
     return entries
+
+
+def _method_context_evidence(
+    projection: MethodProjection,
+    *,
+    requirements_by_id: dict[str, dict[str, object]],
+    use_cases: list[dict[str, object]],
+    endpoints: list[dict[str, object]],
+) -> dict[str, object]:
+    """Select only exact requirement, step, call, and API evidence for one method."""
+
+    method = projection.method
+    use_case_ids = {
+        use_case_id
+        for method_slice in projection.slices
+        for use_case_id in method_slice.use_case_ids
+    }
+    step_refs = {
+        step_ref
+        for method_slice in projection.slices
+        for step_ref in method_slice.step_refs
+    }
+    call_ids = {
+        method_slice.incoming_call_id
+        for method_slice in projection.slices
+        if method_slice.incoming_call_id
+    } | {
+        call.call_id
+        for method_slice in projection.slices
+        for call in method_slice.outgoing
+        if call.call_id
+    }
+    matching_use_cases = [
+        value
+        for value in use_cases
+        if str(value.get("use_case_id") or value.get("id") or "") in use_case_ids
+    ]
+    requirement_ids = {
+        str(requirement_id)
+        for value in matching_use_cases
+        for field in ("requirement_ids", "nfr_ids")
+        for requirement_id in value.get(field, [])
+        if isinstance(requirement_id, str) and requirement_id
+    }
+    scenario_steps = []
+    for value in matching_use_cases:
+        use_case_id = str(value.get("use_case_id") or value.get("id") or "")
+        for step in value.get("main_scenario", []):
+            if not isinstance(step, dict):
+                continue
+            step_ref = f"{use_case_id}:main:{step.get('step_number')}"
+            if step_ref in step_refs:
+                scenario_steps.append({"ref": step_ref, **step})
+
+    api_operations = []
+    for endpoint in endpoints:
+        binding = endpoint.get("control_binding")
+        if not isinstance(binding, dict) or (
+            str(binding.get("control") or "") != method.class_name
+            or str(binding.get("method") or "") != method.name
+        ):
+            continue
+        api_operations.append(
+            {
+                key: endpoint[key]
+                for key in ("operation_id", "method", "path", "control_binding")
+                if endpoint.get(key) is not None
+            }
+        )
+
+    refs = {
+        f"operation:{method.operation_id}",
+        *(f"requirement:{value}" for value in requirement_ids),
+        *(f"use_case:{value}" for value in use_case_ids),
+        *(f"step:{value}" for value in step_refs),
+        *(f"call:{value}" for value in call_ids),
+        *(
+            f"api:{value['operation_id']}"
+            for value in api_operations
+            if isinstance(value.get("operation_id"), str)
+        ),
+    }
+    return {
+        "refs": sorted(refs),
+        "requirements": [
+            {
+                key: requirements_by_id[requirement_id][key]
+                for key in ("id", "type", "text")
+                if requirements_by_id[requirement_id].get(key) is not None
+            }
+            for requirement_id in sorted(requirement_ids)
+            if requirement_id in requirements_by_id
+        ],
+        "scenarioSteps": sorted(scenario_steps, key=lambda value: str(value["ref"])),
+        "apiOperations": sorted(
+            api_operations, key=lambda value: str(value.get("operation_id") or "")
+        ),
+    }
 
 
 def _frontend_contract_index(

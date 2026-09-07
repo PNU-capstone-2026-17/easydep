@@ -6,9 +6,9 @@ import hashlib
 import json
 from dataclasses import asdict, dataclass, replace
 
+from app.design.contracts.sequence import method_call_signature
 from app.design.schemas.class_model import BCEModel, ClassOperation
-from app.design.services.sequence_diagram.methods import method_call_signature
-from app.design.services.sequence_diagram.projection import (
+from app.design.schemas.sequence_model import (
     SequenceArgument,
     SequenceCollection,
     SequenceFragment,
@@ -276,9 +276,11 @@ def _call_contract_reasons(
 ) -> list[str]:
     if method is None:
         return ["unresolved_target_operation"]
-    expected = list(method.parameters)
+    expected = sorted(method.parameters)
     actual = [(item.parameter, item.type) for item in message.arguments]
-    return [] if actual == expected else ["argument_contract_mismatch"]
+    return [] if len(actual) == len(expected) and sorted(actual) == expected else [
+        "argument_contract_mismatch"
+    ]
 
 
 def _project_child_call(
@@ -293,7 +295,13 @@ def _project_child_call(
     if child.method is None:
         reasons.append("unresolved_target_operation")
     else:
-        for argument in child.message.arguments:
+        by_name = {item.parameter: item for item in child.message.arguments}
+        ordered_arguments = [
+            by_name[name]
+            for name, _value_type in child.method.parameters
+            if name in by_name
+        ]
+        for argument in ordered_arguments:
             arguments.append(_project_argument(parent, argument, prior))
         reasons.extend(item.reason for item in arguments if item.reason)
         if parent.method is None or parent.method.stereotype != "Control":

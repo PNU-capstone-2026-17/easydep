@@ -260,6 +260,67 @@ def test_type_mismatch_preserves_the_exact_target_as_a_hint() -> None:
     assert "argument_contract_mismatch" in {item.reason for item in result.diagnostics}
 
 
+def test_argument_bindings_are_validated_by_name_and_rendered_in_signature_order() -> None:
+    bce = _bce().model_copy(deep=True)
+    root_contract = next(
+        item for item in bce.Classes if item.class_name == "RootControl"
+    ).operations[0]
+    root_contract.parameters.append(
+        root_contract.parameters[0].model_copy(
+            update={"name": "mode", "type": "String"}
+        )
+    )
+    lookup_contract = next(
+        item for item in bce.Classes if item.class_name == "LookupControl"
+    ).operations[0]
+    lookup_contract.parameters.append(
+        lookup_contract.parameters[0].model_copy(
+            update={"name": "mode", "type": "String"}
+        )
+    )
+    diagram = _diagram()
+    root_call = diagram["Messages"][0]
+    root_call["label"] = "run(value:int,mode:String)"
+    root_call["arguments"] = [
+        {
+            "parameter": "mode",
+            "type": "String",
+            "source_kind": "input",
+            "source_ref": "UC1:main:1#mode",
+        },
+        root_call["arguments"][0],
+    ]
+    lookup_call = diagram["Messages"][1]
+    lookup_call["label"] = "lookup(value:int,mode:String)"
+    lookup_call["arguments"] = [
+        {
+            "parameter": "mode",
+            "type": "String",
+            "source_kind": "call_parameter",
+            "source_ref": "UC1-flow::call:1#mode",
+        },
+        lookup_call["arguments"][0],
+    ]
+
+    result = project_method_calls(
+        bce_model=bce,
+        sequence_model=SequenceCollection.model_validate(
+            {"Diagrams": [diagram], "MethodProposals": []}
+        ),
+    )
+    root = _method(result, "RootControl")
+
+    assert "argument_contract_mismatch" not in root.reasons
+    assert [item.parameter for item in root.slices[0].outgoing[0].arguments] == [
+        "value",
+        "mode",
+    ]
+    assert [item.expression for item in root.slices[0].outgoing[0].arguments] == [
+        "value",
+        "mode",
+    ]
+
+
 def test_exact_signature_selects_one_overloaded_operation() -> None:
     bce = _bce().model_copy(deep=True)
     lookup = next(item for item in bce.Classes if item.class_name == "LookupControl")
@@ -340,6 +401,7 @@ def test_renders_compile_safe_service_calls_and_an_explicit_test_shell() -> None
     assert "EASYDEP-IMPLEMENT" not in root
     leaf = files["com/example/app/application/impl/LookupControlService.java"]
     assert "EASYDEP-IMPLEMENT:" in leaf
+    assert "reports/implementation-tasks/method-context/" in leaf
     path, test_source = render_backend_test_shell("com.example.app")
     assert path.endswith("application/impl/BackendApplicationTest.java")
     assert 'fail("EASYDEP-IMPLEMENT:' in test_source

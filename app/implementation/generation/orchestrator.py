@@ -19,7 +19,7 @@ from app.config import settings
 from app.design.contracts.api_spec import ApiSpecModel
 from app.design.contracts.application_runtime import application_security_required
 from app.design.schemas.class_model import BCEModel
-from app.design.services.sequence_diagram.projection import SequenceCollection
+from app.design.schemas.sequence_model import SequenceCollection
 from app.llm_connection import build_llm_connection
 
 from ..agents.runtime import write_execution_plan

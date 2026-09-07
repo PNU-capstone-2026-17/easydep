@@ -144,8 +144,9 @@ class GeneratedClientContracts:
         unresolved = sorted(set(operation_ids) - {item[0] for item in calls})
         for operation_id in unresolved:
             lines.append(
-                "// EASYDEP-IMPLEMENT: generated client has no unique exact export for "
-                f"api:{operation_id}"
+                "// EASYDEP-IMPLEMENT: inspect reports/implementation-tasks/"
+                "frontend-generated-client-index.json for "
+                f"api:{operation_id}; the generated client has no unique exact export"
             )
         if unresolved:
             lines.append("")

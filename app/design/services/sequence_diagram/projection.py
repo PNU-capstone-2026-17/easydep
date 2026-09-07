@@ -15,11 +15,17 @@ import hashlib
 import re
 from collections import Counter, defaultdict
 from copy import deepcopy
-from typing import Any, Literal
-
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from typing import Any
 
 from app.design.schemas.class_model import BCEModel
+from app.design.schemas.sequence_model import (
+    SequenceArgument,
+    SequenceCollection,
+    SequenceFragment,
+    SequenceMessage,
+    SequenceParticipant,
+    UseCaseSequence,
+)
 from app.design.services.class_diagram.scenario import (
     ScenarioIndex,
     id_key,
@@ -30,102 +36,17 @@ from app.design.services.class_diagram.validation.model import (
     derived_value_source,
     operation_catalog,
 )
-from app.design.services.sequence_diagram.methods import (
-    is_complete_method_call,
-    is_return_value_label,
-)
 
-
-class SequenceRecord(BaseModel):
-    """추가 필드를 저장하지 않는 현재 시퀀스 JSON 레코드의 기반 계약이다."""
-    model_config = ConfigDict(extra="forbid")
-
-
-class SequenceParticipant(SequenceRecord):
-    """다이어그램 lifeline 하나와 원본 BCE class 연결 정보다."""
-    name: str = Field(min_length=1)
-    alias: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
-    kind: Literal["actor", "boundary", "control", "entity", "database"]
-    description: str = ""
-    source_class: str = ""
-
-
-class SequenceFragment(SequenceRecord):
-    """메시지를 감싸는 조건/반복 경로의 한 수준이다."""
-    id: str = Field(min_length=1)
-    type: Literal["alt", "opt", "loop"]
-    branch: Literal["main", "else"] = "main"
-    condition: str = Field(min_length=1)
-
-
-class SequenceArgument(SequenceRecord):
-    """호출 parameter가 어느 승인 provenance에서 왔는지 표시하는 투영이다."""
-    parameter: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
-    type: str = Field(min_length=1)
-    source_kind: Literal[
-        "input", "precondition", "call_parameter", "call_result", "state", "literal",
-    ]
-    source_ref: str = Field(min_length=1)
-
-
-class SequenceMessage(SequenceRecord):
-    """승인 call 하나 또는 그 call과 짝을 이루는 return 메시지다."""
-    source: str
-    target: str
-    label: str
-    type: Literal["sync", "async", "return", "self", "activate", "deactivate"]
-    fragments: list[SequenceFragment] = Field(default_factory=list)
-    use_case_ids: list[str] = Field(default_factory=list)
-    step_ids: list[str] = Field(default_factory=list)
-    call_id: str = ""
-    reply_to: str = ""
-    arguments: list[SequenceArgument] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def call_or_return_contract(self) -> SequenceMessage:
-        if self.type in {"sync", "self"}:
-            if not is_complete_method_call(self.label):
-                raise ValueError("call label must be a complete method signature")
-            if not self.call_id or self.reply_to:
-                raise ValueError("call requires call_id only")
-        if self.type == "return":
-            if not is_return_value_label(self.label):
-                raise ValueError("return label must be a type identifier")
-            if self.call_id or not self.reply_to:
-                raise ValueError("return requires reply_to only")
-        return self
-
-
-class UseCaseSequence(SequenceRecord):
-    """유스케이스 하나가 소유하는 participant와 순서 있는 메시지다."""
-    use_case_id: str = Field(min_length=1)
-    use_case_name: str = ""
-    Participants: list[SequenceParticipant]
-    Messages: list[SequenceMessage]
-    UnresolvedSteps: list[dict[str, Any]] = Field(default_factory=list)
-    NarrativeSteps: list[dict[str, Any]] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def messages_reference_owner(self) -> UseCaseSequence:
-        for message in self.Messages:
-            if message.use_case_ids != [self.use_case_id]:
-                raise ValueError("every message must reference its diagram use case")
-        return self
-
-
-class SequenceCollection(SequenceRecord):
-    """현재 시퀀스 영속 계약의 최상위 컬렉션이다."""
-    Diagrams: list[UseCaseSequence]
-    class_diagram_hash: str = ""
-    MethodProposals: list[dict[str, Any]] = Field(default_factory=list)
-
-    @field_validator("Diagrams")
-    @classmethod
-    def diagram_ids_are_unique(cls, values: list[UseCaseSequence]) -> list[UseCaseSequence]:
-        identifiers = [diagram.use_case_id for diagram in values]
-        if len(identifiers) != len(set(identifiers)):
-            raise ValueError("sequence diagram use_case_ids must be unique")
-        return values
+__all__ = [
+    "SequenceArgument",
+    "SequenceCollection",
+    "SequenceFragment",
+    "SequenceMessage",
+    "SequenceParticipant",
+    "UseCaseSequence",
+    "project_sequence_model",
+    "sequence_findings",
+]
 
 
 def _alias(value: str) -> str:
