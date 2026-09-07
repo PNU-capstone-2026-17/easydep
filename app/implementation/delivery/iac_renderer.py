@@ -64,9 +64,15 @@ def _vm_sku(node: dict[str, Any]) -> str:
     return _quoted(value) if isinstance(value, str) and value.strip() else "var.vm_sku"
 
 
-def _port_expression(plan: dict[str, Any], owner: dict[str, Any], field: str = "port") -> str:
+def _port_expression(plan: dict[str, Any], owner: Any, field: str = "port") -> str:
     """고정 포트 또는 같은 workload interface를 가리키는 입력 변수를 돌려준다."""
 
+    if isinstance(owner, int):
+        return str(owner)
+    if not isinstance(owner, dict):
+        raise TypeError(
+            f"Port owner must be an object or integer, got {type(owner).__name__}"
+        )
     value = owner.get(field)
     if isinstance(value, int):
         return str(value)
@@ -391,12 +397,31 @@ def _variable_file(plan: dict[str, Any]) -> str:
         item for item in plan.get("bindingSlots") or [] if item.get("kind") == "secretReference"
     ]
     for item in secret_slots:
+        variable_name = _label(item.get("id"))
+        reference_validation = {
+            "aws": (
+                f'    condition     = can(regex("^arn:(aws|aws-us-gov|aws-cn):secretsmanager:[a-z0-9-]+:[0-9]{{12}}:secret:[A-Za-z0-9/_+=.@-]+$", var.{variable_name}))',
+                "must be a Secrets Manager ARN",
+            ),
+            "azure": (
+                f'    condition     = can(regex("^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\\\.KeyVault/vaults/[^/]+/secrets/[^/]+$", var.{variable_name}))',
+                "must be an Azure Key Vault secret resource ID",
+            ),
+            "gcp": (
+                f'    condition     = can(regex("^projects/[^/]+/secrets/[^/]+$", var.{variable_name}))',
+                "must be a Secret Manager resource name",
+            ),
+        }[provider]
         lines.extend(
             [
                 "",
-                f'variable "{_label(item.get("id"))}" {{',
+                f'variable "{variable_name}" {{',
                 "  type      = string",
                 "  sensitive = true",
+                "  validation {",
+                reference_validation[0],
+                f'    error_message = "{variable_name} {reference_validation[1]}; secret values are never accepted here."',
+                "  }",
                 "}",
             ]
         )
@@ -596,7 +621,6 @@ def _runtime_files(
                 '  chmod +x "$COMPOSE_PLUGIN"',
                 "fi",
                 'compose() { if docker compose version >/dev/null 2>&1; then docker compose "$@"; else docker-compose "$@"; fi; }',
-                "[ ! -f /opt/easydep/runtime/.env ] || set -a; [ ! -f /opt/easydep/runtime/.env ] || . /opt/easydep/runtime/.env; set +a",
             ]
         )
         lines.extend(
@@ -763,20 +787,17 @@ def _runtime_files(
                             [
                                 f'AZURE_SECRET_RESOURCE="${{{secret_key}}}"',
                                 'case "$AZURE_SECRET_RESOURCE" in',
-                                "  https://*) SECRET_VALUE=$(az keyvault secret show --id \"$AZURE_SECRET_RESOURCE\" --query value -o tsv) ;;",
-                                "  /subscriptions/*/vaults/*/secrets/*) AZURE_VAULT_NAME=$(printf '%s' \"$AZURE_SECRET_RESOURCE\" | sed -n 's#^.*/vaults/\\([^/]*\\)/secrets/.*$#\\1#p'); AZURE_SECRET_NAME=$(printf '%s' \"$AZURE_SECRET_RESOURCE\" | sed -n 's#^.*/secrets/\\([^/]*\\).*$#\\1#p'); SECRET_VALUE=$(az keyvault secret show --vault-name \"$AZURE_VAULT_NAME\" --name \"$AZURE_SECRET_NAME\" --query value -o tsv) ;;",
+                                "  /subscriptions/*/resourceGroups/*/providers/Microsoft.KeyVault/vaults/*/secrets/*) AZURE_VAULT_NAME=$(printf '%s' \"$AZURE_SECRET_RESOURCE\" | sed -n 's#^.*/vaults/\\([^/]*\\)/secrets/.*$#\\1#p'); AZURE_SECRET_NAME=$(printf '%s' \"$AZURE_SECRET_RESOURCE\" | sed -n 's#^.*/secrets/\\([^/]*\\).*$#\\1#p'); SECRET_VALUE=$(az keyvault secret show --vault-name \"$AZURE_VAULT_NAME\" --name \"$AZURE_SECRET_NAME\" --query value -o tsv) ;;",
+                                "  /subscriptions/*/vaults/*/secrets/*) echo \"Azure secret must use a full resource ID including resourceGroups and providers/Microsoft.KeyVault\" >&2; exit 1 ;;",
                                 '  *) echo "Unsupported Azure Key Vault secret reference: $AZURE_SECRET_RESOURCE" >&2; exit 1 ;;',
                                 "esac",
                                 f'export {env_name}="$SECRET_VALUE"',
                             ]
                         )
                     else:
-                        project_key = f"project_id_{workload_label}_{_label(config_id)}"
-                        template_vars[project_key] = "var.project_id"
                         lines.extend(
                             [
                                 f'SECRET_RESOURCE="${{{secret_key}}}"',
-                                f'case "$SECRET_RESOURCE" in projects/*) ;; *) SECRET_RESOURCE="projects/${{{project_key}}}/secrets/$SECRET_RESOURCE" ;; esac',
                                 'SECRET_TOKEN=$(curl -fsS -H "Metadata-Flavor: Google" "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" | jq -r .access_token)',
                                 f'export {env_name}="$(curl -fsS -H "Authorization: Bearer $SECRET_TOKEN" "https://secretmanager.googleapis.com/v1/$SECRET_RESOURCE/versions/latest:access" | jq -r .payload.data | tr "_-" "/+" | base64 -d)"',
                             ]
@@ -792,6 +813,8 @@ def _runtime_files(
                     f"    container_name: {_quoted(workload_id)}",
                     f"    image: {_quoted(image)}",
                     "    restart: unless-stopped",
+                    "    env_file:",
+                    "      - /opt/easydep/runtime/.env",
                 ]
             )
             if compose_ports:
@@ -967,10 +990,17 @@ def _aws_resources(
                 ingress = f'\ningress {{ from_port = {port}; to_port = {port}; protocol = "tcp"; cidr_blocks = ["0.0.0.0/0"] }}'
             source_groups = context.dependency_refs(node_id, "ingress.security_groups[]")
             if source_groups:
-                ingress += (
-                    '\ningress { from_port = 1; to_port = 65535; protocol = "tcp"; '
-                    f"security_groups = [{', '.join(source_groups)}] }}"
-                )
+                allowed_ports = list(attributes.get("allowedPorts") or [])
+                if not allowed_ports:
+                    raise ValueError(
+                        f"AWS source security-group ingress has no target port: {node_id}"
+                    )
+                for allowed_port in allowed_ports:
+                    port = _port_expression(plan, allowed_port)
+                    ingress += (
+                        f'\ningress {{ from_port = {port}; to_port = {port}; protocol = "tcp"; '
+                        f"security_groups = [{', '.join(source_groups)}] }}"
+                    )
             for health_check in attributes.get("loadBalancerHealthChecks") or []:
                 port = _port_expression(plan, health_check)
                 ingress += (
@@ -1263,9 +1293,30 @@ def _azure_resources(
                     continue
                 child_attrs = _attrs(child)
                 index = int(child_attrs.get("attachmentIndex") or 0)
+                storage_ref = _cloud_label(child_attrs.get("storageRef") or child_id)
                 body += (
                     f'\ndata_disk {{ lun = {10 + index}; caching = "ReadWrite"; '
+                    # ``name`` is an actual VMSS data-disk profile coordinate,
+                    # not a tag on the scale set.  AzureRM 5.0.1 exposes no
+                    # data_disk.delete_option argument, so do not emit an
+                    # unsupported pseudo-retention field; the descriptor below
+                    # tells the deployment package to record managed-disk IDs
+                    # by VMSS instance and LUN before destroy.
+                    f'name = "${{var.resource_prefix}}-{storage_ref}"; '
+                    'create_option = "Empty"; '
                     f'storage_account_type = "Standard_LRS"; disk_size_gb = {int(child_attrs.get("capacityGiB") or 10)} }}'
+                )
+            retained_storage = [
+                str(_attrs(child).get("storageRef") or child_id)
+                for child_id, child in context.embedded_blocks.items()
+                if child.get("ownerRef") == node_id
+                and child.get("blockPath") == "data_disk"
+                and _attrs(child).get("deletionPolicy") == "retain"
+            ]
+            if retained_storage:
+                body += (
+                    "\ntags = { EasyDepRetainedReplicaDisks = "
+                    f"{_quoted(','.join(sorted(retained_storage)))} }}"
                 )
             if identity_target:
                 body += f'\nidentity {{ type = "UserAssigned"; identity_ids = [{context.ref(identity_target)}] }}'
@@ -1381,16 +1432,13 @@ def _gcp_resources(
                 body += f'\nsubnetwork {{ name = {context.ref(subnet)}; source_ip_ranges_to_nat = ["ALL_IP_RANGES"] }}'
         elif kind == "google_compute_firewall":
             public_paths = attributes.get("publicInterfaces") or []
-            ports = []
-            for path in public_paths:
-                ports.append(_port_expression(plan, path))
+            allowed_ports = public_paths or attributes.get("allowedPorts") or []
+            if not allowed_ports:
+                raise ValueError(f"GCP firewall has no explicit allowed port: {node_id}")
+            ports = [_port_expression(plan, path) for path in allowed_ports]
             target_tags = context.dependency_refs(node_id, "target_tags[]")
             source_tags = context.dependency_refs(node_id, "source_tags[]")
-            port_values = (
-                "[" + ", ".join(f"tostring({port})" for port in ports) + "]"
-                if ports
-                else '["1-65535"]'
-            )
+            port_values = "[" + ", ".join(f"tostring({port})" for port in ports) + "]"
             body = f'name = {_gcp_name(node_id, cloud_label)}\nnetwork = {context.dependency_ref(node_id, "network")}\ndirection = "INGRESS"\ntarget_tags = [{", ".join(target_tags)}]\nallow {{ protocol = "tcp"; ports = {port_values} }}'
             if source_tags:
                 body += f"\nsource_tags = [{', '.join(source_tags)}]"
@@ -1400,6 +1448,9 @@ def _gcp_resources(
             gcp_subnet = context.target(node_id, "network_interface.subnetwork")
             tag_values = context.dependency_refs(node_id, "tags[]")
             gcp_identity = context.target(node_id, "service_account.email")
+            traffic_label = context.dependency_ref(
+                node_id, "labels.easydep_traffic_tag", required=False
+            )
             public_address = context.target(node_id, "network_interface.access_config.nat_ip")
             zone = attributes.get("zone") or f"{region}-a"
             bootstrap_file, bootstrap_vars = _bootstrap_expression(node_id, vars_by_compute)
@@ -1416,12 +1467,17 @@ def _gcp_resources(
             if gcp_identity:
                 body += f'service_account {{ email = {context.ref(gcp_identity, "email")}; scopes = ["cloud-platform"] }}\n'
             body += f'metadata = {{ user-data = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}) }}\ntags = [{", ".join(tag_values)}]'
+            if traffic_label:
+                body += f'\nlabels = {{ easydep_traffic_tag = {traffic_label} }}'
             if not public_address and cloud_nat_dependencies:
                 body += f"\ndepends_on = [{', '.join(cloud_nat_dependencies)}]"
         elif kind == "google_compute_instance_template":
             gcp_template_subnet = context.target(node_id, "network_interface.subnetwork")
             gcp_template_identity = context.target(node_id, "service_account.email")
             tag_values = context.dependency_refs(node_id, "tags[]")
+            traffic_label = context.dependency_ref(
+                node_id, "labels.easydep_traffic_tag", required=False
+            )
             bootstrap_file, bootstrap_vars = _bootstrap_expression(node_id, vars_by_compute)
             body = (
                 f'name_prefix = substr("${{var.resource_prefix}}-{cloud_label}-", 0, 37)\nmachine_type = {_vm_sku(node)}\n'
@@ -1441,7 +1497,10 @@ def _gcp_resources(
                     'disk_type = "pd-balanced"; auto_delete = '
                     f"{str(child_attrs.get('deletionPolicy') != 'retain').lower()}; boot = false }}"
                 )
-            body += f'\ntags = [{", ".join(tag_values)}]\nmetadata = {{ user-data = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}) }}\nlifecycle {{ create_before_destroy = true }}'
+            body += f'\ntags = [{", ".join(tag_values)}]'
+            if traffic_label:
+                body += f'\nlabels = {{ easydep_traffic_tag = {traffic_label} }}'
+            body += f'\nmetadata = {{ user-data = templatefile("${{path.module}}/{bootstrap_file}", {bootstrap_vars}) }}\nlifecycle {{ create_before_destroy = true }}'
         elif kind in {
             "google_compute_region_instance_group_manager",
             "google_compute_instance_group_manager",
@@ -1457,6 +1516,21 @@ def _gcp_resources(
                     body += f"\ndistribution_policy_zones = {json.dumps(zones)}"
             else:
                 body += f"\nzone = {_quoted(zones[0] if zones else region + '-a')}"
+            # An instance-template disk with auto_delete=false alone is not a
+            # stateful MIG contract.  Mark each retained per-replica device as
+            # stateful so the manager detaches it (rather than deleting it)
+            # when an instance or the group is removed.
+            for child_id, child in context.embedded_blocks.items():
+                if child.get("ownerRef") != (template or "") or child.get("blockPath") != "disk":
+                    continue
+                child_attrs = _attrs(child)
+                if child_attrs.get("deletionPolicy") != "retain":
+                    continue
+                storage_ref = _cloud_label(child_attrs.get("storageRef") or child_id)
+                body += (
+                    f'\nstateful_disk {{ device_name = "easydep-{storage_ref}"; '
+                    'delete_rule = "NEVER" }'
+                )
             if cloud_nat_dependencies:
                 body += f"\ndepends_on = [{', '.join(cloud_nat_dependencies)}]"
         elif kind == "google_compute_address":
@@ -1567,7 +1641,7 @@ def _output_file(plan: dict[str, Any], context: _Context) -> str:
                 "",
             ]
         )
-        if ingress_kind == "directPublicIp":
+        if ingress_kind == "directPublicIp" and provider == "azure":
             outputs.extend(
                 [
                     f'output "ssh_command_{_label(compute_id)}" {{',
@@ -1576,6 +1650,72 @@ def _output_file(plan: dict[str, Any], context: _Context) -> str:
                     "",
                 ]
             )
+    for block_id, block in context.embedded_blocks.items():
+        attributes = _attrs(block)
+        if not (
+            attributes.get("perReplica") is True
+            and attributes.get("deletionPolicy") == "retain"
+        ):
+            continue
+        owner = str(block.get("ownerRef") or "")
+        if owner not in context.addresses:
+            continue
+        storage_ref = str(attributes.get("storageRef") or block_id)
+        output_name = f"retained_replica_disk_{_label(storage_ref)}"
+        aws_asg_owner = (
+            owner.removeprefix("compute-template-")
+            if provider == "aws" and owner.removeprefix("compute-template-") in context.addresses
+            else owner
+        )
+        gcp_mig_owner = (
+            owner.removeprefix("compute-template-")
+            if provider == "gcp" and owner.removeprefix("compute-template-") in context.addresses
+            else owner
+        )
+        details = [
+            f"provider = {_quoted(provider)}",
+            f"storage_ref = {_quoted(storage_ref)}",
+            f"owner_resource_id = {context.ref(aws_asg_owner if provider == 'aws' else gcp_mig_owner)}",
+        ]
+        if provider == "aws":
+            device = chr(ord("f") + int(attributes.get("attachmentIndex") or 0))
+            details.extend(
+                [
+                    f"autoscaling_group_name = {context.ref(aws_asg_owner, 'name')}",
+                    f"launch_template_id = {context.ref(owner)}",
+                    f"block_device_name = {_quoted('/dev/sd' + device)}",
+                    'lookup_strategy = "asg-instance-block-device-volume-id"',
+                ]
+            )
+        elif provider == "azure":
+            disk_lun = 10 + int(attributes.get("attachmentIndex") or 0)
+            details.append(
+                'vmss_retained_disk_tag_key = "EasyDepRetainedReplicaDisks"'
+            )
+            details.extend(
+                [
+                    f"vmss_data_disk_lun = {disk_lun}",
+                    f'data_disk_profile_name = format("%s-{_cloud_label(storage_ref)}", var.resource_prefix)',
+                    'lookup_strategy = "vmss-instance-lun-managed-disk-id"',
+                ]
+            )
+        else:
+            details.extend(
+                [
+                    f"mig_resource_id = {context.ref(gcp_mig_owner)}",
+                    f"device_name = {_quoted('easydep-' + _cloud_label(storage_ref))}",
+                    f"mig_region = {_quoted(plan.get('region'))}",
+                    'lookup_strategy = "mig-instance-device-source"',
+                ]
+            )
+        outputs.extend(
+            [
+                f'output "{output_name}" {{',
+                "  value = { " + ", ".join(details) + " }",
+                "}",
+                "",
+            ]
+        )
     for compute_id in sorted(
         {str(item.get("computeUnitRef") or "") for item in plan.get("placements") or []}
     ):

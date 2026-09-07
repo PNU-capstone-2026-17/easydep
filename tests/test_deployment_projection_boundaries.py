@@ -317,6 +317,31 @@ def test_selected_resource_plan_has_one_canonical_iac_directory(
     assert not (tmp_path / "run/application/terraform").exists()
 
 
+def test_inconclusive_deployment_verification_is_not_publishable(
+    tmp_path: Path, monkeypatch
+) -> None:
+    bundle = _projection_outputs("aws")["bundle"]
+    bundle_path = tmp_path / "deployment-bundle.json"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+    monkeypatch.setattr(
+        "app.implementation.delivery.package._format_open_tofu", lambda _directory: None
+    )
+    monkeypatch.setattr(
+        "app.implementation.delivery.terraform.check_deployment_package",
+        lambda *_args, **_kwargs: {
+            "gateStatus": "INCONCLUSIVE",
+            "deliverable": False,
+            "issues": ["OpenTofu is unavailable"],
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="did not pass validation"):
+        render_iac(
+            tmp_path / "run",
+            SimpleNamespace(inputs={"deploymentBundle": bundle_path}),
+        )
+
+
 def test_compute_choices_reproject_without_private_constraint_kind() -> None:
     bundle = _projection_outputs("aws")["bundle"]
     projection = bundle["projections"][0]

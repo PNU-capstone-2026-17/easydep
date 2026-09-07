@@ -1210,3 +1210,106 @@ def test_ordinary_and_external_endpoint_configuration_are_injected_without_secre
     assert "      - APP_MODE" in bootstrap
     assert "      - PAYMENTS_URL" in bootstrap
     assert "compose --env-file /opt/easydep/runtime/.env" in bootstrap
+
+
+def test_delivery_script_revalidates_existing_inputs_atomically_without_port_prompt(
+    tmp_path: Path,
+) -> None:
+    bundle = build_deployment_diagram_bundle(
+        _graph(STANDALONE_PRIMARY_PUBLIC), _resource_spec("aws")
+    )
+    resource_plan = bundle["projections"][0]["resourcePlan"]
+    application = tmp_path / "application"
+    application.mkdir()
+    package = render_deployment_package(
+        application, resource_plan, render_open_tofu(resource_plan)
+    )
+    script = (package / "easydep.ps1").read_text(encoding="utf-8")
+
+    assert "Write-TfvarsAtomic" in script
+    assert "Prompt only missing or invalid values" in script
+    assert "if (Test-Path $TfvarsPath) { return }" not in script
+    assert "if ($Name -like 'container_port_*')" not in script
+
+
+def test_gcp_delivery_secret_preflight_requires_full_resource_name(tmp_path: Path) -> None:
+    graph = _graph(STANDALONE_PRIMARY_PUBLIC)
+    graph["workloads"][0]["configuration"] = [
+        {
+            "id": "api-token",
+            "name": "API_TOKEN",
+            "kind": "secretBinding",
+            "sensitive": True,
+            "sourceRefs": ["requirement:SECRET"],
+        }
+    ]
+    bundle = build_deployment_diagram_bundle(graph, _resource_spec("gcp"))
+    application = tmp_path / "application"
+    application.mkdir()
+    package = render_deployment_package(
+        application,
+        bundle["projections"][0]["resourcePlan"],
+        render_open_tofu(bundle["projections"][0]["resourcePlan"]),
+    )
+    script = (package / "easydep.ps1").read_text(encoding="utf-8")
+
+    assert "^projects/[A-Za-z0-9-]+/secrets/[A-Za-z0-9_-]+$" in script
+    assert "|[A-Za-z0-9_-]+)$" not in script
+    assert "gcloud secrets describe $reference" in script
+
+
+@pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])
+def test_retained_replica_destroy_uses_renderer_outputs_and_provider_queries(
+    provider: str,
+    tmp_path: Path,
+) -> None:
+    graph = _graph(STANDALONE_DEFAULT_TWO_WORKLOADS_ONE_PERSISTENT)
+    state = next(item for item in graph["workloads"] if item["id"] == "state")
+    state["replicationSafety"] = "interchangeable"
+    state["storage"][0]["replicaSemantics"] = "perReplica"
+    state["storage"][0]["deletionPolicy"] = "retain"
+    graph["constraints"].append(
+        {
+            "id": "state-replicas",
+            "kind": "replicaCount",
+            "workloadRefs": ["state"],
+            "value": 2,
+            "sourceRefs": ["requirement:STATE-HA"],
+        }
+    )
+    bundle = build_deployment_diagram_bundle(graph, _resource_spec(provider))
+    plan = bundle["projections"][0]["resourcePlan"]
+    files = render_open_tofu(plan)
+    application = tmp_path / "application"
+    application.mkdir()
+    script = (
+        render_deployment_package(
+            application, plan, files
+        )
+        / "easydep.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "retained_replica_disk_" in files["outputs.tf"]
+    assert "tofu output -json $outputName" in script
+    assert "status=present-before-destroy" in script
+    assert "retained-after-destroy" in script
+    assert "missing-after-destroy" in script
+    marker = {
+        "aws": "aws ec2 describe-volumes",
+        "azure": "az vmss list-instances",
+        "gcp": "gcloud compute instance-groups managed list-instances",
+    }[provider]
+    assert marker in script
+    if provider == "aws":
+        assert "aws autoscaling describe-auto-scaling-groups" in script
+        assert "aws ec2 describe-instances" in script
+        assert "BlockDeviceMappings" in script
+        assert "aws ec2 describe-volumes --region $Config.region --volume-ids $prior.id" in script
+    elif provider == "azure":
+        assert "az vmss list-instances" in script
+        assert "storageProfile.dataDisks" in script
+        assert "az disk show --ids $prior.id" in script
+    elif provider == "gcp":
+        assert "instance-groups managed list-instances" in script
+        assert "gcloud compute instances describe $instanceUri" in script
+        assert "gcloud compute disks describe $prior.id" in script

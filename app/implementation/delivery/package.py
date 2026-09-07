@@ -152,7 +152,9 @@ def _registry_bootstrap_targets(
             workload_ref = str(container.get("workloadRef") or "")
             if not registry_ref or not workload_ref:
                 continue
-            workload_label = _tofu_label(workload_ref)
+            # iac_renderer uses _label for variable/output names. Keep the
+            # checkpoint and TF_VAR keys byte-for-byte aligned with that contract.
+            workload_label = _label(workload_ref)
             node = nodes.get(registry_ref) or {}
             terraform_types = list(node.get("terraformTypes") or [])
             if node.get("handling") != "create" or not terraform_types:
@@ -174,6 +176,15 @@ def _health_outputs(rendered_tofu: dict[str, str]) -> list[str]:
 
     return re.findall(
         r'^output\s+"(health_url_[A-Za-z0-9_]+)"\s*\{',
+        rendered_tofu.get("outputs.tf", ""),
+        re.MULTILINE,
+    )
+
+
+def _retained_disk_outputs(rendered_tofu: dict[str, str]) -> list[str]:
+    """Return renderer-provided retained replica disk output names."""
+    return re.findall(
+        r'^output\s+"(retained_replica_disk_[A-Za-z0-9_]+)"\s*\{',
         rendered_tofu.get("outputs.tf", ""),
         re.MULTILINE,
     )
@@ -207,6 +218,7 @@ def _interactive_powershell_script(
             and (node.get("attributes") or {}).get("deletionPolicy") == "retain"
             and next(iter(node.get("terraformTypes") or []), "")
         ],
+        "retainedDiskOutputs": _retained_disk_outputs(rendered_tofu),
     }
     config_json = json.dumps(config, ensure_ascii=True, separators=(",", ":"))
     script = r'''$ErrorActionPreference = 'Stop'
@@ -218,6 +230,8 @@ $TofuRoot = Join-Path $Root 'tofu'
 $RuntimeRoot = Join-Path $Root 'runtime'
 $TfvarsPath = Join-Path $TofuRoot 'terraform.tfvars'
 $DigestPath = Join-Path $RuntimeRoot 'image-digests.env'
+$DigestMetaPath = Join-Path $RuntimeRoot 'image-digests.meta.json'
+$IdentityPath = Join-Path $RuntimeRoot 'cloud-identity.json'
 $PlanPath = Join-Path $TofuRoot 'easydep.tfplan'
 
 function Invoke-Checked([string]$Program, [string[]]$Arguments) {
@@ -310,7 +324,10 @@ function Read-Required([string]$Prompt, [string]$Default = '') {
 
 function Set-TfValue([string]$Name, [string]$Value) {
   $escaped = $Value.Replace('\', '\\').Replace('"', '\"')
-  $content = Get-Content -Raw -Encoding UTF8 $TfvarsPath
+  if ($null -eq $script:TfvarsContent) {
+    $script:TfvarsContent = Get-Content -Raw -Encoding UTF8 $TfvarsPath
+  }
+  $content = $script:TfvarsContent
   $pattern = '(?m)^' + [regex]::Escape($Name) + '\s*=.*$'
   $replacement = $Name + ' = "' + $escaped + '"'
   if ([regex]::IsMatch($content, $pattern)) {
@@ -318,7 +335,44 @@ function Set-TfValue([string]$Name, [string]$Value) {
   } else {
     $content = $content.TrimEnd() + [Environment]::NewLine + $replacement + [Environment]::NewLine
   }
-  Set-Content -Encoding UTF8 -LiteralPath $TfvarsPath -Value $content
+  $script:TfvarsContent = $content
+}
+
+function Write-TfvarsAtomic {
+  $directory = Split-Path -Parent $TfvarsPath
+  $temporary = Join-Path $directory ('.terraform.tfvars.' + [Guid]::NewGuid().ToString('N') + '.tmp')
+  try {
+    $utf8 = New-Object Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($temporary, $script:TfvarsContent.TrimEnd() + [Environment]::NewLine, $utf8)
+    Move-Item -LiteralPath $temporary -Destination $TfvarsPath -Force
+  } finally {
+    if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+  }
+}
+
+function Get-TfValue([string]$Name) {
+  if ($null -eq $script:TfvarsContent) { return '' }
+  $match = [regex]::Match($script:TfvarsContent, '(?m)^' + [regex]::Escape($Name) + '\s*=\s*(.*?)(?:\s+#.*)?$')
+  if (-not $match.Success) { return '' }
+  $value = $match.Groups[1].Value.Trim()
+  if ($value.Length -ge 2 -and $value.StartsWith('"') -and $value.EndsWith('"')) {
+    return $value.Substring(1, $value.Length - 2).Replace('\\"', '"').Replace('\\\\', '\')
+  }
+  return $value
+}
+
+function Test-RequiredTfValue([string]$Name, [string]$Value) {
+  if ([string]::IsNullOrWhiteSpace($Value) -or $Value -match '(?i)REPLACE_ME|CHANGE_ME|YOUR_') { return $false }
+  if ($Name -eq 'resource_prefix') { return $Value -match '^[A-Za-z][A-Za-z0-9-]{0,31}$' }
+  if ($Name -eq 'boot_image_id') { return $Value -match '^ami-[A-Za-z0-9]+$' }
+  if ($Name -like 'secret_reference_*') {
+    switch ($Config.provider) {
+      'aws' { return $Value -match '^arn:aws[a-z-]*:secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+$' }
+      'azure' { return $Value -match '(?i)^/subscriptions/[0-9a-f-]{36}/resourceGroups/[^/]+/providers/Microsoft\.KeyVault/vaults/[^/]+/secrets/[^/]+$' }
+      'gcp' { return $Value -match '^projects/[A-Za-z0-9-]+/secrets/[A-Za-z0-9_-]+$' }
+    }
+  }
+  return $true
 }
 
 function Test-CloudLogin {
@@ -372,40 +426,188 @@ function Test-Prerequisites([bool]$NeedsDocker) {
 }
 
 function Initialize-Inputs {
-  if (Test-Path $TfvarsPath) { return }
-  Copy-Item (Join-Path $TofuRoot 'terraform.tfvars.example') $TfvarsPath
+  $examplePath = Join-Path $TofuRoot 'terraform.tfvars.example'
+  $example = Get-Content -Raw -Encoding UTF8 $examplePath
+  $script:TfvarsContent = if (Test-Path $TfvarsPath) { Get-Content -Raw -Encoding UTF8 $TfvarsPath } else { $example }
+  # Merge newly required keys from the example without discarding a user's existing values.
+  foreach ($exampleMatch in [regex]::Matches($example, '(?m)^([A-Za-z_][A-Za-z0-9_]*)\s*=.*$')) {
+    $name = $exampleMatch.Groups[1].Value
+    if (-not [regex]::IsMatch($script:TfvarsContent, '(?m)^' + [regex]::Escape($name) + '\s*=')) {
+      $script:TfvarsContent = $script:TfvarsContent.TrimEnd() + [Environment]::NewLine + $exampleMatch.Value + [Environment]::NewLine
+    }
+  }
   Write-Host 'Enter the deployment values. They remain only in this extracted folder.' -ForegroundColor Cyan
-  Set-TfValue 'resource_prefix' (Read-Required 'Unique resource prefix' 'easydep')
+  $resourcePrefix = Get-TfValue 'resource_prefix'
+  if (-not (Test-RequiredTfValue 'resource_prefix' $resourcePrefix)) {
+    Set-TfValue 'resource_prefix' (Read-Required 'Unique resource prefix' 'easydep')
+  }
 
   switch ($Config.provider) {
     'aws' {
-      $ami = ''
-      try {
-        $ami = (& aws ssm get-parameter --region $Config.region --name '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64' --query 'Parameter.Value' --output text 2>$null).Trim()
-      } catch { $ami = '' }
-      if (-not $ami.StartsWith('ami-')) { $ami = '' }
-      Set-TfValue 'boot_image_id' (Read-Required "x86_64 Linux AMI in $($Config.region)" $ami)
+      if (-not (Test-RequiredTfValue 'boot_image_id' (Get-TfValue 'boot_image_id'))) {
+        $ami = ''
+        try { $ami = (& aws ssm get-parameter --region $Config.region --name '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64' --query 'Parameter.Value' --output text 2>$null).Trim() } catch { $ami = '' }
+        if (-not $ami.StartsWith('ami-')) { $ami = '' }
+        Set-TfValue 'boot_image_id' (Read-Required "x86_64 Linux AMI in $($Config.region)" $ami)
+      }
     }
     'azure' {
-      $subscription = (& az account show --query id --output tsv).Trim()
-      Set-TfValue 'subscription_id' (Read-Required 'Azure subscription ID' $subscription)
-      $keyPath = Read-Required 'Path to an OpenSSH public key'
-      Set-TfValue 'ssh_public_key' (Get-Content -Raw -Encoding UTF8 $keyPath).Trim()
+      if (-not (Test-RequiredTfValue 'subscription_id' (Get-TfValue 'subscription_id'))) {
+        $subscription = (& az account show --query id --output tsv).Trim()
+        Set-TfValue 'subscription_id' (Read-Required 'Azure subscription ID' $subscription)
+      }
+      if (-not (Test-RequiredTfValue 'ssh_public_key' (Get-TfValue 'ssh_public_key'))) {
+        $keyPath = Read-Required 'Path to an OpenSSH public key'
+        Set-TfValue 'ssh_public_key' (Get-Content -Raw -Encoding UTF8 $keyPath).Trim()
+      }
     }
     'gcp' {
-      $project = (& gcloud config get-value project 2>$null).Trim()
-      Set-TfValue 'project_id' (Read-Required 'GCP project ID' $project)
+      if (-not (Test-RequiredTfValue 'project_id' (Get-TfValue 'project_id'))) {
+        $project = (& gcloud config get-value project 2>$null).Trim()
+        Set-TfValue 'project_id' (Read-Required 'GCP project ID' $project)
+      }
     }
   }
 
-  # Provider 기본값 이외에 외부 endpoint나 Secret 참조가 있으면 이름 그대로 묻는다.
-  $content = Get-Content -Raw -Encoding UTF8 $TfvarsPath
-  $emptyValues = [regex]::Matches($content, '(?m)^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*""\s*$')
-  foreach ($match in $emptyValues) {
-    $name = $match.Groups[1].Value
+  # Prompt only missing or invalid values from both an old partial file and new keys.
+  $requiredNames = [regex]::Matches($script:TfvarsContent, '(?m)^([A-Za-z_][A-Za-z0-9_]*)\s*=') | ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique
+  foreach ($name in $requiredNames) {
     if ($Config.provider -eq 'aws' -and $name -eq 'ssh_public_key') { continue }
-    Set-TfValue $name (Read-Required "Value for $name")
+    $value = Get-TfValue $name
+    if (-not (Test-RequiredTfValue $name $value)) {
+      Set-TfValue $name (Read-Required "Value for $name")
+    }
   }
+  Write-TfvarsAtomic
+}
+
+function Get-CloudIdentity {
+  switch ($Config.provider) {
+    'aws' {
+      $value = (& aws sts get-caller-identity --query Account --output text --region $Config.region 2>$null).Trim()
+      if ($LASTEXITCODE -ne 0 -or $value -notmatch '^\d{12}$') { throw 'Unable to resolve the AWS caller identity.' }
+      return $value
+    }
+    'azure' {
+      $value = (& az account show --query id --output tsv 2>$null).Trim()
+      if ($LASTEXITCODE -ne 0 -or $value -notmatch '^[0-9a-f-]{36}$') { throw 'Unable to resolve the Azure subscription identity.' }
+      return $value.ToLowerInvariant()
+    }
+    'gcp' {
+      $project = (Get-TfValue 'project_id').Trim()
+      $account = (& gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>$null | Select-Object -First 1).Trim()
+      if ($project -notmatch '^[a-z][a-z0-9-]{4,28}[a-z0-9]$' -or -not $account) { throw 'Unable to resolve the GCP caller identity.' }
+      return ($project + '|' + $account)
+    }
+    default { throw "Unsupported cloud provider: $($Config.provider)" }
+  }
+}
+
+function Get-SourceHash([string]$ApplicationRoot) {
+  $files = @(Get-ChildItem -LiteralPath $ApplicationRoot -File -Recurse | Where-Object {
+      $_.FullName -notlike ((Join-Path $Root 'deployment') + '*') -and $_.Name -notin @('terraform.tfstate','terraform.tfstate.backup')
+    } | Sort-Object FullName)
+  $signature = ($files | ForEach-Object {
+      $relative = $_.FullName.Substring($ApplicationRoot.Length).TrimStart('\\','/')
+      $digest = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+      "$relative=$digest"
+    }) -join "`n"
+  $hasher = [Security.Cryptography.SHA256]::Create()
+  try { return ([BitConverter]::ToString($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($signature))).Replace('-','')).ToLowerInvariant() }
+  finally { $hasher.Dispose() }
+}
+
+function Test-DeploymentIdentity([bool]$RecordIfMissing) {
+  $identity = Get-CloudIdentity
+  if (Test-Path -LiteralPath $IdentityPath) {
+    try { $record = Get-Content -Raw -Encoding UTF8 -LiteralPath $IdentityPath | ConvertFrom-Json } catch { throw 'The deployment identity checkpoint is unreadable.' }
+    if ($record.provider -ne $Config.provider -or $record.region -ne $Config.region -or $record.cloudIdentity -ne $identity) {
+      throw 'The active cloud identity does not match this deployment state; refusing to mix accounts.'
+    }
+    return
+  }
+  if (-not $RecordIfMissing) { throw 'No cloud identity checkpoint exists for this deployment state.' }
+  $temporary = $IdentityPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+  try {
+    @{ provider = $Config.provider; region = $Config.region; cloudIdentity = $identity } | ConvertTo-Json -Compress | Set-Content -Encoding UTF8 -LiteralPath $temporary
+    Move-Item -LiteralPath $temporary -Destination $IdentityPath -Force
+  } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+}
+
+function Test-SecretReferences {
+  $names = @([regex]::Matches($script:TfvarsContent, '(?m)^(secret_reference_[A-Za-z0-9_]+)\s*=') | ForEach-Object { $_.Groups[1].Value })
+  foreach ($name in $names) {
+    $reference = (Get-TfValue $name).Trim()
+    if (-not (Test-RequiredTfValue $name $reference)) { throw "Invalid $($Config.provider) Secret reference format for $name." }
+    switch ($Config.provider) {
+      'aws' {
+        & aws secretsmanager describe-secret --region $Config.region --secret-id $reference --query ARN --output text *> $null
+        if ($LASTEXITCODE -ne 0) { throw "AWS Secret metadata lookup failed for $name." }
+        # Supported runtime payload is one SecretString. Capture it only in
+        # memory, reject structured JSON, and never include it in diagnostics.
+        $payload = (& aws secretsmanager get-secret-value --region $Config.region --secret-id $reference --query SecretString --output text 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($payload)) { throw "AWS Secret payload lookup failed for $name." }
+        if ($payload -match '^\s*[\[{]') { throw "AWS Secret payload for $name must be a single string." }
+      }
+      'azure' {
+        # The renderer consumes this canonical resource ID for both RBAC scope and
+        # vault/name lookup; data-plane URLs are intentionally rejected here.
+        & az resource show --ids $reference --query id --output tsv *> $null
+        if ($LASTEXITCODE -ne 0) { throw "Azure Key Vault Secret metadata lookup failed for $name." }
+      }
+      'gcp' {
+        $project = (Get-TfValue 'project_id').Trim()
+        & gcloud secrets describe $reference --project $project --format='value(name)' *> $null
+        if ($LASTEXITCODE -ne 0) { throw "GCP Secret metadata lookup failed for $name." }
+      }
+    }
+  }
+}
+
+function Test-DigestCheckpoint {
+  $targets = @($Config.registryTargets)
+  if ($targets.Count -eq 0) { return $true }
+  if (-not (Test-Path $DigestPath) -or -not (Test-Path $DigestMetaPath)) { return $false }
+  $lines = @(Get-Content -Encoding UTF8 -LiteralPath $DigestPath)
+  $digests = @{}
+  foreach ($line in $lines) {
+    if ($line -match '^TF_VAR_(image_digest_[A-Za-z0-9_]+)=(sha256:[0-9a-f]{64})$') { $digests[$matches[1]] = $matches[2] }
+  }
+  foreach ($target in $targets) {
+    $key = 'image_digest_' + $target.workload
+    if (-not $digests.ContainsKey($key)) { return $false }
+  }
+  try { $metadata = Get-Content -Raw -Encoding UTF8 -LiteralPath $DigestMetaPath | ConvertFrom-Json } catch { return $false }
+  if ($metadata.provider -ne $Config.provider -or $metadata.region -ne $Config.region) { return $false }
+  $applicationRoot = Resolve-Path (Join-Path $Root '..')
+  if ($metadata.sourceHash -ne (Get-SourceHash $applicationRoot)) { return $false }
+  if ($metadata.cloudIdentity -ne (Get-CloudIdentity)) { return $false }
+  $recorded = @($metadata.workloads | ForEach-Object { [string]$_ })
+  $recordedKey = (@($recorded | Sort-Object) -join '|')
+  $targetKey = (@($targets | ForEach-Object { [string]$_.workload } | Sort-Object) -join '|')
+  if ($recordedKey -ne $targetKey) { return $false }
+  # A digest file alone is not proof that the image still exists in this registry.
+  Initialize-Tofu
+  foreach ($target in $targets) {
+    $registryUrl = (& tofu output -raw $target.output 2>$null).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $registryUrl) { return $false }
+    $digest = $digests['image_digest_' + $target.workload]
+    switch ($Config.provider) {
+      'aws' {
+        $repository = $registryUrl.Substring($registryUrl.LastIndexOf('/') + 1)
+        & aws ecr describe-images --region $Config.region --repository-name $repository --image-ids imageDigest=$digest --query 'imageDetails[0].imageDigest' --output text *> $null
+      }
+      'azure' {
+        $parts = $registryUrl.Split('/')
+        $registry = $parts[0].Split('.')[0]
+        $repository = $parts[1]
+        & az acr repository show --name $registry --image "$repository@$digest" --query name --output tsv *> $null
+      }
+      'gcp' { & gcloud artifacts docker images describe "$registryUrl@$digest" --format='value(image_summary.digest)' *> $null }
+    }
+    if ($LASTEXITCODE -ne 0) { return $false }
+  }
+  return $true
 }
 
 function Import-RuntimeValues {
@@ -432,10 +634,14 @@ function Initialize-Tofu {
 }
 
 function Initialize-Images {
-  if (Test-Path $DigestPath) {
+  if (Test-DigestCheckpoint) {
     Show-DeploymentProgress 65 'Reusing the prepared application image.'
-    Write-Host 'Reusing the recorded application image digest.' -ForegroundColor Green
+    Write-Host 'Reusing the recorded image digests after registry, source, and cloud identity checks.' -ForegroundColor Green
     return $true
+  }
+  if (Test-Path $DigestPath) {
+    Write-Host 'The recorded image checkpoint is incomplete or stale; it will not be reused.' -ForegroundColor Yellow
+    Remove-Item -LiteralPath $DigestPath,$DigestMetaPath -Force -ErrorAction SilentlyContinue
   }
   $answer = Read-Host 'Container registries will now be created and may incur cloud charges. Continue? [y/N]'
   if ($answer -notmatch '^(?i)y(?:es)?$') {
@@ -511,13 +717,31 @@ function Initialize-Images {
       }
     }
   }
-  $digestLines | Set-Content -Encoding UTF8 $DigestPath
+  $applicationRoot = Resolve-Path (Join-Path $Root '..')
+  $metadata = @{
+    provider = $Config.provider
+    region = $Config.region
+    cloudIdentity = Get-CloudIdentity
+    sourceHash = Get-SourceHash $applicationRoot
+    workloads = @($targets | ForEach-Object { [string]$_.workload })
+  } | ConvertTo-Json -Depth 4 -Compress
+  $digestTemporary = $DigestPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+  $metadataTemporary = $DigestMetaPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+  try {
+    $digestLines | Set-Content -Encoding UTF8 -LiteralPath $digestTemporary
+    Set-Content -Encoding UTF8 -LiteralPath $metadataTemporary -Value $metadata
+    Move-Item -LiteralPath $digestTemporary -Destination $DigestPath -Force
+    Move-Item -LiteralPath $metadataTemporary -Destination $DigestMetaPath -Force
+  } finally {
+    Remove-Item -LiteralPath $digestTemporary,$metadataTemporary -Force -ErrorAction SilentlyContinue
+  }
   Show-DeploymentProgress 65 'Application images are ready.'
   return $true
 }
 
 function New-AndApplyPlan {
   Set-Location $TofuRoot
+  Test-DeploymentIdentity $true
   Import-RuntimeValues
   Show-DeploymentProgress 70 'Validating the OpenTofu configuration.'
   Invoke-Checked 'tofu' @('validate', '-no-color')
@@ -539,7 +763,12 @@ function New-AndApplyPlan {
 
 function Test-DeployedApplication {
   if (@($Config.healthOutputs).Count -eq 0) {
-    Write-Host 'Deployment completed. This private application has no public health URL; verify it from inside the cloud network.' -ForegroundColor Yellow
+    Write-Host 'health=UNVERIFIED. This private application has no public health URL.' -ForegroundColor Yellow
+    switch ($Config.provider) {
+      'aws' { Write-Host 'Provider-native check: use AWS Systems Manager Run Command to curl the private health path from the VM/VPC.' -ForegroundColor Yellow }
+      'azure' { Write-Host 'Provider-native check: use az vm run-command invoke to curl the private health path from the VM/VNet.' -ForegroundColor Yellow }
+      'gcp' { Write-Host 'Provider-native check: use gcloud compute ssh with --command to curl the private health path from the VM.' -ForegroundColor Yellow }
+    }
     return
   }
   foreach ($outputName in @($Config.healthOutputs)) {
@@ -562,7 +791,124 @@ function Test-DeployedApplication {
   }
   Show-DeploymentProgress 100 'Deployment and health verification completed.'
   Complete-DeploymentProgress
-  Write-Host 'Deployment and health verification completed.' -ForegroundColor Green
+  Write-Host 'health=VERIFIED. Deployment and health verification completed.' -ForegroundColor Green
+}
+
+function Get-RetainedDiskIds([object]$Descriptor, [bool]$AfterDestroy = $false) {
+  $owner = [string]($Descriptor.vmss_resource_id | ForEach-Object { $_ })
+  if (-not $owner) { $owner = [string]$Descriptor.owner_resource_id }
+  $storage = [string]$Descriptor.storage_ref
+  $raw = $null
+  switch ($Config.provider) {
+    'aws' {
+      $asg = [string]$Descriptor.autoscaling_group_name
+      $launchTemplate = [string]$Descriptor.launch_template_id
+      $device = [string]$Descriptor.block_device_name
+      if (-not $asg -or -not $launchTemplate -or -not $device) { throw 'Renderer retained disk output has no AWS ASG lookup coordinates.' }
+      if ([string]$Descriptor.lookup_strategy -ne 'asg-instance-block-device-volume-id') { throw 'Renderer retained disk output has no AWS lookup contract.' }
+      if ($AfterDestroy) { return @() }
+      $instanceIds = @(& aws autoscaling describe-auto-scaling-groups --region $Config.region --auto-scaling-group-names $asg --query 'AutoScalingGroups[0].Instances[].InstanceId' --output json 2>$null | ConvertFrom-Json)
+      if ($LASTEXITCODE -ne 0) { throw 'AWS ASG instance lookup for retained disks failed.' }
+      $ids = @()
+      foreach ($instanceId in $instanceIds) {
+        $mappings = (& aws ec2 describe-instances --region $Config.region --instance-ids $instanceId --query 'Reservations[0].Instances[0].BlockDeviceMappings' --output json 2>$null | Out-String)
+        if ($LASTEXITCODE -ne 0) { throw 'AWS instance disk lookup for retained disks failed.' }
+        try { $blocks = @($mappings | ConvertFrom-Json) } catch { throw 'AWS instance disk response was unreadable.' }
+        $ids += @($blocks | Where-Object { $_.DeviceName -eq $device } | ForEach-Object { [string]$_.Ebs.VolumeId })
+      }
+      return @($ids | Where-Object { $_ })
+    }
+    'azure' {
+      if ($owner -notmatch '(?i)^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft.Compute/virtualMachineScaleSets/[^/]+$') { throw 'Renderer retained disk output has no Azure VMSS owner resource ID.' }
+      $lun = [int]$Descriptor.vmss_data_disk_lun
+      if ([string]$Descriptor.lookup_strategy -ne 'vmss-instance-lun-managed-disk-id' -or -not [string]$Descriptor.data_disk_profile_name) { throw 'Renderer retained disk output has no Azure lookup contract.' }
+      if ($AfterDestroy) { return @() }
+      $instanceIds = @(& az vmss list-instances --ids $owner --query '[].instanceId' --output json 2>$null | ConvertFrom-Json)
+      if ($LASTEXITCODE -ne 0) { throw 'Azure VMSS instance lookup for retained disks failed.' }
+      $ids = @()
+      foreach ($instanceId in $instanceIds) {
+        $profile = (& az vmss show --ids $owner --instance-id $instanceId --query 'storageProfile.dataDisks' --output json 2>$null | Out-String)
+        if ($LASTEXITCODE -ne 0) { throw 'Azure VMSS data disk lookup for retained disks failed.' }
+        try { $disks = @($profile | ConvertFrom-Json) } catch { throw 'Azure VMSS data disk response was unreadable.' }
+        $ids += @($disks | Where-Object { [int]$_.lun -eq $lun } | ForEach-Object { [string]$_.managedDisk.id })
+      }
+      return @($ids | Where-Object { $_ })
+    }
+    'gcp' {
+      $device = [string]$Descriptor.device_name
+      $mig = [string]$Descriptor.mig_resource_id
+      if (-not $mig) { $mig = $owner }
+      if (-not $mig -or -not $device) { throw 'Renderer retained disk output has no GCP MIG/device coordinates.' }
+      if ([string]$Descriptor.lookup_strategy -ne 'mig-instance-device-source' -or -not [string]$Descriptor.mig_region) { throw 'Renderer retained disk output has no GCP lookup contract.' }
+      if ($AfterDestroy) { return @() }
+      $migName = $mig.TrimEnd('/').Split('/')[-1]
+      $region = [string]$Descriptor.mig_region
+      $instances = @(& gcloud compute instance-groups managed list-instances $migName --region=$region --format=json 2>$null | ConvertFrom-Json)
+      if ($LASTEXITCODE -ne 0) { throw 'GCP MIG instance lookup for retained disks failed.' }
+      $sources = @()
+      foreach ($instance in $instances) {
+        $instanceUri = [string]$instance.instance
+        if (-not $instanceUri) { continue }
+        $instanceJson = (& gcloud compute instances describe $instanceUri --format=json 2>$null | Out-String)
+        if ($LASTEXITCODE -ne 0) { throw 'GCP instance disk lookup for retained disks failed.' }
+        try { $details = $instanceJson | ConvertFrom-Json } catch { throw 'GCP instance response was unreadable.' }
+        $sources += @($details.disks | Where-Object { $_.deviceName -eq $device } | ForEach-Object { [string]$_.source })
+      }
+      return @($sources | Where-Object { $_ })
+    }
+  }
+  if ($LASTEXITCODE -ne 0) { throw 'Provider retained disk metadata lookup failed.' }
+  try {
+    $items = @($raw | ConvertFrom-Json)
+    return @($items | ForEach-Object {
+      if ($_ -is [string]) { [string]$_ } elseif ($_.id) { [string]$_.id } elseif ($_.selfLink) { [string]$_.selfLink } elseif ($_.name) { [string]$_.name }
+    } | Where-Object { $_ })
+  } catch { throw 'Provider retained disk metadata response was unreadable.' }
+}
+
+function Get-RetainedDiskSnapshot([object[]]$Previous = @(), [bool]$AfterDestroy = $false) {
+  $snapshot = @()
+  $descriptors = @()
+  if ($Previous.Count -gt 0) {
+    $descriptors = @($Previous | Group-Object output | ForEach-Object { $_.Group[0] })
+  } else {
+    foreach ($outputName in @($Config.retainedDiskOutputs)) {
+      $raw = (& tofu output -json $outputName 2>$null | Out-String)
+      if ($LASTEXITCODE -ne 0 -or -not $raw.Trim()) { throw "Cannot read retained disk output $outputName." }
+      try { $descriptors += [PSCustomObject]@{ output = $outputName; descriptor = ($raw | ConvertFrom-Json) } } catch { throw "Retained disk output $outputName is unreadable." }
+    }
+  }
+  foreach ($entry in $descriptors) {
+    $outputName = [string]$entry.output
+    $descriptor = $entry.descriptor
+    foreach ($id in @(Get-RetainedDiskIds $descriptor $AfterDestroy)) {
+      $snapshot += [PSCustomObject]@{ output = $outputName; descriptor = $descriptor; id = [string]$id }
+    }
+  }
+  if ($AfterDestroy -and $Previous.Count -gt 0) {
+    if ($Config.provider -in @('aws','azure','gcp')) {
+      $snapshot = @()
+      foreach ($prior in $Previous) {
+        $exists = $false
+        switch ($Config.provider) {
+          'aws' {
+            & aws ec2 describe-volumes --region $Config.region --volume-ids $prior.id --query 'Volumes[0].VolumeId' --output text *> $null
+            $exists = $LASTEXITCODE -eq 0
+          }
+          'azure' {
+            & az disk show --ids $prior.id --query id --output tsv *> $null
+            $exists = $LASTEXITCODE -eq 0
+          }
+          'gcp' {
+            & gcloud compute disks describe $prior.id --format='value(selfLink)' *> $null
+            $exists = $LASTEXITCODE -eq 0
+          }
+        }
+        if ($exists) { $snapshot += [PSCustomObject]@{ output = $prior.output; descriptor = $prior.descriptor; id = [string]$prior.id } }
+      }
+    }
+  }
+  return $snapshot
 }
 
 function Start-OrContinueDeployment {
@@ -570,6 +916,9 @@ function Start-OrContinueDeployment {
   Test-Prerequisites $true
   Show-DeploymentProgress 10 'Collecting missing deployment inputs.'
   Initialize-Inputs
+  Show-DeploymentProgress 12 'Checking Secret references before billable resources.'
+  Test-SecretReferences
+  Test-DeploymentIdentity $true
   if (-not (Initialize-Images)) { return }
   if (New-AndApplyPlan) { Test-DeployedApplication }
 }
@@ -582,6 +931,7 @@ function Remove-Deployment {
   }
   $answer = Read-Host 'Destroy resources managed by this deployment state? Type DESTROY to continue'
   if ($answer -cne 'DESTROY') { Write-Host 'Destroy cancelled.'; return }
+  Test-DeploymentIdentity $false
   Initialize-Tofu
   Import-RuntimeValues
   if (-not (Test-Path $DigestPath)) {
@@ -596,6 +946,10 @@ function Remove-Deployment {
     }
   }
   $retainedLog = Join-Path $Root 'retained-resources.txt'
+  $retainedBefore = @(Get-RetainedDiskSnapshot)
+  foreach ($disk in $retainedBefore) {
+    Add-Content -Encoding UTF8 -LiteralPath $retainedLog -Value "provider=$($Config.provider) output=$($disk.output) provider_id=$($disk.id) status=present-before-destroy"
+  }
   foreach ($address in @($Config.retainedResources)) {
     $stateAddresses = @(& tofu state list)
     if ($stateAddresses -contains $address) {
@@ -608,7 +962,19 @@ function Remove-Deployment {
     }
   }
   Invoke-Checked 'tofu' @('destroy', '-auto-approve')
+  $retainedAfter = @(Get-RetainedDiskSnapshot $retainedBefore $true)
+  foreach ($disk in $retainedBefore) {
+    $stillPresent = @($retainedAfter | Where-Object { $_.id -eq $disk.id }).Count -gt 0
+    $status = if ($stillPresent) { 'retained-after-destroy' } else { 'missing-after-destroy' }
+    Add-Content -Encoding UTF8 -LiteralPath $retainedLog -Value "provider=$($Config.provider) output=$($disk.output) provider_id=$($disk.id) status=$status"
+  }
+  foreach ($disk in $retainedAfter) {
+    if (@($retainedBefore | Where-Object { $_.id -eq $disk.id }).Count -eq 0) {
+      Add-Content -Encoding UTF8 -LiteralPath $retainedLog -Value "provider=$($Config.provider) output=$($disk.output) provider_id=$($disk.id) status=unexpected-after-destroy"
+    }
+  }
   Remove-Item -LiteralPath $DigestPath -ErrorAction SilentlyContinue
+  Remove-Item -LiteralPath $DigestMetaPath -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $PlanPath -ErrorAction SilentlyContinue
   Write-Host 'Managed resources were destroyed.' -ForegroundColor Green
 }

@@ -11,6 +11,7 @@ from typing import Any
 from app.db.models import TYPE_DEPLOYMENT_FILE, TYPE_IAC_CODE, TYPE_SOURCE_CODE
 from app.implementation.application.source_files import iter_application_sources
 from app.implementation.domain.artifact_layout import application_artifact_path
+from app.implementation.domain.artifact_release import artifact_release_id
 from app.implementation.workflows.coordinator import bind_deployment_runtime
 from app.repositories import artifact_repository
 
@@ -80,26 +81,39 @@ def refresh_delivery_artifacts(
             if source.artifact_type in groups:
                 groups[source.artifact_type][source.artifact_path] = source.content
 
-        version_ids: dict[str, int] = {}
+        snapshots_to_save: dict[
+            str, tuple[dict[str, str], dict[str, Any]]
+        ] = {}
+        source_version_ids = {
+            artifact_type: int(snapshot["version_id"])
+            for artifact_type, snapshot in snapshots.items()
+            if snapshot.get("version_id") is not None
+        }
         for artifact_type, files in groups.items():
             if not files:
                 raise RuntimeError(f"Refreshed artifact is empty: {artifact_type}")
-            version_ids[artifact_type] = artifact_repository.save_file_snapshot(
-                app_id,
-                artifact_type,
+            snapshots_to_save[artifact_type] = (
                 files,
-                metadata={
+                {
                     "implementation_job_id": implementation_job_id,
                     "operation": "DELIVERY_REFRESH",
                     "renderer": report.get("renderer"),
+                    "source_artifact_version_ids": source_version_ids,
                 },
             )
+        # 배포 script와 HCL은 한 release다. 둘 중 하나만 새 최신 버전으로 보이는
+        # 창을 만들지 않도록 repository의 단일 transaction API로 publish한다.
+        version_ids = artifact_repository.save_file_snapshots(
+            app_id, snapshots_to_save
+        )
+        delivery_release_id = artifact_release_id(version_ids)
 
     verification = report.get("verification")
     return {
         "app_id": app_id,
         "implementation_job_id": implementation_job_id,
         "artifact_version_ids": version_ids,
+        "delivery_release_id": delivery_release_id,
         "provider": report.get("provider"),
         "verification": verification if isinstance(verification, dict) else {},
     }

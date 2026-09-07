@@ -112,6 +112,21 @@ def _run(command: list[str], *, cwd: Path, environment: dict[str, str]) -> None:
         raise RuntimeError(f"{' '.join(command)} failed in {cwd.name}:\n{detail[-6000:]}")
 
 
+def _mock_secret_reference(provider: str, region: str) -> str:
+    if provider == "aws":
+        return (
+            f"arn:aws:secretsmanager:{region}:123456789012:"
+            "secret:easydep-static-AbCdEf"
+        )
+    if provider == "azure":
+        return (
+            "/subscriptions/00000000-0000-0000-0000-000000000000/"
+            "resourceGroups/easydep-rg/providers/Microsoft.KeyVault/"
+            "vaults/easydep-vault/secrets/easydep-static"
+        )
+    return "projects/easydep-static-validation/secrets/easydep-static"
+
+
 def _azure_mock_plan_file(resource_plan: dict) -> str:
     values = {
         "subscription_id": '"00000000-0000-0000-0000-000000000000"',
@@ -125,6 +140,10 @@ def _azure_mock_plan_file(resource_plan: dict) -> str:
             if not isinstance(interface.get("port"), int):
                 interface_key = str(interface.get("id") or "").replace("-", "_")
                 values[f"container_port_{workload_key}_{interface_key}"] = "8080"
+    for slot in resource_plan.get("bindingSlots") or []:
+        if slot.get("kind") == "secretReference":
+            variable_name = str(slot.get("id") or "").replace("-", "_")
+            values[variable_name] = f'"{_mock_secret_reference("azure", "koreacentral")}"'
     assignments = "\n".join(f"    {name} = {value}" for name, value in values.items())
     subscription = "/subscriptions/00000000-0000-0000-0000-000000000000"
     resource_group = f"{subscription}/resourceGroups/easydep-rg"
@@ -299,6 +318,14 @@ def validate(
                                 plan_environment[
                                     f"TF_VAR_container_port_{workload_key}_{interface_key}"
                                 ] = "8080"
+                    for slot in resource_plan.get("bindingSlots") or []:
+                        if slot.get("kind") == "secretReference":
+                            variable_name = str(slot.get("id") or "").replace("-", "_")
+                            plan_environment[f"TF_VAR_{variable_name}"] = (
+                                _mock_secret_reference(
+                                    provider, str(resource_plan.get("region") or "")
+                                )
+                            )
                     _run(
                         [
                             tofu,
