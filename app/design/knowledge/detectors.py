@@ -43,6 +43,11 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
+from app.design.contracts.type_system import (
+    DesignTypeError,
+    parse_type_expression,
+    referenced_names,
+)
 from app.design.services.class_diagram.validation.diagram import (
     Finding,
     _broken_stereotypes,
@@ -494,13 +499,15 @@ def api_schema_references(model: dict, state: dict) -> list[Finding]:
         location = f"{endpoint.get('method', 'get').upper()} {endpoint.get('path', '')}"
         references = [endpoint.get("request_schema", "")] + [item.get("schema_name", "") for item in endpoint.get("responses", [])]
         for reference in references:
-            if (
-                reference
-                and str(reference).strip().lower()
-                not in {"string", "integer", "number", "boolean"}
-                and str(reference).strip() not in schemas
-            ):
-                found.append(Finding("api.schema-references-exist", f"Schemas에 없는 참조 '{reference}'", location))
+            type_name = str(reference or "").strip()
+            if not type_name or type_name in schemas:
+                continue
+            try:
+                missing = referenced_names(parse_type_expression(type_name)) - schemas
+            except DesignTypeError:
+                missing = {type_name}
+            if missing:
+                found.append(Finding("api.schema-references-exist", f"Schemas에 없는 참조 '{type_name}'", location))
     return found
 
 

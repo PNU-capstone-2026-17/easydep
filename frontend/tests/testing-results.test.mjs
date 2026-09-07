@@ -174,10 +174,28 @@ test('does not invent a Testing run from an unrelated command or stale event', (
   assert.equal(view, null);
 });
 
+test('does not treat a blocked design repair as a Testing run', () => {
+  const view = projectTestingRun({
+    command: command({
+      command_id: 'design-repair-command',
+      action: 'delegate_repair',
+      stage: 'design',
+      status: 'AWAITING_INPUT',
+      result: {
+        kind: 'action_required',
+        blocking_findings: [{ code: 'api.schema-references-exist', message: 'Missing schema.' }],
+        requires_revision: true
+      }
+    })
+  });
+  assert.equal(view, null);
+});
+
 test('keeps the initial failure beside a successful repaired result', () => {
   const view = projectTestingRun({
     command: command({
       action: 'delegate_repair',
+      stage: 'implementation',
       payload: {
         initial_testing_failure: {
           gateStatus: 'FAIL',

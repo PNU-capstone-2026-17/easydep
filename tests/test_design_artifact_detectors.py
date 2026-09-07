@@ -1,3 +1,4 @@
+from app.design.contracts.type_system import PROMPT_PRIMITIVES
 from app.design.knowledge import detectors
 from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.common.validation import validate_api_spec
@@ -90,17 +91,18 @@ def test_api_control_outcomes_rejects_success_schema_different_from_control_retu
     assert "성공 응답 schema" in findings[0].message
 
 
-def test_api_schema_references_accepts_primitive_response_contract() -> None:
-    model = {
-        "Endpoints": [{
-            "path": "/catalog/criteria",
-            "method": "get",
-            "responses": [{"status": 200, "schema_name": "string", "is_array": True}],
-        }],
-        "Schemas": [],
-    }
+def test_api_schema_references_accepts_supported_primitive_response_contracts() -> None:
+    for primitive in PROMPT_PRIMITIVES:
+        model = {
+            "Endpoints": [{
+                "path": "/catalog/criteria",
+                "method": "get",
+                "responses": [{"status": 200, "schema_name": primitive, "is_array": True}],
+            }],
+            "Schemas": [],
+        }
 
-    assert detectors.api_schema_references(model, STATE) == []
+        assert detectors.api_schema_references(model, STATE) == []
 
 
 def test_sequence_detector_rejects_dangling_and_invalid_bce_messages():

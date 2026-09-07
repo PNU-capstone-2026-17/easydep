@@ -334,7 +334,7 @@ function workflowsFromReport(report: Record<string, any>): TestingWorkflowView[]
 
 function finalReport(value: unknown): Record<string, any> {
   const root = record(value);
-  if (root.verification || root.gateStatus || root.blocking_findings) return root;
+  if (root.verification || root.gateStatus) return root;
   const jobReport = record(record(root.job).result);
   if (Object.keys(jobReport).length) return jobReport;
   const nested = record(root.result);
@@ -426,7 +426,7 @@ export function projectTestingRun(input: {
   const isTestingCommand =
     command?.stage === 'testing' ||
     command?.action === 'start_testing' ||
-    command?.action === 'delegate_repair';
+    (command?.action === 'delegate_repair' && Object.keys(initialFailure).length > 0);
   if (!Object.keys(source).length && !Object.keys(progress).length && !hasTestingEvent && !isTestingCommand) {
     return null;
   }
