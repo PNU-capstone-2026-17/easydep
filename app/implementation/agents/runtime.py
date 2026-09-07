@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 import os
 import shutil
@@ -482,6 +483,35 @@ def _conversation_terminal_failure(conversation: object) -> bool:
     return str(value or "").rsplit(".", 1)[-1].upper() not in {"FINISHED", ""}
 
 
+def _tool_validation_message(error_text: str) -> str | None:
+    """Extract the provider's structured tool-validation message without its envelope."""
+
+    marker = "Error code: 400 - "
+    _, found, encoded_payload = error_text.partition(marker)
+    if not found:
+        return None
+    payload: object
+    try:
+        payload = json.loads(encoded_payload)
+    except json.JSONDecodeError:
+        try:
+            payload = ast.literal_eval(encoded_payload)
+        except (SyntaxError, ValueError):
+            return None
+    if not isinstance(payload, dict):
+        return None
+    errors = payload.get("errors")
+    if not isinstance(errors, list):
+        return None
+    for item in errors:
+        if not isinstance(item, dict):
+            continue
+        message = item.get("message")
+        if isinstance(message, str) and "tool call validation failed" in message.casefold():
+            return message.strip()
+    return None
+
+
 def _conversation_stats_snapshot(conversation: object | None) -> dict[str, object] | None:
     """Persist OpenHands' own metrics without inventing unavailable values."""
 
@@ -699,6 +729,10 @@ def create_openhands_conversation(
 
     from openhands.sdk import LLM, Agent, Conversation, Tool, register_tool
     from openhands.sdk.context.condenser import default_condenser
+    from openhands.sdk.llm.exceptions import (
+        FunctionCallValidationError,
+        LLMBadRequestError,
+    )
     from openhands.tools.file_editor import FileEditorTool
     from openhands.tools.file_editor.definition import FileEditorObservation
     from openhands.tools.file_editor.impl import FileEditorExecutor
@@ -707,6 +741,28 @@ def create_openhands_conversation(
     from pydantic import SecretStr
 
     _configure_openhands_profile_store()
+
+    def raise_provider_tool_validation(error: LLMBadRequestError) -> None:
+        message = _tool_validation_message(str(error))
+        if message is not None:
+            raise FunctionCallValidationError(message) from error
+
+    class ProviderToolValidationLLM(LLM):
+        """Route provider-side validation 400s into OpenHands' native recovery."""
+
+        def _handle_error(self, error, fallback_call_fn):
+            try:
+                return super()._handle_error(error, fallback_call_fn)
+            except LLMBadRequestError as mapped_error:
+                raise_provider_tool_validation(mapped_error)
+                raise
+
+        async def _ahandle_error(self, error, fallback_call_fn):
+            try:
+                return await super()._ahandle_error(error, fallback_call_fn)
+            except LLMBadRequestError as mapped_error:
+                raise_provider_tool_validation(mapped_error)
+                raise
 
     class SandboxFileEditorExecutor(FileEditorExecutor):
         """Apply only EasyDep's filesystem boundary to the canonical editor."""
@@ -854,7 +910,7 @@ def create_openhands_conversation(
         message=r"Cost calculation failed:.*",
         module=r"openhands\.sdk\.llm\.utils\.telemetry",
     )
-    llm = LLM(**llm_options)
+    llm = ProviderToolValidationLLM(**llm_options)
     agent = Agent(
         llm=llm,
         tools=[

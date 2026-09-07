@@ -994,6 +994,55 @@ def test_openhands_conversation_enables_stuck_detection_and_condensation(
         conversation.close()
 
 
+def test_provider_tool_validation_uses_openhands_native_recovery_error(
+    tmp_path: Path,
+) -> None:
+    """A provider-prevalidated tool call reaches Agent.step's existing handler."""
+
+    from openhands.sdk import LLM
+    from openhands.sdk.llm.exceptions import (
+        FunctionCallValidationError,
+        LLMBadRequestError,
+    )
+
+    provider_error = LLMBadRequestError(
+        "litellm.BadRequestError: OpenAIException - Error code: 400 - "
+        "{'errors': [{'message': \"Model execution failed (User Input Error): "
+        "Tool call validation failed: parameters for tool grep did not match schema: "
+        "errors: [missing properties: 'pattern']\", 'code': 7003}], "
+        "'success': False, 'result': {}, 'messages': []}"
+    )
+    generic_bad_request = LLMBadRequestError(
+        "litellm.BadRequestError: OpenAIException - Error code: 400 - "
+        "{'errors': [{'message': 'Invalid model parameter', 'code': 7001}]}"
+    )
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        LlmConnection(
+            provider="openrouter",
+            api_key="validation-only-key",
+            base_url="https://openrouter.ai/api/v1",
+            model="openai/gpt-oss-20b",
+            litellm_provider="openrouter",
+        ),
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+    )
+    try:
+        with (
+            patch.object(LLM, "_handle_error", side_effect=provider_error),
+            pytest.raises(FunctionCallValidationError, match="missing properties"),
+        ):
+            agent.llm._handle_error(RuntimeError("provider failure"), lambda _: None)
+
+        with (
+            patch.object(LLM, "_handle_error", side_effect=generic_bad_request),
+            pytest.raises(LLMBadRequestError, match="Invalid model parameter"),
+        ):
+            agent.llm._handle_error(RuntimeError("provider failure"), lambda _: None)
+    finally:
+        conversation.close()
+
+
 def test_canonical_editor_uses_standard_action_schema(tmp_path: Path) -> None:
     """The model sees OpenHands' standard file_editor schema, not aliases."""
     source = tmp_path / "Offering.java"
