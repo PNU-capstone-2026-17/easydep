@@ -171,6 +171,38 @@ def test_unrepairable_testing_findings_use_explicit_owner_route(
     ]
 
 
+def test_testing_environment_retry_reuses_the_implementation_job() -> None:
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT", stage="testing"),
+        {
+            "requires_revision": True,
+            "can_delegate_repair": False,
+            "job_id": "testing-1",
+            "job": {"implementation_job_id": "implementation-1"},
+            "blocking_findings": [
+                {
+                    "repairable": False,
+                    "defect_class": "ENVIRONMENT_DEFECT",
+                    "repair_owner": "environment",
+                }
+            ],
+        },
+    )
+
+    assert shaped["wait_reason"] == "external_wait"
+    assert shaped["actions"] == [
+        {
+            "action": "start_testing",
+            "label": "Retry testing after environment recovery",
+            "payload": {
+                "action_id": "command-1",
+                "implementation_job_id": "implementation-1",
+            },
+            "auto_selectable": False,
+        }
+    ]
+
+
 def test_unclassified_unrepairable_finding_is_not_treated_as_environment() -> None:
     shaped = result_with_contract(
         command(status="AWAITING_INPUT", stage="testing"),
@@ -185,6 +217,58 @@ def test_unclassified_unrepairable_finding_is_not_treated_as_environment() -> No
     assert shaped["wait_reason"] == "repair"
     assert [item["action"] for item in shaped["actions"]] == ["message"]
     assert shaped["actions"][0]["label"] == "Send revision feedback"
+
+
+def test_upstream_testing_ambiguity_offers_review_without_automatic_repair() -> None:
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT", stage="testing"),
+        {
+            "requires_revision": True,
+            "can_delegate_repair": False,
+            "blocking_findings": [
+                {
+                    "repairable": True,
+                    "defect_class": "UPSTREAM_AMBIGUITY",
+                    "repair_owner": "requirements-or-design",
+                }
+            ],
+        },
+    )
+
+    assert shaped["wait_reason"] == "repair"
+    assert [item["action"] for item in shaped["actions"]] == ["message"]
+    assert shaped["actions"][0]["label"] == "Send design revision feedback"
+
+
+def test_exhausted_testing_plan_defect_is_an_easydep_platform_issue() -> None:
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT", stage="testing"),
+        {
+            "requires_revision": True,
+            "can_delegate_repair": False,
+            "job": {"implementation_job_id": "implementation-1"},
+            "blocking_findings": [
+                {
+                    "repairable": True,
+                    "defect_class": "TEST_DEFECT",
+                    "repair_owner": "testing",
+                }
+            ],
+        },
+    )
+
+    assert shaped["wait_reason"] == "external_wait"
+    assert [item["action"] for item in shaped["actions"]] == ["message", "start_testing"]
+    assert shaped["actions"][0]["label"] == "Ask about this EasyDep platform issue"
+    assert shaped["actions"][1] == {
+        "action": "start_testing",
+        "label": "Retry testing after EasyDep update",
+        "payload": {
+            "action_id": "command-1",
+            "implementation_job_id": "implementation-1",
+        },
+        "auto_selectable": False,
+    }
 
 
 def test_status_not_a_stale_result_flag_controls_terminal_actions() -> None:

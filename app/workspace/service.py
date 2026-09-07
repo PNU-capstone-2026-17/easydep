@@ -28,7 +28,6 @@ from app.design.service import (
     revise_design_element,
     revise_design_elements,
     revise_design_stage_session,
-    rewind_design_session,
     start_design_session,
 )
 from app.design.services.common.plantuml import render_plantuml
@@ -1535,17 +1534,23 @@ class WorkspaceService:
                         "job": previous_job,
                     }
                 if not implementation_blockers and "UPSTREAM_AMBIGUITY" in defect_classes:
-                    # 이 분류는 고정 요구사항과 OpenAPI 사이에 추적 가능한 endpoint가 없을
-                    # 때만 나온다. 가장 가까운 생산자인 API 명세부터 다시 만들고, 이후
-                    # 설계 단계는 기존 그래프 순서대로 이어서 진행한다.
-                    revised = rewind_design_session(str(command["app_id"]), "api_spec")
-                    shaped = self._design_result(revised)
-                    shaped["routing_stage"] = "design"
-                    shaped["message"] = (
-                        "Testing found an ambiguous requirements-to-API mapping, so EasyDep "
-                        "regenerated the API specification from the preserved sequence design."
-                    )
-                    return shaped
+                    # Testing can identify missing upstream evidence, but it must not edit or
+                    # rewind an earlier stage.  Keep the exact failed run available and let the
+                    # normal conversational revision flow ask the user before changing design.
+                    return {
+                        **result,
+                        "awaiting_input": True,
+                        "kind": "action_required",
+                        "message": (
+                            "Testing found an ambiguity in the frozen requirements or design. "
+                            "Review the affected design before starting a revision."
+                        ),
+                        "requires_revision": True,
+                        "can_delegate_repair": False,
+                        "blocking_route": "design",
+                        "job_id": previous_run_id,
+                        "job": previous_job,
+                    }
                 if implementation_blockers:
                     (
                         selected_blockers,
@@ -3951,12 +3956,8 @@ class WorkspaceService:
             blocking_route = blocking_findings_route(
                 [blocker for blocker in blockers if isinstance(blocker, dict)]
             )
-            if repairable:
-                guidance = (
-                    "EasyDep classified the failures and will continue the matching "
-                    "automatic repair path."
-                )
-            elif blocking_route == "environment":
+            can_delegate_repair = repairable and not blocking_route
+            if blocking_route == "environment":
                 guidance = (
                     "The runtime environment must be restored before the same checks "
                     "can continue."
@@ -3972,6 +3973,11 @@ class WorkspaceService:
                 guidance = (
                     "Review the deployment design and EasyDep platform evidence before "
                     "continuing."
+                )
+            elif can_delegate_repair:
+                guidance = (
+                    "EasyDep classified the failures and will continue the matching "
+                    "automatic repair path."
                 )
             else:
                 guidance = "Review the blocking findings before continuing."
@@ -3991,7 +3997,7 @@ class WorkspaceService:
                     "accepted_count": 0,
                     "recent_attempts": [],
                 },
-                "can_delegate_repair": repairable,
+                "can_delegate_repair": can_delegate_repair,
                 "blocking_route": blocking_route,
                 "job_id": job_id,
                 "job": job,

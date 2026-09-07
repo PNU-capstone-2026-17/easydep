@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from app.testing.utils.arazzo_planner import (
+    ArazzoPlanningError,
     attach_workflow_trace,
     build_arazzo_document,
     build_workflow_candidates,
@@ -186,6 +187,61 @@ def test_candidate_preserves_requirement_use_case_and_acceptance_context() -> No
     requirement_context = str(candidate["requirements"])
     assert "The item is created with its name." in requirement_context
     assert "The created item can be retrieved by identifier." in requirement_context
+
+
+def test_exact_operation_link_supports_a_contract_only_workflow() -> None:
+    openapi = _openapi()
+    openapi["paths"]["/clear"] = {
+        "post": {
+            "operationId": "clear",
+            "x-easydep-use-case-ids": ["UC-CLEAR"],
+            "responses": {"204": {"description": "cleared"}},
+        }
+    }
+    candidates = build_workflow_candidates(
+        [
+            {
+                "id": "REQ-CLEAR",
+                "type": "NFR",
+                "text": "The clear operation should remain available.",
+            }
+        ],
+        {
+            "use_case_specs": [
+                {
+                    "use_case_id": "UC-CLEAR",
+                    "name": "Clear the current values",
+                    "requirement_ids": ["REQ-CLEAR"],
+                    "main_scenario": ["Clear the current values."],
+                }
+            ]
+        },
+        openapi,
+    )
+
+    candidate = candidates[0]
+    assert candidate["requirements"] == []
+    assert candidate["trace"]["requirementIds"] == []
+    assert candidate["operations"][0]["operationId"] == "clear"
+    assert candidate["operations"][0]["traceHints"]["relevant"] is True
+
+
+def test_unlinked_use_case_without_a_functional_requirement_fails_closed() -> None:
+    with pytest.raises(ArazzoPlanningError, match="exact OpenAPI operation link"):
+        build_workflow_candidates(
+            [{"id": "REQ-NFR", "type": "NFR", "text": "A constraint."}],
+            {
+                "use_case_specs": [
+                    {
+                        "use_case_id": "UC-UNLINKED",
+                        "name": "Unlinked flow",
+                        "requirement_ids": ["REQ-NFR"],
+                        "main_scenario": ["Perform an unspecified action."],
+                    }
+                ]
+            },
+            _openapi(),
+        )
 
 
 def test_all_unique_frozen_operations_remain_available_without_rtm_links() -> None:

@@ -208,6 +208,9 @@ def blocking_findings_route(blockers: list[dict[str, Any]]) -> str:
     owner_routes = {
         "environment": "environment",
         "platform": "platform",
+        # A plan/schema defect already exhausted the bounded regeneration inside
+        # Testing. It belongs to EasyDep, not to the generated application or user.
+        "testing": "platform",
         "design": "design",
         "requirements-or-design": "design",
         "platform-or-design": "platform-or-design",
@@ -215,6 +218,7 @@ def blocking_findings_route(blockers: list[dict[str, Any]]) -> str:
     defect_routes = {
         "ENVIRONMENT_DEFECT": "environment",
         "PLATFORM_DEFECT": "platform",
+        "TEST_DEFECT": "platform",
         "UPSTREAM_AMBIGUITY": "design",
         "PLATFORM_OR_DESIGN_DEFECT": "platform-or-design",
     }
@@ -291,6 +295,26 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
     repair_job_id = str(
         result.get("job_id") or (command.get("payload") or {}).get("job_id") or ""
     )
+    testing_job = result.get("job")
+    testing_implementation_job_id = (
+        str(testing_job.get("implementation_job_id") or "")
+        if isinstance(testing_job, dict)
+        else ""
+    )
+    if blocking_route == "environment" and stage == "testing" and testing_implementation_job_id:
+        return AwaitingOutcome(
+            wait_reason=WaitReason.EXTERNAL_WAIT,
+            actions=[
+                _offer(
+                    WorkspaceAction.START_TESTING,
+                    "Retry testing after environment recovery",
+                    {
+                        **common,
+                        "implementation_job_id": testing_implementation_job_id,
+                    },
+                )
+            ],
+        )
     if blocking_route == "environment" and repair_job_id:
         return AwaitingOutcome(
             wait_reason=WaitReason.EXTERNAL_WAIT,
@@ -303,15 +327,27 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
             ],
         )
     if blocking_route == "platform":
+        actions = [
+            _offer(
+                WorkspaceAction.MESSAGE,
+                "Ask about this EasyDep platform issue",
+                common,
+            )
+        ]
+        if stage == "testing" and testing_implementation_job_id:
+            actions.append(
+                _offer(
+                    WorkspaceAction.START_TESTING,
+                    "Retry testing after EasyDep update",
+                    {
+                        **common,
+                        "implementation_job_id": testing_implementation_job_id,
+                    },
+                )
+            )
         return AwaitingOutcome(
             wait_reason=WaitReason.EXTERNAL_WAIT,
-            actions=[
-                _offer(
-                    WorkspaceAction.MESSAGE,
-                    "Ask about this EasyDep platform issue",
-                    common,
-                )
-            ],
+            actions=actions,
         )
     if blocking_route in {"design", "platform-or-design"}:
         label = (

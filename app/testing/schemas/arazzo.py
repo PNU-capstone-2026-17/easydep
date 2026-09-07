@@ -21,6 +21,8 @@ from typing import Any, NoReturn
 import jsonpath_rfc9535
 import jsonschema
 
+from app.testing.utils.functional_executor import schema_errors
+
 ARAZZO_VERSION = "1.1.0"
 
 _HTTP_METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
@@ -225,6 +227,11 @@ def _without_string_literals(value: str) -> str:
 def _runtime_expressions(value: str, *, condition: bool = False) -> list[str]:
     """Return and syntax-check Runtime Expressions in a value or simple condition."""
 
+    if re.fullmatch(r"\{\{[^{}]+\}\}", value.strip()):
+        _error(
+            "Double-brace template placeholders are not Arazzo Runtime Expressions; "
+            "use a $inputs or $steps expression."
+        )
     if condition:
         searchable = _without_string_literals(value)
         expressions = re.findall(r"\$[A-Za-z][^\s<>=!&|(),]*", searchable)
@@ -479,6 +486,43 @@ def _validate_execution_value(
         )
 
 
+def _validate_output_values(
+    value: Any,
+    *,
+    path: str,
+    workflow_id: str,
+    step_index: int | None,
+    current_step: dict[str, Any] | None,
+    workflow_inputs: dict[str, set[str]],
+    workflow_outputs: dict[str, set[str]],
+    workflow_steps: dict[str, list[str]],
+    step_outputs: dict[str, dict[str, set[str]]],
+    dependency_edges: dict[tuple[str, str], set[tuple[str, str]]],
+) -> None:
+    """Require Arazzo outputs to be exact Runtime Expressions or Selector Objects."""
+
+    if not isinstance(value, dict):
+        _error(f"{path} must be an output map.")
+    for name, item in value.items():
+        item_path = f"{path}.{name}"
+        if isinstance(item, str):
+            expressions = _runtime_expressions(item)
+            if expressions != [item]:
+                _error(f"{item_path} must be one complete Arazzo Runtime Expression.")
+        _validate_execution_value(
+            item,
+            path=item_path,
+            workflow_id=workflow_id,
+            step_index=step_index,
+            current_step=current_step,
+            workflow_inputs=workflow_inputs,
+            workflow_outputs=workflow_outputs,
+            workflow_steps=workflow_steps,
+            step_outputs=step_outputs,
+            dependency_edges=dependency_edges,
+        )
+
+
 def _validate_criteria(
     criteria: Any,
     *,
@@ -585,9 +629,10 @@ def _validate_openapi_step_profile(
     path: str,
     operation: dict[str, Any],
     path_item: dict[str, Any],
+    openapi: dict[str, Any],
 ) -> None:
     """Reject request shapes the deterministic HTTP primitive cannot execute."""
-    declared: set[tuple[str, str]] = set()
+    declared: dict[tuple[str, str], Any] = {}
     for owner in (path_item, operation):
         for parameter in owner.get("parameters") or []:
             if not isinstance(parameter, dict):
@@ -596,7 +641,7 @@ def _validate_openapi_step_profile(
             if bool(parameter.get("required")) and location not in {"path", "query", "header"}:
                 _error(f"{path} uses unsupported required OpenAPI parameter location: {location}")
             if isinstance(name, str) and isinstance(location, str):
-                declared.add((location, name))
+                declared[(location, name)] = parameter.get("schema")
     for index, parameter in enumerate(step.get("parameters") or []):
         parameter_path = f"{path}.parameters[{index}]"
         if not isinstance(parameter, dict) or "reference" in parameter:
@@ -609,6 +654,17 @@ def _validate_openapi_step_profile(
         name = _nonempty_string(parameter.get("name"), f"{parameter_path}.name")
         if (location, name) not in declared:
             _error(f"{parameter_path} is absent from the resolved OpenAPI operation.")
+        value = parameter.get("value")
+        expressions = _runtime_expressions(value) if isinstance(value, str) else []
+        is_selector = isinstance(value, dict) and {"context", "selector", "type"}.issubset(value)
+        parameter_schema = declared[(location, name)]
+        if not expressions and not is_selector and isinstance(parameter_schema, dict):
+            errors = schema_errors(openapi, parameter_schema, value)
+            if errors:
+                _error(
+                    f"{parameter_path}.value does not satisfy the frozen OpenAPI schema: "
+                    + "; ".join(errors)
+                )
     request_contract = operation.get("requestBody")
     content = request_contract.get("content") if isinstance(request_contract, dict) else None
     if (
@@ -892,7 +948,7 @@ def validate_arazzo_document(
                         f"{step_path}.operationId does not resolve uniquely in frozen OpenAPI: {operation_id}"
                     )
                 operation, path_item = _resolved_operation(openapi, operation_id)
-                _validate_openapi_step_profile(step, step_path, operation, path_item)
+                _validate_openapi_step_profile(step, step_path, operation, path_item, openapi)
             elif "workflowId" in step:
                 target_workflow = _nonempty_string(
                     step.get("workflowId"), f"{step_path}.workflowId"
@@ -944,7 +1000,7 @@ def validate_arazzo_document(
                     workflow_steps=workflow_steps,
                 )
                 edges.setdefault(prerequisite, set()).add(source_node)
-            for key in ("parameters", "requestBody", "outputs"):
+            for key in ("parameters", "requestBody"):
                 if key in step:
                     _validate_execution_value(
                         step[key],
@@ -958,6 +1014,19 @@ def validate_arazzo_document(
                         step_outputs=step_outputs,
                         dependency_edges=edges,
                     )
+            if "outputs" in step:
+                _validate_output_values(
+                    step["outputs"],
+                    path=f"{step_path}.outputs",
+                    workflow_id=workflow_id,
+                    step_index=step_index,
+                    current_step=step,
+                    workflow_inputs=workflow_inputs,
+                    workflow_outputs=workflow_outputs,
+                    workflow_steps=workflow_order,
+                    step_outputs=step_outputs,
+                    dependency_edges=edges,
+                )
             _validate_criteria(
                 step.get("successCriteria"),
                 path=f"{step_path}.successCriteria",
@@ -1036,7 +1105,7 @@ def validate_arazzo_document(
                 target = action.pop("__easydep_target", None)
                 if target is not None:
                     edges[(workflow_id, workflow_order[workflow_id][-1])].add(target)
-        _validate_execution_value(
+        _validate_output_values(
             workflow.get("outputs") or {},
             path=f"{path}.outputs",
             workflow_id=workflow_id,

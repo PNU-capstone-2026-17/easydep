@@ -134,6 +134,40 @@ def test_prior_step_outputs_and_criteria_are_resolvable() -> None:
     _validate(document)
 
 
+def test_double_brace_template_placeholder_is_rejected_before_execution() -> None:
+    document = _document()
+    document["workflows"][0]["steps"][0] = {
+        "stepId": "read",
+        "operationId": "getItem",
+        "parameters": [{"name": "id", "in": "path", "value": "{{id}}"}],
+    }
+
+    with pytest.raises(ArazzoValidationError, match="not Arazzo Runtime Expressions"):
+        _validate(document)
+
+
+def test_step_output_must_be_a_complete_arazzo_runtime_expression() -> None:
+    document = _document()
+    document["workflows"][0]["steps"][0]["outputs"] = {
+        "result": "$.response.body"
+    }
+
+    with pytest.raises(ArazzoValidationError, match="one complete Arazzo Runtime Expression"):
+        _validate(document)
+
+
+def test_literal_parameter_must_satisfy_the_openapi_schema() -> None:
+    document = _document()
+    document["workflows"][0]["steps"][0] = {
+        "stepId": "read",
+        "operationId": "getItem",
+        "parameters": [{"name": "id", "in": "path", "value": 42}],
+    }
+
+    with pytest.raises(ArazzoValidationError, match="frozen OpenAPI schema"):
+        _validate(document)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

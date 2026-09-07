@@ -6,6 +6,7 @@ import json
 from copy import deepcopy
 from typing import Any
 
+import jsonschema
 from openai import OpenAI
 
 from app.config import settings
@@ -30,11 +31,177 @@ Use the supplied workflowId exactly. Use only listed operationId values, but tre
 ranking evidence rather than an allowlist. Express ordering, repeated calls, data flow, assertions,
 retry, and cleanup only with standard Arazzo fields. Every OpenAPI parameter must include its
 declared `in` value. Use application/json request bodies and JSON Pointer replacements only.
-Use simple conditions or RFC 9535 JSONPath. Add successCriteria only when the frozen requirement
+At workflow level use only workflowId, summary, description, and steps. Put parameters,
+requestBody, outputs, successCriteria, and onFailure on the operation step. A retry is an onFailure
+action with name, type `retry`, and retryLimit; never use request, response, retry, assertions, or a
+workflow-level successCriteria field.
+Use only literal values or an earlier `$steps.<stepId>.outputs.<name>` in request values. This
+profile declares no workflow inputs, so never emit `$inputs`, `{{name}}` placeholders, or bare
+JSONPath such as `$.response`; omit an unfrozen value and let the executor obtain a schema-valid
+value from OpenAPI. Every literal must satisfy its OpenAPI type, format, and enum. Runtime
+expressions include `$statusCode` and `$response.body#/pointer`, not
+`$response.statusCode`. A simple criterion contains only condition; use context and type only for
+RFC 9535 JSONPath. Add successCriteria only when the frozen requirement
 or use-case guarantee directly states the expected result; otherwise leave the workflow
 contract-only. Do not invent operations, paths, methods, status codes, schemas, credentials,
 external URLs, requirements, custom extensions, or implementation-derived expected values.
 Do not return an Arazzo document envelope, Markdown, comments, or prose outside the JSON object."""
+
+
+_JSON_VALUE_SCHEMA: dict[str, Any] = {
+    "type": ["object", "array", "string", "number", "integer", "boolean", "null"]
+}
+_RUNTIME_EXPRESSION_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "pattern": (
+        r"^\$(?:url|method|statusCode|"
+        r"(?:request|response|steps|workflows)\..+)$"
+    ),
+}
+_STEP_OUTPUT_EXPRESSION_SCHEMA: dict[str, Any] = {
+    "type": "string",
+    "pattern": r"^\$steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9._-]+(?:#.*)?$",
+}
+_PARAMETER_VALUE_SCHEMA: dict[str, Any] = {
+    "oneOf": [
+        _STEP_OUTPUT_EXPRESSION_SCHEMA,
+        {
+            "type": "string",
+            "allOf": [
+                {"not": {"pattern": r"^\$"}},
+                {"not": {"pattern": r"^\{\{[^{}]+\}\}$"}},
+            ],
+        },
+        {"type": ["array", "number", "integer", "boolean", "null"]},
+    ]
+}
+_CRITERION_SCHEMA: dict[str, Any] = {
+    "oneOf": [
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {"condition": {"type": "string"}},
+            "required": ["condition"],
+        },
+        {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "condition": {"type": "string"},
+                "context": _RUNTIME_EXPRESSION_SCHEMA,
+                "type": {
+                    "oneOf": [
+                        {"type": "string", "enum": ["jsonpath"]},
+                        {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "type": {"type": "string", "enum": ["jsonpath"]},
+                                "version": {"type": "string", "enum": ["rfc9535"]},
+                            },
+                            "required": ["type", "version"],
+                        },
+                    ]
+                },
+            },
+            "required": ["condition", "context", "type"],
+        },
+    ]
+}
+_ARAZZO_WORKFLOW_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "workflowId": {"type": "string"},
+        "summary": {"type": "string"},
+        "description": {"type": "string"},
+        "steps": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "stepId": {"type": "string"},
+                    "description": {"type": "string"},
+                    "operationId": {"type": "string"},
+                    "parameters": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "name": {"type": "string"},
+                                "in": {
+                                    "type": "string",
+                                    "enum": ["path", "query", "header"],
+                                },
+                                "value": _PARAMETER_VALUE_SCHEMA,
+                            },
+                            "required": ["name", "in", "value"],
+                        },
+                    },
+                    "requestBody": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "properties": {
+                            "contentType": {
+                                "type": "string",
+                                "enum": ["application/json"],
+                            },
+                            "payload": _JSON_VALUE_SCHEMA,
+                            "replacements": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "additionalProperties": False,
+                                    "properties": {
+                                        "target": {"type": "string"},
+                                        "targetSelectorType": {
+                                            "type": "string",
+                                            "enum": ["jsonpointer"],
+                                        },
+                                        "value": _JSON_VALUE_SCHEMA,
+                                    },
+                                    "required": ["target", "value"],
+                                },
+                            },
+                        },
+                        "required": ["contentType", "payload"],
+                    },
+                    "outputs": {
+                        "type": "object",
+                        "additionalProperties": _RUNTIME_EXPRESSION_SCHEMA,
+                    },
+                    "successCriteria": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": _CRITERION_SCHEMA,
+                    },
+                    "onFailure": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {
+                                "name": {"type": "string"},
+                                "type": {"type": "string", "enum": ["retry"]},
+                                "retryLimit": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "maximum": 3,
+                                },
+                            },
+                            "required": ["name", "type", "retryLimit"],
+                        },
+                    },
+                },
+                "required": ["stepId", "operationId"],
+            },
+        },
+    },
+    "required": ["workflowId", "steps"],
+}
 
 
 def _report(status: str, gate_status: str, reason: str, defect_class: str) -> dict[str, Any]:
@@ -84,9 +251,35 @@ def _frozen(state: TestingState) -> dict[str, Any]:
     }
 
 
-def _response_format() -> dict[str, str]:
-    """Use JSON mode; the official Arazzo schema remains the source of truth."""
-    return {"type": "json_object"}
+def _response_format() -> dict[str, Any]:
+    """Constrain authoring to a standard Arazzo subset before official validation."""
+
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "ArazzoWorkflow",
+            "strict": False,
+            "schema": _ARAZZO_WORKFLOW_RESPONSE_SCHEMA,
+        },
+    }
+
+
+def _validate_authored_workflow(value: dict[str, Any]) -> None:
+    """Fail closed when a compatible provider treats response_format as guidance."""
+
+    errors = sorted(
+        jsonschema.Draft202012Validator(_ARAZZO_WORKFLOW_RESPONSE_SCHEMA).iter_errors(value),
+        key=lambda item: tuple(map(str, item.absolute_path)),
+    )
+    if not errors:
+        return
+    details = []
+    for error in errors:
+        location = "/".join(str(part) for part in error.absolute_path) or "workflow"
+        details.append(f"{location}: {error.message}")
+    raise ArazzoValidationError(
+        "Generated workflow violates the Arazzo authoring profile: " + "; ".join(details)
+    )
 
 
 def _prompt(candidate: dict[str, Any], validation_error: str = "") -> str:
@@ -146,6 +339,7 @@ def _generate(
     value = json.loads(content)
     if not isinstance(value, dict):
         raise TypeError("The workflow response must be one JSON object.")
+    _validate_authored_workflow(value)
     return attach_workflow_trace(value, candidate)
 
 

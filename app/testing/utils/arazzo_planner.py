@@ -316,9 +316,14 @@ def build_workflow_candidates(
             if use_case_id in linked
         )
         linked_ids.intersection_update(functional_requirements)
-        if not linked_ids:
+        operations = _operations(openapi, use_case_id, linked_ids)
+        has_exact_operation_link = any(
+            operation["traceHints"]["relevant"] for operation in operations
+        )
+        if not linked_ids and not has_exact_operation_link:
             raise ArazzoPlanningError(
-                f"Functional use case has no functional requirement link: {use_case_id}"
+                "Functional use case has neither a functional requirement nor an exact "
+                f"OpenAPI operation link: {use_case_id}"
             )
         selected = [functional_requirements[identifier] for identifier in linked_ids]
         selected.sort(key=lambda record: _id(record, "id", "requirement_id", "requirementId"))
@@ -329,7 +334,7 @@ def build_workflow_candidates(
                 "workflowId": _workflow_id(use_case_id),
                 "requirements": selected,
                 "useCase": use_case_spec,
-                "operations": _operations(openapi, use_case_id, selected_ids),
+                "operations": operations,
                 "trace": {
                     "requirementIds": sorted(selected_ids),
                     "useCaseIds": [use_case_id],

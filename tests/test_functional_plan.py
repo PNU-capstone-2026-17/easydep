@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+import jsonschema
 import pytest
 
 from app.testing.nodes import dynamic_functional as dynamic
@@ -154,14 +155,92 @@ def _pass(workflow_id: str, *, semantic: str = "PASS") -> dict[str, Any]:
     }
 
 
-def test_json_mode_uses_official_validation_instead_of_a_custom_llm_dsl() -> None:
-    assert dynamic._response_format() == {"type": "json_object"}
+def test_structured_output_is_a_standard_arazzo_workflow_subset() -> None:
+    response_format = dynamic._response_format()
+    assert response_format["type"] == "json_schema"
+    schema = response_format["json_schema"]["schema"]
+    jsonschema.Draft202012Validator(schema).validate(
+        {
+            "workflowId": "workflow-UC-1",
+            "steps": [
+                {
+                    "stepId": "health",
+                    "operationId": "health",
+                    "successCriteria": [{"condition": "$statusCode == 200"}],
+                    "onFailure": [
+                        {"name": "retryOnce", "type": "retry", "retryLimit": 1}
+                    ],
+                }
+            ],
+        }
+    )
     prompt = dynamic._prompt(
         build_workflow_candidates(_requirements(), _use_cases(), _openapi())[0]
     )
     assert "Arazzo v1.1 Workflow Object" in prompt
     assert "traceHints as" in prompt
     assert "FunctionalTestCase" not in prompt
+
+
+@pytest.mark.parametrize(
+    "invalid_field",
+    [
+        {"successCriteria": [{"condition": "$statusCode == 200"}]},
+        {"request": {}},
+        {"response": {}},
+        {"retry": {}},
+    ],
+)
+def test_structured_output_rejects_non_step_or_non_arazzo_fields(
+    invalid_field: dict[str, Any],
+) -> None:
+    schema = dynamic._response_format()["json_schema"]["schema"]
+    workflow = {
+        "workflowId": "workflow-UC-1",
+        "steps": [{"stepId": "health", "operationId": "health"}],
+        **invalid_field,
+    }
+
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.Draft202012Validator(schema).validate(workflow)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        (
+            "parameters",
+            [{"name": "sample", "in": "query", "value": "{{sample}}"}],
+        ),
+        (
+            "parameters",
+            [{"name": "sample", "in": "query", "value": "$inputs.sample"}],
+        ),
+        ("outputs", {"sample": "$.response.body"}),
+        (
+            "successCriteria",
+            [{"condition": "$statusCode == 200", "type": "simple"}],
+        ),
+    ],
+)
+def test_structured_output_rejects_non_arazzo_placeholder_syntax(
+    field: str,
+    value: Any,
+) -> None:
+    schema = dynamic._response_format()["json_schema"]["schema"]
+    workflow = {
+        "workflowId": "workflow-UC-1",
+        "steps": [
+            {
+                "stepId": "health",
+                "operationId": "health",
+                field: value,
+            }
+        ],
+    }
+
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.Draft202012Validator(schema).validate(workflow)
 
 
 def test_generated_document_gets_one_bounded_regeneration(

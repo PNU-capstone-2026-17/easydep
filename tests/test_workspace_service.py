@@ -125,6 +125,75 @@ def test_testing_failure_starts_only_repairable_work_automatically(
         }
 
 
+def test_testing_upstream_ambiguity_waits_for_user_without_rewinding_design(
+    monkeypatch,
+) -> None:
+    job = {
+        "job_id": "testing-command",
+        "implementation_job_id": "implementation-1",
+        "result": {
+            "passed": False,
+            "blocking_findings": [
+                {
+                    "message": "No exact operation can realize the use case.",
+                    "repairable": True,
+                    "defect_class": "UPSTREAM_AMBIGUITY",
+                    "repair_owner": "requirements-or-design",
+                }
+            ],
+        },
+    }
+    service = WorkspaceService()
+    try:
+        result = service._testing_result(job)
+        assert result["blocking_route"] == "design"
+        assert result["can_delegate_repair"] is False
+        assert "Review the affected design" in result["message"]
+
+        command = {
+            "command_id": "testing-command",
+            "app_id": "checkpoint-branch",
+            "action": "start_testing",
+            "stage": "testing",
+            "payload": {"implementation_job_id": "implementation-1"},
+        }
+        monkeypatch.setattr(service, "_dispatch", lambda _command: dict(result))
+        waiting = service._dispatch_automatic_testing_episode(command)
+    finally:
+        service.shutdown()
+
+    assert waiting["awaiting_input"] is True
+    assert waiting["can_delegate_repair"] is False
+    assert command["action"] == "start_testing"
+
+
+def test_testing_plan_defect_does_not_start_an_unbounded_repair_episode() -> None:
+    job = {
+        "job_id": "testing-command",
+        "implementation_job_id": "implementation-1",
+        "result": {
+            "passed": False,
+            "blocking_findings": [
+                {
+                    "message": "The generated Arazzo workflow is invalid.",
+                    "repairable": True,
+                    "defect_class": "TEST_DEFECT",
+                    "repair_owner": "testing",
+                }
+            ],
+        },
+    }
+    service = WorkspaceService()
+    try:
+        result = service._testing_result(job)
+    finally:
+        service.shutdown()
+
+    assert result["blocking_route"] == "platform"
+    assert result["can_delegate_repair"] is False
+    assert "EasyDep platform" in result["message"]
+
+
 def test_testing_repair_without_progress_waits_instead_of_submitting_again(
     monkeypatch,
 ) -> None:
