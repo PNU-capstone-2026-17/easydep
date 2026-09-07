@@ -36,7 +36,9 @@ $requirementsHashPath = Join-Path $runRoot "requirements.sha256"
 $toolchainHashPath = Join-Path $runRoot "toolchain-build.sha256"
 $environmentPath = Join-Path $repoRoot ".env"
 $environmentExamplePath = Join-Path $repoRoot ".env.example"
+$toolchainDockerfile = Join-Path $repoRoot "docker\Dockerfile.toolchain"
 $toolchainImage = "easydep-toolchain:local"
+$toolchainBuildCacheLimit = "5GB"
 $memberGradleCacheVolume = "easydep-member-gradle-cache"
 $databaseContainer = "easydep-mysql-dev"
 $databaseVolume = "easydep-mysql-dev-data"
@@ -358,9 +360,10 @@ function Initialize-Toolchain {
         -not $imageExists -or
         $toolchainHash -ne $recordedHash
     ) {
-        Write-Host "[EasyDep] Building the shared implementation and Testing toolchain."
+        Write-Host "[EasyDep] Refreshing the shared implementation and Testing toolchain."
         Invoke-Docker -Arguments @(
-            "build", "--target", "toolchain", "-t", $toolchainImage, $repoRoot
+            "build", "--file", $toolchainDockerfile,
+            "--target", "toolchain", "-t", $toolchainImage, $repoRoot
         )
         Invoke-Docker -Arguments @(
             "run", "--rm", "--entrypoint", "sh", $toolchainImage,
@@ -369,6 +372,11 @@ function Initialize-Toolchain {
         Invoke-Docker -Arguments @(
             "run", "--rm", "--entrypoint", "sh", $toolchainImage,
             "./scripts/bootstrap-testing-tools.sh"
+        )
+        Write-Host "[EasyDep] Keeping Docker build cache within $toolchainBuildCacheLimit."
+        Invoke-Docker -Arguments @(
+            "builder", "prune", "--force",
+            "--max-used-space", $toolchainBuildCacheLimit
         )
         Set-Content -LiteralPath $toolchainHashPath -Value $toolchainHash -Encoding UTF8
     }
@@ -438,7 +446,7 @@ function Get-ToolchainBuildHash {
     $files = @()
     foreach ($relativePath in @(
         ".dockerignore",
-        "Dockerfile",
+        "docker/Dockerfile.toolchain",
         "requirements-common.txt",
         "requirements-browser-testing.txt",
         "scripts/bootstrap-implementation-tools.sh",

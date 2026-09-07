@@ -1,9 +1,10 @@
 # EasyDep 공용 툴체인
 
-루트 `Dockerfile`은 구현과 Testing 작업이 함께 사용하는 `easydep-toolchain` 이미지와
-API 서버용 `runtime` 이미지를 만든다. 툴체인에는 JDK 21, Gradle, Node/npm, OpenAPI
-Generator, Trivy, OpenTofu, Playwright와 Chromium headless shell 버전이 고정된다.
-PlantUML과 FR/NFR 분류 모델은 API runtime에만 둔다.
+`docker/Dockerfile.toolchain`은 구현과 Testing 작업이 함께 사용하는
+`easydep-toolchain` 이미지를 만들고, 루트 `Dockerfile`은 API 서버용 `runtime` 이미지를
+만든다. 툴체인에는 JDK 21, Gradle, Node/npm, OpenAPI Generator, Trivy, OpenTofu,
+Playwright와 Chromium headless shell 버전이 고정된다. PlantUML과 FR/NFR 분류 모델은
+API runtime에만 둔다.
 
 개발 환경에서는 통합 실행 스크립트가 이미지 존재 여부와 빌드 입력의 SHA-256을 확인하여
 필요할 때만 자동으로 빌드한다.
@@ -13,7 +14,10 @@ powershell -ExecutionPolicy Bypass -File scripts\run-easydep.ps1
 ```
 
 툴체인만 직접 만들고 싶을 때에는
-`docker build --target toolchain -t easydep-toolchain:local .`을 실행한다.
+`docker build -f docker/Dockerfile.toolchain --target toolchain -t easydep-toolchain:local .`을
+실행한다. 고정 도구와 브라우저를 Python 공통 의존성보다 앞선 계층에 두므로
+`requirements-common.txt`가 바뀌어도 큰 도구 계층은 다시 저장하지 않는다. 통합 실행
+스크립트는 성공한 툴체인 갱신 뒤 BuildKit 캐시를 5GB 이내로 정리한다.
 
 같은 이미지를 API 서버로 실행할 수 있고, 구현·Testing 작업은 코드가 Python 진입점을
 바꿔 별도 컨테이너로 실행한다. `.env`의
