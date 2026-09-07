@@ -157,3 +157,31 @@ def test_readiness_normalizes_findings_from_a_sibling_stage_model(monkeypatch) -
 
     assert report["status"] == "BLOCKED"
     assert report["findingRecords"][0]["ruleId"] == "sequence.call-target-exists"
+
+
+def test_hydration_rechecks_only_the_requested_active_stage(monkeypatch) -> None:
+    checked: list[str] = []
+
+    def checker(stage: str):
+        def check(_model: dict, _state: dict) -> ValidationReport:
+            checked.append(stage)
+            return ValidationReport(status="clean")
+
+        return check
+
+    monkeypatch.setattr(
+        validation,
+        "_CHECKED_STAGES",
+        (
+            ("class_diagram", "class_model", "class_check", checker("class_diagram")),
+            ("api_spec", "api_model", "api_check", checker("api_spec")),
+        ),
+    )
+
+    state = validation.rehydrated_check_state(
+        {"class_model": {"Classes": [{}]}, "api_model": {"Endpoints": [{}]}},
+        stages=("api_spec",),
+    )
+
+    assert checked == ["api_spec"]
+    assert set(state) == {"api_check"}

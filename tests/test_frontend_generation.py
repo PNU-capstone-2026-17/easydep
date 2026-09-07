@@ -28,11 +28,10 @@ from app.implementation.generation.frontend import (
     repair_typescript_fetch_export_collisions,
 )
 from app.implementation.generation.frontend_scaffold import (
-    FrontendScaffoldError,
+    frontend_page_names,
     openapi_typescript_fetch_command,
     react_scaffold_files,
     resolve_api_base_url,
-    validate_openapi,
 )
 from app.implementation.planning.design_context import generate_frontend_tasks
 from app.implementation.planning.frontend_contracts import (
@@ -130,9 +129,8 @@ def test_react_scaffold_contains_no_hardcoded_operation_implementation() -> None
     assert "HashRouter" in files["src/main.tsx"]
 
 
-def test_rejects_openapi_without_operations() -> None:
-    with pytest.raises(FrontendScaffoldError, match="at least one operation"):
-        validate_openapi({"openapi": "3.0.3", "paths": {}})
+def test_empty_openapi_has_no_frontend_pages_without_revalidating_design() -> None:
+    assert frontend_page_names({"openapi": "3.0.3", "paths": {}}) == []
 
 
 def test_resolves_api_base_url_from_openapi_server_without_inventing_prefix() -> None:

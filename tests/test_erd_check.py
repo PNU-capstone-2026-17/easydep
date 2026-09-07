@@ -7,10 +7,13 @@ import dataclasses
 
 import pytest
 
-from app.design.graphs.subgraphs import ERD_SPEC
+from app.design.graphs.subgraphs import ERD_SPEC, _seed_erd_model
 from app.design.knowledge.detectors import erd_findings
 from app.design.nodes.artifact import CLEAN as STOPPED_CLEAN
 from app.design.nodes.artifact import check_node, render_and_validate
+from app.design.services.class_diagram.validation.diagram import (
+    class_diagram_findings,
+)
 from tests.design_validation_fixtures import CLEAN_STATE, ERD_CLEAN, unmapped_erd
 
 CHECK_KEY = ERD_SPEC.check_key
@@ -109,6 +112,99 @@ def test_empty_erd_is_a_model_error() -> None:
 
     assert rendered[ERD_SPEC.valid_key] is False
     assert "erd.has-entity" in {finding.rule_id for finding in findings}
+
+
+def _calculator_model() -> dict:
+    return {
+        "Classes": [
+            {
+                "className": "CalculatorUI",
+                "stereotype": "Boundary",
+                "use_case_ids": ["UC1"],
+            },
+            {
+                "className": "CalculatorControl",
+                "stereotype": "Control",
+                "use_case_ids": ["UC1"],
+            },
+        ],
+        "DataTypes": [],
+        "Relationships": [
+            {
+                "source": "CalculatorUI",
+                "target": "CalculatorControl",
+                "type": "Dependency",
+            }
+        ],
+        "Collaborations": [],
+    }
+
+
+def _calculator_state(*, persistent: bool) -> dict:
+    need = {
+        "required": True,
+        "decision": "accepted" if persistent else "abstained",
+        "metadata": {"applicationState": {"durability": "persistent"}},
+        "dependencyCapabilityIds": [],
+    }
+    return {
+        "usecase_spec": {
+            "use_cases": [{"id": "UC1", "name": "Calculate"}],
+            "traceability": {"deployment_needs": {"durable_result": need}},
+        },
+        "capability_contract": {
+            "capabilities": [
+                {
+                    "id": "durable_result",
+                    "necessity": "required",
+                    "decision": need["decision"],
+                    "dependencyCapabilityIds": [],
+                }
+            ]
+        },
+        "extracted_bce_classes": _calculator_model(),
+    }
+
+
+def test_persistence_requirement_is_rejected_by_the_class_stage() -> None:
+    model = _calculator_model()
+    findings = class_diagram_findings(model, _calculator_state(persistent=True))
+
+    assert "class.persistence-requires-entity" in {
+        finding.rule_id for finding in findings
+    }
+
+
+def test_no_persistence_evidence_makes_erd_not_applicable() -> None:
+    state = _calculator_state(persistent=False)
+
+    assert _seed_erd_model(state) == {}
+    assert erd_findings({}, state) == []
+    rendered = render_and_validate(ERD_SPEC, {}, state)
+    assert rendered == {
+        ERD_SPEC.content_key: "",
+        ERD_SPEC.valid_key: None,
+        ERD_SPEC.errors_key: [],
+    }
+
+
+@pytest.mark.parametrize("change", ["entity", "relationship"])
+def test_erd_owns_source_entity_consistency(change: str) -> None:
+    source = copy.deepcopy(ERD_CLEAN)
+    current = copy.deepcopy(source)
+    if change == "entity":
+        current["Classes"][-1]["className"] = "Invoice"
+    else:
+        current["Relationships"] = current["Relationships"][:1]
+
+    findings = erd_findings(
+        current,
+        {**CLEAN_STATE, "extracted_bce_classes": source},
+    )
+
+    assert "erd.source-entity-consistency" in {
+        finding.rule_id for finding in findings
+    }
 
 
 def test_successful_repair_replaces_the_unmapped_model() -> None:

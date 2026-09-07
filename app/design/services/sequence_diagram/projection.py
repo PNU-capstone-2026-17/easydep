@@ -595,7 +595,7 @@ def sequence_findings(model: SequenceCollection | dict[str, Any]) -> list[str]:
         schema 오류, call/return 불일치와 미선언 participant 참조 메시지 목록이다.
 
     Notes:
-        이 함수는 projection 직후와 저장본 복원에서 같은 최소 검사를 사용한다.
+        이 함수는 현재 sequence stage가 만든 projection의 최소 계약만 검사한다.
     """
 
     try:
@@ -618,23 +618,3 @@ def sequence_findings(model: SequenceCollection | dict[str, Any]) -> list[str]:
                 )
                 break
     return findings
-
-
-def normalize_sequence_model(model: dict[str, Any]) -> dict[str, Any]:
-    """현재 시퀀스 저장 계약을 검증하고 canonical JSON으로 직렬화한다.
-
-    Args:
-        model: ``SequenceCollection`` 모양의 raw JSON이다.
-
-    Returns:
-        Pydantic 기본 alias와 field 순서를 적용한 JSON object다.
-
-    Raises:
-        ValidationError: 현재 계약에 없는 field나 잘못된 call/return 레코드가 있는 경우다.
-
-    Notes:
-        legacy 단일 다이어그램 복원은 수행하지 않는다. 호환 detector는 validation 모듈의
-        별도 lane에 남아 있으며 새 projection은 언제나 컬렉션 계약을 쓴다.
-    """
-
-    return SequenceCollection.model_validate(model).model_dump()

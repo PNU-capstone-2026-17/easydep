@@ -123,3 +123,17 @@ def test_input_hash_tracks_typed_bce_changes(tmp_path: Path) -> None:
     orchestrator._validate_inputs()
 
     assert orchestrator._combined_input_hash() != first_hash
+
+
+def test_input_snapshot_check_does_not_revalidate_design_semantics(
+    tmp_path: Path,
+) -> None:
+    orchestrator = _orchestrator(tmp_path)
+
+    orchestrator._validate_inputs()
+
+    assert not [
+        item
+        for item in orchestrator.manifest.diagnostics
+        if item.severity == "ERROR"
+    ]

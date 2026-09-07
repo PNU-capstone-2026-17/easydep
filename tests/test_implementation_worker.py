@@ -96,10 +96,41 @@ def test_initial_job_allows_void_control_with_transport_error_outcomes(
         worker.shutdown()
 
     assert record["status"] == "QUEUED"
-    assert record["design_validation"]["findings"] == []
+    assert "design_validation" not in record
     assert testing_input["contract_artifacts"]["openapi"]["content"] == record[
         "testing_contracts"
     ]["openapi"]["content"]
+
+
+def test_initial_job_does_not_revalidate_class_and_erd_consistency(
+    tmp_path: Path,
+) -> None:
+    worker = ImplementationWorker(settings(tmp_path))
+    worker._plan = lambda *_args, **_kwargs: None
+    try:
+        record = worker.create_job(
+            "app-1",
+            {
+                "class_diagram_puml": "class Order <<Entity>>",
+                "api_spec": {
+                    "openapi": "3.1.0",
+                    "paths": {"/orders": {"get": {"responses": {"200": {}}}}},
+                },
+                "extracted_bce_classes": {
+                    "Classes": [
+                        {"className": "Order", "stereotype": "Entity"}
+                    ]
+                },
+                "sequence_diagram_model": {"Diagrams": [{"use_case_id": "UC1"}]},
+                "api_spec_model": {"Endpoints": [{"path": "/orders"}]},
+            },
+            "com.example",
+            False,
+        )
+    finally:
+        worker.shutdown()
+
+    assert record["status"] == "QUEUED"
 
 
 def test_needs_input_workflow_exposes_the_design_blocker_in_job_error(tmp_path: Path) -> None:
@@ -662,10 +693,10 @@ def test_failed_job_without_checkpoint_requires_a_fresh_run(
         implementation_worker.shutdown()
 
 
-def test_initial_job_is_blocked_when_design_has_no_verifiable_models(tmp_path: Path) -> None:
+def test_initial_job_is_blocked_when_required_snapshot_models_are_missing(tmp_path: Path) -> None:
     implementation_worker = ImplementationWorker(settings(tmp_path))
     implementation_worker.client.prepare_job = lambda *_args, **_kwargs: pytest.fail(
-        "An unresolved design must not prepare or run an implementation job"
+        "An incomplete snapshot must not prepare or run an implementation job"
     )
     try:
         record = implementation_worker.create_job(
@@ -678,13 +709,9 @@ def test_initial_job_is_blocked_when_design_has_no_verifiable_models(tmp_path: P
         implementation_worker.shutdown()
 
     assert record["status"] == "NEEDS_INPUT"
-    assert record["workflow"]["currentPhase"] == "design-validation"
-    assert record["design_validation"]["status"] == "NEEDS_INPUT"
+    assert record["workflow"]["currentPhase"] == "input-validation"
+    assert "design_validation" not in record
     assert "api_spec_model" in record["error"]
-    report = (
-        tmp_path / ".easydep" / "implementation-runs" / record["job_id"] / "design-readiness.json"
-    )
-    assert report.is_file()
 
 
 def test_planning_keeps_validation_needs_input_outcome_resumable(

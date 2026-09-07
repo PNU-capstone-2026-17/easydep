@@ -119,8 +119,6 @@ class JavaScaffoldInput(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     bce_model: BCEModel = Field(alias="bceModel")
-    sequence_model: dict[str, Any] = Field(alias="sequenceModel")
-    api_model: dict[str, Any] = Field(alias="apiModel")
     erd_bce_model: BCEModel | None = Field(default=None, alias="erdBceModel")
     base_package: str = Field(alias="basePackage", min_length=1)
     java_version: Literal[21] = Field(default=21, alias="javaVersion")
@@ -133,13 +131,6 @@ class JavaScaffoldInput(BaseModel):
         parts = value.split(".")
         if any(not _valid_identifier(part) for part in parts):
             raise ValueError("basePackage must contain valid Java identifiers")
-        return value
-
-    @field_validator("sequence_model", "api_model")
-    @classmethod
-    def require_structured_model(cls, value: dict[str, Any]) -> dict[str, Any]:
-        if not value:
-            raise ValueError("structured design model must not be empty")
         return value
 
     @model_validator(mode="after")
@@ -163,22 +154,6 @@ class JavaScaffoldInput(BaseModel):
                     _require_identifier_syntax(operation.name, "operation name")
                     for parameter in operation.parameters:
                         _require_identifier(parameter.name, f"parameter in {operation.name}")
-        if self.erd_bce_model is not None:
-            class_entities = {
-                item.class_name for item in self.bce_model.Classes if item.stereotype == "Entity"
-            }
-            erd_entities = {
-                item.class_name
-                for item in self.erd_bce_model.Classes
-                if item.stereotype == "Entity"
-            }
-            if class_entities != erd_entities:
-                raise ValueError("bceModel and erdBceModel must contain the same Entity names")
-            class_relations = _entity_relation_pairs(self.bce_model, class_entities)
-            erd_relations = _entity_relation_pairs(self.erd_bce_model, erd_entities)
-            if class_relations != erd_relations:
-                raise ValueError("bceModel and erdBceModel contain different Entity relationships")
-
         # API schemas and BCE components intentionally use different Java
         # packages (``.api.model`` and ``.bce``).  A domain entity such as
         # ``Course`` commonly appears in both models, and that is not a Java
@@ -192,9 +167,8 @@ class JavaScaffoldInput(BaseModel):
 def render_java_scaffold(scaffold: JavaScaffoldInput) -> dict[str, str]:
     """BCE 타입별 Java 파일을 경로 기준으로 정렬해 반환한다.
 
-    ``sequenceModel``과 ``apiModel``은 같은 설계 snapshot임을 보장하기 위해 입력 계약에
-    포함된다. 이 함수가 만드는 BCE 선언에는 class model만 사용하고, HTTP adapter와
-    실행 순서는 각 전용 생성·구현 단계가 담당한다.
+    이 함수가 만드는 BCE 선언에는 class model만 사용하고, HTTP adapter와 실행 순서는
+    각 전용 생성·구현 단계가 담당한다.
     """
     package_name = f"{scaffold.base_package}.bce"
     package_path = package_name.replace(".", "/")
@@ -442,7 +416,7 @@ def _controller_body(
         (response for response in endpoint.responses if 200 <= response.status < 300),
         None,
     )
-    if success is None or not _controller_types_are_complete(
+    if success is None or not _controller_projection_is_safe(
         endpoint,
         operation,
         api_model=api_model,
@@ -604,14 +578,19 @@ def _field_name(type_name: str) -> str:
     return type_name[:1].lower() + type_name[1:]
 
 
-def _controller_types_are_complete(
+def _controller_projection_is_safe(
     endpoint: ApiEndpoint,
     operation: ClassOperation,
     *,
     api_model: ApiSpecModel,
     bce_model: BCEModel,
 ) -> bool:
-    """입력과 성공 응답의 구조를 typed 모델만으로 변환할 수 있는지 확인한다."""
+    """Return whether deterministic ObjectMapper wiring can preserve the contract.
+
+    This is an implementation strategy choice, not an upstream validation gate. A
+    false result leaves the controller body to the implementation agent instead of
+    rejecting or revising the accepted API/BCE artifacts.
+    """
 
     binding = endpoint.control_binding
     if binding is None:
@@ -1004,14 +983,3 @@ def java_method_name(design_name: str) -> str:
 def _require_identifier(value: str, label: str) -> None:
     if not _valid_identifier(value):
         raise ValueError(f"{label} is not a valid Java identifier: {value}")
-
-
-def _entity_relation_pairs(model: BCEModel, entity_names: set[str]) -> set[tuple[str, str]]:
-    return {
-        (
-            min(relation.source, relation.target),
-            max(relation.source, relation.target),
-        )
-        for relation in model.Relationships
-        if relation.source in entity_names and relation.target in entity_names
-    }

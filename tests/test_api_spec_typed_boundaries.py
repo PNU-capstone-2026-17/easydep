@@ -21,7 +21,7 @@ from app.design.services.api_spec.normalization import (
 )
 from app.design.services.api_spec.projection import build_openapi_from_model
 from app.design.services.sequence_diagram.projection import SequenceCollection
-from app.implementation.generation.frontend_scaffold import validate_openapi
+from app.implementation.generation.frontend_scaffold import frontend_page_names
 
 
 def _bce_model() -> BCEModel:
@@ -429,7 +429,7 @@ def test_accepted_model_round_trips_existing_json_and_openapi_contract() -> None
     }
     assert operation["x-easydep-use-case-ids"] == ["UC1"]
     assert operation["x-easydep-scenario-step-refs"] == ["UC1:main:1"]
-    validate_openapi(openapi)
+    assert frontend_page_names(openapi) == ["OverviewPage"]
 
 
 def test_accepted_api_model_keeps_rtm_traceability_shape() -> None:

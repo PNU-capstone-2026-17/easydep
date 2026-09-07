@@ -19,10 +19,7 @@ from ..agents.runtime import execute_openhands_task
 from ..agents.verification.build import WorkspaceVerificationError, verify_run_workspace
 from ..delivery.container import render_local_container
 from ..delivery.terraform import render_iac
-from ..domain.implementation_ir import (
-    assess_bce_erd_entity_contract,
-    build_implementation_ir,
-)
+from ..domain.implementation_ir import build_implementation_ir
 from ..domain.models import JobSpec
 from ..generation.orchestrator import (
     plan_api_adapter_tasks,
@@ -84,32 +81,9 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     if spec.job_type == "FEEDBACK_REVISION":
         apply_repair_directives(run_root)
         return reconcile_workflow_state(run_root)
-    ir = build_implementation_ir(spec, run_root)
+    build_implementation_ir(spec, run_root)
     erd_model_path = spec.inputs.get("erdBceModel")
-    erd_model = _read_json(erd_model_path) if erd_model_path and erd_model_path.is_file() else {}
-    bce_entities = set(ir.entities)
-    contract = assess_bce_erd_entity_contract(erd_model, bce_entities)
-    if bce_entities and not contract.erd_entities:
-        raise ValueError("erdBceModel must contain Entity definitions matching bceModel")
-    unexpected_erd_entities = set(contract.unexpected_erd_entities)
-    missing_erd_entities = set(contract.missing_bce_entities)
-    if missing_erd_entities or unexpected_erd_entities:
-        missing_in_erd = sorted(missing_erd_entities)
-        missing_in_bce = sorted(unexpected_erd_entities)
-        details = []
-        if missing_in_erd:
-            details.append("missing in ERD: " + ", ".join(missing_in_erd))
-        if missing_in_bce:
-            details.append("missing in BCE: " + ", ".join(missing_in_bce))
-        raise ValueError("bceModel/erdBceModel Entity mismatch; " + "; ".join(details))
-    needs_persistence = bool(bce_entities) or any(
-        gateway.kind == "persistence" for gateway in ir.gateways
-    )
-    if needs_persistence:
-        if erd_model_path is None or not erd_model_path.is_file():
-            raise ValueError(
-                "erdBceModel is required because bceModel contains persistent Entity classes"
-            )
+    if erd_model_path is not None:
         plan_persistence_tasks(spec, run_root)
     plan_api_adapter_tasks(spec, run_root)
     plan_wiring_tasks(spec, run_root)

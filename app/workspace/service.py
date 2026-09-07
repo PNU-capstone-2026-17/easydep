@@ -264,7 +264,7 @@ def _with_capability_handoff_questions(app_id: str, result: dict[str, Any]) -> d
 # here so the workspace can report the same stable milestones even when the
 # underlying task plan differs by application.
 _IMPLEMENTATION_GENERATION_STEPS = (
-    ("validate-input", "Validate input and design"),
+    ("validate-input", "Verify input snapshot"),
     ("generate-sources", "Generate base sources"),
     ("prepare-build", "Prepare build environment"),
     ("verify-generated", "Verify initial compilation"),
@@ -3064,7 +3064,7 @@ class WorkspaceService:
                 elif index == active_index and generation_status != "SUCCEEDED":
                     add_update(step, label, "running", progress_message)
         elif generation_status == "REUSING_GENERATED_RUN":
-            add_update("validate-input", "Validate input and design", "completed")
+            add_update("validate-input", "Verify input snapshot", "completed")
             add_update(
                 "reuse-generated-run",
                 "Reuse generated output",
@@ -3072,7 +3072,7 @@ class WorkspaceService:
                 progress_message,
             )
         elif generation_status == "PREPARING_FEEDBACK":
-            add_update("validate-input", "Validate input and design", "completed")
+            add_update("validate-input", "Verify input snapshot", "completed")
             add_update("prepare-feedback", "Prepare feedback application", "running", progress_message)
 
         workflow_complete = False

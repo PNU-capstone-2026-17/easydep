@@ -33,9 +33,8 @@ def render_iac(run_root: Path, spec: Any) -> dict[str, object]:
             f"Supported: {', '.join(SUPPORTED_PROVIDERS)}"
         )
 
-    # renderer와 package writer 모두 같은 검증된 객체를 사용한다. 중간에 별도
-    # application/terraform 복사본을 만들지 않아 화면·Testing·사용자 파일이 갈라지지 않는다.
-    validate_provider_resource_plan(resource_plan)
+    # The design-source adapter above returns the already parsed ResourcePlan. Keep
+    # one boundary check there instead of validating the same plan again here.
     files = render_open_tofu(resource_plan)
     application = run_root / "application"
     application.mkdir(parents=True, exist_ok=True)

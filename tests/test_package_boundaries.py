@@ -15,6 +15,7 @@ APP_ROOT = REPOSITORY_ROOT / "app"
 CLOUDKB_ROOT = APP_ROOT / "cloudkb"
 DESIGN_SERVICES_ROOT = APP_ROOT / "design" / "services"
 IMPLEMENTATION_ROOT = APP_ROOT / "implementation"
+TESTING_ROOT = APP_ROOT / "testing"
 REQUIREMENTS_BOUNDED_ROOTS = tuple(
     APP_ROOT / "requirements" / name
     for name in ("contracts", "runtime", "resources", "modeling", "orchestration")
@@ -116,7 +117,19 @@ def test_design_services_do_not_import_legacy_graph_or_repository_modules():
 def test_implementation_does_not_import_design_service_internals():
     _assert_no_forbidden_imports(
         IMPLEMENTATION_ROOT,
-        ("app.design.services", "app.orchestration"),
+        (
+            "app.design.knowledge",
+            "app.design.services",
+            "app.design.validation",
+            "app.orchestration",
+        ),
+    )
+
+
+def test_testing_does_not_import_design_semantic_validators():
+    _assert_no_forbidden_imports(
+        TESTING_ROOT,
+        ("app.design.knowledge", "app.design.validation"),
     )
 
 

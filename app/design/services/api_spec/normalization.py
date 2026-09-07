@@ -593,27 +593,14 @@ def api_spec_proposal_from_model(
                     ],
                 }
             )
-    return ApiSpecProposal.model_validate(
-        {
-            "Endpoints": endpoints,
-        }
-    )
+    return ApiSpecProposal.model_validate({"Endpoints": endpoints})
 
 
-def normalize_stored_api_spec_model(
-    value: dict[str, Any] | ApiSpecModel,
-    bce_model: BCEModel,
-) -> ApiSpecModel:
-    """과거 checkpoint의 HTTP 제안을 현재 BCE 계약으로 다시 결합한다.
-
-    저장 모델의 Control binding은 코드가 만든 파생 정보다. schema 이름 표기나 wire 타입
-    규칙이 바뀌었을 때 과거 binding을 그대로 검사하면 이미 수정된 코드에서도 앱이 계속
-    막힌다. 사용자가 정한 HTTP surface만 proposal로 되돌린 뒤 현재 결정론적 규칙으로
-    binding과 trace를 다시 만든다.
-    """
-
-    current = value if isinstance(value, ApiSpecModel) else ApiSpecModel.model_validate(value)
-    return normalize_api_spec_model(
-        api_spec_proposal_from_model(current, bce_model),
-        bce_model,
-    )
+__all__ = [
+    "api_input_type_for_control",
+    "api_spec_proposal_from_model",
+    "interaction_context",
+    "interaction_contracts",
+    "normalize_api_spec_model",
+    "response_contract_for_control",
+]

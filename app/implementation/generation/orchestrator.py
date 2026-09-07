@@ -23,9 +23,6 @@ from app.llm_connection import build_llm_connection
 
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (
-    api_operations_from_model,
-    assess_bce_erd_entity_contract,
-    entity_names,
     pascal_case,
     remove_readonly,
 )
@@ -504,82 +501,6 @@ class PrototypeOrchestrator:
                 "size": path.stat().st_size,
             }
 
-        if self.spec.job_type != "FEEDBACK_REVISION":
-            def read_model(name: str) -> dict[str, object]:
-                path = self.spec.inputs.get(name)
-                if not path or not path.is_file():
-                    return {}
-                value = json.loads(path.read_text(encoding="utf-8"))
-                return value if isinstance(value, dict) else {}
-
-            sequence_model = read_model("sequenceModel")
-            diagrams = sequence_model.get("Diagrams", [])
-            messages = [
-                message
-                for diagram in diagrams
-                if isinstance(diagram, dict)
-                for message in diagram.get("Messages", [])
-                if isinstance(message, dict) and message.get("type") != "return"
-            ] if isinstance(diagrams, list) else []
-            if not messages:
-                self.manifest.diagnostics.append(
-                    Diagnostic(
-                        "SEQUENCE_HAS_NO_CALLS",
-                        "ERROR",
-                        "sequenceModel contains no executable participant calls.",
-                        str(self.spec.inputs.get("sequenceModel", "")),
-                    )
-                )
-            api_model = read_model("apiModel")
-            operations = api_operations_from_model(api_model)
-            if not operations:
-                self.manifest.diagnostics.append(
-                    Diagnostic(
-                        "API_MODEL_NO_OPERATIONS",
-                        "ERROR",
-                        "apiModel must contain at least one endpoint before implementation can start.",
-                        str(self.spec.inputs.get("apiModel", "")),
-                    )
-                )
-            for operation in operations:
-                if not operation.operation_id:
-                    self.manifest.diagnostics.append(
-                        Diagnostic(
-                            "API_MODEL_MISSING_OPERATION_ID",
-                            "ERROR",
-                            f"API endpoint requires operation_id: {operation.method} {operation.path}",
-                            str(self.spec.inputs.get("apiModel", "")),
-                        )
-                    )
-            bce_model = read_model("bceModel")
-            erd_model = read_model("erdBceModel")
-            bce_entities = entity_names(bce_model)
-            contract = assess_bce_erd_entity_contract(erd_model, bce_entities)
-            if bce_entities and not contract.erd_entities:
-                self.manifest.diagnostics.append(
-                    Diagnostic(
-                        "ERD_REQUIRED_FOR_BCE_ENTITIES",
-                        "ERROR",
-                        "erdBceModel is required when bceModel contains Entity classes.",
-                        str(self.spec.inputs.get("bceModel", "")),
-                    )
-                )
-            elif contract.missing_bce_entities or contract.unexpected_erd_entities:
-                unexpected_erd_entities = set(contract.unexpected_erd_entities)
-                missing_erd_entities = set(contract.missing_bce_entities)
-                if missing_erd_entities or unexpected_erd_entities:
-                    self.manifest.diagnostics.append(
-                        Diagnostic(
-                            "BCE_ERD_ENTITY_MISMATCH",
-                            "ERROR",
-                            "bceModel and erdBceModel Entity names must match: "
-                            f"BCE={sorted(bce_entities)}, ERD={sorted(contract.erd_entities)}, "
-                            f"unmatched ERD={sorted(unexpected_erd_entities)}, "
-                            f"missing ERD={sorted(missing_erd_entities)}",
-                            str(self.spec.inputs.get("erdBceModel", "")),
-                        )
-                    )
-
     def _combined_input_hash(self) -> str:
         connection = build_llm_connection()
         digest = hashlib.sha256()
@@ -673,8 +594,6 @@ class PrototypeOrchestrator:
         erd_path = self.spec.inputs.get("erdBceModel")
         scaffold = JavaScaffoldInput.model_validate({
             "bceModel": read_json("bceModel"),
-            "sequenceModel": read_json("sequenceModel"),
-            "apiModel": read_json("apiModel"),
             "erdBceModel": (
                 json.loads(erd_path.read_text(encoding="utf-8"))
                 if erd_path and erd_path.is_file()

@@ -123,6 +123,10 @@ def test_llm_settings_loads_dotenv_without_overriding_process_environment(
         "COMPARISON_MODEL",
         "OPENAI_MODEL",
         "MODEL",
+        "CLOUDFLARE_API_TOKEN",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_AI_GATEWAY_ID",
+        "CLOUDFLARE_COMPARISON_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
     assert llm_settings(dotenv_path) == (

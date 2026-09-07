@@ -1,14 +1,11 @@
-"""Checkpoint source/derived artifact compatibility for class design."""
+"""Typed checkpoint sources and their derived design renderings."""
 from __future__ import annotations
-
-import json
 
 from app.db.models import FORMAT_JSON
 from app.design.schemas.architecture_state import ArchitectureState
 from app.design.schemas.class_model import BCEModel
 from app.design.services.sequence_diagram.projection import (
     SequenceCollection,
-    normalize_sequence_model,
 )
 from app.repositories.artifact_repository import STAGE_ARTIFACTS
 from tests.class_design_fixtures import (
@@ -33,21 +30,6 @@ def test_class_and_sequence_checkpoints_store_typed_sources_and_derive_rendering
     sequence_puml = sequence_config["derive"](sequence_source)
     assert "class OrderBoundary" in class_puml
     assert "submit(request)" in sequence_puml
-
-
-def test_json_checkpoint_round_trip_revalidates_sequence_source_before_rendering():
-    source = SequenceCollection.model_validate(
-        typed_sequence_model_payload()
-    ).model_dump(mode="json")
-    checkpoint_payload = json.loads(json.dumps(source, ensure_ascii=False))
-
-    normalized = normalize_sequence_model(checkpoint_payload)
-    restored = SequenceCollection.model_validate(normalized)
-
-    assert restored.model_dump(mode="json") == source
-    assert STAGE_ARTIFACTS["sequence_diagram"]["derive"](normalized).startswith(
-        "@startuml"
-    )
 
 
 def test_architecture_state_keeps_structured_sources_as_checkpoint_values():

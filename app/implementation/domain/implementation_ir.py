@@ -71,16 +71,6 @@ class ImplementationIR:
         return asdict(self)
 
 
-@dataclass(frozen=True)
-class ErdEntityContract:
-    """BCE와 ERD typed 모델의 Entity 이름 비교 결과다."""
-
-    erd_entities: frozenset[str]
-    allowed_physical_entities: frozenset[str]
-    missing_bce_entities: frozenset[str]
-    unexpected_erd_entities: frozenset[str]
-
-
 def build_implementation_ir(
     spec: JobSpec, run_root: Path, *, persist: bool = True
 ) -> ImplementationIR:
@@ -105,9 +95,7 @@ def build_implementation_ir(
         controls=tuple(sorted(c.name for c in components if c.stereotype.lower() == "control")),
         boundaries=tuple(sorted(c.name for c in components if c.stereotype.lower() == "boundary")),
         entities=tuple(sorted(c.name for c in components if c.stereotype.lower() == "entity")),
-        persistent_entities=tuple(
-            sorted({c.name for c in components if c.stereotype.lower() == "entity"} & erd_entities)
-        ),
+        persistent_entities=tuple(sorted(erd_entities)),
         gateways=gateways,
         api_ports=api_ports,
         e2e_scenarios=tuple(derive_e2e_scenarios(api_operations)),
@@ -219,23 +207,6 @@ def discover_api_ports(
             )
         )
     return result
-
-
-def assess_bce_erd_entity_contract(
-    erd_model: dict[str, object], base_entities: set[str]
-) -> ErdEntityContract:
-    """BCE와 ERD 단계가 저장한 Entity 이름이 같은지 확인한다.
-
-    조인 테이블과 다중값용 물리 테이블은 렌더링 결과일 뿐 ``erdBceModel``의 도메인 Entity가
-    아니다. 따라서 표시용 PlantUML 주석과 이름을 추측하는 예전 예외 규칙이 필요 없다.
-    """
-    erd_entities = entity_names(erd_model)
-    return ErdEntityContract(
-        erd_entities=frozenset(erd_entities),
-        allowed_physical_entities=frozenset(),
-        missing_bce_entities=frozenset(base_entities - erd_entities),
-        unexpected_erd_entities=frozenset(erd_entities - base_entities),
-    )
 
 
 def derive_e2e_scenarios(

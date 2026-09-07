@@ -89,45 +89,6 @@ def _pid_is_alive(pid: int) -> bool:
     return True
 
 
-def _upstream_check_summary(design: dict[str, Any]) -> dict[str, Any]:
-    """설계 단계가 남긴 검사 결과를 다시 검사하지 않고 구현 기록에 복사한다.
-
-    API와 ERD의 의미 검사는 각 설계 작업이 생성 직후 수행한다. 구현 단계가 같은 검사를
-    다시 호출하면 규칙이 두 군데의 진입 조건이 되고, 오래된 설계를 구현 단계가 고치려는
-    흐름까지 생긴다. 여기서는 추적을 위해 이미 계산된 결과만 요약한다.
-    """
-
-    stages: list[dict[str, Any]] = []
-    findings: list[dict[str, str]] = []
-    for stage, check_key in (
-        ("class_diagram", "class_diagram_check"),
-        ("sequence_diagram", "sequence_diagram_check"),
-        ("api_spec", "api_spec_check"),
-        ("erd", "erd_check"),
-    ):
-        check = design.get(check_key)
-        if not isinstance(check, dict):
-            continue
-        stage_findings = [str(item) for item in check.get("findings") or []]
-        stages.append(
-            {
-                "stage": stage,
-                "status": "READY" if not stage_findings else "BLOCKED",
-                "findings": stage_findings,
-            }
-        )
-        findings.extend(
-            {"stage": stage, "finding": finding}
-            for finding in stage_findings
-        )
-    return {
-        "schemaVersion": "easydep-design-readiness/v1alpha1",
-        "status": "READY" if not findings else "BLOCKED",
-        "stages": stages,
-        "findings": findings,
-    }
-
-
 def build_testing_contracts(design: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """구현이 실제로 사용한 요구사항·설계 입력을 Testing용으로 고정한다.
 
@@ -339,7 +300,7 @@ class ImplementationWorker:
         self._recover_pending_jobs()
 
     def create_job(self, app_id: str, design: dict[str, Any], base_package: str, allow_assumptions: bool) -> dict[str, Any]:
-        """설계를 검사한 뒤 새 구현 작업을 등록하고 비동기 planning을 시작한다."""
+        """필수 설계 snapshot의 존재를 확인하고 비동기 구현 planning을 시작한다."""
         missing = [key for key in ("class_diagram_puml", "api_spec") if design.get(key) in (None, "", {})]
         if missing:
             raise InvalidJobState("Missing required design artifacts: " + ", ".join(missing))
@@ -349,31 +310,13 @@ class ImplementationWorker:
             )
             if not isinstance(design.get(key), dict) or not design[key]
         ]
-        class_model = design.get("extracted_bce_classes")
-        has_entity = bool(
-            isinstance(class_model, dict)
-            and any(
-                isinstance(item, dict) and item.get("stereotype") == "Entity"
-                for item in class_model.get("Classes", [])
-            )
-        )
-        if has_entity and (
-            not isinstance(design.get("erd_bce_classes"), dict)
-            or not design["erd_bce_classes"]
-        ):
-            missing_models.append("erd_bce_classes")
-        readiness = _upstream_check_summary(design)
         if missing_models:
-            return self._create_design_blocked_job(
-                app_id, base_package, self._missing_design_model_report(missing_models)
-            )
+            return self._create_input_blocked_job(app_id, base_package, missing_models)
         job_id = uuid.uuid4().hex
         job_path = self.client.prepare_job(job_id, app_id, design, base_package, allow_assumptions)
         record = {
             "job_id": job_id, "app_id": app_id, "status": "QUEUED", "base_package": base_package,
             "job_path": str(job_path), "run_root": None, "workflow": None,
-            # 시작을 막지 않는 설계 finding도 구현 보고서에서 확인할 수 있도록 함께 넘긴다.
-            "design_validation": readiness,
             "testing_contracts": build_testing_contracts(design),
             "trace_artifact_versions": _trace_artifact_versions(design),
             "error": None, "created_at": _now(), "updated_at": _now(),
@@ -417,21 +360,12 @@ class ImplementationWorker:
             "artifact_version_ids": version_ids,
         }
 
-    def _create_design_blocked_job(
-        self, app_id: str, base_package: str, readiness: dict[str, Any]
+    def _create_input_blocked_job(
+        self, app_id: str, base_package: str, missing_models: list[str]
     ) -> dict[str, Any]:
-        """코드 생성기를 실행하지 않고, 해결할 설계 문제를 작업 기록으로 남긴다."""
+        """필수 입력이 빠진 경우 코드 생성기를 시작하지 않는다."""
         job_id = uuid.uuid4().hex
-        report_path = self.settings.work_root / job_id / "design-readiness.json"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(
-            json.dumps(readiness, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        findings = readiness.get("findings", [])
-        summary = "; ".join(
-            str(item.get("finding", "")) for item in findings[:3]
-            if isinstance(item, dict)
-        )
+        summary = ", ".join(missing_models)
         record = {
             "job_id": job_id,
             "app_id": app_id,
@@ -441,45 +375,22 @@ class ImplementationWorker:
             "workflow": {
                 "schemaVersion": "implementation-workflow/v1alpha1",
                 "status": "NEEDS_INPUT",
-                "currentPhase": "design-validation",
+                "currentPhase": "input-validation",
                 "updatedAt": _now(),
                 "phases": [],
                 "tasks": [],
                 "nextRunnableTasks": [],
-                "blockingReason": "Resolve the design mismatches before implementation can start.",
+                "blockingReason": "Required design snapshot files are missing: " + summary,
             },
-            "design_validation": readiness,
             "error": (
-                "The implementation job did not start because design inconsistencies remain. "
-                + summary
+                "The implementation job did not start because required design snapshot "
+                "files are missing: " + summary
             ),
             "created_at": _now(),
             "updated_at": _now(),
         }
         self._write(record)
         return self.public_record(record)
-
-    @staticmethod
-    def _missing_design_model_report(missing_models: list[str]) -> dict[str, Any]:
-        """구조화 모델이 없어 API와 Control의 연결을 검사할 수 없다는 보고서를 만든다."""
-        findings = [
-            {
-                "stage": "api_spec",
-                "finding": (
-                    f"The verifiable design model '{name}' is missing, so API, Control, and "
-                    "sequence consistency cannot be established. Regenerate or revise the design stage."
-                ),
-            }
-            for name in missing_models
-        ]
-        return {
-            "schemaVersion": "easydep-design-readiness/v1alpha1",
-            "status": "NEEDS_INPUT",
-            "stages": [{"stage": "api_spec", "status": "NEEDS_INPUT", "findings": [
-                item["finding"] for item in findings
-            ]}],
-            "findings": findings,
-        }
 
     def create_feedback_job(
         self,

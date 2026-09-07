@@ -2,14 +2,12 @@
 
 from app.design.services.sequence_diagram.projection import (
     SequenceCollection,
-    normalize_sequence_model,
     project_sequence_model,
     sequence_findings,
 )
 
 __all__ = [
     "SequenceCollection",
-    "normalize_sequence_model",
     "project_sequence_model",
     "sequence_findings",
 ]

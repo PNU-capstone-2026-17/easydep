@@ -1,4 +1,4 @@
-"""Design-readiness checks shared by design hand-off and implementation entry."""
+"""Stage-owned design checks used by design generation, review, and hydration."""
 
 from __future__ import annotations
 
@@ -144,9 +144,11 @@ def design_readiness_report(
     }
 
 
-def rehydrated_check_state(state: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """Rebuild visible check state from stored models without claiming a repair."""
-    report = design_readiness_report(state)
+def rehydrated_check_state(
+    state: dict[str, Any], stages: Iterable[str] | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Rebuild visible checks only for the requested active design stage."""
+    report = design_readiness_report(state, stages=stages)
     by_stage = {str(item["stage"]): item for item in report["stages"]}
     result: dict[str, dict[str, Any]] = {}
     for stage, model_key, check_key, _ in _CHECKED_STAGES:

@@ -19,6 +19,7 @@ from app.design.services.class_diagram.scenario import (
 from app.design.services.class_diagram.validation.model import validate_class_model
 from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
+from app.design.services.persistence_scope import erd_disposition
 from app.validation import CheckSpec, FindingOrigin, ValidationReport, run_checks
 from app.validation import Finding as ValidationFinding
 
@@ -483,6 +484,17 @@ def usecase_coverage(model: dict, state: dict) -> list[Finding]:
         for uc in sorted(known - claimed)
     ]
 
+
+def persistence_requires_entity(model: dict, state: dict) -> list[Finding]:
+    """Persistent domain data must be represented before the class stage is accepted."""
+
+    if erd_disposition(model, state) != "class_revision_required":
+        return []
+    return [Finding(
+        "class.persistence-requires-entity",
+        "Accepted persistence requirements are not represented by an Entity class.",
+    )]
+
 CLASS_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "relationship_endpoints": relationship_endpoints,
     "usecase_ids": usecase_ids,
@@ -496,6 +508,7 @@ CLASS_DIAGRAM_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "names_unique": names_unique,
     "name_pascal_case": name_pascal_case,
     "usecase_coverage": usecase_coverage,
+    "persistence_requires_entity": persistence_requires_entity,
 }
 
 
@@ -537,6 +550,7 @@ CLASS_DIAGRAM_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
     CheckSpec("class.names-unique", names_unique),
     CheckSpec("class.name-pascal-case", name_pascal_case),
     CheckSpec("class.covers-use-cases", usecase_coverage),
+    CheckSpec("class.persistence-requires-entity", persistence_requires_entity),
 )
 
 
@@ -562,6 +576,7 @@ __all__ = [
     "communication_rules",
     "name_pascal_case",
     "names_unique",
+    "persistence_requires_entity",
     "relationship_endpoints",
     "stereotype_is_bce",
     "usecase_coverage",

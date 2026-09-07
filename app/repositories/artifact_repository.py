@@ -43,8 +43,6 @@ from app.db.models import (
 )
 from app.db.session import session_scope
 from app.design.schemas.architecture_state import ArchitectureState
-from app.design.schemas.class_model import BCEModel
-from app.design.services.api_spec.normalization import normalize_stored_api_spec_model
 from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.deployment_diagram.bundle import (
@@ -56,7 +54,6 @@ from app.design.services.deployment_diagram.provider_plantuml import (
 )
 from app.design.services.erd.plantuml import generate_erd_from_bce_json
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
-from app.design.services.sequence_diagram.projection import normalize_sequence_model
 from app.design.validation import rehydrated_check_state
 
 logger = logging.getLogger(__name__)
@@ -332,33 +329,11 @@ def load_state(app_id: str) -> ArchitectureState:
             artifact_status[stage] = "implemented"
 
         state["artifact_status"] = artifact_status
-        # 저장 당시와 현재의 sequence schema가 달라도 클래스 모델과 호출 모델을 기준으로
-        # 현재 형식에 맞춘다. PlantUML 문자열을 해석해 모델을 역으로 만들지는 않는다.
-        sequence_model = state.get("sequence_diagram_model")
-        class_model = state.get("extracted_bce_classes")
-        class_puml = str(state.get("class_diagram_puml") or "")
-        if isinstance(sequence_model, dict) and sequence_model and (
-            isinstance(class_model, dict) or class_puml
-        ):
-            normalized_sequence = normalize_sequence_model(sequence_model)
-            state["sequence_diagram_model"] = normalized_sequence
-            state["sequence_diagram_puml"] = generate_sequence_from_model(
-                normalized_sequence
-            )
-        # API binding과 trace도 표시용 OpenAPI처럼 BCE에서 다시 만들 수 있는 파생 정보다.
-        # 과거 LLM이 schema 이름에 ``#/components/schemas/``를 붙였거나 예전 wire 타입
-        # 규칙으로 저장했더라도 현재 코드의 정규화 계약으로 재수화한다.
-        api_model = state.get("api_spec_model")
-        if isinstance(api_model, dict) and api_model and isinstance(class_model, dict):
-            normalized_api = normalize_stored_api_spec_model(
-                api_model,
-                BCEModel.model_validate(class_model),
-            ).model_dump()
-            state["api_spec_model"] = normalized_api
-            state["api_spec"] = build_openapi_from_model(normalized_api)
-        # 검사 결과는 저장 모델에서 다시 계산할 수 있는 값이다. 새로고침할 때 다시 검사해
-        # 해결되지 않은 설계 오류가 사라진 것처럼 보인 채 구현 단계로 넘어가지 않게 한다.
-        state.update(rehydrated_check_state(state))
+        # Stored structured models are authoritative. Loading must not reinterpret an
+        # earlier sequence/API artifact against a newer class artifact. If the latest
+        # persisted stage is still under design review, rebuild only that stage's
+        # visible findings; all earlier stages keep the decision made at their gate.
+        state.update(rehydrated_check_state(state, stages=(str(app.current_stage),)))
         return state
 
 

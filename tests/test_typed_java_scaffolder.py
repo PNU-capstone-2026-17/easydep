@@ -118,8 +118,6 @@ def _payload() -> dict[str, object]:
             "Relationships": [],
             "Collaborations": [],
         },
-        "sequenceModel": {"Diagrams": []},
-        "apiModel": {"endpoints": []},
         "basePackage": "com.example.orders",
         "javaVersion": 21,
         "applicationName": "Orders",
@@ -462,8 +460,8 @@ public interface OrdersApi {
     assert "EASYDEP_CONTROLLER_BODY_REQUIRED" not in source
 
 
-def test_controller_keeps_llm_body_when_typed_fields_do_not_match() -> None:
-    """API가 요구하는 값을 BCE 결과가 제공하지 못하면 자동 변환을 성공 처리하지 않는다."""
+def test_controller_defers_body_when_deterministic_projection_is_unsafe() -> None:
+    """Unsafe automatic mapping is delegated without rejecting the accepted design."""
     payload = _payload()["bceModel"]
     payload["Classes"][1]["operations"][0]["parameters"] = [
         {"name": "request", "type": "OrderRequest"}

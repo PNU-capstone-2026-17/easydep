@@ -87,6 +87,7 @@ from app.design.services.deployment_diagram.service import (
 from app.design.services.erd.plantuml import render_logical_model
 from app.design.services.erd.projection import project_logical_model
 from app.design.services.erd.service import revise_erd_model as revise_erd_classes
+from app.design.services.persistence_scope import erd_disposition
 from app.design.services.sequence_diagram.plantuml import generate_sequence_from_model
 from app.design.services.sequence_diagram.projection import (
     project_sequence_model,
@@ -203,7 +204,16 @@ def _seed_erd_model(state: ArchitectureState) -> dict[str, Any]:
     source = copy.deepcopy(
         state.get("extracted_bce_classes") or state.get("erd_bce_classes") or {}
     )
-    return _stored_class_model(source).model_dump(by_alias=True)
+    stored = _stored_class_model(source).model_dump(by_alias=True)
+    disposition = erd_disposition(stored, state)
+    if disposition == "not_applicable":
+        return {}
+    if disposition == "class_revision_required":
+        raise RuntimeError(
+            "The class diagram must represent accepted persistence requirements "
+            "with an Entity before ERD generation."
+        )
+    return stored
 
 
 def _message_key(message: dict) -> str:

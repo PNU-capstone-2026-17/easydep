@@ -3,21 +3,20 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from .frontend_scaffold import (
-    FrontendScaffoldError,
     OPENAPI_GENERATOR_NAME,
     OPENAPI_GENERATOR_VERSION,
+    FrontendScaffoldError,
     openapi_typescript_fetch_command,
     render_package_lock,
     resolve_api_base_url,
-    validate_openapi,
     write_react_scaffold,
 )
-
 
 CommandRunner = Callable[[str, list[str], Path], object]
 
@@ -94,7 +93,6 @@ def generate_frontend_project(
     run_command: CommandRunner,
 ) -> FrontendGenerationResult:
     """Generate the client, deterministic React shell, and npm dependency lock."""
-    validate_openapi(api_spec)
     effective_api_base_url = resolve_api_base_url(api_spec, api_base_url)
     generated_client = frontend_root / "src" / "generated"
     run_command(

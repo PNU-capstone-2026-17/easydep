@@ -60,6 +60,7 @@ from app.design.services.class_diagram.validation.diagram import (
 )
 from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
+from app.design.services.persistence_scope import entity_names
 from app.design.services.sequence_diagram.methods import (
     method_call_signature,
     method_return_type,
@@ -126,13 +127,63 @@ def erd_entity_name_usable(model: dict, logical: dict) -> list[Finding]:
     return found
 
 
+def _entity_relationships(model: dict, names: set[str] | frozenset[str]) -> set[str]:
+    """Return the undirected Entity relationship pairs used by persistence mapping."""
+
+    return {
+        " <-> ".join(sorted((str(item.get("source")), str(item.get("target")))))
+        for item in _relationships(model)
+        if str(item.get("source")) in names and str(item.get("target")) in names
+    }
+
+
+def erd_source_entity_consistency(model: dict, logical: dict) -> list[Finding]:
+    """Keep the ERD's domain entities aligned with the accepted class model."""
+
+    source_entities = logical.get("_sourceEntityNames")
+    source_relationships = logical.get("_sourceEntityRelationships")
+    if not isinstance(source_entities, list) or not isinstance(source_relationships, list):
+        return []
+    current_entities = entity_names(model)
+    expected_entities = frozenset(
+        str(name).strip() for name in source_entities if str(name).strip()
+    )
+    current_relationships = _entity_relationships(model, current_entities)
+    expected_relationships = {
+        str(value).strip() for value in source_relationships if str(value).strip()
+    }
+    if (
+        current_entities == expected_entities
+        and current_relationships == expected_relationships
+    ):
+        return []
+    return [
+        Finding(
+            "erd.source-entity-consistency",
+            "ERD Entity names and relationships must match the accepted class model: "
+            f"expectedEntities={sorted(expected_entities)}, "
+            f"actualEntities={sorted(current_entities)}, "
+            f"expectedRelationships={sorted(expected_relationships)}, "
+            f"actualRelationships={sorted(current_relationships)}",
+            requires_user_input=True,
+        )
+    ]
+
+
 def erd_has_entity(model: dict, logical: dict) -> list[Finding]:
     """표가 하나라도 있는가.
+
+    클래스 모델이 함께 제공되면 Entity 집합과 관계 일치는
+    ``erd_source_entity_consistency``가 맡는다. ERD 적용 여부는 별도의 영속성 계약과
+    클래스 모델을 함께 보는 결정에서 정한다. 독립 검증처럼 상류 문맥이 없을 때에만
+    기존의 비어 있는 ERD 오류를 유지한다.
 
     재생성이 모델을 **비워서** 위반을 없애는 길도 이것이 막는다 — 비우면 이 위반이 새로
     생겨 위반 수가 안 줄고 후보가 버려진다. ERD 스펙에는 `elements`가 없어
     `_is_degenerate`가 그 함정을 못 막으므로 막는 것은 이 규칙 하나다.
     """
+    if "_sourceEntityNames" in logical:
+        return []
     if _tables(logical):
         return []
     return [Finding("erd.has-entity", "<<Entity>> 클래스가 하나도 없어 ERD가 비어 있다")]
@@ -403,6 +454,7 @@ ERD_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "erd_relationship_endpoints": erd_relationship_endpoints,
     "erd_stereotype_is_bce": erd_stereotype_is_bce,
     "erd_entity_name_usable": erd_entity_name_usable,
+    "erd_source_entity_consistency": erd_source_entity_consistency,
     "erd_has_entity": erd_has_entity,
     "erd_relationships_mapped": erd_relationships_mapped,
     "erd_composition_owner": erd_composition_owner,
@@ -420,6 +472,7 @@ ERD_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
     CheckSpec("erd.relationship-endpoints-exist", erd_relationship_endpoints),
     CheckSpec("erd.stereotype-is-bce", erd_stereotype_is_bce),
     CheckSpec("erd.entity-name-usable", erd_entity_name_usable),
+    CheckSpec("erd.source-entity-consistency", erd_source_entity_consistency),
     CheckSpec("erd.has-entity", erd_has_entity),
     CheckSpec("erd.relationship-mapped", erd_relationships_mapped),
     CheckSpec("erd.composition-owner-is-mandatory", erd_composition_owner),
@@ -437,15 +490,21 @@ ERD_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
 def erd_validation_report(model: dict, state: dict) -> ValidationReport:
     """Return shared validation evidence for one ERD model."""
     logical = mapping.build_logical_model(model or {})
+    source = state.get("extracted_bce_classes") if isinstance(state, dict) else None
+    if isinstance(source, dict):
+        source_entities = entity_names(source)
+        logical["_sourceEntityNames"] = sorted(source_entities)
+        logical["_sourceEntityRelationships"] = sorted(
+            _entity_relationships(source, source_entities)
+        )
     return run_checks(ERD_CHECKS, model or {}, logical)
 
 
 def erd_findings(model: dict, state: dict) -> list[Finding]:
     """ERD 모델 하나에 대한 결정론 검증 전부.
 
-    `state`를 받지만 **안 쓴다.** 시그니처가 `DesignArtifactSpec.check`의 것이라 그대로
-    맞추고, 상류 대조가 필요한 ERD 규칙은 지금 없다 — ERD가 참조하는 유스케이스는 클래스
-    다이어그램에서 이미 판정됐다.
+    `state`의 승인된 클래스 모델과 ERD의 Entity 이름·관계 집합을 대조한다. ERD 적용 여부는
+    요구사항의 영속성 결정과 클래스 모델을 함께 보는 stage projection이 맡는다.
 
     사상을 여기서 한 번 돌린다. 렌더가 다시 돌리므로 두 번 도는 셈인데, 순수 함수라
     결과가 같고 캐시를 두면 "언제 무효화하나"가 새 문제가 된다.

@@ -77,18 +77,6 @@ def render_package_lock(package_json_text: str) -> str | None:
     return json.dumps(template, ensure_ascii=False, indent=2) + "\n"
 
 
-def validate_openapi(api_spec: dict[str, Any]) -> None:
-    paths = api_spec.get("paths") if isinstance(api_spec, dict) else None
-    if not isinstance(paths, dict) or not paths:
-        raise FrontendScaffoldError("api_spec.paths must contain at least one operation")
-    if not any(
-        isinstance(item, dict)
-        and any(method in HTTP_METHODS and isinstance(value, dict) for method, value in item.items())
-        for item in paths.values()
-    ):
-        raise FrontendScaffoldError("api_spec.paths contains no supported HTTP operations")
-
-
 def openapi_typescript_fetch_command(
     workspace_root: Path, openapi_path: Path, output_path: Path
 ) -> list[str]:
@@ -138,7 +126,6 @@ def write_react_scaffold(
     application_name: str,
     api_base_url: str | None = None,
 ) -> dict[str, str]:
-    validate_openapi(api_spec)
     files = react_scaffold_files(
         application_name, resolve_api_base_url(api_spec, api_base_url)
     )
@@ -246,9 +233,9 @@ components are owned by the EasyDep frontend implementation agent and verified w
 
 
 def frontend_page_names(api_spec: dict[str, Any]) -> list[str]:
-    validate_openapi(api_spec)
     tags: set[str] = set()
-    for path_item in api_spec["paths"].values():
+    paths = api_spec.get("paths") if isinstance(api_spec, dict) else None
+    for path_item in (paths.values() if isinstance(paths, dict) else ()):
         if not isinstance(path_item, dict):
             continue
         for method, operation in path_item.items():

@@ -23,11 +23,11 @@
 per distinct interaction concern, not automatically one per actor"*라고 경계하고 있는데,
 그 경계가 산문에만 있으면 다음 사람이 관찰을 규칙으로 승격시킨다.
 
-## 왜 요구사항 쪽 지식베이스를 import하지 않는가
+## 요구사항 지식과 설계 규칙의 경계
 
-`app/design`은 `app/requirements`를 **전혀 import하지 않는다**(현재 위반 0건). 그 격리를
-깨지 않는다. 모양은 같지만 규칙 목록은 각 축의 선언이라 공유할 것이 아니다. 공유해야 할
-것이 생기면 소유권이 분명한 공개 계약으로 승격한다. 이름 없는 공용 패키지를 만들지 않는다.
+설계는 요구사항의 지식베이스나 내부 검출기를 import하지 않는다. 다만 요구사항 단계가
+확정한 capability의 공개 판정 함수는 그대로 사용한다. 그래야 영속성 여부를 설계에서 다시
+추측하거나 별도의 키 목록으로 복제하지 않는다.
 
 ## `stage` 필드를 지금 두는 이유
 
@@ -397,6 +397,22 @@ RULES: tuple[Rule, ...] = (
         evidence="pipeline-invariant",
         judged_by=JUDGED_DETECTOR,
         detector="usecase_coverage",
+    ),
+    Rule(
+        id="class.persistence-requires-entity",
+        stage=CLASS_DIAGRAM,
+        severity=DEFECT,
+        statement=(
+            "When accepted requirement and capability evidence requires persistent domain "
+            "data, the class model must contain at least one Entity."
+        ),
+        citation=(
+            "app/requirements/capability_contract.py (requires_persistent_storage); "
+            "app/design/services/class_diagram/validation/diagram.py"
+        ),
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="persistence_requires_entity",
     ),
     # --- 시퀀스 다이어그램: 모델 참조 무결성 -------------------------------
     Rule(
@@ -1049,12 +1065,25 @@ RULES: tuple[Rule, ...] = (
         detector="erd_entity_name_usable",
     ),
     Rule(
+        id="erd.source-entity-consistency",
+        stage=ERD,
+        severity=DEFECT,
+        statement=(
+            "The ERD must contain exactly the Entity names and Entity-to-Entity "
+            "relationships accepted by the class model."
+        ),
+        citation="app/design/knowledge/detectors.py (erd_source_entity_consistency)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="erd_source_entity_consistency",
+    ),
+    Rule(
         id="erd.has-entity",
         stage=ERD,
         severity=DEFECT,
         statement=(
-            "The model must contain at least one <<Entity>> class. An ERD with no table "
-            "is not a diagram, it is an empty file."
+            "An applicable ERD must contain at least one <<Entity>> class. An empty "
+            "standalone ERD is not a diagram."
         ),
         # 테이블이 0개면 렌더가 빈 문자열을 내고, 문법 검사가 "PlantUML code is empty."로
         # 잡는다. 그런데 그 칸의 뜻은 **"우리 렌더러가 깨졌다"**이다(`nodes/artifact.py`의

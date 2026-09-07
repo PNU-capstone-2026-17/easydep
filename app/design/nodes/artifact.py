@@ -69,6 +69,7 @@ from app.design.knowledge.detectors import (
 )
 from app.design.observability import log_design_timing
 from app.design.schemas.architecture_state import ArchitectureState
+from app.design.services.persistence_scope import erd_disposition
 from app.validation import (
     RepairAttempt,
     RepairLedger,
@@ -916,6 +917,17 @@ def render_and_validate(
     순수 함수인 이유는 부르는 곳이 둘이라서다 — 그래프의 `render_node`와 지목 수정
     (`cascade.py`). 예전에는 이 네 줄이 세 곳에 흩어져 있었다.
     """
+    if (
+        spec.stage == "erd"
+        and state is not None
+        and erd_disposition(state.get("extracted_bce_classes") or {}, state)
+        == "not_applicable"
+    ):
+        return {
+            spec.content_key: spec.empty,
+            spec.valid_key: None,
+            spec.errors_key: [],
+        }
     started = time.perf_counter()
     content = (
         spec.render_with_state(model or {}, state)
