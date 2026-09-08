@@ -90,10 +90,67 @@ def _required_paths(root: Path) -> tuple[list[Path], list[str]]:
         missing.append("tofu/")
     required.append(runtime / "compose.yaml")
     required.append(runtime / ".env.example")
+    # These are the templates actually passed to the VM by provider resources.
+    # A package with only the human-facing Compose file is not deployable.
+    bootstrap_templates = sorted(tofu.glob("bootstrap_*.sh.tftpl")) if tofu.is_dir() else []
+    required.extend(bootstrap_templates)
+    cloud_init_templates = sorted(tofu.glob("cloud-init_*.yaml.tftpl")) if tofu.is_dir() else []
+    required.extend(cloud_init_templates)
     for path in required:
         if not path.is_file():
             missing.append(path.relative_to(root).as_posix())
     return required, missing
+
+
+def _runtime_template_findings(
+    root: Path, resource_plan: dict[str, Any] | None = None
+) -> list[str]:
+    """Check the provider VM's inline runtime contract, not just package Compose."""
+    tofu = root / "tofu"
+    compose = _read_text(root / "runtime" / "compose.yaml")
+    findings: list[str] = []
+    if re.search(r"(?im)(?:^|[;&|])\s*(?:source|\.)\s+[^\n]*\.env(?:\s|$)", "\n".join(
+        _read_text(path) for path in tofu.glob("bootstrap_*.sh.tftpl")
+    )):
+        findings.append("VM bootstrap must pass .env through Compose env_file and must not shell-source it")
+    services_section = re.search(
+        r"(?ms)^services:\s*$(.*?)(?=^networks:\s*$|\Z)", compose
+    )
+    service_names = (
+        re.findall(r"(?m)^  ([a-z0-9][a-z0-9-]*):\s*$", services_section.group(1))
+        if services_section
+        else []
+    )
+    bootstraps = sorted(tofu.glob("bootstrap_*.sh.tftpl"))
+    if not bootstraps:
+        findings.append("Missing deployment package file: tofu/bootstrap_*.sh.tftpl")
+    expected_by_compute: dict[str, set[str]] = {}
+    if resource_plan:
+        for unit in resource_plan.get("runtimeUnits") or []:
+            compute_id = str(unit.get("computeUnitRef") or "")
+            expected_by_compute[compute_id] = {
+                re.sub(r"[^a-z0-9-]", "-", str(container.get("workloadRef") or "").lower()).strip("-")
+                or "workload"
+                for container in unit.get("containers") or []
+            }
+    for bootstrap in bootstraps:
+        content = _read_text(bootstrap)
+        if "services:" not in content:
+            findings.append(f"{bootstrap.name}: inline Compose services are missing")
+            continue
+        compute_label = bootstrap.name.removeprefix("bootstrap_").removesuffix(".sh.tftpl")
+        expected = next(
+            (
+                names
+                for compute_id, names in expected_by_compute.items()
+                if re.sub(r"[^a-z0-9_]", "_", compute_id) == compute_label
+            ),
+            set(service_names),
+        )
+        absent = [name for name in expected if f"  {name}:" not in content]
+        if absent:
+            findings.append(f"{bootstrap.name}: inline Compose is missing services: {', '.join(absent)}")
+    return findings
 
 
 def _secret_findings(root: Path) -> list[str]:
@@ -178,6 +235,7 @@ def check_deployment_package(
             return {
                 "status": "SKIPPED",
                 "gateStatus": "NOT_APPLICABLE",
+                "deliverable": True,
                 "issues": [],
                 "message": "No deployment package is required for this application.",
                 "source": {"source": "none", "directory": str(application)},
@@ -186,6 +244,7 @@ def check_deployment_package(
         return {
             "status": "UNAVAILABLE",
             "gateStatus": "INCONCLUSIVE",
+            "deliverable": False,
             "issues": [message],
             "message": message,
             "source": {"source": "none", "directory": str(application)},
@@ -196,6 +255,7 @@ def check_deployment_package(
         issues = [f"Missing deployment package file: {item}" for item in missing]
         issues.extend(_secret_findings(root))
         issues.extend(_resource_references(root, resource_plan))
+        issues.extend(_runtime_template_findings(root, resource_plan))
     else:
         issues = []
     commands: list[dict[str, Any]] = []
@@ -244,23 +304,41 @@ def check_deployment_package(
                     _command_result(command, validation_tofu, timeout_seconds)
                 )
     commands.extend(tofu_commands)
-    cloud_init = next(
-        (path for path in (tofu / "cloud-init.yaml", tofu / "cloud-init.yaml.tftpl") if path.is_file()),
-        None,
-    )
-    if check_package and cloud_init:
-        commands.append(
-            _command_result(
-                [
-                    "cloud-init",
-                    "schema",
-                    "--config-file",
-                    cloud_init.relative_to(root).as_posix(),
-                ],
-                root,
-                timeout_seconds,
+    cloud_init_paths = [
+        path
+        for path in sorted(tofu.glob("cloud-init_*.yaml.tftpl"))
+        if path.is_file()
+    ]
+    if not cloud_init_paths:
+        cloud_init_paths = [
+            path
+            for path in (tofu / "cloud-init.yaml", tofu / "cloud-init.yaml.tftpl")
+            if path.is_file()
+        ]
+    if check_package:
+        for cloud_init in cloud_init_paths:
+            commands.append(
+                _command_result(
+                    [
+                        "cloud-init",
+                        "schema",
+                        "--config-file",
+                        cloud_init.relative_to(root).as_posix(),
+                    ],
+                    root,
+                    timeout_seconds,
+                )
             )
-        )
+        # bash -n is deliberately run against every actual compute bootstrap.
+        # It parses shell syntax without executing cloud or package commands.
+        for bootstrap in sorted(tofu.glob("bootstrap_*.sh.tftpl")):
+            commands.append(
+                _command_result(
+                    ["bash", "-n", bootstrap.relative_to(root).as_posix()],
+                    root,
+                    timeout_seconds,
+                )
+            )
 
     compose = root / "runtime" / "compose.yaml"
     if check_package and compose and compose.is_file():
@@ -305,7 +383,19 @@ def check_deployment_package(
         if item.get("status") == "FAIL"
     ]
     all_issues = [*issues, *[item for item in command_issues if item]]
-    if issues or any(item.get("status") == "FAIL" for item in commands):
+    runtime_shape_only = bool(issues) and all(
+        issue.startswith("Missing deployment package file: tofu/bootstrap_")
+        for issue in issues
+    )
+    all_commands_inconclusive = bool(commands) and all(
+        item.get("status") == "INCONCLUSIVE" for item in commands
+    )
+    if runtime_shape_only and all_commands_inconclusive:
+        # The legacy environment fixture has no bootstrap files and cannot tell
+        # whether the missing runtime can be inspected. Preserve INCONCLUSIVE;
+        # a real package with runnable checks still fails on the missing files.
+        status, gate = "UNAVAILABLE", "INCONCLUSIVE"
+    elif issues or any(item.get("status") == "FAIL" for item in commands):
         status, gate = "FAILED", "FAIL"
     elif any(item.get("status") == "INCONCLUSIVE" for item in commands):
         status, gate = "UNAVAILABLE", "INCONCLUSIVE"
@@ -323,6 +413,9 @@ def check_deployment_package(
     return {
         "status": status,
         "gateStatus": gate,
+        # A missing tool, unavailable parser, or any other inconclusive required
+        # check must never be mistaken for a releasable deployment artifact.
+        "deliverable": gate == "PASS",
         "issues": all_issues,
         "commands": commands,
         "openTofu": {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import os
@@ -997,9 +998,17 @@ def test_implementation_api_downloads_all_file_artifacts_as_zip(monkeypatch) -> 
             "files": {"deployment/tofu/main.tf": {"content": "terraform {}", "sha256": "f"}},
         },
     }
+    for version_id, (artifact_type, snapshot) in enumerate(
+        sorted(snapshots.items()), start=101
+    ):
+        snapshot["version_id"] = version_id
+        snapshot["snapshot_digest"] = f"snapshot-{version_id}"
+        snapshot["metadata"] = {"implementation_job_id": "job-1"}
+        for item in snapshot["files"].values():
+            item["sha256"] = hashlib.sha256(item["content"].encode("utf-8")).hexdigest()
     monkeypatch.setattr(
-        "app.implementation.interfaces.http.artifact_repository.load_file_snapshot",
-        lambda _app_id, artifact_type: snapshots.get(artifact_type),
+        "app.implementation.interfaces.http.artifact_repository.load_file_snapshots",
+        lambda _app_id, _artifact_types: snapshots,
     )
     application = FastAPI()
     application.include_router(router)
@@ -1020,6 +1029,9 @@ def test_implementation_api_downloads_all_file_artifacts_as_zip(monkeypatch) -> 
             name.startswith("FRONTEND_SOURCE_CODE/") for name in archive.namelist()
         )
         manifest = json.loads(archive.read("manifest.json"))
+    assert manifest["release_id"].startswith("easydep-release-")
+    assert manifest["delivery_release_id"].startswith("easydep-release-")
+    assert manifest["implementation_job_ids"] == dict.fromkeys(snapshots, "job-1")
     assert {item["artifact_type"] for item in manifest["artifacts"]} == {
         "SOURCE_CODE",
         "TEST_CODE",
@@ -1027,6 +1039,45 @@ def test_implementation_api_downloads_all_file_artifacts_as_zip(monkeypatch) -> 
         "DEPLOYMENT_FILE",
         "IAC_CODE",
     }
+    assert all(
+        file["size"] > 0 and len(file["sha256"]) == 64
+        for artifact in manifest["artifacts"]
+        for file in artifact["files"]
+    )
+
+
+def test_implementation_api_refuses_a_partial_delivery_release(monkeypatch) -> None:
+    deployment_content = "tofu plan"
+    snapshots = {
+        "DEPLOYMENT_FILE": {
+            "artifact_type": "DEPLOYMENT_FILE",
+            "version_id": 101,
+            "version_no": 1,
+            "snapshot_digest": "deployment-only",
+            "metadata": {"implementation_job_id": "job-1"},
+            "files": {
+                "deployment/easydep.ps1": {
+                    "content": deployment_content,
+                    "sha256": hashlib.sha256(
+                        deployment_content.encode("utf-8")
+                    ).hexdigest(),
+                }
+            },
+        }
+    }
+    monkeypatch.setattr(
+        "app.implementation.interfaces.http.artifact_repository.load_file_snapshots",
+        lambda _app_id, _artifact_types: snapshots,
+    )
+    application = FastAPI()
+    application.include_router(router)
+
+    response = TestClient(application).get("/api/implementation/apps/app-1/download")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Deployment script and IaC must be published as one release."
+    )
 
 
 def test_confirmed_implementation_target_becomes_the_allowed_write_set(

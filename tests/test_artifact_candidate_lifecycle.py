@@ -14,6 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from app.db import session as db_session
 from app.db.models import (
     TYPE_DEPLOYMENT_FILE,
+    TYPE_IAC_CODE,
     TYPE_SOURCE_CODE,
     TYPE_TEST_CODE,
     App,
@@ -131,6 +132,70 @@ def test_identical_latest_snapshot_reuses_version_but_changed_content_does_not(
     assert reused == first
     assert changed != first
     assert [item["version_no"] for item in versions] == [1, 2]
+
+
+def test_multiple_latest_file_snapshots_are_loaded_as_one_version_set(
+    artifact_database: None,
+) -> None:
+    """다운로드는 deployment script와 IaC의 최신 세대를 함께 고정한다."""
+
+    artifact_repository.save_file_snapshots(
+        "app-1",
+        {
+            TYPE_DEPLOYMENT_FILE: ({"deployment/easydep.ps1": "old"}, None),
+            TYPE_IAC_CODE: ({"deployment/tofu/main.tf": "old"}, None),
+        },
+    )
+    expected = artifact_repository.save_file_snapshots(
+        "app-1",
+        {
+            TYPE_DEPLOYMENT_FILE: ({"deployment/easydep.ps1": "new"}, None),
+            TYPE_IAC_CODE: ({"deployment/tofu/main.tf": "new"}, None),
+        },
+    )
+
+    snapshots = artifact_repository.load_file_snapshots(
+        "app-1", {TYPE_DEPLOYMENT_FILE, TYPE_IAC_CODE}
+    )
+
+    assert {
+        artifact_type: snapshot["version_id"]
+        for artifact_type, snapshot in snapshots.items()
+    } == expected
+    assert snapshots[TYPE_DEPLOYMENT_FILE]["files"][
+        "deployment/easydep.ps1"
+    ]["content"] == "new"
+    assert snapshots[TYPE_IAC_CODE]["files"]["deployment/tofu/main.tf"][
+        "content"
+    ] == "new"
+
+
+def test_multiple_file_snapshot_write_rolls_back_as_one_release(
+    artifact_database: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = artifact_repository._write_file_snapshot
+
+    def fail_second_snapshot(session, app_id, artifact_type, normalized, **kwargs):
+        if artifact_type == TYPE_IAC_CODE:
+            raise RuntimeError("simulated IaC write failure")
+        return original(session, app_id, artifact_type, normalized, **kwargs)
+
+    monkeypatch.setattr(
+        artifact_repository, "_write_file_snapshot", fail_second_snapshot
+    )
+
+    with pytest.raises(RuntimeError, match="simulated IaC write failure"):
+        artifact_repository.save_file_snapshots(
+            "app-1",
+            {
+                TYPE_DEPLOYMENT_FILE: ({"deployment/easydep.ps1": "script"}, None),
+                TYPE_IAC_CODE: ({"deployment/tofu/main.tf": "terraform {}"}, None),
+            },
+        )
+
+    assert artifact_repository.load_file_snapshots(
+        "app-1", {TYPE_DEPLOYMENT_FILE, TYPE_IAC_CODE}
+    ) == {}
 
 
 def test_testing_accepts_job_record_that_reuses_an_older_snapshot(

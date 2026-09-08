@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,15 @@ from app.design.services.deployment_diagram.service import (
     revise_workload_graph,
 )
 from app.implementation.delivery.iac_renderer import render_open_tofu
+from app.implementation.delivery.package import _tfvars_example
 from app.implementation.runtime.observations import observe_runtime_contract
+from scripts.generate_deployment_diagram_examples import (
+    CASE_EXPECTATIONS,
+    DEPLOYMENT_CASES,
+    TARGETS,
+    deployment_case_graph,
+    deployment_resource_spec,
+)
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -78,6 +87,61 @@ def _resource_spec() -> dict[str, Any]:
         "provider": "aws",
         "region": "ap-northeast-2",
     }
+
+
+def test_two_workload_corpus_uses_one_generated_source_and_a_pinned_worker() -> None:
+    two_workload_cases = [
+        case
+        for case, expectation in CASE_EXPECTATIONS.items()
+        if expectation["workloadCount"] == 2
+        and expectation["persistentWorkloadCount"] == 0
+    ]
+
+    assert len(two_workload_cases) == 2
+    for case in two_workload_cases:
+        workloads = deployment_case_graph(case)["workloads"]
+        generated = [
+            workload
+            for workload in workloads
+            if workload["artifact"]["kind"] == "generatedApplication"
+        ]
+        worker = next(workload for workload in workloads if workload["id"] == "worker")
+
+        assert [workload["id"] for workload in generated] == ["web"]
+        assert worker["artifact"] == {
+            "kind": "prebuiltImage",
+            "image": "registry.example/worker@sha256:" + "2" * 64,
+            "engine": "example-worker",
+            "deploymentMode": "container",
+            "runtimeCatalogRef": "docker-on-vm/prebuilt-image",
+        }
+
+
+@pytest.mark.parametrize("provider", TARGETS)
+@pytest.mark.parametrize("case", DEPLOYMENT_CASES)
+def test_official_corpus_deterministically_generates_valid_runtime_defaults(
+    provider: str, case: str
+) -> None:
+    """All official modules use the package port default and actual HTTP path."""
+
+    graph = deployment_case_graph(case)
+    resource_plan = build_deployment_diagram_bundle(
+        graph, deployment_resource_spec(provider)
+    )["projections"][0]["resourcePlan"]
+    tfvars = _tfvars_example(resource_plan)
+
+    for workload in graph["workloads"]:
+        workload_id = workload["id"].replace("-", "_")
+        for interface in workload["interfaces"]:
+            if interface["protocol"] == "http":
+                assert interface["healthPath"].startswith("/")
+            if interface.get("port") is not None:
+                continue
+            interface_id = interface["id"].replace("-", "_")
+            variable = f"container_port_{workload_id}_{interface_id}"
+            match = re.search(rf"^{variable} = (\d+) #", tfvars, flags=re.MULTILINE)
+            assert match is not None
+            assert 1 <= int(match.group(1)) <= 65535
 
 
 def test_generate_workload_graph_uses_one_name_only_proposal() -> None:

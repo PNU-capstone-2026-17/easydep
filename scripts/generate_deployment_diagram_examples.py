@@ -42,6 +42,7 @@ TARGETS = {
     "azure": ("koreacentral", ("1", "2")),
     "gcp": ("asia-northeast3", ("asia-northeast3-a", "asia-northeast3-b")),
 }
+CORPUS_HTTP_HEALTH_PATH = "/healthz"
 
 
 def _workload(workload_id: str, *, public: bool, safety: str = "singleton") -> dict[str, Any]:
@@ -54,6 +55,7 @@ def _workload(workload_id: str, *, public: bool, safety: str = "singleton") -> d
                 "id": "http",
                 "protocol": "http",
                 "exposure": "public" if public else "internal",
+                "healthPath": CORPUS_HTTP_HEALTH_PATH,
                 "sourceRefs": [f"api:{workload_id}"],
             }
         ],
@@ -80,6 +82,7 @@ def _state_workload() -> dict[str, Any]:
             "id": "service",
             "protocol": "http",
             "exposure": "internal",
+            "healthPath": CORPUS_HTTP_HEALTH_PATH,
             "sourceRefs": ["requirement:STATE-SERVICE"],
         }
     ]
@@ -95,6 +98,25 @@ def _state_workload() -> dict[str, Any]:
         }
     ]
     workload["sourceRefs"] = ["requirement:STATE-SERVICE"]
+    return workload
+
+
+def _worker_workload() -> dict[str, Any]:
+    """Return the fixed prebuilt worker used when an example needs two workloads.
+
+    EasyDep currently builds one generated application source per deployment.
+    A second workload in the topology corpus therefore exercises the supported
+    prebuilt-image path instead of implying a second generated source tree.
+    """
+
+    workload = _workload("worker", public=False)
+    workload["artifact"] = {
+        "kind": "prebuiltImage",
+        "image": "registry.example/worker@sha256:" + "2" * 64,
+        "engine": "example-worker",
+        "deploymentMode": "container",
+        "runtimeCatalogRef": "docker-on-vm/prebuilt-image",
+    }
     return workload
 
 
@@ -356,7 +378,7 @@ def deployment_case_graph(case: str) -> dict[str, Any]:
     connections: list[dict[str, Any]] = []
     constraints: list[dict[str, Any]] = []
     if workload_count == 2 and persistent_workload_count == 0:
-        workloads.append(_workload("worker", public=False))
+        workloads.append(_worker_workload())
     if persistent_workload_count == 1:
         workloads.append(_state_workload())
         workloads[0]["configuration"].append(

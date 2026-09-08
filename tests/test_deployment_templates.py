@@ -724,16 +724,28 @@ def test_user_package_has_one_interactive_deployment_entrypoint(
 
         assert "container_port_web_http = 8000" in tfvars
         assert "image_digest_WEB" not in tfvars
+        assert '"workload":"web"' in script
+        assert '"output":"registry_web_url"' in script
+        assert '"workload":"WEB"' not in script
+        assert "image_digest_WEB" not in script
         assert "1. Start or continue deployment" in script
         assert "2. Destroy deployed resources" in script
         assert "-target=$($target.address)" in script
         assert "docker push" in script
         assert "$pushLines.Add($line)" in script
+        assert ".TrimStart('\\','/')" in script
+        assert ".TrimStart('\\\\','/')" not in script
+        assert "$deploymentPrefix = [IO.Path]::GetFullPath($Root)" in script
+        assert "StartsWith($deploymentPrefix, [StringComparison]::OrdinalIgnoreCase)" in script
+        assert "Join-Path $Root 'deployment'" not in script
         assert "TF_VAR_image_digest_$($target.workload)" in script
         assert "health_url_compute_1_http" in script
         assert "TF_PLUGIN_CACHE_DIR" in script
         assert "EasyDep\\opentofu-plugin-cache" in script
         assert "OpenTofu initialization is still running" in script
+        assert "$startInfo = New-Object Diagnostics.ProcessStartInfo" in script
+        assert "$exitCode = $process.ExitCode" in script
+        assert "$process.Dispose()" in script
         assert "Show-DeploymentProgress 15 'Initializing OpenTofu providers.'" in script
         assert "Show-DeploymentProgress 100 'Deployment and health verification completed.'" in script
         assert not (package / "scripts").exists()
@@ -1210,3 +1222,217 @@ def test_ordinary_and_external_endpoint_configuration_are_injected_without_secre
     assert "      - APP_MODE" in bootstrap
     assert "      - PAYMENTS_URL" in bootstrap
     assert "compose --env-file /opt/easydep/runtime/.env" in bootstrap
+
+
+def test_delivery_script_revalidates_existing_inputs_atomically_without_port_prompt(
+    tmp_path: Path,
+) -> None:
+    bundle = build_deployment_diagram_bundle(
+        _graph(STANDALONE_PRIMARY_PUBLIC), _resource_spec("aws")
+    )
+    resource_plan = bundle["projections"][0]["resourcePlan"]
+    application = tmp_path / "application"
+    application.mkdir()
+    package = render_deployment_package(
+        application, resource_plan, render_open_tofu(resource_plan)
+    )
+    script = (package / "easydep.ps1").read_text(encoding="utf-8")
+
+    assert "Write-TfvarsAtomic" in script
+    assert "Prompt only missing or invalid values" in script
+    assert "if (Test-Path $TfvarsPath) { return }" not in script
+    assert "if ($Name -like 'container_port_*')" not in script
+
+
+def test_gcp_delivery_secret_preflight_requires_full_resource_name(tmp_path: Path) -> None:
+    graph = _graph(STANDALONE_PRIMARY_PUBLIC)
+    graph["workloads"][0]["configuration"] = [
+        {
+            "id": "api-token",
+            "name": "API_TOKEN",
+            "kind": "secretBinding",
+            "sensitive": True,
+            "sourceRefs": ["requirement:SECRET"],
+        }
+    ]
+    bundle = build_deployment_diagram_bundle(graph, _resource_spec("gcp"))
+    application = tmp_path / "application"
+    application.mkdir()
+    package = render_deployment_package(
+        application,
+        bundle["projections"][0]["resourcePlan"],
+        render_open_tofu(bundle["projections"][0]["resourcePlan"]),
+    )
+    script = (package / "easydep.ps1").read_text(encoding="utf-8")
+
+    assert "^projects/[A-Za-z0-9-]+/secrets/[A-Za-z0-9_-]+$" in script
+    assert "|[A-Za-z0-9_-]+)$" not in script
+    assert "gcloud secrets describe $reference" in script
+
+
+@pytest.mark.parametrize(
+    ("provider", "create_marker", "file_marker", "delete_marker"),
+    [
+        (
+            "aws",
+            "aws secretsmanager create-secret",
+            "--secret-string (Get-AwsSecretFileArgument $secretPath)",
+            "--recovery-window-in-days 7",
+        ),
+        (
+            "azure",
+            "az keyvault secret set",
+            "--file $secretPath --encoding utf-8",
+            "az keyvault secret purge",
+        ),
+        (
+            "gcp",
+            "gcloud secrets create",
+            "--data-file=$secretPath",
+            "gcloud secrets delete",
+        ),
+    ],
+)
+def test_delivery_script_can_create_and_own_provider_secrets_without_persisting_values(
+    provider: str,
+    create_marker: str,
+    file_marker: str,
+    delete_marker: str,
+    tmp_path: Path,
+) -> None:
+    graph = _graph(STANDALONE_PRIMARY_PUBLIC)
+    graph["workloads"][0]["configuration"] = [
+        {
+            "id": "api-token",
+            "name": "API_TOKEN",
+            "kind": "secretBinding",
+            "sensitive": True,
+            "sourceRefs": ["requirement:SECRET"],
+        }
+    ]
+    plan = build_deployment_diagram_bundle(graph, _resource_spec(provider))["projections"][
+        0
+    ]["resourcePlan"]
+    application = tmp_path / provider
+    application.mkdir()
+    package = render_deployment_package(application, plan, render_open_tofu(plan))
+    script = (package / "easydep.ps1").read_text(encoding="utf-8")
+    readme = (package / "README.md").read_text(encoding="utf-8")
+
+    assert "Use an [E]xisting reference or [C]reate a new managed Secret?" in script
+    assert "Read-Host \"Secret value for $Slot\" -AsSecureString" in script
+    assert create_marker in script
+    assert file_marker in script
+    if provider == "aws":
+        assert "return 'file://' + $normalized" in script
+        assert "return 'file:///' + $normalized" not in script
+    assert delete_marker in script
+    assert "$CreatedSecretsPath = Join-Path $RuntimeRoot 'created-secret-resources.json'" in script
+    assert "schemaVersion = 1" in script
+    assert "createdSecret = $true" in script
+    assert "ready = $false" in script
+    assert "ready = $true" in script
+    assert "Save-CreatedSecretRecord $record" in script
+    assert "function Invoke-NativeCapture" in script
+    assert "$ErrorActionPreference = 'Continue'" in script
+    assert "$deleteResult = Invoke-NativeCapture { aws secretsmanager delete-secret" in script
+    assert "aws secretsmanager put-secret-value" in script
+    assert "aws secretsmanager put-secret-value --region $Config.region --secret-id $reference --secret-string (Get-AwsSecretFileArgument $secretPath) --output none" not in script
+    assert "aws secretsmanager delete-secret --region $Config.region --secret-id $secretId --recovery-window-in-days 7 --output none" not in script
+    assert "--secret-string $SecretValue" not in script
+    assert "--value $SecretValue" not in script
+    assert "value = $SecretValue" not in script
+    assert "Existing Secret references are never deleted." in readme
+    assert not (package / "runtime/created-secret-resources.json").exists()
+
+
+def test_secret_input_and_cleanup_are_separate_from_general_tfvars_and_tofu_state(
+    tmp_path: Path,
+) -> None:
+    graph = _graph(STANDALONE_PRIMARY_PUBLIC)
+    graph["workloads"][0]["configuration"] = [
+        {
+            "id": "database-password",
+            "name": "DATABASE_PASSWORD",
+            "kind": "secretBinding",
+            "sensitive": True,
+            "sourceRefs": ["requirement:SECRET"],
+        }
+    ]
+    plan = build_deployment_diagram_bundle(graph, _resource_spec("aws"))["projections"][0][
+        "resourcePlan"
+    ]
+    application = tmp_path / "application"
+    application.mkdir()
+    package = render_deployment_package(application, plan, render_open_tofu(plan))
+    script = (package / "easydep.ps1").read_text(encoding="utf-8")
+
+    assert "if ($name -like 'secret_reference_*') { continue }" in script
+    assert script.index("Initialize-Inputs") < script.index("Initialize-Secrets")
+    start = script.index("function Start-OrContinueDeployment")
+    assert script.index("Initialize-Secrets", start) < script.index(
+        "Test-SecretReferences", start
+    )
+    assert "Only Secrets recorded as created by this script" in script
+    assert "Existing references are never deleted." in script
+    assert "if (-not (Test-Path -LiteralPath $CreatedSecretsPath)) { return }" in script
+    assert "No local OpenTofu state was found" in script
+    assert "Remove-CreatedSecrets\n    return" in script
+    assert "gcloud secrets versions list $reference" in script
+
+
+@pytest.mark.parametrize("provider", ["aws", "azure", "gcp"])
+def test_retained_replica_destroy_uses_renderer_outputs_and_provider_queries(
+    provider: str,
+    tmp_path: Path,
+) -> None:
+    graph = _graph(STANDALONE_DEFAULT_TWO_WORKLOADS_ONE_PERSISTENT)
+    state = next(item for item in graph["workloads"] if item["id"] == "state")
+    state["replicationSafety"] = "interchangeable"
+    state["storage"][0]["replicaSemantics"] = "perReplica"
+    state["storage"][0]["deletionPolicy"] = "retain"
+    graph["constraints"].append(
+        {
+            "id": "state-replicas",
+            "kind": "replicaCount",
+            "workloadRefs": ["state"],
+            "value": 2,
+            "sourceRefs": ["requirement:STATE-HA"],
+        }
+    )
+    bundle = build_deployment_diagram_bundle(graph, _resource_spec(provider))
+    plan = bundle["projections"][0]["resourcePlan"]
+    files = render_open_tofu(plan)
+    application = tmp_path / "application"
+    application.mkdir()
+    script = (
+        render_deployment_package(
+            application, plan, files
+        )
+        / "easydep.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "retained_replica_disk_" in files["outputs.tf"]
+    assert "tofu output -json $outputName" in script
+    assert "status=present-before-destroy" in script
+    assert "retained-after-destroy" in script
+    assert "missing-after-destroy" in script
+    marker = {
+        "aws": "aws ec2 describe-volumes",
+        "azure": "az vmss list-instances",
+        "gcp": "gcloud compute instance-groups managed list-instances",
+    }[provider]
+    assert marker in script
+    if provider == "aws":
+        assert "aws autoscaling describe-auto-scaling-groups" in script
+        assert "aws ec2 describe-instances" in script
+        assert "BlockDeviceMappings" in script
+        assert "aws ec2 describe-volumes --region $Config.region --volume-ids $prior.id" in script
+    elif provider == "azure":
+        assert "az vmss list-instances" in script
+        assert "storageProfile.dataDisks" in script
+        assert "az disk show --ids $prior.id" in script
+    elif provider == "gcp":
+        assert "instance-groups managed list-instances" in script
+        assert "gcloud compute instances describe $instanceUri" in script
+        assert "gcloud compute disks describe $prior.id" in script

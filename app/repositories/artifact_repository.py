@@ -668,25 +668,48 @@ def load_file_snapshot(
             ).first()
         if version is None:
             return None
-        files = {
-            item.file_path: {"content": item.content, "sha256": item.sha256}
-            for item in version.files
-        }
-        # 파일 경로와 각 파일의 SHA-256을 정렬된 순서로 합쳐 snapshot 전체 digest를
-        # 만든다. DB row ID나 저장 시각은 넣지 않으므로 같은 파일 tree는 같은 digest다.
-        digest_source = "".join(
-            f"{path}\0{item['sha256']}\n" for path, item in sorted(files.items())
+        return _file_snapshot_payload(version)
+
+
+def load_file_snapshots(
+    app_id: str, artifact_types: list[str] | tuple[str, ...] | set[str]
+) -> dict[str, dict[str, Any]]:
+    """Load the latest requested file snapshots from one database statement.
+
+    Delivery refresh writes deployment and IaC snapshots in one transaction.
+    Selecting all latest versions in one statement prevents a concurrent refresh
+    from mixing an old deployment script with new HCL, or the reverse.
+    """
+
+    requested = sorted({str(item) for item in artifact_types if str(item)})
+    if not requested:
+        return {}
+    with session_scope() as session:
+        _require_app(session, app_id)
+        latest = (
+            select(
+                ArtifactVersion.artifact_type.label("artifact_type"),
+                func.max(ArtifactVersion.version_no).label("version_no"),
+            )
+            .where(
+                ArtifactVersion.app_id == app_id,
+                ArtifactVersion.artifact_type.in_(requested),
+            )
+            .group_by(ArtifactVersion.artifact_type)
+            .subquery()
         )
+        versions = session.scalars(
+            select(ArtifactVersion).join(
+                latest,
+                (ArtifactVersion.artifact_type == latest.c.artifact_type)
+                & (ArtifactVersion.version_no == latest.c.version_no),
+            )
+            .where(ArtifactVersion.app_id == app_id)
+            .order_by(ArtifactVersion.artifact_type)
+        ).all()
         return {
-            "artifact_type": artifact_type,
-            "version_id": version.id,
-            "version_no": version.version_no,
-            "snapshot_digest": hashlib.sha256(
-                digest_source.encode("utf-8")
-            ).hexdigest(),
-            "metadata": _safe_json_object(version.content),
-            "files": files,
-            "created_at": version.created_at.isoformat(),
+            version.artifact_type: _file_snapshot_payload(version)
+            for version in versions
         }
 
 
@@ -824,6 +847,27 @@ def _decode_content(content: str, content_format: str) -> Any:
         return json.loads(content)
     except json.JSONDecodeError:
         return {}
+
+
+def _file_snapshot_payload(version: ArtifactVersion) -> dict[str, Any]:
+    files = {
+        item.file_path: {"content": item.content, "sha256": item.sha256}
+        for item in version.files
+    }
+    # 파일 경로와 각 파일의 SHA-256을 정렬된 순서로 합쳐 snapshot 전체 digest를
+    # 만든다. DB row ID나 저장 시각은 넣지 않으므로 같은 파일 tree는 같은 digest다.
+    digest_source = "".join(
+        f"{path}\0{item['sha256']}\n" for path, item in sorted(files.items())
+    )
+    return {
+        "artifact_type": version.artifact_type,
+        "version_id": version.id,
+        "version_no": version.version_no,
+        "snapshot_digest": hashlib.sha256(digest_source.encode("utf-8")).hexdigest(),
+        "metadata": _safe_json_object(version.content),
+        "files": files,
+        "created_at": version.created_at.isoformat(),
+    }
 
 
 def _normalize_file_path(value: str) -> str:

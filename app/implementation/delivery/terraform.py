@@ -45,9 +45,9 @@ def render_iac(run_root: Path, spec: Any) -> dict[str, object]:
         expected=True,
         resource_plan=resource_plan,
     )
-    if verification.get("gateStatus") == "FAIL":
+    if verification.get("gateStatus") != "PASS":
         raise RuntimeError(
-            "Generated deployment package failed validation: "
+            "Generated deployment package did not pass validation: "
             + "; ".join(str(item) for item in verification.get("issues") or [])
         )
     rendered_files = sorted(

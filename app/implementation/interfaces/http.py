@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import zipfile
@@ -27,6 +28,7 @@ from app.repositories.artifact_repository import AppNotFound
 
 from ..application.jobs import InvalidJobState, JobNotFound, worker
 from ..domain.artifact_layout import application_artifact_path
+from ..domain.artifact_release import artifact_release_id
 
 router = APIRouter(prefix="/api/implementation", tags=["implementation"])
 FILE_ARTIFACT_TYPES = {
@@ -77,21 +79,56 @@ def refresh_delivery_artifacts(app_id: str, job_id: str) -> dict[str, Any]:
 @router.get("/apps/{app_id}/download")
 def download_implementation_artifacts(app_id: str) -> StreamingResponse:
     """최신 구현 파일 snapshot들을 하나의 ZIP으로 묶어 다운로드한다."""
-    snapshots = []
     try:
-        for artifact_type in sorted(FILE_ARTIFACT_TYPES):
-            snapshot = artifact_repository.load_file_snapshot(app_id, artifact_type)
-            if snapshot and snapshot.get("files"):
-                snapshots.append(snapshot)
+        snapshot_map = artifact_repository.load_file_snapshots(
+            app_id, FILE_ARTIFACT_TYPES
+        )
     except AppNotFound as error:
         raise HTTPException(status_code=404, detail="Unknown app id.") from error
+    snapshots = [
+        snapshot_map[artifact_type]
+        for artifact_type in sorted(snapshot_map)
+        if snapshot_map[artifact_type].get("files")
+    ]
     if not snapshots:
         raise HTTPException(status_code=404, detail="Implementation artifacts are unavailable.")
+
+    deployment_types = {TYPE_DEPLOYMENT_FILE, TYPE_IAC_CODE}
+    present_deployment_types = deployment_types.intersection(snapshot_map)
+    if present_deployment_types and present_deployment_types != deployment_types:
+        raise HTTPException(
+            status_code=409,
+            detail="Deployment script and IaC must be published as one release.",
+        )
+    version_ids = {
+        str(snapshot["artifact_type"]): int(snapshot["version_id"])
+        for snapshot in snapshots
+    }
+    delivery_version_ids = {
+        artifact_type: version_ids[artifact_type]
+        for artifact_type in sorted(deployment_types)
+        if artifact_type in version_ids
+    }
 
     # 파일을 서버 디스크에 임시로 쓰지 않고 메모리에서 ZIP으로 조립한다. manifest에는
     # 어떤 산출물 버전이 들어갔는지 기록해 다운로드한 파일의 출처를 확인할 수 있게 한다.
     archive = io.BytesIO()
-    manifest: dict[str, Any] = {"app_id": app_id, "artifacts": []}
+    manifest: dict[str, Any] = {
+        "app_id": app_id,
+        "release_id": artifact_release_id(version_ids),
+        "delivery_release_id": (
+            artifact_release_id(delivery_version_ids)
+            if delivery_version_ids
+            else None
+        ),
+        "implementation_job_ids": {
+            str(snapshot["artifact_type"]): str(
+                (snapshot.get("metadata") or {}).get("implementation_job_id") or ""
+            )
+            for snapshot in snapshots
+        },
+        "artifacts": [],
+    }
     occupied_paths: dict[str, str] = {}
     with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_DEFLATED) as bundle:
         for snapshot in snapshots:
@@ -99,11 +136,14 @@ def download_implementation_artifacts(app_id: str) -> StreamingResponse:
             files = snapshot.get("files") or {}
             artifact_entry = {
                 "artifact_type": artifact_type,
+                "version_id": snapshot.get("version_id"),
                 "version_no": snapshot.get("version_no"),
+                "snapshot_digest": snapshot.get("snapshot_digest"),
                 "file_count": len(files),
+                "files": [],
             }
             manifest["artifacts"].append(artifact_entry)
-            for path, item in files.items():
+            for path, item in sorted(files.items()):
                 try:
                     relative = application_artifact_path(
                         artifact_type, str(path)
@@ -122,8 +162,23 @@ def download_implementation_artifacts(app_id: str) -> StreamingResponse:
                         ),
                     )
                 content = item.get("content", "") if isinstance(item, dict) else str(item)
+                encoded = content.encode("utf-8")
+                actual_sha256 = hashlib.sha256(encoded).hexdigest()
+                stored_sha256 = str(item.get("sha256") or "") if isinstance(item, dict) else ""
+                if stored_sha256 and stored_sha256 != actual_sha256:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Artifact content hash does not match its snapshot: {relative}",
+                    )
                 bundle.writestr(relative, content)
                 occupied_paths[relative] = artifact_type
+                artifact_entry["files"].append(
+                    {
+                        "path": relative,
+                        "size": len(encoded),
+                        "sha256": actual_sha256,
+                    }
+                )
         bundle.writestr(
             "manifest.json",
             json.dumps(manifest, ensure_ascii=False, indent=2),

@@ -902,15 +902,23 @@ def _add_network_and_compute(
                 rule="gcp.cloud-nat",
             )
         filter_id = f"traffic-filter-{compute_id}"
+        public_interfaces = copy.deepcopy(public_by_compute.get(compute_id, []))
+        # GCP firewall rules require an allow/deny block.  A compute unit with no
+        # public path must not be represented by a synthetic 0.0.0.0/0 all-port
+        # rule merely to preserve the network-tag topology.  Keep the tag anchor
+        # as a reference-only node; connection-specific internal firewalls are
+        # added later by _add_internal_traffic with their real target port.
+        create_filter = provider != "gcp" or bool(public_interfaces)
         template.add_node(
             filter_id,
             _provider_kind(provider, "filter"),
+            handling="create" if create_filter else "referenceExisting",
             logical_ref=compute_id,
-            attributes={"publicInterfaces": copy.deepcopy(public_by_compute.get(compute_id, []))},
+            attributes={"publicInterfaces": public_interfaces},
             source_refs=refs,
             rule=f"{provider}.compute-traffic-filter",
         )
-        if provider in {"aws", "gcp"}:
+        if create_filter and provider in {"aws", "gcp"}:
             template.reference(
                 filter_id,
                 "network",
@@ -1088,14 +1096,26 @@ def _add_network_and_compute(
                 cardinality="many",
                 rule="gcp.compute-firewall-network-tag",
             )
-            template.reference(
-                filter_id,
-                network_tag_id,
-                consumer_path="target_tags[]",
-                producer_attribute="value",
-                cardinality="many",
-                rule="gcp.compute-firewall-network-tag",
-            )
+            if create_filter:
+                template.reference(
+                    filter_id,
+                    network_tag_id,
+                    consumer_path="target_tags[]",
+                    producer_attribute="value",
+                    cardinality="many",
+                    rule="gcp.compute-firewall-network-tag",
+                )
+            else:
+                # A no-ingress compute still needs two real consumers for the
+                # shared tag.  The provider-visible label gives operators a
+                # traceable anchor without manufacturing an all-port firewall.
+                template.reference(
+                    tag_consumer,
+                    network_tag_id,
+                    consumer_path="labels.easydep_traffic_tag",
+                    producer_attribute="value",
+                    rule="gcp.compute-traffic-label",
+                )
         boot_consumer = (
             compute_node if provider == "azure" or not managed else f"compute-template-{compute_id}"
         )
@@ -1939,6 +1959,11 @@ def _add_internal_traffic(
                 "protocol": connection.get("protocol"),
                 "sourceComputeRef": source_compute,
                 "targetComputeRef": target_compute,
+                # Every source SG / source tag rule is scoped to the target
+                # interface selected by this connection.  Rendering from this
+                # explicit port list prevents a later generic fallback from
+                # opening 1-65535 for private traffic.
+                "allowedPorts": [target_port],
             },
             source_refs=refs,
             rule=f"{template.provider}.internal-workload-traffic",
