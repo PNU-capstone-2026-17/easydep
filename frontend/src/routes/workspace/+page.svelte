@@ -74,14 +74,6 @@
     return [...new Set(messages)];
   });
 
-  let sequenceMethodApprovalOffer = $derived(
-    command?.result?.actions?.find(
-      (offer) =>
-        offer.action === 'advance' && offer.payload.auto_approve_method_proposals === true
-    ) ?? null
-  );
-  let canApproveSequenceMethodProposals = $derived(Boolean(sequenceMethodApprovalOffer));
-
   let busy = $derived(actionBusy || ['QUEUED', 'RUNNING'].includes(command?.status ?? ''));
   let classGenerating = $derived(
     command?.stage === 'design' &&
@@ -436,29 +428,6 @@
     artifactOpen = true;
   }
 
-  async function approveSequenceMethodProposals() {
-    const offer = sequenceMethodApprovalOffer;
-    if (!offer) return;
-    await act(offer.action, offer.payload);
-  }
-
-  async function submitSequenceFeedback(
-    entries: Array<{ useCaseId: string; feedback: string }>
-  ) {
-    await act('message', {
-      text: `Targeted sequence feedback for ${entries.map((entry) => entry.useCaseId).join(', ')}`,
-      action_id: command?.status === 'AWAITING_INPUT' ? command.command_id : undefined,
-      context: {
-        stage: 'design',
-        artifact_stage: 'sequence_diagram',
-        target_feedbacks: entries.map((entry) => ({
-          target: `sequence_diagram:${entry.useCaseId}`,
-          feedback: entry.feedback
-        }))
-      }
-    });
-  }
-
   async function loadFileArtifacts(id: string) {
     const entries = await Promise.all(
       fileArtifactTypes.map(async (type) => {
@@ -613,6 +582,7 @@
               <ChatTimeline
                 {appId}
                 {events}
+                {command}
                 document={artifacts}
                 {fileArtifacts}
                 implementationErrors={implementationErrors}
@@ -632,7 +602,6 @@
             {busy}
             {autoMode}
             context={{ stage: selectedStage, artifact_stage: selectedArtifact }}
-            targetRequired={selectedArtifact === 'sequence_diagram'}
             onSend={send}
             onAction={act}
             onToggleAutoMode={toggleAutoMode}
@@ -645,15 +614,10 @@
             {fileArtifacts}
             {liveSources}
             preferredFile={selectedSourcePath}
-            {events}
             {classPreview}
             {classGenerating}
             selected={selectedArtifact}
             onSelect={reviewArtifact}
-            onSequenceFeedbackSubmit={submitSequenceFeedback}
-            sequenceFeedbackSubmitting={busy}
-            sequenceMethodApprovalAvailable={canApproveSequenceMethodProposals}
-            onSequenceMethodApproval={approveSequenceMethodProposals}
             onFileSelect={(path) => (selectedSourcePath = path)}
             onDeploymentSizingApplied={refreshState}
             onClose={() => (artifactOpen = false)}

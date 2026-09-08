@@ -1873,6 +1873,7 @@ def test_failed_testing_is_an_actionable_repair_gate(monkeypatch) -> None:
 def test_start_testing_persists_checkpoint_in_the_command(monkeypatch) -> None:
     """Testing 입력을 실행 전에 현재 Workspace command에 저장한다."""
     updates: list[dict] = []
+    events: list[dict] = []
     command = {
         "command_id": "command-1",
         "app_id": "app-1",
@@ -1885,6 +1886,11 @@ def test_start_testing_persists_checkpoint_in_the_command(monkeypatch) -> None:
         repository,
         "update_command",
         lambda _command_id, **changes: updates.append(changes) or changes,
+    )
+    monkeypatch.setattr(
+        repository,
+        "append_event",
+        lambda _app_id, **event: events.append(event) or event,
     )
 
     def run_testing(_app_id, implementation_job_id, **kwargs):
@@ -1911,6 +1917,7 @@ def test_start_testing_persists_checkpoint_in_the_command(monkeypatch) -> None:
         service.shutdown()
 
     assert updates[0]["payload"]["testing_checkpoint"]["current_node"] == "queued"
+    assert events[0]["metadata"]["progress_event"] == "testingStepUpdated"
     assert result["job"]["job_id"] == "command-1"
 
 

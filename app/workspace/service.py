@@ -3744,6 +3744,63 @@ class WorkspaceService:
             command["payload"] = payload
             repository.update_command(command_id, payload=payload)
 
+            node = str(checkpoint.get("current_node") or "")
+            updates = {
+                "queued": [
+                    (
+                        "prepare-testing",
+                        "Prepare testing snapshot",
+                        "running",
+                        "Freezing the generated application and its design contracts.",
+                    )
+                ],
+                "verification": [
+                    (
+                        "prepare-testing",
+                        "Prepare testing snapshot",
+                        "completed",
+                        "Testing inputs are ready.",
+                    ),
+                    (
+                        "run-verification",
+                        "Run application verification",
+                        "running",
+                        "Running functional, static, deployment package, and IaC checks.",
+                    ),
+                ],
+                "verification_complete": [
+                    (
+                        "run-verification",
+                        "Run application verification",
+                        "completed",
+                        "Verification gates finished.",
+                    ),
+                    (
+                        "finalize-testing",
+                        "Finalize testing results",
+                        "completed",
+                        "Test results are ready.",
+                    ),
+                ],
+            }.get(node, [])
+            for step, label, status, detail in updates:
+                repository.append_event(
+                    str(command["app_id"]),
+                    command_id=command_id,
+                    stage="testing",
+                    kind="progress",
+                    actor="system",
+                    text=detail,
+                    metadata={
+                        "progress_event": "testingStepUpdated",
+                        "step": step,
+                        "progress_step_label": label,
+                        "progress_card_label": "Testing progress",
+                        "progress_detail": detail,
+                        "progress_status": status,
+                    },
+                )
+
         checkpoint = command.get("payload", {}).get("testing_checkpoint")
         job = run_testing(
             str(command["app_id"]),

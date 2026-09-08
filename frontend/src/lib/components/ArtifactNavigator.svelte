@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { AlertTriangle, CheckCircle2, Circle, LoaderCircle } from '@lucide/svelte';
+  import { CheckCircle2, Circle, LoaderCircle } from '@lucide/svelte';
   import type { ArtifactDocument, FileArtifactSnapshot, LiveDiagramPreview } from '$lib/types';
   import { artifactLabels, artifactPresent, fileArtifactTypes } from '$lib/artifacts';
 
@@ -46,11 +46,6 @@
     return stage === 'class_diagram' && (classGenerating || Boolean(classPreview)) && !artifactPresent(document?.artifacts?.[stage]);
   }
 
-  function hasFindings(stage: string) {
-    const validation = document?.validation?.[stage];
-    return Boolean(validation?.errors?.length || validation?.findings?.length);
-  }
-
 </script>
 
 <nav class="scrollbar-thin grid max-h-72 grid-cols-3 gap-2 overflow-y-auto p-3" aria-label="Project artifacts">
@@ -73,8 +68,6 @@
                 <LoaderCircle size={14} class="shrink-0 animate-spin text-[#39745a]" />
               {:else if !ready}
                 <Circle size={13} class="shrink-0" />
-              {:else if hasFindings(stage)}
-                <AlertTriangle size={14} class="shrink-0 text-[#a64a40]" />
               {:else}
                 <CheckCircle2 size={14} class="shrink-0 text-[#4f8066]" />
               {/if}

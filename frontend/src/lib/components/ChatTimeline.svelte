@@ -11,6 +11,7 @@
     type FileArtifactSnapshot,
     type RevisionPlanTarget,
     type RevisionExecution,
+    type WorkspaceCommand,
     type WorkspaceEvent
   } from '$lib/types';
   import { formatTime } from '$lib/utils';
@@ -24,6 +25,7 @@
   let {
     appId,
     events,
+    command,
     document,
     fileArtifacts,
     implementationErrors = [],
@@ -36,6 +38,7 @@
   }: {
     appId: string;
     events: WorkspaceEvent[];
+    command?: WorkspaceCommand | null;
     document?: ArtifactDocument | null;
     fileArtifacts: Record<string, FileArtifactSnapshot>;
     implementationErrors?: string[];
@@ -46,7 +49,15 @@
     onDeploymentPreferencesSave: (preferences: DeploymentPreferences) => Promise<void>;
     onArtifactSelect: (stage: string) => void;
   } = $props();
-  let latestProgress = $derived([...events].reverse().find((event) => event.kind === 'progress'));
+  let latestProgress = $derived(
+    [...events]
+      .reverse()
+      .find(
+        (event) =>
+          event.kind === 'progress' &&
+          (!command?.command_id || event.command_id === command.command_id)
+      )
+  );
   let latestImplementationError = $derived(
     [...events].reverse().find(
       (event) => event.stage === 'implementation' && event.kind === 'error'
@@ -228,6 +239,15 @@
     return event.text;
   }
 
+  function stageLabel(stage: string): string {
+    return {
+      requirements: 'Requirements analysis',
+      design: 'System design',
+      implementation: 'Implementation',
+      testing: 'Testing'
+    }[stage] ?? 'Development';
+  }
+
   function revisionPlanTargets(event: WorkspaceEvent, key: string): RevisionPlanTarget[] {
     const targets = event.metadata?.[key];
     return Array.isArray(targets) ? targets : [];
@@ -268,7 +288,7 @@
           <span class="font-semibold text-[#343831]">
             {isLlmMetrics
               ? 'LLM run history'
-              : String(event.metadata?.progress_card_label ?? 'Requirements analysis')}
+              : String(event.metadata?.progress_card_label ?? `${stageLabel(event.stage)} progress`)}
           </span>
           <time class="text-[10px] text-[#a0a29a]">{formatTime(event.created_at)}</time>
         </div>
@@ -506,6 +526,16 @@
     </article>
     {/if}
   {/each}
+  {#if command && ['QUEUED', 'RUNNING'].includes(command.status) && !latestProgress}
+    <div
+      class="mb-4 ml-11 flex items-center gap-2 rounded-xl border border-[#dfe3dc] bg-[#fafbf8] px-3 py-2.5 text-xs text-[#555950]"
+      role="status"
+      aria-live="polite"
+    >
+      <LoaderCircle size={13} class="shrink-0 animate-spin text-[#2d7354]" />
+      <span>{stageLabel(command.stage)} is starting…</span>
+    </div>
+  {/if}
   {#if showDeploymentPreferences && Object.values(regions).some((items) => items.length)}
     {#key appId}
       <DeploymentPreferencesCard
