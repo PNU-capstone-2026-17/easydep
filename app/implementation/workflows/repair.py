@@ -209,8 +209,11 @@ def apply_repair_directives(run_root: Path) -> None:
                 f"## Previous failed approaches\n\n{history}\n\n"
                 "## Current failure\n\n```text\n"
                 f"{current.get('evidence', '')}\n```\n\n"
+                "Resolve every item in the current failure evidence before running verification; "
+                "a passing build alone does not clear implementation markers or controller stubs. "
                 "After editing, rerun the relevant build or test in the terminal. If it fails, "
-                "inspect the cause and continue repairing in this conversation.\n"
+                "inspect the cause and continue repairing in this conversation. When it passes, "
+                "call FinishTool immediately; do not end with a plain-text summary.\n"
             )
             repair_prompt_path.write_text(repair_prompt, encoding="utf-8")
             task["repair_prompt_file"] = str(

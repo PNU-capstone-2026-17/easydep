@@ -16,6 +16,7 @@ from app.implementation.agents.runtime import (
     OWNER_TURN_ITERATIONS,
     NoActionResponseGuard,
     OwnerConversationIncomplete,
+    _conversation_needs_finish_recovery,
     _conversation_terminal_failure,
     _owner_continuation_required,
     _owner_message_required,
@@ -1717,6 +1718,21 @@ def test_repeated_typed_no_action_responses_stop_at_openhands_threshold() -> Non
     assert guard.max_consecutive_count == StuckDetectionThresholds().monologue
     assert conversation.state.execution_status is ConversationExecutionStatus.STUCK
     assert _conversation_terminal_failure(conversation) is True
+
+
+def test_owner_finish_recovery_only_targets_nonterminal_nonstuck_statuses() -> None:
+    from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+    conversation = SimpleNamespace(
+        state=SimpleNamespace(execution_status=ConversationExecutionStatus.RUNNING)
+    )
+    assert _conversation_needs_finish_recovery(conversation) is True
+
+    conversation.state.execution_status = ConversationExecutionStatus.FINISHED
+    assert _conversation_needs_finish_recovery(conversation) is False
+
+    conversation.state.execution_status = ConversationExecutionStatus.STUCK
+    assert _conversation_needs_finish_recovery(conversation) is False
 
 
 def test_scoped_editor_applies_workspace_and_contract_guards(

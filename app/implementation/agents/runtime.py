@@ -68,6 +68,11 @@ OWNER_STUCK_RECOVERY_MESSAGE = (
     "different action. Use the absolute project path from the workspace facts, run the "
     "canonical verification command, and fix only its concrete failures."
 )
+OWNER_FINISH_RECOVERY_MESSAGE = (
+    "The verification command has already been run, but this conversation was not completed. "
+    "Do not summarize the work or run another command. Call the FinishTool now to mark this "
+    "task complete."
+)
 _SANDBOX_TOOLS_REGISTERED = False
 _SANDBOX_TOOLS_REGISTRATION_LOCK = threading.Lock()
 
@@ -285,7 +290,7 @@ def _owner_workspace_guidance(
         "- Start from generated skeletons and their local context; open raw design inputs only for a concrete contract gap.",
         "- Batch related source reads into as few terminal calls as practical, and use build/test results rather than file counts as completion evidence.",
         "- After an edit batch, run the canonical verification once. If it fails, inspect that output and its existing diagnostic files before rerunning; do not rerun only to obtain more detail.",
-        "- When canonical verification passes, finish immediately. Do not disable tests or alter test reporting to hide a failure.",
+        "- When canonical verification passes, call the FinishTool immediately. A plain-text summary does not complete the task. Do not disable tests or alter test reporting to hide a failure.",
         "- Prefer the lowest-cost test level that proves the behavior; avoid restarting a full application context for every assertion.",
         "- Use English for source comments and user-visible text.",
     ]
@@ -575,6 +580,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     journal = EventJournal(execution_dir / f"{task_id}.attempt-{attempt:03d}.events.jsonl")
     no_action_guard = NoActionResponseGuard() if owner_task else None
     stuck_recovery_used = False
+    finish_recovery_used = False
     started = time.monotonic()
     conversation = None
     agent = None
@@ -636,6 +642,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             if no_action_guard is not None:
                 no_action_guard.reset()
             conversation.send_message(OWNER_STUCK_RECOVERY_MESSAGE)
+            conversation.run()
+        if owner_task and _conversation_needs_finish_recovery(conversation):
+            # OpenHands can stop after a prose response even when FinishTool is
+            # available. Give that state one narrow completion-only recovery.
+            finish_recovery_used = True
+            if no_action_guard is not None:
+                no_action_guard.reset()
+            conversation.send_message(OWNER_FINISH_RECOVERY_MESSAGE)
             conversation.run()
         if _conversation_terminal_failure(conversation):
             raise OwnerConversationIncomplete(
@@ -727,6 +741,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 else 0
             ),
             "stuckRecoveryUsed": stuck_recovery_used,
+            "finishRecoveryUsed": finish_recovery_used,
         }
         if isinstance(error, WorkspaceVerificationError):
             failure["verificationEvidence"] = error.evidence
@@ -768,6 +783,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             no_action_guard.max_consecutive_count if no_action_guard is not None else 0
         ),
         "stuckRecoveryUsed": stuck_recovery_used,
+        "finishRecoveryUsed": finish_recovery_used,
         "conversationStats": _conversation_stats_snapshot(conversation),
         "status": "SUCCEEDED",
     }
@@ -792,6 +808,20 @@ def _conversation_is_stuck(conversation: object) -> bool:
         getattr(getattr(conversation, "state", None), "execution_status", None)
         is ConversationExecutionStatus.STUCK
     )
+
+
+def _conversation_needs_finish_recovery(conversation: object) -> bool:
+    """Return whether an owner stopped without using OpenHands' FinishTool."""
+
+    from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+    status = getattr(getattr(conversation, "state", None), "execution_status", None)
+    if not isinstance(status, ConversationExecutionStatus):
+        return False
+    return status not in {
+        ConversationExecutionStatus.FINISHED,
+        ConversationExecutionStatus.STUCK,
+    }
 
 
 def _conversation_terminal_failure(conversation: object) -> bool:
