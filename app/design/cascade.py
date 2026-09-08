@@ -462,6 +462,13 @@ def _apply_projection(
     projected = spec.extract(state)
     merged = merge_model(spec, original, projected, targets)
     assert_untargeted_elements_preserved(spec, original, merged, targets)
+    # ``projected`` comes from deterministic code, not an LLM. Targeted list
+    # merging must preserve unrelated diagrams, while collection-level
+    # provenance (for example the class diagram hash) must describe the new
+    # projection rather than the old persisted collection.
+    for field_name, value in projected.items():
+        if field_name not in spec.elements:
+            merged[field_name] = value
     working: ArchitectureState = {**state, spec.model_key: merged}
     patch: dict[str, Any] = {spec.model_key: merged}
     if spec.finalize:

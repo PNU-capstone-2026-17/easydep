@@ -64,6 +64,54 @@ def test_apply_uses_state_revision_and_preserves_untargeted_diagrams() -> None:
     assert patch["revised_upstream_stages"] == ["class_diagram"]
 
 
+def test_deterministic_projection_refreshes_provenance_without_replacing_siblings() -> None:
+    original = {
+        "Diagrams": [
+            {"use_case_id": "UC1", "Messages": [{"label": "old-target"}]},
+            {"use_case_id": "UC2", "Messages": [{"label": "approved-sibling"}]},
+        ],
+        "class_diagram_hash": "old-class-hash",
+        "MethodProposals": [{"operation": "old-proposal"}],
+    }
+    projected = {
+        "Diagrams": [
+            {"use_case_id": "UC1", "Messages": [{"label": "new-target"}]},
+            {"use_case_id": "UC2", "Messages": [{"label": "regenerated-sibling"}]},
+        ],
+        "class_diagram_hash": "current-class-hash",
+        "MethodProposals": [],
+    }
+    spec = DesignArtifactSpec(
+        stage="sequence_diagram",
+        model_key="sequence_model",
+        content_key="sequence_puml",
+        valid_key="sequence_valid",
+        errors_key="sequence_errors",
+        feedback_key="sequence_feedback",
+        empty="",
+        extract=lambda _state: projected,
+        revise=lambda *_args: projected,
+        render=str,
+        validate=_validation,
+        elements={"Diagrams": lambda item: item.get("use_case_id", "")},
+    )
+
+    patch = cascade._apply_projection(
+        spec,
+        {"sequence_model": original},
+        {"UC1"},
+    )
+
+    assert patch["sequence_model"] == {
+        "Diagrams": [
+            {"use_case_id": "UC1", "Messages": [{"label": "new-target"}]},
+            {"use_case_id": "UC2", "Messages": [{"label": "approved-sibling"}]},
+        ],
+        "class_diagram_hash": "current-class-hash",
+        "MethodProposals": [],
+    }
+
+
 def test_targeted_class_merge_updates_dependent_collaboration() -> None:
     old_operation = "UserBoundary::login(request:LoginRequest)"
     new_operation = "UserBoundary::login(credentials:LoginRequest)"

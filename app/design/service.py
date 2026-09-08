@@ -134,6 +134,29 @@ def start_design_session(app_id: str) -> dict[str, Any]:
         raise RuntimeError(f"Design pipeline failed: {error}") from error
 
 
+def _repair_stale_sequence_projection(
+    app_id: str,
+    state: ArchitectureState,
+    readiness: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Reproject a sequence whose only defect is stale class provenance."""
+
+    records = list(readiness.get("findingRecords") or [])
+    if not records or any(
+        str(record.get("stage") or "") != "sequence_diagram"
+        or str(record.get("ruleId") or "") != "sequence.class-diagram-version"
+        for record in records
+    ):
+        return None
+    class_readiness = design_readiness_report(state, stages=["class_diagram"])
+    if class_readiness.get("findings"):
+        return None
+    # Sequence is a deterministic projection of the accepted class model. A
+    # version mismatch has no user decision to make, so regenerate it and stop
+    # at the sequence review gate instead of presenting an unrecoverable error.
+    return rewind_design(app_id, "sequence_diagram")
+
+
 def resume_design_session(app_id: str, feedback: str = "") -> dict[str, Any]:
     """검토 중인 설계에 피드백을 적용하거나 다음 설계 단계로 진행한다."""
     _validate_app_id(app_id)
@@ -149,6 +172,11 @@ def resume_design_session(app_id: str, feedback: str = "") -> dict[str, Any]:
             readiness = design_readiness_report(state, stages=[str(active_stage)])
             findings = list(readiness.get("findings") or [])
             if findings:
+                repaired = _repair_stale_sequence_projection(
+                    app_id, state, readiness
+                )
+                if repaired is not None:
+                    return repaired
                 raise ValueError(
                     "Resolve the active design findings before advancing. "
                     f"Stage: {active_stage}. Findings: {findings}"
@@ -394,6 +422,12 @@ def retry_design_session(app_id: str) -> dict[str, Any]:
     _validate_app_id(app_id)
     _require_app_exists(app_id)
     status = session_status(app_id)
+    if status.get("active") and status.get("stage") == "sequence_diagram":
+        state = _load_app(app_id)
+        readiness = design_readiness_report(state, stages=["sequence_diagram"])
+        repaired = _repair_stale_sequence_projection(app_id, state, readiness)
+        if repaired is not None:
+            return repaired
     if not status.get("retryable"):
         # 검토 지점은 실패 상태가 아니다. 이때에는 LLM을 다시 호출하지 않고 저장된
         # 결과를 반환하여 새로고침한 Workspace와 실행 상태만 다시 맞춘다.
