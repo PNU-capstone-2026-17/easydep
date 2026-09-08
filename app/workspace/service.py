@@ -3580,7 +3580,11 @@ class WorkspaceService:
                 and str(item.get("canonical_ref") or "")
             )
         )
-        targets = tools.normalize_revision_targets(implementation_refs)
+        targets = (
+            tools.normalize_revision_targets(implementation_refs)
+            if implementation_refs
+            else []
+        )
         payload = repair_payload_from_testing_evidence(evidence, targets)
         return list(payload.confirmed_target_refs), list(payload.repair_file_hints)
 

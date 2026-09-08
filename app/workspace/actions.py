@@ -466,7 +466,12 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
                         WorkspaceAction.RETRY_IMPLEMENTATION,
                         "Retry implementation checkpoint",
                         {**common, "job_id": job_id},
-                    )
+                    ),
+                    _offer(
+                        WorkspaceAction.RERUN_IMPLEMENTATION,
+                        "Start a fresh implementation run",
+                        common,
+                    ),
                 ]
             return [
                 discuss,

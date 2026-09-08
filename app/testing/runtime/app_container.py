@@ -25,6 +25,7 @@ DEFAULT_START_TIMEOUT_SECONDS = 360
 _EXPOSE = re.compile(r"(?mi)^\s*EXPOSE\s+(?P<port>\d+)")
 _FALLBACK_CONTAINER_PORT = 8080
 _ENVIRONMENT_BUILD_FAILURE_MARKERS = (
+    "could not load from local cache",
     "failed to fetch",
     "connection reset",
     "connection refused",
@@ -295,7 +296,7 @@ def running_application(
             runner_image,
             "bootRun",
             "--no-daemon",
-            "--build-cache",
+            "--no-build-cache",
         ],
         timeout=120,
     )

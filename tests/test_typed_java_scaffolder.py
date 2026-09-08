@@ -151,7 +151,7 @@ def test_renders_only_explicit_bce_contracts() -> None:
 
     # field에서 getter/setter를 자동으로 만들지 않는다. 설계에 명시한 getQuantity도
     # 정확히 한 번만 출력되므로 과거의 중복 Java signature가 다시 생기지 않는다.
-    assert entity.count("getQuantity()") == 1
+    assert entity.count("public Integer getQuantity()") == 1
     assert "getPayload()" not in entity
     assert "setQuantity(" not in entity
 
@@ -331,6 +331,68 @@ def test_persistence_collapses_columns_with_the_same_database_name() -> None:
     assert "private UUID studentId;" in entity
     assert "private UUID student_id;" not in entity
     assert migration.count("student_id BINARY(16)") == 1
+
+
+def test_persistence_uses_erd_scalar_for_class_typed_foreign_key() -> None:
+    """A domain relationship is persisted through the FK type fixed by the ERD."""
+
+    model = BCEModel.model_validate(
+        {
+            "Classes": [
+                {
+                    "className": "Student",
+                    "stereotype": "Entity",
+                    "fields": ["studentId : String"],
+                    "use_case_ids": ["UC1"],
+                    "identifier": ["studentId"],
+                    "operations": [],
+                },
+                {
+                    "className": "Enrollment",
+                    "stereotype": "Entity",
+                    "fields": ["enrollmentId : String", "studentId : Student"],
+                    "use_case_ids": ["UC1"],
+                    "identifier": ["enrollmentId"],
+                    "operations": [],
+                },
+            ],
+            "DataTypes": [],
+            "Relationships": [],
+            "Collaborations": [],
+        }
+    )
+    logical_model = {
+        "Tables": [
+            {
+                "name": "Student",
+                "primaryKey": ["studentId"],
+                "columns": [{"name": "studentId", "type": "VARCHAR(255)"}],
+                "origin": {"kind": "class", "className": "Student"},
+            },
+            {
+                "name": "Enrollment",
+                "primaryKey": ["enrollmentId"],
+                "columns": [
+                    {"name": "enrollmentId", "type": "VARCHAR(255)"},
+                    {"name": "studentId", "type": "VARCHAR(255)"},
+                ],
+                "origin": {"kind": "class", "className": "Enrollment"},
+            },
+        ]
+    }
+
+    files = render_persistence_scaffold(
+        model,
+        "com.example.registration",
+        logical_model=logical_model,
+    )
+
+    entity = files[
+        "src/main/java/com/example/registration/persistence/entity/EnrollmentEntity.java"
+    ]
+    assert "private String studentId;" in entity
+    assert "private Student studentId;" not in entity
+    assert "import com.example.registration.bce.Student;" not in entity
 
 
 def test_controller_scaffold_preserves_generated_openapi_declarations() -> None:

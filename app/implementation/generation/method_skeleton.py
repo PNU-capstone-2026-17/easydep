@@ -29,7 +29,7 @@ def render_backend_method_skeletons(
         key=lambda item: item.class_name,
     ):
         methods = [projected.get(item.operation_id) for item in control.operations]
-        dependencies = _dependencies(methods)
+        dependencies = _dependencies(control.class_name, methods)
         source = _render_service(
             control.class_name,
             control.operations,
@@ -66,6 +66,7 @@ final class BackendApplicationTest {{
 
 
 def _dependencies(
+    owner_class_name: str,
     methods: list[MethodProjection | None],
 ) -> tuple[str, ...]:
     return tuple(
@@ -76,7 +77,9 @@ def _dependencies(
                 if method is not None and method.generation == "code"
                 for item in method.slices
                 for call in item.outgoing
-                if call.generation == "code" and call.target is not None
+                if call.generation == "code"
+                and call.target is not None
+                and call.target.class_name != owner_class_name
             }
         )
     )
@@ -117,7 +120,7 @@ def _render_service(
         lines.append("    }")
     for operation, method in zip(operations, methods, strict=True):
         lines.extend(
-            _render_method(operation, method, declared_types)
+            _render_method(operation, method, declared_types, class_name)
         )
     lines.append("}")
     return "\n".join(lines) + "\n"
@@ -127,6 +130,7 @@ def _render_method(
     operation: ClassOperation,
     projection: MethodProjection | None,
     declared_types: set[str],
+    owner_class_name: str,
 ) -> list[str]:
     return_type = java_type(operation.return_type, declared_types=declared_types)
     parameters = ", ".join(
@@ -146,9 +150,11 @@ def _render_method(
             arguments = ", ".join(
                 item.expression or "" for item in call.arguments
             )
+            method_call = f"{java_method_name(call.target.name)}({arguments})"
             invocation = (
-                f"{_field_name(call.target.class_name)}."
-                f"{java_method_name(call.target.name)}({arguments})"
+                method_call
+                if call.target.class_name == owner_class_name
+                else f"{_field_name(call.target.class_name)}.{method_call}"
             )
             if call.result_variable:
                 lines.append(f"        var {call.result_variable} = {invocation};")

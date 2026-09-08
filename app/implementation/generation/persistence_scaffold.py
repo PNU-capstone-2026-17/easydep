@@ -11,12 +11,17 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.design.contracts.type_system import DesignTypeError, sql_type_for_design
+from app.design.contracts.type_system import (
+    DesignTypeError,
+    parse_type_expression,
+    referenced_names,
+    sql_type_for_design,
+)
 from app.design.schemas.class_model import AcceptedBCEClass, BCEModel
 
 from .java_scaffold import java_type
 
-PERSISTENCE_SCAFFOLDER_VERSION = "1.4.0"
+PERSISTENCE_SCAFFOLDER_VERSION = "1.4.1"
 
 _FIELD = re.compile(r"^\s*[+#~\-]?\s*(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(?P<type>.+?)\s*$")
 _JAVA_IMPORTS = {
@@ -167,6 +172,7 @@ def _persistence_entities(
     """
 
     original = {item.class_name: item for item in model.Classes if item.stereotype == "Entity"}
+    class_types = {item.class_name for item in model.Classes}
     tables = logical_model.get("Tables") if isinstance(logical_model, dict) else None
     if not isinstance(tables, list):
         return list(original.values())
@@ -198,11 +204,21 @@ def _persistence_entities(
                 column_name in source_fields and str(current.get("name") or "") not in source_fields
             ):
                 physical_columns[database_name] = column
-        physical_fields = [
-            f"{column['name']} : "
-            f"{source_fields.get(str(column['name']), _design_type_from_sql(column.get('type')))}"
-            for column in physical_columns.values()
-        ]
+        physical_fields = []
+        for column in physical_columns.values():
+            column_name = str(column["name"])
+            source_type = source_fields.get(column_name)
+            # A class-typed BCE field describes a domain relationship. The ERD has already
+            # projected that relationship to its physical FK column, so persistence must use
+            # the ERD scalar instead of embedding the referenced domain object in @Column.
+            # DataTypes such as enums and value objects remain useful Java value mappings.
+            if source_type is not None and not _references_class_type(
+                source_type, class_types
+            ):
+                field_type = source_type
+            else:
+                field_type = _design_type_from_sql(column.get("type"))
+            physical_fields.append(f"{column_name} : {field_type}")
         selected_names = {
             database_name: str(column["name"]) for database_name, column in physical_columns.items()
         }
@@ -236,6 +252,17 @@ def _declared_field_types(declarations: list[str]) -> dict[str, str]:
         if match is not None:
             result[match.group("name")] = match.group("type")
     return result
+
+
+def _references_class_type(design_type: str, class_types: set[str]) -> bool:
+    """Return whether a field type embeds a BCE Class rather than a DataType."""
+
+    try:
+        return bool(referenced_names(parse_type_expression(design_type)) & class_types)
+    except DesignTypeError:
+        # Invalid types are rejected at the design boundary. Keeping the original value here
+        # preserves the existing failure mode for direct renderer callers with malformed input.
+        return False
 
 
 def _design_type_from_sql(value: Any) -> str:

@@ -124,6 +124,19 @@ def _is_work_component(component: ComponentIR) -> bool:
     }
 
 
+def _assumption_instruction(spec: JobSpec) -> str:
+    if spec.allow_assumptions:
+        return (
+            "- When typed artifacts leave a local implementation detail unspecified, choose the "
+            "simplest behavior consistent with the frozen contracts and requirements. Do not keep "
+            "searching for source that is absent, and do not add endpoints or public types."
+        )
+    return (
+        "- Do not invent behavior when the typed artifacts leave a required implementation detail "
+        "unspecified; report that exact contract gap."
+    )
+
+
 def _build_backend_owner_task(
     spec: JobSpec,
     run_root: Path,
@@ -301,6 +314,7 @@ def _build_backend_owner_task(
         "taskId": task_id,
         "taskType": "backend-implementation",
         "owner": "backend",
+        "allowAssumptions": spec.allow_assumptions,
         "dependsOn": [],
         "requirementIds": _artifact_ids(requirements),
         "useCaseIds": list(bundle.use_case_ids),
@@ -335,8 +349,12 @@ Control service and test shells; their typed calls are already projected from th
 - Preserve frozen BCE/API declarations, persistence projections, repositories, and migrations.
 - Resolve every `EASYDEP-IMPLEMENT` and named Controller marker with contracted behavior and
   meaningful assertions. Do not replace them with empty, demo, or always-passing behavior.
-- Before repository-wide search, batch-read each marker's `Context` path and its listed source
-  paths. The marker ID maps directly to `method-context/<ID>.json`.
+{_assumption_instruction(spec)}
+- Your first action must be `task_tracker view`. Continue the preloaded exhaustive marker-file
+  plan, keep one item in progress at a time, and do not replace it with a partial plan.
+- During marker work, use `file_editor` to read the current file and each marker's exact `Context`
+  path before inspecting related owner sources. The standard terminal is added only for final
+  canonical verification.
 - Use existing repositories for persistent behavior and constructor injection for Spring beans.
 - Generated web Controllers already call their typed Control binding; do not duplicate HTTP or
   Boundary adapters.
@@ -556,6 +574,7 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
         "taskId": task_id,
         "taskType": "frontend-implementation",
         "owner": "frontend",
+        "allowAssumptions": spec.allow_assumptions,
         "dependsOn": ["implement-backend-application"],
         "operationIds": operations,
         "generatedImportRoot": client_contracts.import_root,
@@ -584,6 +603,11 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
 Complete the React application using the exact generated-client calls already wired in
 `application/frontend/src/api.ts`.
 
+{_assumption_instruction(spec)}
+- Your first action must be `task_tracker view`. Continue the preloaded exhaustive marker-file
+  plan, keep one item in progress at a time, and do not replace it with a partial plan.
+- During marker work, use `file_editor` to read the current file and its exact operation context.
+  The standard terminal is added only for final canonical verification.
 - Preserve `{client_contracts.import_root}` and use `apiCalls`; never hand-write HTTP calls or paths.
 - Start with the compact client index. Read an operation context only when implementing that
   operation; do not recursively inventory the workspace unless an unresolved contract requires it.

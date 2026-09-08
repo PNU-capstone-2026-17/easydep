@@ -287,6 +287,25 @@ def test_status_not_a_stale_result_flag_controls_terminal_actions() -> None:
     ]
 
 
+def test_failed_implementation_offers_checkpoint_retry_and_fresh_rerun() -> None:
+    shaped = result_with_contract(
+        command(
+            status="FAILED",
+            stage="implementation",
+            payload={"job_id": "failed-job"},
+            result={"job_id": "failed-job"},
+        ),
+        {"job_id": "failed-job"},
+    )
+
+    assert [item["action"] for item in shaped["actions"]] == [
+        "message",
+        "retry_implementation",
+        "rerun_implementation",
+    ]
+    assert shaped["actions"][2]["payload"] == {"action_id": "command-1"}
+
+
 def test_reference_validation_accepts_only_a_published_payload() -> None:
     prior = command(
         status="AWAITING_INPUT",

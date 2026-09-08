@@ -51,12 +51,11 @@ from .workspace import (
 
 # OpenHands owns the tool/action loop. This only bounds one task conversation.
 MAX_AGENT_TURN_ITERATIONS = 32
-# The failed real-app baseline spent 238 tool calls without completing after the
-# useful first draft was already present around call 28.  A clean real-app run
-# reached its first complete implementation at call 61, so 96 leaves one local
-# build-and-repair pass without inheriting OpenHands' 500 iteration default.  A
-# retry resumes the same persisted conversation.
-OWNER_TURN_ITERATIONS = 96
+# Each owner turn now covers one explicit marker-bearing output (or final
+# verification), rather than the whole backend/frontend. Keep the regular SDK
+# task bound so a non-progressing work item checkpoints without spending the old
+# whole-owner allowance; retries resume the same persisted conversation.
+OWNER_TURN_ITERATIONS = 32
 OWNER_TASK_TYPES = frozenset({"backend-implementation", "frontend-implementation"})
 OWNER_CONTINUATION_MESSAGE = (
     "Continue from the current candidate; do not restart repository discovery. Run the "
@@ -67,6 +66,10 @@ OWNER_STUCK_RECOVERY_MESSAGE = (
     "OpenHands detected a repeated-action loop. Continue in this same conversation with a "
     "different action. Use the absolute project path from the workspace facts, run the "
     "canonical verification command, and fix only its concrete failures."
+)
+_OWNER_IMPLEMENTATION_MARKERS = (
+    "EASYDEP-IMPLEMENT",
+    "EASYDEP_CONTROLLER_BODY_REQUIRED",
 )
 _SANDBOX_TOOLS_REGISTERED = False
 _SANDBOX_TOOLS_REGISTRATION_LOCK = threading.Lock()
@@ -94,6 +97,222 @@ def _owner_conversation_identity(run_root: Path, task_id: str) -> tuple[Path, uu
     return run_root / "reports" / "openhands-conversations", conversation_id
 
 
+def _owner_persisted_tool_names(
+    persistence_dir: Path, conversation_id: uuid.UUID
+) -> set[str]:
+    state_path = persistence_dir / conversation_id.hex / "base_state.json"
+    if not state_path.is_file():
+        return set()
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return set()
+    agent = state.get("agent") if isinstance(state, dict) else None
+    tools = agent.get("tools") if isinstance(agent, dict) else None
+    return {
+        str(item.get("name") or "")
+        for item in tools or []
+        if isinstance(item, dict) and item.get("name")
+    }
+
+
+def _owner_marker_count(root: Path, relative: str) -> int:
+    target = (root / relative).resolve()
+    try:
+        target.relative_to(root.resolve())
+    except ValueError:
+        return 0
+    if not target.is_file():
+        return 0
+    try:
+        content = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return 0
+    return sum(content.count(marker) for marker in _OWNER_IMPLEMENTATION_MARKERS)
+
+
+def _owner_marker_files(root: Path, candidate_paths: list[str]) -> list[tuple[str, int]]:
+    marker_files = [
+        (relative, count)
+        for relative in dict.fromkeys(
+            path.replace("\\", "/") for path in candidate_paths
+        )
+        if (count := _owner_marker_count(root, relative))
+    ]
+
+    def work_order(item: tuple[str, int]) -> tuple[int, str]:
+        path = item[0]
+        if "/src/test/" in path or "/test/" in path:
+            rank = 3
+        elif "/adapter/in/" in path:
+            rank = 2
+        elif "/application/impl/" in path:
+            rank = 1
+        else:
+            rank = 0
+        return rank, path
+
+    return sorted(marker_files, key=work_order)
+
+
+def _owner_tracker_tasks(
+    marker_files: list[tuple[str, int]],
+    progress_root: Path,
+    *,
+    current_path: str | None = None,
+    verifying: bool = False,
+) -> list[dict[str, object]]:
+    tasks: list[dict[str, object]] = []
+    for relative, original_count in marker_files:
+        remaining = _owner_marker_count(progress_root, relative)
+        status = (
+            "done"
+            if remaining == 0
+            else "in_progress"
+            if relative == current_path
+            else "todo"
+        )
+        tasks.append(
+            {
+                "title": f"Resolve all implementation markers in {relative}",
+                "notes": (
+                    f"{original_count} original marker occurrence(s); {remaining} remain. "
+                    "Use the file's Context references and generated source index as "
+                    "starting hints; investigate related owner sources when needed."
+                ),
+                "status": status,
+            }
+        )
+    tasks.append(
+        {
+            "title": "Run canonical owner verification and repair concrete failures",
+            "notes": (
+                "Start only after every marker-file task is done. Finish only when the "
+                "canonical build or test command passes."
+            ),
+            "status": "in_progress" if verifying else "todo",
+        }
+    )
+    return tasks
+
+
+def _seed_owner_task_tracker(
+    persistence_dir: Path,
+    conversation_id: uuid.UUID,
+    contract_root: Path,
+    progress_root: Path,
+    candidate_paths: list[str],
+) -> Path | None:
+    """Seed OpenHands' native task list from generated implementation markers.
+
+    TaskTrackerTool persists ``TASKS.json`` inside the conversation directory and
+    loads it during tool initialization. EasyDep supplies only the exhaustive,
+    deterministic set of marker-bearing files; the owner remains responsible for
+    implementation order, related-file investigation, and code changes.
+    """
+
+    task_file = persistence_dir / conversation_id.hex / "TASKS.json"
+    marker_files = _owner_marker_files(contract_root, candidate_paths)
+    if not marker_files:
+        return task_file if task_file.is_file() else None
+    pending = next(
+        (
+            relative
+            for relative, _count in marker_files
+            if _owner_marker_count(progress_root, relative)
+        ),
+        None,
+    )
+    tasks = _owner_tracker_tasks(
+        marker_files,
+        progress_root,
+        current_path=pending,
+        verifying=pending is None,
+    )
+    task_file.parent.mkdir(parents=True, exist_ok=True)
+    task_file.write_text(
+        json.dumps(tasks, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return task_file
+
+
+def _sync_owner_task_tracker(agent: object, tasks: list[dict[str, object]]) -> None:
+    """Update the complete native task list between focused conversation turns."""
+
+    tool = getattr(agent, "_tools", {}).get("task_tracker")
+    if tool is None:
+        raise RuntimeError("OpenHands owner is missing the native task_tracker tool.")
+    action = tool.action_type.model_validate(
+        {"command": "plan", "task_list": tasks}
+    )
+    observation = tool.executor(action)
+    if getattr(observation, "is_error", False):
+        raise RuntimeError(f"OpenHands task tracker update failed: {observation}")
+
+
+def _owner_focus_message(root: Path, relative: str, remaining: int) -> str:
+    target = root / relative
+    source = target.read_text(encoding="utf-8")
+    context_paths: list[str] = []
+    for line in source.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("// Context:"):
+            continue
+        context_path = stripped.removeprefix("// Context:").strip()
+        resolved = (root / context_path).resolve()
+        try:
+            resolved.relative_to(root.resolve())
+        except ValueError:
+            continue
+        if resolved.is_file() and context_path not in context_paths:
+            context_paths.append(context_path)
+            break
+    contexts = "\n\n".join(
+        f"### `{path}`\n\n```json\n{(root / path).read_text(encoding='utf-8')}\n```"
+        for path in context_paths
+    )
+    return f"""## Current owner work item
+
+Use `task_tracker view`, then implement only the first method whose body contains an
+`EASYDEP-IMPLEMENT` marker in `{relative}`. Replace that method's marker comment and its existing
+`throw new UnsupportedOperationException("EASYDEP-IMPLEMENT:...")` line with working code. Do not
+search for or create an exception type. The generated file and that method's exact context are
+included below; do not reopen them. Keep this method as the only work item for this turn. You may
+inspect and edit related files anywhere inside the owner roots when its local Context evidence
+requires it, but do not begin another marked method. Once this one method is implemented, update
+the complete task list and call `finish`. The file currently has {remaining} marker occurrence(s).
+Do not run the full canonical verification until the verification item becomes current.
+
+### Generated target
+
+```java
+{source}
+```
+
+{contexts or "No marker context file was declared; inspect related owner sources as needed."}
+"""
+
+
+def _owner_focus_continuation(relative: str, remaining: int) -> str:
+    return (
+        f"Continue the current owner item in `{relative}`. It still contains {remaining} "
+        "implementation marker occurrence(s). Use `file_editor`; replace the first marked "
+        "method's marker comment and existing UnsupportedOperationException with working code. "
+        "Do not search for or create an exception type, restart repository discovery, or replace "
+        "the complete task list. Implement that method now, then call finish."
+    )
+
+
+OWNER_VERIFICATION_MESSAGE = """## Current owner work item
+
+All generated implementation markers are resolved. Use `task_tracker view`, make the canonical
+owner verification item the only in-progress item, and run the canonical build or test command.
+Fix only concrete compiler or test failures in the owner roots, rerun verification, mark the full
+task list complete, and call `finish` only after verification passes.
+"""
+
+
 def _owner_message_required(
     *,
     resumed: bool,
@@ -107,7 +326,8 @@ def _owner_message_required(
     from openhands.sdk.event import MessageEvent
     from openhands.sdk.llm import content_to_str
 
-    events = conversation.state.events
+    state = getattr(conversation, "state", None)
+    events = getattr(state, "events", [])
     for index in range(len(events) - 1, -1, -1):
         event = events[index]
         if not isinstance(event, MessageEvent) or event.source != "user":
@@ -277,13 +497,13 @@ def _owner_workspace_guidance(
     common = [
         "## EasyDep implementation workspace",
         "",
-        f"- Workspace and terminal starting directory: `{sandbox.resolve()}`",
-        "- The terminal session preserves `cd` and environment changes between calls.",
-        "- Use `file_editor` for source edits and `terminal` for inspection, search, build, and tests.",
+        f"- Workspace directory: `{sandbox.resolve()}`",
+        "- Use `file_editor` to inspect and edit marker work. EasyDep runs canonical verification "
+        "once after all generated markers are resolved.",
         "- Source locations and RTM references are investigation hints, not a required edit list.",
         "- Candidate contract copies may be inspected, but promotion rejects changes to generated contracts.",
         "- Start from generated skeletons and their local context; open raw design inputs only for a concrete contract gap.",
-        "- Batch related source reads into as few terminal calls as practical, and use build/test results rather than file counts as completion evidence.",
+        "- Read the target and its exact method context first; inspect related owner sources only when that local evidence requires it.",
         "- After an edit batch, run the canonical verification once. If it fails, inspect that output and its existing diagnostic files before rerunning; do not rerun only to obtain more detail.",
         "- When canonical verification passes, finish immediately. Do not disable tests or alter test reporting to hide a failure.",
         "- Prefer the lowest-cost test level that proves the behavior; avoid restarting a full application context for every assertion.",
@@ -521,6 +741,15 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         persistent=owner_task,
     )
     before = snapshot_files(sandbox)
+    owner_candidate_paths = (
+        sorted(
+            path
+            for path in before
+            if path_is_editable(path, editable_paths, editable_roots, immutable)
+        )
+        if owner_task
+        else []
+    )
     prompt_file = task.get("repair_prompt_file") if active_repair is not None else task.get("prompt_file")
     if not isinstance(prompt_file, str) or not (run_root / prompt_file).is_file():
         prompt_file = str(task["prompt_file"])
@@ -586,67 +815,183 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         resumed_conversation = (
             persistence_dir / conversation_id.hex / "base_state.json"
         ).is_file()
+        if active_repair is None:
+            _seed_owner_task_tracker(
+                persistence_dir,
+                conversation_id,
+                run_root,
+                sandbox,
+                owner_candidate_paths,
+            )
     try:
         reasoning_effort = os.environ.get(
             "OPENHANDS_REASONING_EFFORT",
             str(task["llm"].get("reasoningEffort", settings.implementation_reasoning_effort)),
         )
-        conversation, agent = create_openhands_conversation(
-            sandbox,
-            connection,
-            task["llm"],
-            task_type=task_type,
-            verification_paths=editable_paths,
-            verification_profile=verification_profile,
-            editable_files=writable_files,
-            editable_roots=writable_roots,
-            immutable_paths=immutable_absolute,
-            callbacks=[journal, *([no_action_guard] if no_action_guard else [])],
-            max_iterations=(
-                OWNER_TURN_ITERATIONS if owner_task else MAX_AGENT_TURN_ITERATIONS
-            ),
-            reasoning_effort=reasoning_effort,
-            native_owner_tools=owner_task,
-            enable_native_terminal=owner_task,
-            persistence_dir=persistence_dir,
-            conversation_id=conversation_id,
+        marker_files = (
+            _owner_marker_files(run_root, owner_candidate_paths) if owner_task else []
+        )
+        owner_terminal_enabled = bool(
+            owner_task
+            and persistence_dir is not None
+            and conversation_id is not None
+            and "terminal"
+            in _owner_persisted_tool_names(persistence_dir, conversation_id)
+        )
+
+        def open_conversation(*, enable_owner_terminal: bool):
+            return create_openhands_conversation(
+                sandbox,
+                connection,
+                task["llm"],
+                task_type=task_type,
+                verification_paths=editable_paths,
+                verification_profile=verification_profile,
+                editable_files=writable_files,
+                editable_roots=writable_roots,
+                immutable_paths=immutable_absolute,
+                callbacks=[journal, *([no_action_guard] if no_action_guard else [])],
+                max_iterations=(
+                    OWNER_TURN_ITERATIONS if owner_task else MAX_AGENT_TURN_ITERATIONS
+                ),
+                reasoning_effort=reasoning_effort,
+                native_owner_tools=owner_task,
+                enable_native_terminal=enable_owner_terminal,
+                persistence_dir=persistence_dir,
+                conversation_id=conversation_id,
+            )
+
+        conversation, agent = open_conversation(
+            enable_owner_terminal=owner_terminal_enabled
         )
         if no_action_guard is not None:
             no_action_guard.bind(conversation)
-        # The SDK loads persisted events when the stable conversation exists.
-        # Compare the exact user message in that public event history: a new
-        # repair is appended, while a crash after event persistence resumes
-        # without duplicating the potentially large task message.
-        message_required = _owner_message_required(
-            resumed=resumed_conversation,
-            conversation=conversation,
-            prompt=prompt,
-        )
-        if message_required:
-            conversation.send_message(prompt)
-        elif _owner_continuation_required(
-            resumed=resumed_conversation,
-            conversation=conversation,
-            prompt=prompt,
-        ):
-            conversation.send_message(OWNER_CONTINUATION_MESSAGE)
-        conversation.run()
-        if owner_task and _conversation_is_stuck(conversation):
-            stuck_recovery_used = True
-            if no_action_guard is not None:
-                no_action_guard.reset()
-            conversation.send_message(OWNER_STUCK_RECOVERY_MESSAGE)
-            conversation.run()
-        if _conversation_terminal_failure(conversation):
-            raise OwnerConversationIncomplete(
-                {
-                    "command": ["openhands", "conversation"],
-                    "exitCode": 1,
-                    "stdout": "",
-                    "stderr": journal.latest_agent_message or "OpenHands conversation did not finish.",
-                    "testResults": "",
-                }
+        if owner_task and active_repair is None:
+            # Keep one backend/frontend owner and one persisted history, but use
+            # OpenHands' supported multi-turn Conversation API to make the
+            # current marker-bearing output explicit. RTM and related paths stay
+            # hints; this loop does not narrow the owner's write authority.
+            if _owner_message_required(
+                resumed=resumed_conversation,
+                conversation=conversation,
+                prompt=prompt,
+            ):
+                conversation.send_message(prompt)
+
+            no_progress_turns: dict[str, int] = {}
+            while True:
+                pending = [
+                    (relative, _owner_marker_count(sandbox, relative))
+                    for relative, _original_count in marker_files
+                    if _owner_marker_count(sandbox, relative)
+                ]
+                if not pending:
+                    break
+                current_path, remaining = pending[0]
+                focus_message = _owner_focus_message(
+                    sandbox, str(current_path), remaining
+                )
+                continuation = _owner_focus_continuation(
+                    str(current_path), remaining
+                )
+                if _owner_message_required(
+                    resumed=True,
+                    conversation=conversation,
+                    prompt=focus_message,
+                ):
+                    conversation.send_message(focus_message)
+                elif _owner_continuation_required(
+                    resumed=True,
+                    conversation=conversation,
+                    prompt=focus_message,
+                ):
+                    conversation.send_message(continuation)
+                # ``send_message`` initializes an OpenHands agent lazily. On a
+                # resumed conversation there may be no new full task prompt, so
+                # synchronize the native tracker only after the focused message
+                # has made its tool executors available and before ``run``.
+                _sync_owner_task_tracker(
+                    agent,
+                    _owner_tracker_tasks(
+                        marker_files,
+                        sandbox,
+                        current_path=current_path,
+                        verifying=False,
+                    ),
+                )
+
+                conversation.run()
+                if _conversation_is_stuck(conversation):
+                    stuck_recovery_used = True
+                    if no_action_guard is not None:
+                        no_action_guard.reset()
+                    conversation.send_message(
+                        _owner_focus_continuation(str(current_path), remaining)
+                    )
+                    conversation.run()
+                after_remaining = _owner_marker_count(sandbox, str(current_path))
+                if _conversation_terminal_failure(conversation):
+                    if after_remaining < remaining:
+                        conversation.close()
+                        conversation, agent = open_conversation(
+                            enable_owner_terminal=owner_terminal_enabled
+                        )
+                        if no_action_guard is not None:
+                            no_action_guard.reset()
+                            no_action_guard.bind(conversation)
+                        no_progress_turns.pop(str(current_path), None)
+                        continue
+                    raise OwnerConversationIncomplete(
+                        {
+                            "command": ["openhands", "conversation"],
+                            "exitCode": 1,
+                            "stdout": "",
+                            "stderr": journal.latest_agent_message
+                            or "OpenHands conversation did not finish.",
+                            "testResults": "",
+                        }
+                    )
+
+                if after_remaining < remaining:
+                    no_progress_turns.pop(str(current_path), None)
+                    continue
+                count = no_progress_turns.get(str(current_path), 0) + 1
+                no_progress_turns[str(current_path)] = count
+                if count >= 2:
+                    raise WorkspaceVerificationError(
+                        {
+                            "command": ["owner-work-item-progress", str(current_path)],
+                            "exitCode": 1,
+                            "stdout": "",
+                            "stderr": (
+                                "OpenHands finished two focused turns without removing any "
+                                f"implementation marker from {current_path}."
+                            ),
+                            "testResults": "",
+                        }
+                    )
+            _sync_owner_task_tracker(
+                agent,
+                _owner_tracker_tasks(
+                    marker_files,
+                    sandbox,
+                    verifying=True,
+                ),
             )
+        else:
+            conversation.send_message(prompt)
+            conversation.run()
+            if _conversation_terminal_failure(conversation):
+                raise OwnerConversationIncomplete(
+                    {
+                        "command": ["openhands", "conversation"],
+                        "exitCode": 1,
+                        "stdout": "",
+                        "stderr": journal.latest_agent_message
+                        or "OpenHands conversation did not finish.",
+                        "testResults": "",
+                    }
+                )
         missing_outputs = missing_required_outputs(sandbox, required_paths)
         if missing_outputs:
             raise WorkspaceVerificationError(
@@ -964,6 +1309,7 @@ def create_openhands_conversation(
     from openhands.tools.file_editor.impl import FileEditorExecutor
     from openhands.tools.grep import GrepObservation, GrepTool
     from openhands.tools.grep.impl import GrepExecutor
+    from openhands.tools.task_tracker import TaskTrackerTool
     from openhands.tools.terminal import TerminalTool
     from pydantic import SecretStr
 
@@ -1176,6 +1522,9 @@ def create_openhands_conversation(
                     "enforce_write_scope": False,
                 },
             ),
+            # Keep the standard OpenHands planning surface for complex owner
+            # tasks. The tool persists its own task list with the conversation.
+            Tool(name=TaskTrackerTool.name),
         ]
         if enable_native_terminal:
             tools.append(
@@ -1217,6 +1566,9 @@ def create_openhands_conversation(
         llm=llm,
         tools=tools,
         include_default_tools=["FinishTool"],
+        # Match OpenHands' default command-line agent experience while keeping
+        # EasyDep's sandboxed editor and credential-scrubbed terminal.
+        system_prompt_kwargs={"cli_mode": True},
         # Do not override OpenHands' built-in system behavior. EasyDep's
         # task-specific constraints are appended to the user task message.
         condenser=default_condenser(

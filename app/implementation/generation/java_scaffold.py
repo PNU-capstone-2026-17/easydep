@@ -888,11 +888,21 @@ def _render_component(
     ]
     for name, field_type in fields:
         lines.append(f"    private {field_type} {name};")
-    for declaration, return_type in methods:
+    for operation, (declaration, _return_type) in zip(
+        component.operations, methods, strict=True
+    ):
+        stable_id = operation.stable_id or operation.operation_id
         lines.append("")
         lines.append(f"    public {declaration} {{")
-        if return_type != "void":
-            lines.append("        return null;")
+        lines.append(f"        // EASYDEP-IMPLEMENT: complete {stable_id}")
+        lines.append(
+            "        // Context: reports/implementation-tasks/method-context/"
+            f"{stable_id}.json"
+        )
+        lines.append(
+            "        throw new UnsupportedOperationException("
+            f'"EASYDEP-IMPLEMENT:{stable_id}");'
+        )
         lines.append("    }")
     lines.append("}")
     return "\n".join(lines) + "\n"

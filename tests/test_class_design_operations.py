@@ -117,6 +117,65 @@ def test_operation_validation_rejects_step_ref_outside_use_case_scope():
     )
 
 
+def test_operation_validation_accepts_a_type_reserved_by_an_earlier_use_case():
+    index = build_scenario_index(single_use_case())
+    inventory = AcceptedInventory.from_payload({
+        "Classes": [
+            {
+                "className": "RequestBoundary",
+                "stereotype": "Boundary",
+                "useCaseIds": ["UC1"],
+            },
+            {
+                "className": "RequestControl",
+                "stereotype": "Control",
+                "useCaseIds": ["UC1"],
+            },
+        ],
+        "DataTypes": [],
+        "Relationships": [],
+    })
+    candidate = operation_fragment()
+    candidate["DataTypes"] = [
+        item for item in candidate["DataTypes"]
+        if item["name"] != "RequestResult"
+    ]
+    fragment = operations.normalize_operation_fragment(
+        candidate,
+        index,
+        inventory,
+        index.use_case("UC1"),
+        reserved_types=[{
+            "name": "RequestResult",
+            "kind": "valueObject",
+            "fields": ["accepted : Boolean"],
+            "values": [],
+        }],
+        allowed_step_ids=("UC1:main:1", "UC1:main:2"),
+    )
+
+    accepted = operations.validate_operation_fragment(
+        fragment,
+        index,
+        inventory,
+        index.use_case("UC1"),
+        reserved_types=[{
+            "name": "RequestResult",
+            "kind": "valueObject",
+            "fields": ["accepted : Boolean"],
+            "values": [],
+        }],
+        allowed_step_ids=("UC1:main:1", "UC1:main:2"),
+    )
+
+    assert accepted.as_payload()["DataTypes"] == [{
+        "name": "RequestData",
+        "kind": "valueObject",
+        "fields": ["value : String"],
+        "values": [],
+    }]
+
+
 def test_state_backed_use_case_requires_an_entity_operation_only_when_scoped():
     index = build_scenario_index(single_use_case())
     inventory = {
@@ -185,6 +244,48 @@ def test_final_compose_keeps_operationless_class_referenced_by_an_entity_field()
     assert {item.class_name for item in model.Classes} == {
         "AcademicTerm", "RegistrationPeriod",
     }
+
+
+def test_compose_reuses_a_signature_with_equivalent_type_casing():
+    inventory = AcceptedInventory.from_payload({
+        "Classes": [{
+            "className": "RequestControl",
+            "stereotype": "Control",
+            "useCaseIds": ["UC1"],
+        }],
+        "DataTypes": [],
+        "Relationships": [],
+    })
+    first = AcceptedFragment("UC1", {
+        "Classes": [{
+            "className": "RequestControl",
+            "operations": [{
+                "name": "validate",
+                "parameters": [{"name": "requestId", "type": "string"}],
+                "returnType": "void",
+                "stepRefs": ["UC1:main:1"],
+            }],
+        }],
+        "DataTypes": [],
+    })
+    second = AcceptedFragment("UC1", {
+        "Classes": [{
+            "className": "RequestControl",
+            "operations": [{
+                "name": "validate",
+                "parameters": [{"name": "requestId", "type": "String"}],
+                "returnType": "void",
+                "stepRefs": ["UC1:main:2"],
+            }],
+        }],
+        "DataTypes": [],
+    })
+
+    model = operations.compose_operation_units(inventory, [first, second])
+    operation = model.Classes[0].operations[0]
+
+    assert operation.parameters[0].type == "String"
+    assert operation.step_refs == ["UC1:main:1", "UC1:main:2"]
 
 
 def test_operation_contract_rejects_duplicate_parameter_names():

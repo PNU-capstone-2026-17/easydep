@@ -20,6 +20,8 @@ from app.implementation.agents.runtime import (
     _owner_continuation_required,
     _owner_message_required,
     _owner_workspace_guidance,
+    _seed_owner_task_tracker,
+    _sync_owner_task_tracker,
     _task_execution_scope,
     create_openhands_conversation,
 )
@@ -833,6 +835,7 @@ def test_owner_candidate_contract_change_is_rejected_before_verification(
         }
     )
     task_path.write_text(json.dumps(task), encoding="utf-8")
+    source.write_text("// EASYDEP-IMPLEMENT: pending\n", encoding="utf-8")
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
 
     sandboxes: list[Path] = []
@@ -877,22 +880,23 @@ def test_owner_candidate_contract_change_is_rejected_before_verification(
                 litellm_model=lambda: "openrouter/openai/gpt-4o-mini",
             ),
         ),
-        patch(
-            "app.implementation.agents.runtime.create_openhands_conversation",
-            side_effect=lambda sandbox, *_args, **_kwargs: (
-                FakeConversation(sandbox),
-                SimpleNamespace(_tools={}),
+            patch(
+                "app.implementation.agents.runtime.create_openhands_conversation",
+                side_effect=lambda sandbox, *_args, **_kwargs: (
+                    FakeConversation(sandbox),
+                    SimpleNamespace(_tools={}),
+                ),
             ),
-        ),
-        patch(
-            "app.implementation.agents.runtime.verify_agent_workspace"
-        ) as verify,
+            patch("app.implementation.agents.runtime._sync_owner_task_tracker"),
+            patch(
+                "app.implementation.agents.runtime.verify_agent_workspace"
+            ) as verify,
         pytest.raises(WorkspaceVerificationError),
     ):
         execute_openhands_task(run, task_id)
 
     verify.assert_not_called()
-    assert source.read_text(encoding="utf-8") == "class OrderService {}"
+    assert source.read_text(encoding="utf-8") == "// EASYDEP-IMPLEMENT: pending\n"
     assert contract.read_text(encoding="utf-8") == "interface OrdersApi {}"
     failure = json.loads(
         (run / f"reports/agent-executions/{task_id}.result.json").read_text(
@@ -1255,6 +1259,7 @@ def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
         }
     )
     task_path.write_text(json.dumps(task), encoding="utf-8")
+    source.write_text("// EASYDEP-IMPLEMENT: pending\n", encoding="utf-8")
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
 
     class FakeConversation:
@@ -1312,6 +1317,7 @@ def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
             "app.implementation.agents.runtime.create_openhands_conversation",
             side_effect=create_conversation,
         ),
+        patch("app.implementation.agents.runtime._sync_owner_task_tracker"),
         patch(
             "app.implementation.agents.runtime.verify_agent_workspace",
             return_value={"command": ["gradle", "test"], "exitCode": 0},
@@ -1321,8 +1327,9 @@ def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
 
     assert conversation is not None
     assert conversation.run_count == 2
-    assert len(conversation.messages) == 2
-    assert "repeated-action loop" in conversation.messages[-1]
+    assert len(conversation.messages) == 3
+    assert "canonical" in conversation.messages[-2]
+    assert "Continue the current owner item" in conversation.messages[-1]
     assert result["stuckRecoveryUsed"] is True
     assert result["executionStatus"] == "finished"
     assert "completedAfterStuck" in source.read_text(encoding="utf-8")
@@ -1583,8 +1590,263 @@ def test_owner_conversation_reopens_the_same_openhands_checkpoint(tmp_path: Path
             conversation=resumed,
             prompt="A newly assigned repair message.",
         )
+        resumed.send_message("A newly assigned repair message.")
+        _sync_owner_task_tracker(
+            _agent,
+            [
+                {
+                    "title": "Resume the current implementation item",
+                    "notes": "The complete list is restored before the next run.",
+                    "status": "in_progress",
+                }
+            ],
+        )
+        from openhands.tools.task_tracker import TaskTrackerAction
+
+        observation = _agent._tools["task_tracker"].executor(
+            TaskTrackerAction(command="view")
+        )
+        assert observation.task_list[0].status == "in_progress"
     finally:
         resumed.close()
+
+
+def test_owner_conversation_uses_native_task_tracker(tmp_path: Path) -> None:
+    persistence = tmp_path / "backend-conversation"
+    conversation_id = uuid.uuid4()
+    source = tmp_path / "application/src/main/java/example/Service.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("// EASYDEP-IMPLEMENT: pending\n", encoding="utf-8")
+    _seed_owner_task_tracker(
+        persistence,
+        conversation_id,
+        tmp_path,
+        tmp_path,
+        [source.relative_to(tmp_path).as_posix()],
+    )
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        LlmConnection(
+            provider="openrouter",
+            api_key="validation-only-key",
+            base_url="https://openrouter.ai/api/v1",
+            model="openai/gpt-oss-20b",
+            litellm_provider="openrouter",
+        ),
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        editable_roots=[str(tmp_path.resolve())],
+        native_owner_tools=True,
+        enable_native_terminal=False,
+        persistence_dir=persistence,
+        conversation_id=conversation_id,
+    )
+    try:
+        conversation.send_message("Track this multi-component implementation.")
+        assert "task_tracker" in agent._tools
+
+        from openhands.tools.task_tracker import TaskTrackerAction
+
+        observation = agent._tools["task_tracker"].executor(
+            TaskTrackerAction(command="view")
+        )
+        assert observation.is_error is False
+        assert len(observation.task_list) == 2
+        assert source.relative_to(tmp_path).as_posix() in observation.task_list[0].title
+        assert observation.task_list[0].status == "in_progress"
+        assert (persistence / conversation_id.hex / "TASKS.json").is_file()
+    finally:
+        conversation.close()
+
+
+def test_owner_task_tracker_is_seeded_from_every_marker_file(tmp_path: Path) -> None:
+    sandbox = tmp_path / "workspace"
+    first = sandbox / "application/src/main/java/example/application/impl/AService.java"
+    second = sandbox / "application/src/main/java/example/adapter/in/AController.java"
+    test = sandbox / "application/src/test/java/example/BackendApplicationTest.java"
+    unrelated = sandbox / "application/src/main/java/example/Unrelated.java"
+    for path, content in (
+        (first, "// EASYDEP-IMPLEMENT: one\n// EASYDEP-IMPLEMENT: two\n"),
+        (second, "// EASYDEP_CONTROLLER_BODY_REQUIRED:GET:/items\n"),
+        (test, "// EASYDEP-IMPLEMENT: assertions\n"),
+        (unrelated, "class Unrelated {}\n"),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    persistence = tmp_path / "conversations"
+    conversation_id = uuid.uuid4()
+    task_file = _seed_owner_task_tracker(
+        persistence,
+        conversation_id,
+        sandbox,
+        sandbox,
+        [
+            first.relative_to(sandbox).as_posix(),
+            second.relative_to(sandbox).as_posix(),
+            test.relative_to(sandbox).as_posix(),
+            unrelated.relative_to(sandbox).as_posix(),
+        ],
+    )
+
+    assert task_file == persistence / conversation_id.hex / "TASKS.json"
+    tasks = json.loads(task_file.read_text(encoding="utf-8"))
+    assert [item["status"] for item in tasks] == [
+        "in_progress",
+        "todo",
+        "todo",
+        "todo",
+    ]
+    assert first.relative_to(sandbox).as_posix() in tasks[0]["title"]
+    assert "2 original marker occurrence(s); 2 remain" in tasks[0]["notes"]
+    assert second.relative_to(sandbox).as_posix() in tasks[1]["title"]
+    assert test.relative_to(sandbox).as_posix() in tasks[2]["title"]
+    assert "canonical owner verification" in tasks[3]["title"]
+    assert all(unrelated.name not in item["title"] for item in tasks)
+
+
+def test_owner_task_tracker_restores_full_plan_from_workspace_progress(
+    tmp_path: Path,
+) -> None:
+    contract = tmp_path / "contract"
+    sandbox = tmp_path / "workspace"
+    relative = Path("application/src/main/java/example/Service.java")
+    source = contract / relative
+    completed = sandbox / relative
+    source.parent.mkdir(parents=True)
+    completed.parent.mkdir(parents=True)
+    source.write_text("// EASYDEP-IMPLEMENT: pending\n", encoding="utf-8")
+    completed.write_text("class Service {}\n", encoding="utf-8")
+    persistence = tmp_path / "conversations"
+    conversation_id = uuid.uuid4()
+    task_file = persistence / conversation_id.hex / "TASKS.json"
+    task_file.parent.mkdir(parents=True)
+    existing = [{"title": "Partial model plan", "notes": "stale", "status": "todo"}]
+    task_file.write_text(json.dumps(existing), encoding="utf-8")
+
+    result = _seed_owner_task_tracker(
+        persistence,
+        conversation_id,
+        contract,
+        sandbox,
+        [relative.as_posix()],
+    )
+
+    assert result == task_file
+    tasks = json.loads(task_file.read_text(encoding="utf-8"))
+    assert [item["status"] for item in tasks] == ["done", "in_progress"]
+    assert relative.as_posix() in tasks[0]["title"]
+    assert "canonical owner verification" in tasks[1]["title"]
+    assert all(item["title"] != "Partial model plan" for item in tasks)
+
+
+def test_owner_runs_marker_files_as_focused_turns_before_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run, task_id, first_path, _first = _write_minimal_agent_task(tmp_path)
+    second_path = "application/src/main/java/com/example/application/OtherService.java"
+    for relative in (first_path, second_path):
+        target = run / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("// EASYDEP-IMPLEMENT: pending\n", encoding="utf-8")
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task.update(
+        {
+            "task_type": "backend-implementation",
+            "owner": "backend",
+            "allowed_write_roots": [
+                "application/src/main/java/com/example/application"
+            ],
+            "required_output_paths": [first_path, second_path],
+        }
+    )
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+
+    class FakeConversation:
+        def __init__(self, sandbox: Path) -> None:
+            self.sandbox = sandbox
+            self.messages: list[str] = []
+            self.run_count = 0
+
+        def send_message(self, message: str) -> None:
+            self.messages.append(message)
+
+        def run(self) -> None:
+            self.run_count += 1
+            current = self.messages[-1]
+            for relative in (first_path, second_path):
+                if f"`{relative}`" in current:
+                    (self.sandbox / relative).write_text(
+                        f"class {Path(relative).stem} {{}}\n",
+                        encoding="utf-8",
+                    )
+
+        def close(self) -> None:
+            pass
+
+    conversations: list[FakeConversation] = []
+    terminal_flags: list[bool] = []
+    tracker_updates: list[list[dict[str, object]]] = []
+
+    def create_conversation(sandbox: Path, *_args, **kwargs):
+        conversation = FakeConversation(sandbox)
+        conversations.append(conversation)
+        terminal_flags.append(bool(kwargs["enable_native_terminal"]))
+        return conversation, SimpleNamespace(_tools={})
+
+    with (
+        patch(
+            "app.implementation.agents.runtime.openhands_compatibility",
+            return_value={
+                "pythonCompatible": True,
+                "sdkInstalled": True,
+                "toolsInstalled": True,
+                "apiKeyConfigured": True,
+            },
+        ),
+        patch(
+            "app.implementation.agents.runtime.openhands_connection",
+            return_value=SimpleNamespace(
+                provider="openrouter",
+                model="openai/gpt-4o-mini",
+                litellm_model=lambda: "openrouter/openai/gpt-4o-mini",
+            ),
+        ),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            side_effect=create_conversation,
+        ),
+        patch(
+            "app.implementation.agents.runtime._sync_owner_task_tracker",
+            side_effect=lambda _agent, tasks: tracker_updates.append(tasks),
+        ),
+        patch(
+            "app.implementation.agents.runtime.verify_agent_workspace",
+            return_value={"command": ["gradle", "test"], "exitCode": 0},
+        ) as verify,
+    ):
+        result = execute_openhands_task(run, task_id)
+
+    assert terminal_flags == [False]
+    assert [conversation.run_count for conversation in conversations] == [2]
+    assert first_path in conversations[0].messages[1]
+    assert second_path in conversations[0].messages[2]
+    assert [item["status"] for item in tracker_updates[0]] == [
+        "in_progress",
+        "todo",
+        "todo",
+    ]
+    assert [item["status"] for item in tracker_updates[-1]] == [
+        "done",
+        "done",
+        "in_progress",
+    ]
+    verify.assert_called_once()
+    assert result["status"] == "SUCCEEDED"
+    assert "EASYDEP-IMPLEMENT" not in (run / first_path).read_text(encoding="utf-8")
+    assert "EASYDEP-IMPLEMENT" not in (run / second_path).read_text(encoding="utf-8")
 
 
 def test_owner_retry_continues_after_a_completed_unverified_turn(tmp_path: Path) -> None:
@@ -2320,6 +2582,7 @@ class Order <<Entity>> { - id: UUID }
     assert frontend["depends_on"] == ["implement-backend-application"]
     assert state["nextRunnableTasks"] == ["implement-backend-application"]
     context = json.loads((run / backend["context_file"]).read_text(encoding="utf-8"))
+    assert context["allowAssumptions"] is True
     assert set(context["useCaseIds"]) == {"UC1", "UC2"}
     assert set(context["requirementIds"]) == {"FR-ORDER", "FR-CANCEL"}
     assert "application/src/main/java/com/example/orders/bce/Order.java" in set(
@@ -2375,6 +2638,7 @@ class Order <<Entity>> { - id: UUID }
     assert '"control_binding"' not in prompt
     assert context["sourceIndexPath"] in prompt
     assert context["methodContextRoot"] in prompt
+    assert "choose the simplest behavior consistent with the frozen contracts" in prompt
     assert "INTERNAL-REPAIR-MARKER" not in prompt
     assert "INTERNAL-USE-CASE-REPAIR" not in prompt
 
