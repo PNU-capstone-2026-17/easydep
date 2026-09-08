@@ -85,6 +85,7 @@ class _SpecificationInput(UseCaseItem):
 
     _neighboring_goals: NotRequired[list[_NeighbourGoal]]
     _constraint_requirements: NotRequired[list[dict[str, object]]]
+    _existing_spec: NotRequired[UseCaseSpecItem]
 
 
 def normalize_text(text: str) -> str:
@@ -152,6 +153,25 @@ def _spec_human(
         "Applicable RTM constraints (refine this use case; they are not new goals or "
         f"scenario coverage):\n{constraint_listing}"
     )
+    existing_spec = uc.get("_existing_spec")
+    if existing_spec:
+        current = {
+            key: existing_spec.get(key)
+            for key in (
+                "preconditions",
+                "trigger",
+                "main_scenario",
+                "extensions",
+                "success_guarantee",
+                "minimal_guarantee",
+            )
+        }
+        base += (
+            "\n\n[CURRENT SPECIFICATION — use this as the authoritative baseline. "
+            "Return the full specification, but change only what the user feedback asks "
+            "for and preserve every other field exactly.]\n"
+            + json.dumps(current, ensure_ascii=False, sort_keys=True)
+        )
     return prompts.apply_user_feedback(base, feedback)
 
 
@@ -618,11 +638,14 @@ def generate_specs(
             )
             if str(item.get("id") or "") not in direct_ids
         ]
-        to_gen.append(cast(_SpecificationInput, {
+        spec_input = cast(_SpecificationInput, {
             **use_case,
             "_neighboring_goals": neighbouring_goals,
             "_constraint_requirements": applicable_constraints,
-        }))
+        })
+        if target_set is not None and existing.get(use_case["id"]):
+            spec_input["_existing_spec"] = existing[use_case["id"]]
+        to_gen.append(spec_input)
 
     workers = max(1, min(len(to_gen), settings.spec_concurrency)) if to_gen else 1
     results: dict[str, UseCaseSpecItem] = {}

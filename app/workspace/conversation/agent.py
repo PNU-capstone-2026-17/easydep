@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from typing import Literal, TypeVar
 
@@ -34,7 +35,17 @@ class _ConversationPlan(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     kind: Literal["reply", "project_question", "command", "clarification"]
-    intent: ConversationIntent | None = None
+    intent: Literal[
+        "",
+        "advance",
+        "answer",
+        "revise",
+        "delegate_repair",
+        "branch",
+        "rerun",
+        "confirm_revision",
+        "dismiss_revision",
+    ] = ""
     query: str = ""
     reply: str = ""
     question: str = ""
@@ -42,7 +53,7 @@ class _ConversationPlan(BaseModel):
 
     @model_validator(mode="after")
     def validate_kind_fields(self) -> _ConversationPlan:
-        if self.kind == "command" and self.intent is None:
+        if self.kind == "command" and not self.intent:
             raise ValueError("command plans require an intent")
         if self.kind == "command" and self.intent in {
             ConversationIntent.BRANCH,
@@ -75,6 +86,8 @@ Classify the user's utterance without inventing state or artifact references.
   corresponding pending-plan action is present in the supplied workspace context. Branch supports
   requirements, design, and implementation; rerun also supports testing. Choose only one stage.
 - clarification: the utterance is ambiguous between those categories.
+An artifact selection in workspace context identifies what the user is viewing; it is not itself an
+instruction to revise it. Classify the user's utterance first.
 Never infer a file, impact scope, or target reference. A stage may be selected only for an explicit
 branch or rerun request. Buttons and explicit action payloads do not pass through this classifier."""
 
@@ -133,15 +146,21 @@ class ConversationAgent:
         if plan.kind == "clarification":
             return Clarification(question=plan.question.strip(), candidates=[])
         if plan.kind == "project_question":
-            return self._answer_project_question(utterance, plan.query, project_tools)
+            return self._answer_project_question(
+                utterance,
+                plan.query,
+                project_tools,
+                context=context,
+            )
 
-        assert plan.intent is not None
+        assert plan.intent
         if plan.intent == ConversationIntent.REVISE:
             return self._resolve_revision(
                 utterance,
                 plan.query or utterance,
                 project_tools,
                 recent_refs=list(dict.fromkeys(context.target_remap.values())),
+                context=context,
             )
         return CommandIntent(
             intent=plan.intent,
@@ -156,10 +175,16 @@ class ConversationAgent:
         tools: ProjectTools,
         *,
         recent_refs: list[str] | None = None,
+        context: ConversationContext | None = None,
     ) -> CommandIntent | Clarification:
-        candidates = tools.search_elements(query)
+        selected_candidates = self._selected_artifact_candidates(context, tools)
+        candidates = _merge_candidates(
+            self._exact_catalog_candidates(query, tools),
+            tools.search_elements(query),
+            selected_candidates,
+        )
         if not candidates and query.strip() != text.strip():
-            candidates = tools.search_elements(text)
+            candidates = _merge_candidates(candidates, tools.search_elements(text))
         if recent_refs:
             validation = tools.validate_revision_selections(recent_refs[:12])
             known_refs = {str(item.get("ref") or "") for item in candidates}
@@ -172,7 +197,12 @@ class ConversationAgent:
                     known_refs.add(normalized_ref)
                 except KeyError:
                     continue
-        return self._select_revision(text, candidates, tools)
+        return self._select_revision(
+            text,
+            candidates,
+            tools,
+            context=context,
+        )
 
     def interpret_revision(
         self,
@@ -180,23 +210,43 @@ class ConversationAgent:
         target_refs: list[str],
         *,
         tools: ProjectTools,
+        context: ConversationContext | None = None,
     ) -> CommandIntent | Clarification:
         """Interpret semantics for UI-selected targets without reclassifying the command."""
 
         validation = tools.validate_revision_selections(target_refs)
-        candidates: list[dict] = []
+        exact_candidates: list[dict] = []
+        describe = getattr(tools, "describe_element", None)
         for ref in validation.get("valid_refs") or []:
             try:
-                candidates.append(tools.read_element(str(ref)))
+                exact_candidates.append(
+                    describe(str(ref)) if callable(describe) else tools.read_element(str(ref))
+                )
             except KeyError:
                 continue
-        return self._select_revision(text, candidates, tools)
+        # A selected card is locality, not necessarily the leaf that owns the
+        # requested change. Include finite current-project matches so a named
+        # operation inside a selected sequence can become the exact authority.
+        candidates = _merge_candidates(
+            self._exact_catalog_candidates(text, tools),
+            exact_candidates,
+            tools.search_elements(text),
+            self._selected_artifact_candidates(context, tools),
+        )[:12]
+        return self._select_revision(
+            text,
+            candidates,
+            tools,
+            context=context,
+        )
 
     def _select_revision(
         self,
         text: str,
         candidates: list[dict],
         tools: ProjectTools,
+        *,
+        context: ConversationContext | None = None,
     ) -> CommandIntent | Clarification:
         """Use one structured call for target selection and revision semantics."""
 
@@ -217,15 +267,25 @@ class ConversationAgent:
                         "implementation, test_expectation, or unknown. Use implementation for a "
                         "testing finding that asks to repair trace-linked production code; use "
                         "test_expectation only when the expected external behavior itself changes. "
+                        "Use presentation only for visual formatting or labels that do not change "
+                        "a described system response. Scenario steps, emitted messages, conditions, "
+                        "and outcomes are behavior. Use contract for designed interfaces such as "
+                        "operation names, parameters, return types, API shapes, and schema fields. "
+                        "Use implementation only for source files, implementation tasks, or code "
+                        "details behind those contracts. "
                         "requested_effect is a short "
-                        "description of what the user asked for, never an executable stage, file, "
+                        "resolved description of what the user asked for. When the supplied "
+                        "conversation contains an original request and a follow-up, preserve the "
+                        "specific details from both; do not invent details. Never name an executable stage, file, "
                         "owner, impact list, or inferred upstream target. Also classify change_type "
-                        "as modify, add, rename, remove, or unknown. Use unknown when the wording "
+                        "as modify, add, rename, remove, or unknown. A selected artifact is context, "
+                        "not a requested mutation. Use unknown when the wording "
                         "does not distinguish those meanings."
                     )
                 ),
                 HumanMessage(
                     content=(
+                        f"Revision conversation:\n{self._recent_turns_text(context)}\n\n"
                         f"Revision request:\n{text}\n\nCandidates:\n"
                         + json.dumps(candidates, ensure_ascii=False, default=str)
                     )
@@ -234,6 +294,12 @@ class ConversationAgent:
         )
         available = {str(item.get("ref") or "") for item in candidates}
         selected = list(dict.fromkeys(ref for ref in selection.targets if ref in available))
+        exact_refs = _exact_candidate_refs(text, candidates)
+        selected_exact = [ref for ref in selected if ref in exact_refs]
+        if len(selected_exact) == 1:
+            # Exact identity narrows an already model-selected target; merely
+            # mentioning another artifact is not authority to edit it.
+            selected = selected_exact
         validation = tools.validate_revision_selections(selected)
         valid = list(validation.get("valid_refs") or [])
         if not valid:
@@ -248,31 +314,47 @@ class ConversationAgent:
                 ),
                 candidates=[item for item in labels if item],
             )
+        # A follow-up after a clarification needs the original request as well
+        # as the new constraint. The structured interpreter receives that small
+        # dialogue and resolves the user-authored request without guessing refs.
+        requested_effect = (
+            selection.requested_effect.strip()
+            if context is not None and context.turns and selection.requested_effect.strip()
+            else text.strip()
+        )
         interpretation = selection.model_copy(
             update={
                 "targets": valid,
-                # The exact user instruction is frozen into the deterministic
-                # plan digest. The model may classify its semantics, but it
-                # cannot replace the instruction that will execute.
-                "requested_effect": text.strip(),
+                "requested_effect": requested_effect,
             }
         )
         return CommandIntent(
             intent=ConversationIntent.REVISE,
             targets=valid,
-            instruction=text.strip(),
+            instruction=interpretation.requested_effect,
             revision=interpretation,
         )
 
     def _answer_project_question(
-        self, text: str, query: str, tools: ProjectTools
+        self,
+        text: str,
+        query: str,
+        tools: ProjectTools,
+        *,
+        context: ConversationContext | None = None,
     ) -> Reply | Clarification:
         workspace = tools.read_workspace()
-        candidates = tools.search_elements(query)
+        selected_candidates = self._selected_artifact_candidates(context, tools)
+        candidates = _merge_candidates(
+            self._explicit_selection_candidates(context, selected_candidates),
+            tools.search_elements(query),
+            selected_candidates,
+        )
         if not candidates and query.strip() != text.strip():
-            candidates = tools.search_elements(text)
+            candidates = _merge_candidates(candidates, tools.search_elements(text))
         evidence = {
             "workspace": workspace,
+            "selection": self._selection(context),
             "matches": candidates,
         }
         if candidates:
@@ -294,6 +376,7 @@ class ConversationAgent:
                 ),
                 HumanMessage(
                     content=(
+                        f"Conversation:\n{self._recent_turns_text(context)}\n\n"
                         f"Question:\n{text}\n\nTool evidence:\n"
                         + json.dumps(evidence, ensure_ascii=False, default=str)
                     )
@@ -307,6 +390,50 @@ class ConversationAgent:
             )
         return Reply(text=reply.text.strip())
 
+    @staticmethod
+    def _selection(context: ConversationContext | None) -> dict:
+        if context is None:
+            return {}
+        selection = context.workspace.get("selection")
+        return dict(selection) if isinstance(selection, dict) else {}
+
+    def _selected_artifact_candidates(
+        self, context: ConversationContext | None, tools: ProjectTools
+    ) -> list[dict]:
+        """Read the finite catalog behind a UI artifact selection when present."""
+
+        stage = str(self._selection(context).get("artifact_stage") or "").strip()
+        artifact_candidates = getattr(tools, "artifact_candidates", None)
+        if not stage or not callable(artifact_candidates):
+            return []
+        return list(artifact_candidates(stage))
+
+    @staticmethod
+    def _exact_catalog_candidates(text: str, tools: ProjectTools) -> list[dict]:
+        resolver = getattr(tools, "resolve_exact_elements", None)
+        return list(resolver(text)) if callable(resolver) else []
+
+    def _explicit_selection_candidates(
+        self, context: ConversationContext | None, candidates: list[dict]
+    ) -> list[dict]:
+        """Place the exact UI element first so a grounded answer reads it."""
+
+        selected_ref = str(self._selection(context).get("element_ref") or "").strip()
+        if not selected_ref:
+            return []
+        return [item for item in candidates if str(item.get("ref") or "") == selected_ref]
+
+    @staticmethod
+    def _recent_turns_text(context: ConversationContext | None) -> str:
+        if context is None:
+            return ""
+        return _bounded_text(
+            "\n".join(
+                f"{turn.role}: {turn.text}"
+                for turn in context.turns[-4:]
+            ),
+            16_000,
+        )
 
 def _bounded_text(text: str, limit: int) -> str:
     if len(text) <= limit:
@@ -317,6 +444,62 @@ def _bounded_text(text: str, limit: int) -> str:
         return text[:limit]
     tail = max(1, available // 3)
     return f"{text[: available - tail]}{marker}{text[-tail:]}"
+
+
+def _merge_candidates(*groups: list[dict]) -> list[dict]:
+    """Preserve the first catalog candidate for every finite public ref."""
+
+    merged: list[dict] = []
+    refs: set[str] = set()
+    for group in groups:
+        for item in group:
+            ref = str(item.get("ref") or "")
+            if not ref or ref in refs:
+                continue
+            refs.add(ref)
+            merged.append(item)
+    return merged
+
+
+def _exact_candidate_refs(text: str, candidates: list[dict]) -> list[str]:
+    """Resolve finite public candidate identifiers without ref-kind semantics."""
+
+    normalized_text = " ".join(text.split()).casefold()
+    text_tokens = re.findall(r"[A-Za-z0-9_]+", text.casefold())
+    refs: list[str] = []
+    for item in candidates:
+        ref = str(item.get("ref") or "").strip()
+        if not ref:
+            continue
+        forms = [
+            str(item.get(key) or "").strip()
+            for key in ("ref", "name", "label", "canonical_ref", "requested_ref")
+        ]
+        summary = str(item.get("summary") or "").strip()
+        if summary and normalized_text == " ".join(summary.split()).casefold():
+            refs.append(ref)
+            continue
+        for form in forms:
+            if not form:
+                continue
+            literal = re.search(
+                rf"(?<![A-Za-z0-9_]){re.escape(form)}(?![A-Za-z0-9_])",
+                text,
+                re.IGNORECASE,
+            )
+            # Separator-insensitive comparison supports catalog identifiers in
+            # ordinary prose (for example, ``Owner.method``). Compare whole
+            # token sequences so a shorter catalog name cannot match a word
+            # fragment such as ``Incident`` inside ``Incidental``.
+            form_tokens = re.findall(r"[A-Za-z0-9_]+", form.casefold())
+            token_match = bool(form_tokens) and any(
+                text_tokens[index : index + len(form_tokens)] == form_tokens
+                for index in range(len(text_tokens) - len(form_tokens) + 1)
+            )
+            if literal or token_match:
+                refs.append(ref)
+                break
+    return list(dict.fromkeys(refs))
 
 
 conversation_agent = ConversationAgent()

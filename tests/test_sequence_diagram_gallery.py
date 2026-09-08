@@ -176,6 +176,72 @@ def test_design_refuses_to_advance_past_sequence_findings() -> None:
     resume.assert_not_called()
 
 
+def _stale_sequence_readiness() -> dict:
+    return {
+        "status": "BLOCKED",
+        "findings": [{"stage": "sequence_diagram", "finding": "stale projection"}],
+        "findingRecords": [
+            {
+                "stage": "sequence_diagram",
+                "ruleId": "sequence.class-diagram-version",
+            }
+        ],
+    }
+
+
+def test_advance_reprojects_a_stale_sequence_instead_of_exposing_an_error() -> None:
+    state = {**_state(), "extracted_bce_classes": {"Classes": [{"className": "Course"}]}}
+    repaired = {"status": "need_feedback", "stage": "sequence_diagram"}
+    with (
+        patch("app.design.service.artifact_repository.ensure_app_exists"),
+        patch("app.design.service.has_active_session", return_value=True),
+        patch(
+            "app.design.service.session_status",
+            return_value={"active": True, "stage": "sequence_diagram"},
+        ),
+        patch("app.design.service.artifact_repository.load_state", return_value=state),
+        patch(
+            "app.design.service.design_readiness_report",
+            side_effect=[_stale_sequence_readiness(), {"status": "READY", "findings": []}],
+        ),
+        patch("app.design.service.rewind_design", return_value=repaired) as rewind,
+        patch("app.design.service.resume_design") as resume,
+    ):
+        payload = resume_design_session(APP_ID)
+
+    assert payload == repaired
+    rewind.assert_called_once_with(APP_ID, "sequence_diagram")
+    resume.assert_not_called()
+
+
+def test_retry_at_stale_sequence_gate_runs_the_same_deterministic_reprojection() -> None:
+    state = {**_state(), "extracted_bce_classes": {"Classes": [{"className": "Incident"}]}}
+    repaired = {"status": "need_feedback", "stage": "sequence_diagram"}
+    with (
+        patch("app.design.service.artifact_repository.ensure_app_exists"),
+        patch(
+            "app.design.service.session_status",
+            return_value={
+                "active": True,
+                "retryable": False,
+                "stage": "sequence_diagram",
+            },
+        ),
+        patch("app.design.service.artifact_repository.load_state", return_value=state),
+        patch(
+            "app.design.service.design_readiness_report",
+            side_effect=[_stale_sequence_readiness(), {"status": "READY", "findings": []}],
+        ),
+        patch("app.design.service.rewind_design", return_value=repaired) as rewind,
+        patch("app.design.service.retry_design") as retry,
+    ):
+        payload = retry_design_session(APP_ID)
+
+    assert payload == repaired
+    rewind.assert_called_once_with(APP_ID, "sequence_diagram")
+    retry.assert_not_called()
+
+
 def test_retry_at_a_review_gate_restores_the_draft_without_rerunning() -> None:
     state = {
         **_state(),

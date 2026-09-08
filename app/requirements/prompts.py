@@ -256,9 +256,12 @@ def usecase_local_edit(base_user: str, current_listing: str, target_desc: str, f
         f"{base_user}\n\n"
         f"[CURRENT USE CASES]\n{current_listing}\n\n"
         f"[LOCAL EDIT — apply the user feedback ONLY to these target use cases: {target_desc}. "
-        f"The user's instruction is authoritative. Return the FULL use-case list in the SAME order "
-        f"and the SAME count as above; copy every NON-target use case VERBATIM (identical name, "
-        f"primary_actor, supporting_actors, level, goal, requirement_ids, nfr_ids). Modify only the target(s).]\n"
+        f"The user's instruction is authoritative. Return the FULL use-case list and keep every "
+        f"NON-target use case in the SAME relative order. The selected contiguous target block may "
+        f"change count only when the feedback requests a split, merge, addition, or removal. "
+        f"Copy every NON-target use case VERBATIM (identical name, "
+        f"primary_actor, supporting_actors, level, goal, requirement_ids, nfr_ids). Modify only the target(s), "
+        f"and preserve every target field that the feedback does not ask to change.]\n"
         f"{feedback}"
     )
 

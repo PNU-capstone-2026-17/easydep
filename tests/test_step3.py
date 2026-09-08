@@ -113,6 +113,34 @@ def test_generate_specs_preserves_input_order():
     assert [s["name"] for s in specs] == ["Alpha", "Bravo", "Charlie"]
 
 
+def test_generate_specs_local_edit_keeps_sibling_spec_verbatim():
+    sibling = {
+        **_clean_spec(trigger="existing-import-trigger").model_dump(),
+        "use_case_id": "UC2",
+        "name": "Billing export",
+        "requirement_ids": ["R2"],
+        "nfr_ids": [],
+        "extensions": [{"label": "domain-specific", "branch_step": 1}],
+    }
+
+    def fake(_schema, _messages):
+        return _clean_spec(trigger="new-target-trigger")
+
+    specs = s3.generate_specs(
+        {
+            "use_cases": [_uc("UC1", name="Account access"), _uc("UC2", name="Billing export")],
+            "classified": _CLASSIFIED,
+            "actors": [],
+            "use_case_specs": [sibling],
+        },
+        target_ids=["UC1"],
+        proposal_call=fake,
+    )["use_case_specs"]
+
+    assert specs[1] == sibling
+    assert specs[0]["trigger"] == "new-target-trigger"
+
+
 def test_check_specs_aggregates_report():
     state = {"use_case_specs": [
         {"use_case_id": "UC1", "issues": ["i1", "i2"], "repair_iters": 2},

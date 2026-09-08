@@ -90,6 +90,30 @@ class BatchReviseRequest(BaseModel):
         return revisions
 
 
+def _persisted_stage_changed(
+    original: ArchitectureState,
+    working: ArchitectureState,
+    stage: str,
+) -> bool:
+    """Compare the values that the artifact repository actually versions."""
+
+    config = artifact_repository.STAGE_ARTIFACTS.get(stage)
+    if config is None:
+        # Unknown cascade stages must not be discarded by a deduplication check.
+        return True
+    source_key = config.get("source_key") or config.get("state_key")
+    keys = [
+        key
+        for key in (
+            source_key,
+            config.get("valid_key"),
+            config.get("errors_key"),
+        )
+        if key
+    ]
+    return any(original.get(key) != working.get(key) for key in keys)
+
+
 def start_design_session(app_id: str) -> dict[str, Any]:
     """첫 설계 단계부터 실행하고 클래스 다이어그램 검토 지점에서 멈춘다."""
     _validate_app_id(app_id)
@@ -110,6 +134,29 @@ def start_design_session(app_id: str) -> dict[str, Any]:
         raise RuntimeError(f"Design pipeline failed: {error}") from error
 
 
+def _repair_stale_sequence_projection(
+    app_id: str,
+    state: ArchitectureState,
+    readiness: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Reproject a sequence whose only defect is stale class provenance."""
+
+    records = list(readiness.get("findingRecords") or [])
+    if not records or any(
+        str(record.get("stage") or "") != "sequence_diagram"
+        or str(record.get("ruleId") or "") != "sequence.class-diagram-version"
+        for record in records
+    ):
+        return None
+    class_readiness = design_readiness_report(state, stages=["class_diagram"])
+    if class_readiness.get("findings"):
+        return None
+    # Sequence is a deterministic projection of the accepted class model. A
+    # version mismatch has no user decision to make, so regenerate it and stop
+    # at the sequence review gate instead of presenting an unrecoverable error.
+    return rewind_design(app_id, "sequence_diagram")
+
+
 def resume_design_session(app_id: str, feedback: str = "") -> dict[str, Any]:
     """검토 중인 설계에 피드백을 적용하거나 다음 설계 단계로 진행한다."""
     _validate_app_id(app_id)
@@ -125,6 +172,11 @@ def resume_design_session(app_id: str, feedback: str = "") -> dict[str, Any]:
             readiness = design_readiness_report(state, stages=[str(active_stage)])
             findings = list(readiness.get("findings") or [])
             if findings:
+                repaired = _repair_stale_sequence_projection(
+                    app_id, state, readiness
+                )
+                if repaired is not None:
+                    return repaired
                 raise ValueError(
                     "Resolve the active design findings before advancing. "
                     f"Stage: {active_stage}. Findings: {findings}"
@@ -370,6 +422,12 @@ def retry_design_session(app_id: str) -> dict[str, Any]:
     _validate_app_id(app_id)
     _require_app_exists(app_id)
     status = session_status(app_id)
+    if status.get("active") and status.get("stage") == "sequence_diagram":
+        state = _load_app(app_id)
+        readiness = design_readiness_report(state, stages=["sequence_diagram"])
+        repaired = _repair_stale_sequence_projection(app_id, state, readiness)
+        if repaired is not None:
+            return repaired
     if not status.get("retryable"):
         # 검토 지점은 실패 상태가 아니다. 이때에는 LLM을 다시 호출하지 않고 저장된
         # 결과를 반환하여 새로고침한 Workspace와 실행 상태만 다시 맞춘다.
@@ -492,6 +550,22 @@ def revise_design_elements(
     except Exception as error:
         raise RuntimeError(f"Revision failed; no batch changes were saved: {error}") from error
 
+    # A valid LLM response may still reproduce the selected artifact exactly. Use
+    # the repository's persisted payload rather than a graph model key: deployment,
+    # for example, versions its hydrated bundle and that can change while the
+    # workload graph itself remains identical.
+    changed = [
+        stage
+        for stage in changed
+        if _persisted_stage_changed(original, working, stage)
+    ]
+    touched = {stage: elements for stage, elements in touched.items() if stage in changed}
+    regenerated = {
+        stage: elements for stage, elements in regenerated.items() if stage in changed
+    }
+    if not changed:
+        working = original
+
     combined = {
         "state": working,
         "changed": changed,
@@ -500,12 +574,13 @@ def revise_design_elements(
     # Update the checkpoint first. If artifact persistence then fails, restore
     # the prior checkpoint so a partial database batch cannot become visible.
     # Artifact versions themselves are committed by one repository transaction.
-    sync_design_state(app_id, cast(dict[str, Any], working))
-    try:
-        persist_cascade(app_id, combined)
-    except Exception:
-        sync_design_state(app_id, cast(dict[str, Any], original))
-        raise
+    if changed:
+        sync_design_state(app_id, cast(dict[str, Any], working))
+        try:
+            persist_cascade(app_id, combined)
+        except Exception:
+            sync_design_state(app_id, cast(dict[str, Any], original))
+            raise
 
     return {
         "app_id": app_id,

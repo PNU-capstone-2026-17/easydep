@@ -262,15 +262,58 @@ def _feedback_scope(
     }
     fragments = _fragments_from_model(index, model)
     local_type_owners: dict[str, set[str]] = {}
+    operation_owners: dict[str, set[str]] = {}
     for use_case_id, fragment in fragments.items():
         for item in fragment.get("DataTypes") or []:
             if isinstance(item, dict):
                 local_type_owners.setdefault(text(item.get("name")), set()).add(use_case_id)
+        for item in fragment.get("Classes") or []:
+            if not isinstance(item, dict):
+                continue
+            for operation in item.get("operations") or []:
+                if not isinstance(operation, dict):
+                    continue
+                for key in ("stableId", "operationId"):
+                    operation_id = text(operation.get(key))
+                    if operation_id:
+                        operation_owners.setdefault(operation_id, set()).add(use_case_id)
     use_case_ids = {use_case.id for use_case in index.use_cases}
+    # The reversible fragment intentionally omits canonical operationId because it is
+    # recomputed after an edit.  UI/RTM targets can still use that current ID, so map
+    # both identities from the persisted model through their explicit step ownership.
+    for item in model.get("Classes") or []:
+        if not isinstance(item, dict):
+            continue
+        for operation in item.get("operations") or []:
+            if not isinstance(operation, dict):
+                continue
+            owners = {
+                ref.split(":", 1)[0]
+                for value in operation.get("stepRefs") or []
+                if (ref := text(value)) and ref.split(":", 1)[0] in use_case_ids
+            }
+            for key in ("stableId", "operationId"):
+                operation_id = text(operation.get(key))
+                if operation_id and owners:
+                    operation_owners.setdefault(operation_id, set()).update(owners)
     collaboration_ids = {
         use_case.id for use_case in index.use_cases
         if any(group.use_case_id == use_case.id for group in index.groups)
     }
+    call_owners: dict[str, set[str]] = {}
+    for collaboration in model.get("Collaborations") or []:
+        if not isinstance(collaboration, dict):
+            continue
+        collaboration_id = text(collaboration.get("collaborationId"))
+        if collaboration_id not in collaboration_ids:
+            continue
+        for call in collaboration.get("calls") or []:
+            if not isinstance(call, dict):
+                continue
+            for key in ("stableId", "callId"):
+                call_id = text(call.get(key))
+                if call_id:
+                    call_owners.setdefault(call_id, set()).add(collaboration_id)
     # 1. UI나 finding이 정확한 ID를 보냈다면 LLM을 호출하지 않는다. target 전체가 한
     # 소유 집합에 포함될 때만 확정해 부분적으로 잘못 해석된 ID를 조용히 버리지 않는다.
     if targets:
@@ -281,6 +324,17 @@ def _feedback_scope(
                 use_case_id for target in targets for use_case_id in local_type_owners[target]
             }
             return FeedbackScope(kind="operation", ids=sorted(owners, key=id_key))
+        if targets <= operation_owners.keys():
+            owners = {
+                use_case_id for target in targets for use_case_id in operation_owners[target]
+            }
+            return FeedbackScope(kind="operation", ids=sorted(owners, key=id_key))
+        if targets <= call_owners.keys():
+            owners = {
+                collaboration_id for target in targets
+                for collaboration_id in call_owners[target]
+            }
+            return FeedbackScope(kind="collaboration", ids=sorted(owners, key=id_key))
     # 2. 결정론적 단서가 없을 때만 LLM이 종류와 ID를 고른다. 아래 candidates 밖의 ID는
     # 응답 검증 직후 거부되며, 이 호출 자체가 설계 내용을 생성하지는 않는다.
     parsed = parse_structured(

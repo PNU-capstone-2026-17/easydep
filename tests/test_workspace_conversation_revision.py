@@ -4,7 +4,7 @@ from typing import Any
 
 from app.workspace import service as workspace_module
 from app.workspace.conversation.agent import ConversationAgent
-from app.workspace.conversation.context import ConversationContext
+from app.workspace.conversation.context import ConversationContext, ConversationTurn
 from app.workspace.conversation.contracts import (
     Clarification,
     CommandIntent,
@@ -47,6 +47,28 @@ class _FakeTools:
         }
 
     validate_revision_selections = validate_targets
+
+
+def test_followup_executes_resolved_request_instead_of_only_target_name() -> None:
+    context = _context(pending_question="Which class should change?")
+    context.turns = [
+        ConversationTurn(role="user", text="Require a customer id when placing orders.", command_id="request"),
+        ConversationTurn(role="assistant", text="Which class should change?", command_id="request"),
+    ]
+    instruction = "Require a customer id when OrderService places orders."
+
+    def propose(schema, messages):
+        if schema.__name__ == "_ConversationPlan":
+            return schema(kind="command", intent="revise", query="OrderService")
+        assert "Require a customer id" in messages[-1].content
+        return schema(targets=["class_diagram:OrderService"], semantic_scope="behavior", requested_effect=instruction)
+
+    result = ConversationAgent(propose).respond(
+        "app-1", "OrderService", context, tools=_FakeTools()
+    )
+    assert isinstance(result, CommandIntent)
+    assert result.instruction == instruction
+    assert result.revision.requested_effect == instruction
 
 
 def test_revision_uses_one_structured_selection_call_for_full_interpretation() -> None:
@@ -227,3 +249,94 @@ def test_plain_affirmative_without_pending_plan_is_not_an_answer_approval(monkey
     assert action == "message"
     assert payload["_conversation_outcome"]["kind"] == "clarification"
     assert "not available" in payload["_conversation_outcome"]["question"]
+
+
+def test_clarification_after_reply_reuses_its_preserved_message_action() -> None:
+    reply = {
+        "command_id": "reply-command",
+        "app_id": "app-1",
+        "stage": "requirements",
+        "status": "COMPLETED",
+        "payload": {
+            "_conversation_actions": [
+                {
+                    "action": "message",
+                    "label": "Send revision feedback",
+                    "payload": {"action_id": "stage-gate"},
+                }
+            ]
+        },
+        "result": {},
+    }
+
+    action, payload, stage = WorkspaceService._clarification_message(
+        {"text": "Change UC2.", "action_id": "reply-command"},
+        Clarification(question="Which UC2 artifact?"),
+        None,
+        reply,
+    )
+
+    assert (action, stage) == ("message", "requirements")
+    assert payload["action_id"] == "stage-gate"
+
+
+def test_single_selected_feedback_keeps_the_ref_out_of_user_instruction(
+    monkeypatch,
+) -> None:
+    latest = {
+        "command_id": "stage-gate",
+        "app_id": "app-1",
+        "action": "advance",
+        "stage": "design",
+        "status": "AWAITING_INPUT",
+        "payload": {},
+        "result": {
+            "wait_reason": "review",
+            "actions": [
+                {
+                    "action": "message",
+                    "label": "Send revision feedback",
+                    "payload": {"action_id": "stage-gate"},
+                    "auto_selectable": False,
+                }
+            ],
+        },
+    }
+    observed: dict[str, Any] = {}
+    monkeypatch.setattr(
+        workspace_module.repository, "latest_command", lambda *_a, **_k: latest,
+    )
+    monkeypatch.setattr(
+        workspace_module, "build_conversation_context", lambda _app: _context(),
+    )
+
+    def interpret(text, refs, **_kwargs):
+        observed["text"] = text
+        observed["refs"] = refs
+        return Clarification(question="Choose the exact operation.")
+
+    monkeypatch.setattr(
+        workspace_module.conversation_agent, "interpret_revision", interpret,
+    )
+    service = WorkspaceService()
+    try:
+        service._prepare_conversational_message(
+            "app-1",
+            action="message",
+            payload={
+                "text": "Rename MemberBoundary.cancelReservation.",
+                "action_id": "stage-gate",
+                "context": {
+                    "artifact_stage": "sequence_diagram",
+                    "element_ref": "sequence_diagram:UC4",
+                },
+            },
+            stage=None,
+        )
+    finally:
+        service.shutdown()
+
+    assert observed == {
+        "text": "Rename MemberBoundary.cancelReservation.",
+        "refs": ["sequence_diagram:UC4"],
+    }

@@ -191,6 +191,32 @@ class RevisionPlanner:
             "actor": "actors",
             "relationship": "relationships",
         }
+        if len(requested) == 1 and requested[0].kind == "requirements_stage":
+            stage = requested[0].element_id
+            if stage not in {"actors", "relationships"}:
+                return self._result(
+                    intent,
+                    snapshot,
+                    status="unsupported",
+                    requested=requested,
+                    reasons=("unsupported_requirements_stage",),
+                    explanation="This requirements section has no bounded broad revision adapter.",
+                )
+            relations = self.tools.revision_relations(requested)
+            return self._result(
+                intent,
+                snapshot,
+                status="needs_confirmation",
+                requested=requested,
+                authority=requested,
+                downstream=self._downstream_targets(relations, requested),
+                execution_mode="stage_rewind",
+                reasons=("stage_rewind_requires_confirmation",),
+                explanation=(
+                    "This requirements editor regenerates the complete owning section and "
+                    "its downstream model. Confirm the displayed scope before continuing."
+                ),
+            )
         if len(requested) == 1 and requested[0].kind in broad_requirements:
             marker_ref = str(
                 TraceRef("requirements_stage", broad_requirements[requested[0].kind])
@@ -262,7 +288,10 @@ class RevisionPlanner:
                 status="unsupported",
                 requested=requested,
                 reasons=("unsupported_owner_scope",),
-                explanation=f"The current revision path does not support this target and semantic scope: {', '.join(unsupported)}",
+                explanation=(
+                    "The current revision path does not support "
+                    f"{intent.semantic_scope} changes for: {', '.join(unsupported)}"
+                ),
             )
         resolved_rules = tuple(rule for rule in rules if rule is not None)
         if len({rule for rule in resolved_rules}) != 1:

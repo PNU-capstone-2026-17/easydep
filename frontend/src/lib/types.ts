@@ -155,6 +155,121 @@ export interface RepairState {
   stall_reason?: string;
 }
 
+export type TestingGateStatus = 'PASS' | 'FAIL' | 'INCONCLUSIVE' | 'NOT_APPLICABLE' | string;
+
+export interface TestingDiagnostic {
+  code?: string;
+  message?: string;
+  defectClass?: string;
+}
+
+export interface TestingFinding {
+  code?: string;
+  stage?: string;
+  message?: string;
+  severity?: string;
+  repairable?: boolean;
+  defect_class?: string;
+  repair_owner?: string;
+  target_ids?: string[];
+  file_hints?: string[];
+  trace_refs?: string[];
+  statusCode?: number;
+  operationId?: string;
+  request?: Record<string, unknown>;
+  responseBody?: unknown;
+}
+
+export interface TestingCommandEvidence {
+  name?: string;
+  command?: unknown;
+  status?: string;
+  output?: string;
+  error?: string;
+  reason?: string;
+  statusCode?: number;
+  operationId?: string;
+}
+
+export interface TestingFunctionalStep {
+  stepId?: string;
+  operationId?: string;
+  method?: string;
+  path?: string;
+  statusCode?: number;
+  inputSources?: Record<string, string>;
+}
+
+export interface TestingFunctionalCase {
+  caseId?: string;
+  requirementIds?: string[];
+  useCaseId?: string;
+  result?: TestingGateReport;
+}
+
+export interface TestingGateReport {
+  status?: string;
+  gateStatus?: TestingGateStatus;
+  message?: string;
+  reason?: string;
+  issues?: unknown[];
+  targets?: string[];
+  tool?: string;
+  commands?: TestingCommandEvidence[];
+  findings?: TestingFinding[];
+  allowedFindings?: TestingFinding[];
+  finding?: TestingFinding;
+  steps?: TestingFunctionalStep[];
+  cases?: TestingFunctionalCase[];
+  pendingCaseIds?: string[];
+  reusedCaseIds?: string[];
+  executionOrder?: string[];
+  requirements?: {
+    contractCount?: number;
+    contractIds?: string[];
+    unverifiedIds?: string[];
+    semanticStatus?: string;
+  };
+  reused?: boolean;
+  reusedFromJobId?: string;
+  trivyScan?: TestingGateReport;
+  deploymentPackage?: TestingGateReport;
+}
+
+export interface TestingReport {
+  passed?: boolean;
+  gateStatus?: TestingGateStatus;
+  gateCounts?: Record<string, number>;
+  diagnostics?: TestingDiagnostic[];
+  blocking_findings?: TestingFinding[];
+  repair_state?: RepairState;
+  verification?: {
+    passed?: boolean;
+    gateStatus?: TestingGateStatus;
+    gateCounts?: Record<string, number>;
+    blockingReason?: string | null;
+    applicationLaunchError?: string | null;
+    diagnostics?: TestingDiagnostic[];
+    reports?: {
+      static?: TestingGateReport;
+      iac?: TestingGateReport;
+      dynamicFunctional?: TestingGateReport;
+    };
+  };
+}
+
+export interface TestingResultResponse {
+  app_id: string;
+  available: boolean;
+  command_id: string | null;
+  command_status: CommandStatus | null;
+  implementation_job_id: string | null;
+  created_at: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+  report: TestingReport | null;
+}
+
 export interface LiveDiagramPreview {
   command_id: string;
   stage: 'class_diagram';

@@ -37,6 +37,10 @@ class FakeTools:
         self.calls.append(("search_elements", query))
         return list(self.matches)
 
+    def artifact_candidates(self, artifact_stage: str):
+        self.calls.append(("artifact_candidates", artifact_stage))
+        return list(self.matches)
+
     def validate_targets(self, refs):
         refs = list(refs)
         self.calls.append(("validate_targets", refs))
@@ -66,6 +70,62 @@ def test_general_reply_does_not_read_project_state() -> None:
     assert isinstance(result, Reply)
     assert result.text.startswith("Hello")
     assert tools.calls == []
+
+
+def test_selected_artifact_still_classifies_ordinary_chat_before_reading() -> None:
+    def propose(schema, _messages):
+        assert schema.__name__ == "_ConversationPlan"
+        return schema(kind="reply", reply="Hello. How can I help?")
+
+    tools = FakeTools()
+    result = ConversationAgent(propose).respond(
+        "app-1",
+        "Hello",
+        ConversationContext(
+            app_id="app-1",
+            workspace={
+                "stage": "design",
+                "selection": {"artifact_stage": "class_diagram"},
+            },
+        ),
+        tools=tools,
+    )
+
+    assert isinstance(result, Reply)
+    assert tools.calls == []
+
+
+def test_selected_artifact_question_reads_the_exact_selected_element() -> None:
+    def propose(schema, _messages):
+        if schema.__name__ == "_ConversationPlan":
+            return schema(kind="project_question", query="operations")
+        return schema(text="OrderService has a placeOrder operation.")
+
+    tools = FakeTools()
+    result = ConversationAgent(propose).respond(
+        "app-1",
+        "What operations does this have?",
+        ConversationContext(
+            app_id="app-1",
+            workspace={
+                "stage": "design",
+                "selection": {
+                    "artifact_stage": "class_diagram",
+                    "element_ref": "class_diagram:OrderService",
+                },
+            },
+        ),
+        tools=tools,
+    )
+
+    assert isinstance(result, Reply)
+    assert [name for name, _ in tools.calls] == [
+        "read_workspace",
+        "artifact_candidates",
+        "search_elements",
+        "validate_targets",
+        "read_element",
+    ]
 
 
 def test_project_question_is_answered_from_read_only_tool_evidence() -> None:
@@ -111,6 +171,197 @@ def test_revision_can_only_select_a_finite_validated_ref() -> None:
     assert result.intent == "revise"
     assert result.targets == ["class_diagram:OrderService"]
     assert ("validate_targets", ["class_diagram:OrderService"]) in tools.calls
+
+
+def test_selected_diagram_can_resolve_an_explicitly_named_nested_operation() -> None:
+    operation_ref = "class_diagram:OrderControl::cancelReservation()"
+
+    def propose(schema, messages):
+        assert schema.__name__ == "RevisionInterpretation"
+        prompt = str(messages[-1].content)
+        assert "sequence_diagram:UC4" in prompt
+        assert operation_ref in prompt
+        return schema(
+            targets=[
+                operation_ref,
+                "class_diagram:UC4::call:1",
+                "sequence_diagram:UC4",
+            ],
+            semantic_scope="contract",
+            requested_effect="Rename cancelReservation to submitCancellation.",
+            change_type="rename",
+        )
+
+    tools = FakeTools()
+    tools.matches = [
+        {
+            "ref": "sequence_diagram:UC4",
+            "label": "UC4",
+            "owner": "design",
+            "editable": True,
+        },
+        {
+            "ref": operation_ref,
+            "label": "OrderControl::cancelReservation()",
+            "owner": "design",
+            "editable": True,
+        },
+        {
+            "ref": "class_diagram:UC4::call:1",
+            "label": "UC4::call:1",
+            "owner": "design",
+            "editable": True,
+        },
+    ]
+    selected_context = ConversationContext(
+        app_id="app-1",
+        workspace={
+            "stage": "design",
+            "status": "AWAITING_INPUT",
+            "selection": {
+                "artifact_stage": "sequence_diagram",
+                "element_ref": "sequence_diagram:UC4",
+            },
+        },
+    )
+
+    result = ConversationAgent(propose).interpret_revision(
+        "Rename OrderControl.cancelReservation to submitCancellation.",
+        ["sequence_diagram:UC4"],
+        tools=tools,
+        context=selected_context,
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert result.targets == [operation_ref]
+
+
+def test_exact_identifier_resolution_is_not_limited_to_class_operations() -> None:
+    schema_ref = "api_spec:IncidentAcknowledgement"
+
+    def propose(schema, _messages):
+        assert schema.__name__ == "RevisionInterpretation"
+        return schema(
+            targets=["sequence_diagram:UC-INCIDENT", schema_ref],
+            semantic_scope="contract",
+            requested_effect="Rename IncidentAcknowledgement to IncidentReceipt.",
+            change_type="rename",
+        )
+
+    tools = FakeTools()
+    tools.matches = [
+        {
+            "ref": "sequence_diagram:UC-INCIDENT",
+            "label": "UC-INCIDENT",
+            "owner": "design",
+            "editable": True,
+        },
+        {
+            "ref": schema_ref,
+            "label": "IncidentAcknowledgement",
+            "owner": "design",
+            "editable": True,
+        },
+    ]
+
+    result = ConversationAgent(propose).interpret_revision(
+        "Rename IncidentAcknowledgement to IncidentReceipt.",
+        ["sequence_diagram:UC-INCIDENT"],
+        tools=tools,
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert result.targets == [schema_ref]
+
+
+def test_ambiguous_exact_labels_remain_for_structured_disambiguation() -> None:
+    first_ref = "api_spec:Incident"
+    second_ref = "use_case:Incident"
+
+    def propose(schema, _messages):
+        assert schema.__name__ == "RevisionInterpretation"
+        return schema(
+            targets=[second_ref],
+            semantic_scope="behavior",
+            requested_effect="Change the incident use case.",
+        )
+
+    tools = FakeTools()
+    tools.matches = [
+        {"ref": first_ref, "label": "Incident", "owner": "design", "editable": True},
+        {"ref": second_ref, "label": "Incident", "owner": "requirements", "editable": True},
+    ]
+
+    result = ConversationAgent(propose).interpret_revision(
+        "Change Incident.", [first_ref], tools=tools
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert result.targets == [second_ref]
+
+
+def test_exact_identifier_does_not_match_inside_a_longer_word() -> None:
+    incident_ref = "api_spec:Incident"
+    selected_ref = "use_case:UC-TRIAGE"
+
+    def propose(schema, _messages):
+        assert schema.__name__ == "RevisionInterpretation"
+        return schema(
+            targets=[selected_ref],
+            semantic_scope="behavior",
+            requested_effect="Change incidental behavior.",
+        )
+
+    tools = FakeTools()
+    tools.matches = [
+        {"ref": incident_ref, "label": "Incident", "owner": "design", "editable": True},
+        {"ref": selected_ref, "label": "Workflow", "owner": "requirements", "editable": True},
+    ]
+
+    result = ConversationAgent(propose).interpret_revision(
+        "Change incidental behavior.", [selected_ref], tools=tools
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert result.targets == [selected_ref]
+
+
+def test_mentioned_exact_dependency_does_not_override_the_selected_authority() -> None:
+    schema_ref = "api_spec:IncidentAcknowledgement"
+    sequence_ref = "sequence_diagram:UC-TRIAGE"
+
+    def propose(schema, _messages):
+        assert schema.__name__ == "RevisionInterpretation"
+        return schema(
+            targets=[sequence_ref],
+            semantic_scope="behavior",
+            requested_effect="Return IncidentAcknowledgement after triage succeeds.",
+        )
+
+    tools = FakeTools()
+    tools.matches = [
+        {
+            "ref": schema_ref,
+            "label": "IncidentAcknowledgement",
+            "owner": "design",
+            "editable": True,
+        },
+        {
+            "ref": sequence_ref,
+            "label": "Triage scenario",
+            "owner": "design",
+            "editable": True,
+        },
+    ]
+
+    result = ConversationAgent(propose).interpret_revision(
+        "Return IncidentAcknowledgement after triage succeeds.",
+        [sequence_ref],
+        tools=tools,
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert result.targets == [sequence_ref]
 
 
 def test_revision_candidates_include_recent_stable_target_remaps() -> None:
@@ -303,6 +554,68 @@ def test_natural_followup_uses_actions_preserved_by_a_reply(monkeypatch) -> None
             "app-1",
             action="message",
             payload={"text": "Please repair it.", "action_id": "reply-command"},
+            stage=None,
+        )
+    finally:
+        service.shutdown()
+
+    assert action == "delegate_repair"
+    assert payload["action_id"] == "repair-command"
+    assert stage is None
+
+
+def test_repeated_conversation_clarifications_route_to_original_offer(monkeypatch) -> None:
+    original = {
+        **_completed_command("design"),
+        "command_id": "original-command",
+        "payload": {
+            "_conversation_actions": [
+                {
+                    "action": "delegate_repair",
+                    "label": "Delegate repair to LLM",
+                    "payload": {"action_id": "repair-command"},
+                }
+            ]
+        },
+    }
+    first = {
+        **_completed_command("design"),
+        "command_id": "clarification-one",
+        "payload": {"action_id": "original-command", "text": "Which one?"},
+        "result": {"conversation": {"clarification": {"question": "Which one?"}}},
+    }
+    latest = {
+        **_completed_command("design"),
+        "command_id": "clarification-two",
+        "payload": {"action_id": "clarification-one", "text": "Still unclear"},
+        "result": {"conversation": {"clarification": {"question": "Please clarify."}}},
+    }
+    commands = {item["command_id"]: item for item in (original, first, latest)}
+
+    def get_command(command_id):
+        return commands.get(command_id)
+
+    monkeypatch.setattr(workspace_module.repository, "latest_command", lambda *_a, **_k: latest)
+    monkeypatch.setattr(
+        workspace_module.repository,
+        "get_command",
+        get_command,
+    )
+    monkeypatch.setattr(workspace_module, "build_conversation_context", lambda _app: context())
+    monkeypatch.setattr(
+        workspace_module.conversation_agent,
+        "respond",
+        lambda *_a, **_k: CommandIntent(
+            intent="delegate_repair", instruction="Delegate the original repair."
+        ),
+    )
+
+    service = WorkspaceService()
+    try:
+        action, payload, stage = service._prepare_conversational_message(
+            "app-1",
+            action="message",
+            payload={"text": "Yes, do that.", "action_id": "clarification-two"},
             stage=None,
         )
     finally:

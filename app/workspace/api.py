@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -32,6 +33,92 @@ from .live_preview import live_previews
 from .service import workspace_service
 
 router = APIRouter(prefix="/api/workspace", tags=["workspace"])
+
+
+def _testing_report(command: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Testing command에서 화면에 보여 줄 가장 최근 보고서를 찾는다.
+
+    완료된 command는 ``result.job.result``에 보고서를 보관한다. 서버가 검사 도중
+    재시작됐다면 같은 내용이 command payload의 checkpoint에 먼저 저장될 수 있다.
+    어느 쪽이든 Testing 입력 계약 자체는 매우 크고 결과 화면에는 필요하지 않으므로
+    제외하고, 실제 판정과 검사 근거만 반환한다.
+    """
+
+    result = command.get("result")
+    result = result if isinstance(result, Mapping) else {}
+    job = result.get("job")
+    job_report = job.get("result") if isinstance(job, Mapping) else None
+    payload = command.get("payload")
+    payload = payload if isinstance(payload, Mapping) else {}
+    checkpoint = payload.get("testing_checkpoint")
+    checkpoint_report = (
+        checkpoint.get("result") if isinstance(checkpoint, Mapping) else None
+    )
+
+    candidates = (job_report, checkpoint_report, result)
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping):
+            continue
+        # 실행 준비 checkpoint에는 보존한 계획만 들어 있을 수 있다. 실제 검사 결과를
+        # 뜻하는 키가 하나라도 생긴 뒤부터 결과 보고서로 공개한다.
+        if not any(
+            key in candidate
+            for key in ("verification", "passed", "gateStatus", "blocking_findings")
+        ):
+            continue
+        report = dict(candidate)
+        report.pop("testingInput", None)
+        return report
+    return None
+
+
+@router.get("/apps/{app_id}/testing-result")
+def get_testing_result(app_id: str) -> dict[str, Any]:
+    """가장 최근 Testing 실행의 상태와 상세 결과를 반환한다.
+
+    Testing 결과는 별도 테이블이나 산출물로 복사하지 않는다. 이미 저장된 Workspace
+    command를 읽으므로 이후 단계로 이동한 뒤에도 마지막 검사 결과를 다시 볼 수 있다.
+    """
+
+    validate_app_id(app_id)
+    require_app(app_id)
+    command = repository.latest_command(app_id, stage="testing")
+    if command is None:
+        return {
+            "app_id": app_id,
+            "available": False,
+            "command_id": None,
+            "command_status": None,
+            "implementation_job_id": None,
+            "created_at": None,
+            "started_at": None,
+            "completed_at": None,
+            "report": None,
+        }
+
+    result = command.get("result")
+    result = result if isinstance(result, Mapping) else {}
+    job = result.get("job")
+    job = job if isinstance(job, Mapping) else {}
+    payload = command.get("payload")
+    payload = payload if isinstance(payload, Mapping) else {}
+    checkpoint = payload.get("testing_checkpoint")
+    checkpoint = checkpoint if isinstance(checkpoint, Mapping) else {}
+    return {
+        "app_id": app_id,
+        "available": True,
+        "command_id": command.get("command_id"),
+        "command_status": command.get("status"),
+        "implementation_job_id": (
+            job.get("implementation_job_id")
+            or checkpoint.get("implementation_job_id")
+            or payload.get("implementation_job_id")
+        ),
+        "created_at": command.get("created_at"),
+        "started_at": command.get("started_at"),
+        "completed_at": command.get("completed_at"),
+        "report": _testing_report(command),
+    }
 
 
 def _class_preview(app_id: str, command_id: str):

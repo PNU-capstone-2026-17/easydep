@@ -131,7 +131,12 @@ def test_targeted_sequence_batch_persists_once_after_every_revision_succeeds(mon
 
     def cascade(state, target, feedback, **_scope):
         return {
-            "state": {**state, "revision_count": state["revision_count"] + 1, target: feedback},
+            "state": {
+                **state,
+                "revision_count": state["revision_count"] + 1,
+                "sequence_diagram_model": {"last_target": target},
+                target: feedback,
+            },
             "changed": ["sequence_diagram"],
             "touched": {"sequence_diagram": [target.partition(":")[2]]},
             "related": [],
@@ -155,6 +160,112 @@ def test_targeted_sequence_batch_persists_once_after_every_revision_succeeds(mon
     assert response["artifacts"]["revision_count"] == 2
     assert len(persisted) == 1
     assert persisted[0]["touched"] == {"sequence_diagram": ["UC5", "UC6"]}
+    assert synced == [persisted[0]["state"]]
+
+
+def test_identical_targeted_revision_does_not_mint_a_duplicate_version(monkeypatch) -> None:
+    original = {"sequence_diagram_model": {"Diagrams": [{"use_case_id": "UC5"}]}}
+    persisted: list[dict] = []
+    synced: list[dict] = []
+    monkeypatch.setattr(
+        design_service.artifact_repository, "load_state", lambda _app_id: original,
+    )
+    monkeypatch.setattr(
+        design_service, "to_web_response", lambda state: {"artifacts": state},
+    )
+    monkeypatch.setattr(
+        design_service, "persist_cascade", lambda _app_id, result: persisted.append(result),
+    )
+    monkeypatch.setattr(
+        design_service,
+        "sync_design_state",
+        lambda _app_id, state: synced.append(state),
+    )
+    monkeypatch.setattr(
+        design_service,
+        "revise_and_cascade",
+        lambda state, _target, _feedback, **_scope: {
+            "state": {**state, "transient_check": "clean"},
+            "changed": ["sequence_diagram"],
+            "touched": {"sequence_diagram": ["UC5"]},
+            "related": [],
+        },
+    )
+
+    response = design_service.revise_design_elements(
+        "00000000-0000-0000-0000-000000000001",
+        design_service.BatchReviseRequest(
+            revisions=[
+                design_service.ReviseRequest(
+                    target="sequence_diagram:UC5", feedback="Keep it unchanged."
+                )
+            ]
+        ),
+    )
+
+    assert response["changed"] == []
+    assert response["touched"] == {}
+    assert response["artifacts"] == original
+    assert persisted == []
+    assert synced == []
+
+
+def test_deployment_bundle_change_is_not_hidden_by_an_identical_workload_model(
+    monkeypatch,
+) -> None:
+    original = {
+        "deployment_diagram_model": {"workloads": [{"id": "api"}]},
+        "deployment_diagram_bundle": {
+            "model": {"workloads": [{"id": "api"}]},
+            "provisioning": {"compute": [{"id": "old-compute"}]},
+        },
+    }
+    revised_bundle = {
+        "model": {"workloads": [{"id": "api"}]},
+        "provisioning": {"compute": [{"id": "new-compute"}]},
+    }
+    persisted: list[dict] = []
+    synced: list[dict] = []
+    monkeypatch.setattr(
+        design_service.artifact_repository, "load_state", lambda _app_id: original,
+    )
+    monkeypatch.setattr(
+        design_service, "to_web_response", lambda state: {"artifacts": state},
+    )
+    monkeypatch.setattr(
+        design_service, "persist_cascade", lambda _app_id, result: persisted.append(result),
+    )
+    monkeypatch.setattr(
+        design_service,
+        "sync_design_state",
+        lambda _app_id, state: synced.append(state),
+    )
+    monkeypatch.setattr(
+        design_service,
+        "revise_and_cascade",
+        lambda state, _target, _feedback, **_scope: {
+            "state": {**state, "deployment_diagram_bundle": revised_bundle},
+            "changed": ["deployment_diagram"],
+            "touched": {"deployment_diagram": ["api"]},
+            "related": [],
+        },
+    )
+
+    response = design_service.revise_design_elements(
+        "00000000-0000-0000-0000-000000000001",
+        design_service.BatchReviseRequest(
+            revisions=[
+                design_service.ReviseRequest(
+                    target="deployment_diagram:api",
+                    feedback="Use the updated provisioning choice.",
+                )
+            ]
+        ),
+    )
+
+    assert response["changed"] == ["deployment_diagram"]
+    assert response["artifacts"]["deployment_diagram_bundle"] == revised_bundle
+    assert persisted[0]["state"]["deployment_diagram_bundle"] == revised_bundle
     assert synced == [persisted[0]["state"]]
 
 
@@ -220,7 +331,11 @@ def test_artifact_persistence_failure_restores_the_previous_design_checkpoint(
         design_service,
         "revise_and_cascade",
         lambda state, _target, _feedback, **_scope: {
-            "state": {**state, "revision_count": 1},
+            "state": {
+                **state,
+                "revision_count": 1,
+                "sequence_diagram_model": {"changed": True},
+            },
             "changed": ["sequence_diagram"],
             "touched": {"sequence_diagram": ["UC5"]},
             "related": [],
@@ -245,7 +360,10 @@ def test_artifact_persistence_failure_restores_the_previous_design_checkpoint(
             ),
         )
 
-    assert synced == [{"revision_count": 1}, original]
+    assert synced == [
+        {"revision_count": 1, "sequence_diagram_model": {"changed": True}},
+        original,
+    ]
 
 
 def test_design_review_result_exposes_pending_method_proposals_for_manual_approval() -> None:

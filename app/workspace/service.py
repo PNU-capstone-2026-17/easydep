@@ -14,7 +14,6 @@ from typing import Any, cast
 
 from fastapi import HTTPException
 
-from app.artifact_trace import TraceRef
 from app.design import progress as design_progress
 from app.design.graphs.design_graph import has_active_session, session_status
 from app.design.graphs.subgraphs import DESIGN_STAGES
@@ -513,18 +512,6 @@ class WorkspaceService:
         self._validate_payload(action, payload)
         self._validate_action_reference(app_id, action, payload)
         text = user_text or str(payload.get("text") or "").strip()
-        context = payload.get("context") or {}
-        if (
-            action == "message"
-            and text
-            and context.get("artifact_stage") == "sequence_diagram"
-            and not context.get("target_feedbacks")
-            and not str(context.get("element_ref") or "").strip()
-            and not payload.get("revision_plan")
-        ):
-            raise ValueError(
-                "Select at least one use-case target and enter feedback for each selected target."
-            )
         command_id = str(uuid.uuid4())
         with self._submission_lock:
             command = repository.create_command(command_id, app_id, action, resolved_stage, payload)
@@ -578,19 +565,23 @@ class WorkspaceService:
         if selected.get("target_feedbacks") is not None:
             for revision in self._sequence_target_feedbacks(dict(selected)):
                 explicit_instructions[revision.target] = revision.feedback
-        artifact_stage = str(selected.get("artifact_stage") or "").strip()
-        if text and artifact_stage and not explicit_instructions:
-            explicit_instructions[str(TraceRef("design_stage", artifact_stage))] = text
         if explicit_instructions:
-            combined_instruction = "\n".join(
-                f"{target}: {instruction}"
-                for target, instruction in explicit_instructions.items()
+            combined_instruction = (
+                next(iter(explicit_instructions.values()))
+                if len(explicit_instructions) == 1
+                else "\n".join(
+                    f"{target}: {instruction}"
+                    for target, instruction in explicit_instructions.items()
+                )
             )
             try:
+                conversation_context = build_conversation_context(app_id)
+                conversation_context.workspace["selection"] = dict(selected)
                 outcome = conversation_agent.interpret_revision(
                     combined_instruction,
                     list(explicit_instructions),
                     tools=ProjectTools(app_id),
+                    context=conversation_context,
                 )
             except Exception:
                 _log.exception("Failed to interpret selected revision feedback")
@@ -611,6 +602,9 @@ class WorkspaceService:
                 )
             if not isinstance(outcome, CommandIntent):
                 raise ValueError("Selected revision feedback did not produce a command intent.")
+            if len(explicit_instructions) == 1:
+                target = next(iter(explicit_instructions))
+                explicit_payload["revision_instructions"] = {target: outcome.instruction}
             return self._route_conversation_intent(
                 app_id, explicit_payload, outcome, latest
             )
@@ -629,18 +623,25 @@ class WorkspaceService:
             return action, payload, str(prior.get("stage") or stage or "requirements")
 
         actionable = latest
-        latest_conversation = (latest.get("result") or {}).get("conversation")
-        if isinstance(latest_conversation, dict) and latest_conversation.get("clarification"):
+        visited: set[str] = set()
+        while actionable["command_id"] not in visited:
+            visited.add(actionable["command_id"])
+            conversation = (actionable.get("result") or {}).get("conversation")
+            if not isinstance(conversation, dict) or not conversation.get("clarification"):
+                break
             referenced = repository.get_command(
-                str((latest.get("payload") or {}).get("action_id") or "")
+                str((actionable.get("payload") or {}).get("action_id") or "")
             )
-            if referenced is not None:
-                actionable = referenced
+            if referenced is None or referenced.get("app_id") != app_id:
+                break
+            actionable = referenced
         try:
+            conversation_context = build_conversation_context(app_id)
+            conversation_context.workspace["selection"] = dict(selected)
             outcome = conversation_agent.respond(
                 app_id,
                 text,
-                build_conversation_context(app_id),
+                conversation_context,
                 tools=ProjectTools(app_id),
             )
         except Exception:
@@ -678,10 +679,24 @@ class WorkspaceService:
         stage: str | None,
         latest: dict[str, Any],
     ) -> tuple[str, dict[str, Any], str | None]:
+        offered_message_id = next(
+            (
+                str(offer.payload.get("action_id") or "")
+                for offer in offered_actions(latest)
+                if str(offer.action) == "message"
+                and str(offer.payload.get("action_id") or "")
+            ),
+            "",
+        )
         return (
             "message",
             {
                 **payload,
+                "action_id": (
+                    offered_message_id
+                    or payload.get("action_id")
+                    or latest["command_id"]
+                ),
                 "_conversation_outcome": {
                     "kind": "clarification",
                     **outcome.model_dump(mode="json"),
@@ -689,6 +704,60 @@ class WorkspaceService:
             },
             stage or str(latest.get("stage") or "requirements"),
         )
+
+    @staticmethod
+    def _revision_action_anchor(
+        app_id: str,
+        owner: str,
+        command: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Follow preserved conversation actions back to the editable stage gate."""
+
+        current = command
+        visited: set[str] = set()
+        while len(visited) < 12:
+            command_id = str(current.get("command_id") or "")
+            if not command_id or command_id in visited:
+                break
+            visited.add(command_id)
+            conversation = (current.get("result") or {}).get("conversation")
+            if isinstance(conversation, dict) and conversation.get("clarification"):
+                referenced_id = str(
+                    (current.get("payload") or {}).get("action_id") or ""
+                )
+                referenced = repository.get_command(referenced_id)
+                if (
+                    referenced_id
+                    and referenced_id != command_id
+                    and referenced is not None
+                    and referenced.get("app_id") == app_id
+                    and referenced.get("stage") == owner
+                ):
+                    current = referenced
+                    continue
+            message_offer = next(
+                (
+                    offer
+                    for offer in offered_actions(current)
+                    if str(offer.action) == "message"
+                    and str(offer.payload.get("action_id") or "")
+                ),
+                None,
+            )
+            if message_offer is None:
+                break
+            referenced_id = str(message_offer.payload.get("action_id") or "")
+            if referenced_id == command_id:
+                break
+            referenced = repository.get_command(referenced_id)
+            if (
+                referenced is None
+                or referenced.get("app_id") != app_id
+                or referenced.get("stage") != owner
+            ):
+                break
+            current = referenced
+        return current
 
     def _route_conversation_intent(
         self,
@@ -756,7 +825,12 @@ class WorkspaceService:
             plan = plan_revision(tools, interpretation)
             if plan.status in {"needs_clarification", "unsupported"}:
                 return self._clarification_message(
-                    payload,
+                    {
+                        **payload,
+                        "conversation_intent": intent.model_dump(mode="json"),
+                        "revision_interpretation": interpretation.model_dump(mode="json"),
+                        "revision_plan": plan.model_dump(mode="json"),
+                    },
                     Clarification(
                         question=plan.explanation,
                         candidates=[
@@ -781,6 +855,10 @@ class WorkspaceService:
                 )
             owner = owners.pop()
             owner_command = repository.latest_command(app_id, stage=owner)
+            if owner_command is not None:
+                owner_command = self._revision_action_anchor(
+                    app_id, owner, owner_command
+                )
             valid_refs = [target.ref for target in execution_targets]
             targets = [target.model_dump(mode="json") for target in execution_targets]
             routed_payload = {
@@ -2021,13 +2099,8 @@ class WorkspaceService:
                         else None
                     ),
                     approved_downstream_targets=(
-                        {
-                            str(ref)
-                            for ref in context.get("approved_downstream_targets") or []
-                            if str(ref)
-                        }
-                        if "approved_downstream_targets" in context
-                        else None
+                        # RTM downstream entries are impact hints, not a write deny-list.
+                        None
                     ),
                 )
                 return {
@@ -2976,11 +3049,23 @@ class WorkspaceService:
             target_remap=target_remap,
             artifact_versions=dict(snapshot.get("artifact_versions") or {}),
         )
-        return {
+        response = {
             **result,
             "revision_plan": plan.model_dump(mode="json"),
             "revision_execution": execution.model_dump(mode="json"),
         }
+        if not changed_stages:
+            response.update(
+                {
+                    "revision_no_effect": True,
+                    "message": (
+                        "The approved feedback did not change the current artifacts. "
+                        "It may already be satisfied or the current editor may not support "
+                        "that change; refine the feedback or continue without it."
+                    ),
+                }
+            )
+        return response
 
     @staticmethod
     def _implementation_progress_snapshot(job: dict[str, Any]) -> dict[str, Any]:
