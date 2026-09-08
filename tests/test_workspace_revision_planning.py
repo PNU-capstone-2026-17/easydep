@@ -119,6 +119,69 @@ def test_ready_local_plan_is_attached_to_the_bounded_design_message(monkeypatch)
     assert payload["context"]["approved_downstream_targets"] == [downstream.ref]
 
 
+def test_revision_after_a_reply_and_clarification_uses_the_stage_action_anchor(monkeypatch) -> None:
+    target = _target("class_diagram:OrderControl")
+    plan = _plan("ready_local", requested=[target])
+    stage_gate = {
+        **_latest(),
+        "command_id": "stage-gate",
+        "status": "AWAITING_INPUT",
+        "result": {"message": "Review the class diagram."},
+    }
+    reply = {
+        **_latest(),
+        "command_id": "reply-command",
+        "payload": {
+            "_conversation_actions": [
+                {
+                    "action": "message",
+                    "label": "Send revision feedback",
+                    "payload": {"action_id": "stage-gate"},
+                }
+            ]
+        },
+    }
+    clarification = {
+        **_latest(),
+        "command_id": "clarification-command",
+        "status": "AWAITING_INPUT",
+        "payload": {"action_id": "reply-command"},
+        "result": {
+            "conversation": {"clarification": {"question": "Which behavior?"}}
+        },
+    }
+    commands = {
+        item["command_id"]: item for item in (stage_gate, reply, clarification)
+    }
+
+    def get_command(command_id):
+        return commands.get(command_id)
+
+    monkeypatch.setattr(workspace_module, "ProjectTools", _Tools)
+    monkeypatch.setattr(workspace_module, "plan_revision", lambda *_args: plan)
+    monkeypatch.setattr(
+        workspace_module.repository,
+        "latest_command",
+        lambda *_args, **_kwargs: clarification,
+    )
+    monkeypatch.setattr(
+        workspace_module.repository,
+        "get_command",
+        get_command,
+    )
+
+    service = WorkspaceService()
+    try:
+        action, payload, stage = service._route_conversation_intent(
+            "app-1", {"text": "Change it."}, _intent(target.ref), clarification
+        )
+    finally:
+        service.shutdown()
+
+    assert (action, stage) == ("message", "design")
+    assert payload["action_id"] == "stage-gate"
+
+
 def test_confirmation_plan_dispatches_without_running_a_stage_service() -> None:
     requested = _target("sequence_diagram:UC1", kind="sequence")
     authority = _target("class_diagram:OrderControl")
@@ -201,7 +264,7 @@ def test_stale_confirmation_never_calls_a_stage_service(monkeypatch) -> None:
     assert result["stale_revision_plan"] == plan.plan_digest
 
 
-def test_approved_plan_passes_only_frozen_targets_to_the_stage(monkeypatch) -> None:
+def test_approved_plan_keeps_authority_bounded_and_downstream_as_hints(monkeypatch) -> None:
     requested = _target("sequence_diagram:UC1", kind="sequence")
     authority = _target("class_diagram:OrderControl")
     downstream = _target("api_spec:createOrder", kind="api", artifact_type="API_SPEC")
@@ -261,7 +324,7 @@ def test_approved_plan_passes_only_frozen_targets_to_the_stage(monkeypatch) -> N
             "target": authority.ref,
             "feedback": "Change the call contract.",
             "approved_authority_targets": [authority.ref],
-            "approved_downstream_targets": [downstream.ref],
+            "approved_downstream_targets": None,
         }
     ]
     assert context["approved_authority_targets"] == [authority.ref]

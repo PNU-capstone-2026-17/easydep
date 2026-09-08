@@ -267,12 +267,14 @@ def test_identify_use_cases_local_edit_preserves_siblings(monkeypatch):
     ]
     calls = 0
 
-    def fake(schema, _messages):
+    def fake(schema, messages):
         nonlocal calls
         calls += 1
-        # 모델이 같은 개수/순서로 전체 목록 반환(UC2만 수정).
+        assert '"requirement_ids": ["R3"]' in messages[-1].content
+        assert '"nfr_ids": []' in messages[-1].content
+        # 모델이 다른 도메인의 형제까지 잘못 바꿔 반환해도 경계에서 복구한다.
         return UseCaseResult(use_cases=[
-            UseCase(name="Log in", primary_actor="U", goal="auth", requirement_ids=["R1"]),
+            UseCase(name="Ship invoice", primary_actor="U", goal="ship", requirement_ids=["R1"]),
             UseCase(name="Place order and pay", primary_actor="U", goal="buy and pay",
                     requirement_ids=["R3", "R4"]),
         ])
@@ -313,6 +315,40 @@ def test_identify_use_cases_local_edit_reindexes_on_count_change(monkeypatch):
         feedback="UC1을 둘로 쪼개줘", target_ids=["UC1"],
     )
     assert [u["id"] for u in out["use_cases"]] == ["UC1", "UC2"]
+
+
+def test_local_split_preserves_siblings_and_allocates_only_new_target_ids(monkeypatch):
+    existing = [
+        {"id": "UC1", "name": "Browse courses", "primary_actor": "U", "level": "user_goal",
+         "goal": "browse", "requirement_ids": ["R1"], "nfr_ids": []},
+        {"id": "UC2", "name": "Register course", "primary_actor": "U", "level": "user_goal",
+         "goal": "register", "requirement_ids": ["R2", "R3"], "nfr_ids": []},
+        {"id": "UC3", "name": "View timetable", "primary_actor": "U", "level": "user_goal",
+         "goal": "view", "requirement_ids": ["R4"], "nfr_ids": []},
+    ]
+    monkeypatch.setattr(s2, "invoke_structured", lambda _schema, _messages: UseCaseResult(use_cases=[
+        UseCase(name="Altered sibling", primary_actor="U", goal="wrong", requirement_ids=["R1"]),
+        UseCase(name="Request registration", primary_actor="U", goal="request", requirement_ids=["R2"]),
+        UseCase(name="Confirm registration", primary_actor="U", goal="confirm", requirement_ids=["R3"]),
+        UseCase(name="Another altered sibling", primary_actor="U", goal="wrong", requirement_ids=["R4"]),
+    ]))
+
+    out = s2.identify_use_cases(
+        {
+            "classified": SAMPLE_CLASSIFIED,
+            "actors": [{"name": "U", "description": "student", "source_refs": ["R1"]}],
+            "use_cases": existing,
+        },
+        feedback="Split UC2 into request and confirmation goals.",
+        target_ids=["UC2"],
+    )
+
+    assert out["use_cases"][0] == existing[0]
+    assert out["use_cases"][-1] == existing[-1]
+    assert [item["id"] for item in out["use_cases"]] == ["UC1", "UC2", "UC4", "UC3"]
+    assert [item["name"] for item in out["use_cases"][1:3]] == [
+        "Request registration", "Confirm registration",
+    ]
 
 
 def test_identify_use_cases_empty_when_no_fr(monkeypatch):

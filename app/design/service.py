@@ -90,6 +90,30 @@ class BatchReviseRequest(BaseModel):
         return revisions
 
 
+def _persisted_stage_changed(
+    original: ArchitectureState,
+    working: ArchitectureState,
+    stage: str,
+) -> bool:
+    """Compare the values that the artifact repository actually versions."""
+
+    config = artifact_repository.STAGE_ARTIFACTS.get(stage)
+    if config is None:
+        # Unknown cascade stages must not be discarded by a deduplication check.
+        return True
+    source_key = config.get("source_key") or config.get("state_key")
+    keys = [
+        key
+        for key in (
+            source_key,
+            config.get("valid_key"),
+            config.get("errors_key"),
+        )
+        if key
+    ]
+    return any(original.get(key) != working.get(key) for key in keys)
+
+
 def start_design_session(app_id: str) -> dict[str, Any]:
     """첫 설계 단계부터 실행하고 클래스 다이어그램 검토 지점에서 멈춘다."""
     _validate_app_id(app_id)
@@ -492,6 +516,22 @@ def revise_design_elements(
     except Exception as error:
         raise RuntimeError(f"Revision failed; no batch changes were saved: {error}") from error
 
+    # A valid LLM response may still reproduce the selected artifact exactly. Use
+    # the repository's persisted payload rather than a graph model key: deployment,
+    # for example, versions its hydrated bundle and that can change while the
+    # workload graph itself remains identical.
+    changed = [
+        stage
+        for stage in changed
+        if _persisted_stage_changed(original, working, stage)
+    ]
+    touched = {stage: elements for stage, elements in touched.items() if stage in changed}
+    regenerated = {
+        stage: elements for stage, elements in regenerated.items() if stage in changed
+    }
+    if not changed:
+        working = original
+
     combined = {
         "state": working,
         "changed": changed,
@@ -500,12 +540,13 @@ def revise_design_elements(
     # Update the checkpoint first. If artifact persistence then fails, restore
     # the prior checkpoint so a partial database batch cannot become visible.
     # Artifact versions themselves are committed by one repository transaction.
-    sync_design_state(app_id, cast(dict[str, Any], working))
-    try:
-        persist_cascade(app_id, combined)
-    except Exception:
-        sync_design_state(app_id, cast(dict[str, Any], original))
-        raise
+    if changed:
+        sync_design_state(app_id, cast(dict[str, Any], working))
+        try:
+            persist_cascade(app_id, combined)
+        except Exception:
+            sync_design_state(app_id, cast(dict[str, Any], original))
+            raise
 
     return {
         "app_id": app_id,

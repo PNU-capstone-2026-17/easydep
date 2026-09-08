@@ -123,6 +123,12 @@ def _pending_question(command: Mapping[str, Any] | None) -> str | None:
         first = next((item for item in questions if isinstance(item, str) and item.strip()), None)
         if first:
             return first.strip()
+    # Some stages publish one ordinary question instead of the resource-question
+    # shape. It is still current input only while the command is awaiting input.
+    if (result.get("kind") or result.get("type")) == "question":
+        value = result.get("message") or result.get("text")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
     return None
 
 
@@ -156,6 +162,35 @@ def _revision_target_remap(command: Mapping[str, Any]) -> dict[str, str]:
         if str(source).strip() and str(target).strip()
     ]
     return dict(pairs[:50])
+
+
+def _actionable_ancestor(
+    command: Mapping[str, Any] | None, app_id: str
+) -> Mapping[str, Any] | None:
+    """Follow conversational clarification links to the still-actionable command."""
+
+    current = command
+    seen: set[str] = set()
+    for _ in range(12):
+        if not isinstance(current, Mapping):
+            return None
+        command_id = str(current.get("command_id") or "").strip()
+        if not command_id or command_id in seen:
+            return None
+        seen.add(command_id)
+        result = current.get("result")
+        conversation = result.get("conversation") if isinstance(result, Mapping) else None
+        if not (isinstance(conversation, Mapping) and conversation.get("clarification")):
+            return current
+        payload = current.get("payload")
+        action_id = str(payload.get("action_id") or "").strip() if isinstance(payload, Mapping) else ""
+        if not action_id:
+            return current
+        parent = repository.get_command(action_id)
+        if not isinstance(parent, Mapping) or str(parent.get("app_id") or "") != app_id:
+            return current
+        current = parent
+    return current
 
 
 def _bounded_text(text: str, limit: int) -> str:
@@ -233,18 +268,21 @@ def build_conversation_context(
     turns = _bounded_turns(turns)
 
     latest = repository.latest_command(app_id)
+    actionable = _actionable_ancestor(latest, app_id) or latest
     actions = (
         [
             offer.model_dump(mode="json", exclude_none=True)
-            for offer in offered_actions(latest)
+            for offer in offered_actions(actionable)
         ]
-        if latest
+        if actionable
         else []
     )
     workspace = {
         "command_id": latest.get("command_id") if latest else None,
         "stage": latest.get("stage") if latest else None,
         "status": latest.get("status") if latest else None,
+        "pending_command_id": actionable.get("command_id") if actionable else None,
+        "pending_stage": actionable.get("stage") if actionable else None,
     }
     return ConversationContext(
         app_id=app_id,
@@ -252,7 +290,7 @@ def build_conversation_context(
         turns=turns,
         pending_question=(
             _bounded_text(question, 2_000)
-            if (question := _pending_question(latest))
+            if (question := (_pending_question(actionable) or _pending_question(latest)))
             else None
         ),
         actions=actions,

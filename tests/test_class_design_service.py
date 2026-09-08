@@ -7,6 +7,7 @@ from copy import deepcopy
 import pytest
 from pydantic import ValidationError
 
+from app.design.services.class_diagram import feedback as feedback_stage
 from app.design.services.class_diagram import service
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
 from app.design.services.class_diagram.proposals import (
@@ -20,12 +21,52 @@ from app.design.services.class_diagram.proposals import (
 )
 from app.design.services.class_diagram.scenario import build_scenario_index
 from tests.class_design_fixtures import (
+    combined_unit_proposal,
     inventory_proposal,
     multiple_entry_use_case,
     multiple_root_call_plan,
     multiple_root_combined_proposal,
     patch_class_design_parser,
+    single_use_case,
 )
+
+
+def test_exact_operation_and_call_targets_resolve_without_scope_llm(monkeypatch):
+    def fake_parse(_messages, schema, **_kwargs):
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is CombinedUnitProposal:
+            return combined_unit_proposal()
+        raise AssertionError(f"unexpected scope LLM call: {schema}")
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    index = build_scenario_index(single_use_case())
+    model = service.generate_class_model(index)
+
+    operation_id = model.Classes[0].operations[0].stable_id
+    call_id = model.Collaborations[0].calls[0].stable_id
+    legacy_operation_id = model.Classes[0].operations[0].operation_id
+    legacy_call_id = model.Collaborations[0].calls[0].call_id
+    assert operation_id is not None
+    assert call_id is not None
+
+    operation_scope = feedback_stage.feedback_scope(
+        index, model, "Rename only this operation.", {operation_id},
+    )
+    call_scope = feedback_stage.feedback_scope(
+        index, model, "Change only this call.", {call_id},
+    )
+    legacy_operation_scope = feedback_stage.feedback_scope(
+        index, model, "Rename only this operation.", {legacy_operation_id},
+    )
+    legacy_call_scope = feedback_stage.feedback_scope(
+        index, model, "Change only this call.", {legacy_call_id},
+    )
+
+    assert operation_scope == FeedbackScope(kind="operation", ids=["UC1"])
+    assert call_scope == FeedbackScope(kind="collaboration", ids=["UC1"])
+    assert legacy_operation_scope == operation_scope
+    assert legacy_call_scope == call_scope
 
 
 def test_generate_uses_one_combined_call_and_keeps_the_public_model(monkeypatch):

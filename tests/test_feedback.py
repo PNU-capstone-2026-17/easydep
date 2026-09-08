@@ -4,8 +4,6 @@
   2. specs local 재생성이 형제 spec을 보존.
   3. 구조화 편집(FeedbackEdit)이 분류 LLM을 건너뛴다 — 자연어 경로는 그대로.
 """
-import pytest
-
 from app.requirements.orchestration import feedback as fb
 from app.requirements.schemas import FeedbackEdit
 
@@ -135,9 +133,11 @@ def test_generate_specs_local_target_preserves_siblings():
     # UC2만 재생성, UC1은 기존 유지.
     calls = 0
 
-    def propose(_schema, _messages):
+    def propose(_schema, messages):
         nonlocal calls
         calls += 1
+        assert "CURRENT SPECIFICATION" in messages[-1].content
+        assert '"trigger": "OLD"' in messages[-1].content
         return UseCaseSpec(
             preconditions=["The user is ready."],
             trigger="regenerated",

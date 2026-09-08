@@ -1,6 +1,7 @@
 """요구사항 근거가 있는 actor와 user-goal use case modeling stage다."""
 from __future__ import annotations
 
+import json
 from collections import Counter
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -174,7 +175,7 @@ def normalize_use_cases(
 
 
 def _actors_referenced_by_use_cases(
-    actors: list[ActorItem], use_cases: list[UseCase]
+    actors: list[ActorItem], use_cases: list[UseCase | UseCaseItem]
 ) -> list[ActorItem]:
     """Keep participating actors and the generalization context they inherit from."""
     by_key = {
@@ -182,12 +183,20 @@ def _actors_referenced_by_use_cases(
         for actor in actors
         if _actor_key(actor.get("name"))
     }
-    retained = {
-        _actor_key(reference)
-        for use_case in use_cases
-        for reference in (use_case.primary_actor, *use_case.supporting_actors)
-        if _actor_key(reference)
-    }
+    retained: set[str] = set()
+    for use_case in use_cases:
+        if isinstance(use_case, dict):
+            references = (
+                str(use_case.get("primary_actor") or ""),
+                *[str(value) for value in use_case.get("supporting_actors") or []],
+            )
+        else:
+            references = (use_case.primary_actor, *use_case.supporting_actors)
+        retained.update(
+            _actor_key(reference)
+            for reference in references
+            if _actor_key(reference)
+        )
     pending = list(retained)
     while pending:
         actor = by_key.get(pending.pop())
@@ -515,7 +524,7 @@ def _local_edit_use_cases(
 ) -> ModelingStagePatch:
     target_set = {target.strip() for target in target_ids if target and target.strip()}
     current_listing = "\n".join(
-        f"- {use_case['id']} {use_case['name']} [primary actor: {use_case['primary_actor']}]"
+        f"- {json.dumps(use_case, ensure_ascii=False, sort_keys=True)}"
         for use_case in existing
     )
     target_desc = ", ".join(
@@ -537,16 +546,60 @@ def _local_edit_use_cases(
         extract=lambda repaired: repaired.use_cases,
         proposal_call=proposal_call,
     )
-    ids = [item["id"] for item in existing] if len(use_cases) == len(existing) else [
-        f"UC{index}" for index in range(1, len(use_cases) + 1)
-    ]
-    use_case_items = [
-        normalize_use_case(use_case, ids[index])
-        for index, use_case in enumerate(use_cases)
-    ]
+    # The model returns a full list for a local edit, but its copy of a sibling
+    # is not an authority.  When the cardinality is unchanged, merge by the
+    # explicit list-position contract and copy every non-target record from the
+    # persisted baseline.  This keeps sibling identity and all fields intact,
+    # even when the model edits a different domain's goal in its response.
+    if len(use_cases) == len(existing):
+        use_case_items = [
+            existing[index]
+            if existing[index]["id"] not in target_set
+            else normalize_use_case(use_case, existing[index]["id"])
+            for index, use_case in enumerate(use_cases)
+        ]
+    elif target_positions := [
+        index for index, item in enumerate(existing) if item["id"] in target_set
+    ]:
+        first_target = target_positions[0]
+        last_target = target_positions[-1]
+        if target_positions != list(range(first_target, last_target + 1)):
+            raise ValueError(
+                "A cardinality-changing local edit requires one contiguous target block."
+            )
+        replacement_count = len(use_cases) - len(existing) + len(target_positions)
+        if replacement_count < 0:
+            raise ValueError("The local edit removed elements outside its target block.")
+        proposed_targets = use_cases[
+            first_target : first_target + replacement_count
+        ]
+        if len(proposed_targets) != replacement_count:
+            raise ValueError("The local edit did not preserve non-target list positions.")
+
+        reusable_ids = [existing[index]["id"] for index in target_positions]
+        used_ids = {
+            item["id"] for item in existing if item["id"] not in target_set
+        }
+        next_id = 1
+        target_items: list[UseCaseItem] = []
+        for index, use_case in enumerate(proposed_targets):
+            if index < len(reusable_ids):
+                use_case_id = reusable_ids[index]
+            else:
+                while f"UC{next_id}" in used_ids:
+                    next_id += 1
+                use_case_id = f"UC{next_id}"
+                next_id += 1
+            used_ids.add(use_case_id)
+            target_items.append(normalize_use_case(use_case, use_case_id))
+        use_case_items = (
+            existing[:first_target] + target_items + existing[last_target + 1:]
+        )
+    else:
+        raise ValueError("The local edit does not identify an existing target use case.")
     preserved_ids = {item["id"] for item in use_case_items}
     return {
-        "actors": _actors_referenced_by_use_cases(actors, use_cases),
+        "actors": _actors_referenced_by_use_cases(actors, use_case_items),
         "use_cases": use_case_items,
         "constraint_applicability": {
             requirement_id: [

@@ -95,7 +95,7 @@ def test_design_adapter_carries_explicit_frozen_scope() -> None:
     revision = payload.batch_request().revisions[0]
     assert revision.target == "class_diagram:Order"
     assert revision.approved_authority_targets == ["class_diagram:Order"]
-    assert revision.approved_downstream_targets == ["entity:Order"]
+    assert revision.approved_downstream_targets is None
 
 
 def test_design_adapter_accepts_a_cross_delivery_requested_projection() -> None:

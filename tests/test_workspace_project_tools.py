@@ -190,6 +190,70 @@ def test_search_uses_latest_editing_catalog_and_returns_owner_and_version(
     assert source["artifact_version_id"] == 31
 
 
+def test_search_ranks_evidence_spread_across_multiple_elements(
+    tools: ProjectTools,
+) -> None:
+    matches = tools.search_elements(
+        "How does the UC-ORDER sequence call OrderControl placeOrder?"
+    )
+    refs = {item["ref"] for item in matches[:5]}
+
+    assert "sequence_diagram:UC-ORDER" in refs
+    assert "class_diagram:OrderControl::placeOrder()" in refs
+
+
+def test_exact_identifier_and_path_search_work_across_registration_and_incident_domains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _state()
+    state["refined_requirements"]["requirements"].append(
+        {"id": "REQ-REGISTER", "text": "A student can register for a course."}
+    )
+    state["usecase_spec"]["use_cases"].append(
+        {"id": "UC-REGISTER", "name": "Course registration"}
+    )
+    state["api_spec_model"]["Endpoints"].append(
+        {
+            "operation_id": "acknowledgeIncident",
+            "method": "post",
+            "path": "/incidents/{incidentId}/acknowledgement",
+        }
+    )
+    state["api_spec_model"]["Schemas"].append(
+        {"name": "IncidentAcknowledgement", "fields": ["incidentId"]}
+    )
+    monkeypatch.setattr(
+        project_tools_module.artifact_repository,
+        "load_state",
+        lambda _app_id: state,
+    )
+    monkeypatch.setattr(
+        project_tools_module.artifact_repository,
+        "load_file_snapshot",
+        lambda _app_id, _artifact_type: _snapshot(),
+    )
+    monkeypatch.setattr(
+        project_tools_module.workspace_repository,
+        "latest_command",
+        lambda *_args, **_kwargs: None,
+    )
+    cross_domain_tools = ProjectTools(APP_ID)
+
+    registration = cross_domain_tools.resolve_exact_elements(
+        "Revise requirement:REQ-REGISTER."
+    )
+    incident_schema = cross_domain_tools.resolve_exact_elements(
+        "Rename schema:IncidentAcknowledgement."
+    )
+    incident_path = cross_domain_tools.search_elements("incident path")
+
+    assert [item["ref"] for item in registration] == ["requirement:REQ-REGISTER"]
+    assert [item["ref"] for item in incident_schema] == [
+        "api_spec:IncidentAcknowledgement"
+    ]
+    assert incident_path[0]["ref"] == "api_spec:acknowledgeIncident"
+
+
 def test_implementation_catalog_matches_workspace_rtm_to_application_snapshot_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -234,6 +298,10 @@ def test_read_element_reads_only_the_selected_current_element(tools: ProjectTool
         "id": "REQ-ORDER",
         "text": "The member can place an order.",
     }
+
+    description = tools.describe_element("requirement:REQ-ORDER")
+    assert "content" not in description
+    assert "member can place an order" in description["summary"]
 
 
 def test_catalog_is_built_once_per_tool_instance(
@@ -371,6 +439,21 @@ def test_stage_rewind_relations_include_exact_cross_delivery_downstream(
     assert "file:application/src/OrderService.java" in requirement_downstream
     assert "api_spec:placeOrder" in design_downstream
     assert "file:application/src/OrderService.java" in design_downstream
+
+
+def test_usecase_diagram_candidates_are_catalog_owned_and_cover_its_sections(
+    tools: ProjectTools,
+) -> None:
+    refs = {item["ref"] for item in tools.artifact_candidates("usecase_diagram")}
+
+    assert {
+        "actor:Member",
+        "use_case:UC-ORDER",
+        "relationship:associations:Member->UC-ORDER",
+        "requirements_stage:actors",
+        "requirements_stage:relationships",
+    } <= refs
+    assert all(item["app_id"] == APP_ID for item in tools.artifact_candidates("usecase_diagram"))
 
 
 def test_context_is_rebuilt_from_message_commands_and_status_not_stale_flags(

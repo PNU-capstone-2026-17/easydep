@@ -55,6 +55,12 @@ _SECRET_KEYS = {
     "secret",
     "token",
 }
+_SEARCH_STOP_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "does", "for", "from",
+    "happen", "happens", "how", "in", "is", "it", "of", "on", "or",
+    "that", "the", "this", "to", "what", "when", "where", "which", "who", "why",
+    "with",
+}
 _PRIVATE_KEY_PATTERN = re.compile(
     r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?-----END [^-\r\n]*PRIVATE KEY-----",
     re.DOTALL,
@@ -270,13 +276,19 @@ def _add_requirements(catalog: _Catalog) -> None:
     version_id, _version_no = catalog.version(TYPE_USECASE_SPEC)
     if version_id is not None:
         for stage in _REQUIREMENTS_KINDS_BY_STAGE:
+            section_key = {
+                "actors": "actors",
+                "use_cases": "use_cases",
+                "specs": "use_case_specs",
+                "relationships": "relationships",
+            }[stage]
             catalog.add(
                 ref=str(TraceRef("requirements_stage", stage)),
                 name=stage.replace("_", " "),
                 owner="requirements",
                 editable=False,
                 artifact_type=TYPE_USECASE_SPEC,
-                content={"stage": stage},
+                content={"stage": stage, "section": usecase.get(section_key)},
             )
 
 
@@ -580,6 +592,57 @@ class ProjectTools:
         if self._cached_catalog is None:
             self._cached_catalog = _build_catalog(self.app_id)
         return self._cached_catalog
+
+    def artifact_candidates(self, artifact_stage: str) -> list[dict[str, Any]]:
+        """Return catalog-owned candidates for the UI's selected artifact.
+
+        The selection is a view over the current catalog, including the
+        existing owning sections used when adding actors or relationships.
+        """
+        stage = str(artifact_stage or "").strip()
+        if not stage:
+            return []
+        catalog = self._catalog()
+        if stage == "refined_requirements":
+            elements = [
+                element for element in catalog.elements.values()
+                if element.ref.startswith("requirement:")
+            ]
+        elif stage == "usecase_spec":
+            elements = [
+                element for element in catalog.elements.values()
+                if element.artifact_type == TYPE_USECASE_SPEC
+                and (
+                    element.ref.startswith(("actor:", "use_case:", "use_case_spec:", "relationship:"))
+                    or element.ref == str(TraceRef("requirements_stage", "relationships"))
+                )
+            ]
+        elif stage == "usecase_diagram":
+            supported_sections = {
+                str(TraceRef("requirements_stage", section))
+                for section in ("actors", "relationships")
+            }
+            elements = [
+                element for element in catalog.elements.values()
+                if element.artifact_type == TYPE_USECASE_SPEC
+                and (
+                    element.ref.startswith(("actor:", "use_case:", "relationship:"))
+                    or element.ref in supported_sections
+                )
+            ]
+        else:
+            artifact_type = _VERSION_BY_DESIGN_STAGE.get(stage)
+            if artifact_type is None:
+                return []
+            elements = [
+                element for element in catalog.elements.values()
+                if element.artifact_type == artifact_type
+                and (
+                    element.ref == str(TraceRef("design_stage", stage))
+                    or element.owner == "design"
+                )
+            ]
+        return [element.public(self.app_id) for element in sorted(elements, key=lambda item: item.ref)]
 
     def normalize_revision_targets(
         self,
@@ -954,21 +1017,61 @@ class ProjectTools:
         if limit < 1 or limit > 100:
             raise ValueError("search limit must be between 1 and 100")
         catalog = self._catalog()
-        needles = tuple(part.casefold() for part in query.split() if part)
-        matches: list[tuple[int, str, _Element]] = []
+        exact = self.resolve_exact_elements(query)
+        tokens = [
+            token.casefold()
+            for token in re.findall(r"[A-Za-z0-9_]+", query)
+            if len(token) >= 3 and token.casefold() not in _SEARCH_STOP_WORDS
+        ]
+        needles = tuple(dict.fromkeys(tokens))
+        if not needles:
+            return exact[:limit]
+        matches: list[tuple[int, int, str, _Element]] = []
         for element in catalog.elements.values():
             haystack = " ".join(
                 (element.ref, element.name, _summary(element.content))
             ).casefold()
-            if not all(needle in haystack for needle in needles):
+            matched = [needle for needle in needles if needle in haystack]
+            if not matched:
                 continue
             name = element.name.casefold()
             ref = element.ref.casefold()
-            score = sum(4 if needle in ref else 3 if needle in name else 1 for needle in needles)
-            matches.append((-score, element.ref, element))
+            score = sum(4 if needle in ref else 3 if needle in name else 1 for needle in matched)
+            matches.append((-len(matched), -score, element.ref, element))
+        lexical = [
+            element.public(self.app_id)
+            for _, _, _, element in sorted(matches)[:limit]
+        ]
+        return _unique_public_refs([*exact, *lexical])[:limit]
+
+    def resolve_exact_elements(self, text: str, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Return catalog elements whose public identifier occurs literally in text.
+
+        This is deliberately identity-only: refs, display names, and registered
+        aliases are compared as literal strings. It does not assign meaning to a
+        ref prefix or promote an ambiguous name to a target.
+        """
+
+        text = str(text or "").strip()
+        if not text:
+            return []
+        catalog = self._catalog()
+        normalized_text = " ".join(text.split()).casefold()
+        aliases_by_ref: dict[str, list[str]] = {}
+        for alias, canonical in catalog.aliases.items():
+            aliases_by_ref.setdefault(canonical, []).append(alias)
+        matches: list[_Element] = []
+        for element in catalog.elements.values():
+            forms = (element.ref, element.name, *aliases_by_ref.get(element.ref, []))
+            summary = _summary(element.content)
+            if (
+                any(_literal_identifier_in_text(form, text) for form in forms)
+                or normalized_text == " ".join(summary.split()).casefold()
+            ):
+                matches.append(element)
         return [
             element.public(self.app_id)
-            for _, _, element in sorted(matches)[:limit]
+            for element in sorted(matches, key=lambda item: item.ref)[:limit]
         ]
 
     def read_element(self, ref: str) -> dict[str, Any]:
@@ -977,6 +1080,17 @@ class ProjectTools:
         if element is None:
             raise KeyError(ref)
         payload = element.public(self.app_id, include_content=True)
+        payload["requested_ref"] = ref
+        return payload
+
+    def describe_element(self, ref: str) -> dict[str, Any]:
+        """Return bounded target-selection metadata without the full element body."""
+
+        catalog = self._catalog()
+        element = catalog.resolve(ref)
+        if element is None:
+            raise KeyError(ref)
+        payload = element.public(self.app_id)
         payload["requested_ref"] = ref
         return payload
 
@@ -1127,6 +1241,38 @@ def _records(value: Any) -> list[Mapping[str, Any]]:
 def _identifier(item: Mapping[str, Any], key: str) -> str | None:
     value = item.get(key)
     return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _literal_identifier_in_text(identifier: str, text: str) -> bool:
+    """Match a catalog identifier as a whole literal, never a token fragment."""
+
+    normalized = " ".join(str(identifier).split())
+    if not normalized:
+        return False
+    # Two alphanumeric characters are common prose fragments (for example,
+    # ``to`` and ``id``). They remain valid when the entire query is that
+    # identifier, but do not create noisy embedded matches.
+    alphanumeric = "".join(character for character in normalized if character.isalnum())
+    if len(alphanumeric) < 3:
+        return " ".join(text.split()).casefold() == normalized.casefold()
+    identifier_tokens = re.findall(r"[A-Za-z0-9_]+", normalized.casefold())
+    text_tokens = re.findall(r"[A-Za-z0-9_]+", text.casefold())
+    return bool(identifier_tokens) and any(
+        text_tokens[index : index + len(identifier_tokens)] == identifier_tokens
+        for index in range(len(text_tokens) - len(identifier_tokens) + 1)
+    )
+
+
+def _unique_public_refs(items: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    unique: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in items:
+        ref = str(item.get("ref") or "")
+        if not ref or ref in seen:
+            continue
+        seen.add(ref)
+        unique.append(item)
+    return unique
 
 
 def _display_name(item: Mapping[str, Any], fallback: str) -> str:
