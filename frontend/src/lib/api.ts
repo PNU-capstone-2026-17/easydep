@@ -14,7 +14,8 @@ import type {
   LiveDiagramPreview,
   LiveSourceSnapshot,
   LlmTimingPage,
-  ArtifactTraceResponse
+  ArtifactTraceResponse,
+  TestingResultResponse
 } from '$lib/types';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -61,6 +62,12 @@ export function saveDeploymentPreferences(appId: string, input: DeploymentPrefer
 
 export function getWorkspace(appId: string) {
   return request<WorkspaceSnapshot>(`/api/workspace/apps/${appId}`);
+}
+
+export function getTestingResult(appId: string) {
+  return request<TestingResultResponse>(
+    `/api/workspace/apps/${encodeURIComponent(appId)}/testing-result`
+  );
 }
 
 export function sendCommand(appId: string, payload: CommandPayload) {

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Braces, Check, Copy, FileText, Image, Layers3, LoaderCircle, Maximize2, X } from '@lucide/svelte';
   import { Dialog } from 'bits-ui';
-  import type { ArtifactDocument, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, SequenceDiagramSummary } from '$lib/types';
+  import type { ArtifactDocument, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, SequenceDiagramSummary, TestingResultResponse } from '$lib/types';
   import { getArtifactFile, getLiveImplementationFile, getSequenceDiagrams } from '$lib/api';
   import { errorMessage } from '$lib/utils';
   import ArtifactVisualization from '$lib/components/ArtifactVisualization.svelte';
@@ -10,6 +10,7 @@
   import DeploymentSizingPanel from '$lib/components/DeploymentSizingPanel.svelte';
   import ReadOnlySourceViewer from '$lib/components/ReadOnlySourceViewer.svelte';
   import SourceFileExplorer from '$lib/components/SourceFileExplorer.svelte';
+  import TestingResultPanel from '$lib/components/TestingResultPanel.svelte';
   import { artifactLabels, artifactPresent, diagramArtifactTypes } from '$lib/artifacts';
 
   let {
@@ -17,6 +18,7 @@
     document,
     fileArtifacts,
     liveSources = null,
+    testingResult = null,
     preferredFile = '',
     classPreview,
     classGenerating = false,
@@ -30,6 +32,7 @@
     document?: ArtifactDocument | null;
     fileArtifacts: Record<string, FileArtifactSnapshot>;
     liveSources?: LiveSourceSnapshot | null;
+    testingResult?: TestingResultResponse | null;
     preferredFile?: string;
     classPreview?: LiveDiagramPreview | null;
     classGenerating?: boolean;
@@ -82,6 +85,7 @@
       .filter((key) => key in artifactLabels && artifactPresent(document?.artifacts?.[key]))
       .concat(Object.keys(fileArtifacts))
       .concat(liveSources ? ['LIVE_SOURCE'] : [])
+      .concat(testingResult?.available ? ['testing_result'] : [])
       .concat(classPreview || classGenerating ? ['class_diagram'] : [])
       .filter((stage, index, stages) => stages.indexOf(stage) === index)
   );
@@ -316,13 +320,15 @@
         <strong class="text-xs">Artifact index</strong>
         <span class="text-[10px] text-[#85877e]">Select an output</span>
       </div>
-      <ArtifactNavigator {document} {fileArtifacts} liveSourceAvailable={Boolean(liveSources)} {classPreview} {classGenerating} {selected} onSelect={selectFromIndex} />
+      <ArtifactNavigator {document} {fileArtifacts} liveSourceAvailable={Boolean(liveSources)} testingResultAvailable={Boolean(testingResult?.available)} {classPreview} {classGenerating} {selected} onSelect={selectFromIndex} />
     </div>
   {/if}
 
   <div class="scrollbar-thin flex-1 overflow-auto bg-[#fbfbf8]">
     <div class="min-h-full w-full">
-    {#if classGenerating && selected === 'class_diagram' && !displayContent}
+    {#if selected === 'testing_result'}
+      <TestingResultPanel result={testingResult} />
+    {:else if classGenerating && selected === 'class_diagram' && !displayContent}
       <div class="mt-16 text-center text-[#5d7565]" role="status">
         <LoaderCircle class="mx-auto mb-3 animate-spin" size={25} strokeWidth={1.5} />
         <p class="text-xs font-semibold">Generating the class diagram</p>

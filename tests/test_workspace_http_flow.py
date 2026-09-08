@@ -29,6 +29,62 @@ def clear_live_previews() -> Iterator[None]:
     live_previews.clear()
 
 
+def test_latest_testing_result_exposes_report_without_repeating_frozen_inputs(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = {
+        "passed": False,
+        "gateStatus": "FAIL",
+        "gateCounts": {"PASS": 2, "FAIL": 1},
+        "testingInput": {"contract_artifacts": {"requirements": "large input"}},
+        "verification": {
+            "reports": {
+                "dynamicFunctional": {
+                    "gateStatus": "FAIL",
+                    "caseId": "UC-2",
+                    "reason": "POST /enrollments returned HTTP 500",
+                }
+            }
+        },
+    }
+    command = {
+        "command_id": "testing-command-1",
+        "app_id": APP_ID,
+        "stage": "testing",
+        "status": "COMPLETED",
+        "payload": {},
+        "result": {
+            "job": {
+                "implementation_job_id": "implementation-job-1",
+                "result": report,
+            }
+        },
+        "created_at": "2026-09-09T10:00:00+09:00",
+        "started_at": "2026-09-09T10:00:01+09:00",
+        "completed_at": "2026-09-09T10:00:05+09:00",
+    }
+    monkeypatch.setattr(workspace_api, "require_app", lambda _app_id: {})
+
+    def latest(_app_id: str, *, stage: str | None = None):
+        assert stage == "testing"
+        return command
+
+    monkeypatch.setattr(workspace_api.repository, "latest_command", latest)
+
+    response = client.get(f"/api/workspace/apps/{APP_ID}/testing-result")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["available"] is True
+    assert body["command_status"] == "COMPLETED"
+    assert body["implementation_job_id"] == "implementation-job-1"
+    assert body["report"]["gateStatus"] == "FAIL"
+    assert body["report"]["verification"]["reports"]["dynamicFunctional"][
+        "caseId"
+    ] == "UC-2"
+    assert "testingInput" not in body["report"]
+
+
 def test_frontend_can_create_read_and_advance_a_workspace(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

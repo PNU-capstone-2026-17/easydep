@@ -8,8 +8,8 @@
   import Composer from '$lib/components/Composer.svelte';
   import StageRail from '$lib/components/StageRail.svelte';
   import ResizableWorkspace from '$lib/components/ResizableWorkspace.svelte';
-  import { connectEvents, getArtifacts, getClassDiagramPreview, getCloudOptions, getFileArtifact, getLiveImplementationSources, getWorkspace, listApps, saveDeploymentPreferences, sendCommand } from '$lib/api';
-  import type { ArtifactDocument, CloudProvider, CloudRegionOption, DeploymentPreferences, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, Stage, WorkspaceApp, WorkspaceCommand, WorkspaceEvent } from '$lib/types';
+  import { connectEvents, getArtifacts, getClassDiagramPreview, getCloudOptions, getFileArtifact, getLiveImplementationSources, getTestingResult, getWorkspace, listApps, saveDeploymentPreferences, sendCommand } from '$lib/api';
+  import type { ArtifactDocument, CloudProvider, CloudRegionOption, DeploymentPreferences, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, Stage, TestingResultResponse, WorkspaceApp, WorkspaceCommand, WorkspaceEvent } from '$lib/types';
   import { errorMessage } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
@@ -31,6 +31,7 @@
   let currentStage = $state<Stage>('requirements');
   let artifacts = $state.raw<ArtifactDocument | null>(null);
   let fileArtifacts = $state.raw<Record<string, FileArtifactSnapshot>>({});
+  let testingResult = $state.raw<TestingResultResponse | null>(null);
   let selectedArtifact = $state('refined_requirements');
   let sidebarCollapsed = $state(false);
   let artifactOpen = $state(true);
@@ -59,6 +60,7 @@
   let checkpointMode = $state<'branch' | 'rerun'>('branch');
   let checkpointStage = $state<Stage>('requirements');
   let openedCheckpointCommand = '';
+  let openedTestingCommand = '';
 
   let implementationErrors = $derived.by(() => {
     const messages = events
@@ -123,7 +125,9 @@
       : undefined;
   });
   let selectedStage = $derived(
-    selectedArtifact === 'LIVE_SOURCE' || fileArtifactTypes.includes(selectedArtifact)
+    selectedArtifact === 'testing_result'
+      ? 'testing'
+      : selectedArtifact === 'LIVE_SOURCE' || fileArtifactTypes.includes(selectedArtifact)
       ? 'implementation'
       : ['refined_requirements', 'usecase_spec', 'usecase_diagram'].includes(selectedArtifact)
       ? 'requirements'
@@ -208,12 +212,19 @@
   async function loadApp(id: string) {
     loading = true;
     error = '';
+    testingResult = null;
+    openedTestingCommand = '';
     try {
-      const [snapshot, document] = await Promise.all([getWorkspace(id), getArtifacts(id)]);
+      const [snapshot, document, latestTesting] = await Promise.all([
+        getWorkspace(id),
+        getArtifacts(id),
+        getTestingResult(id)
+      ]);
       events = snapshot.events;
       classPreview = null;
       previewOpenedForCommand = '';
       command = snapshot.command ?? null;
+      testingResult = latestTesting;
       deploymentPreferences = snapshot.deployment_preferences ?? null;
       currentStage = (command?.stage ?? snapshot.current_stage ?? 'requirements') as Stage;
       const loadedFileArtifacts = shouldLoadFileArtifactsInitially(command)
@@ -223,6 +234,11 @@
         completedArtifactLoads.add(`${id}:${command.command_id}`);
       }
       applyArtifactSnapshot(document, loadedFileArtifacts, true);
+      if (latestTesting.available) {
+        openedTestingCommand = latestTesting.command_id ?? '';
+        selectedArtifact = 'testing_result';
+        if (window.innerWidth >= 900) artifactOpen = true;
+      }
       const liveJobId = findImplementationJobId(command, events);
       if (
         command?.stage === 'implementation' &&
@@ -288,10 +304,15 @@
   async function refreshState(id = appId) {
     if (!id) return;
     const previousCommand = command;
-    const [snapshot, document] = await Promise.all([getWorkspace(id), getArtifacts(id)]);
+    const [snapshot, document, latestTesting] = await Promise.all([
+      getWorkspace(id),
+      getArtifacts(id),
+      getTestingResult(id)
+    ]);
     const nextCommand = snapshot.command ?? null;
     events = snapshot.events;
     command = nextCommand;
+    testingResult = latestTesting;
     deploymentPreferences = snapshot.deployment_preferences ?? null;
     currentStage = (command?.stage ?? snapshot.current_stage ?? currentStage) as Stage;
     const targetAppId = nextCommand?.result?.target_app_id;
@@ -314,6 +335,15 @@
       nextFileArtifacts = await loadFileArtifacts(id);
     }
     applyArtifactSnapshot(document, nextFileArtifacts);
+    if (
+      latestTesting.available &&
+      latestTesting.command_id &&
+      latestTesting.command_id !== openedTestingCommand
+    ) {
+      openedTestingCommand = latestTesting.command_id;
+      selectedArtifact = 'testing_result';
+      if (window.innerWidth >= 900) artifactOpen = true;
+    }
     const liveJobId = findImplementationJobId(nextCommand, snapshot.events);
     if (
       nextCommand?.stage === 'implementation' &&
@@ -613,6 +643,7 @@
             document={artifacts}
             {fileArtifacts}
             {liveSources}
+            {testingResult}
             preferredFile={selectedSourcePath}
             {classPreview}
             {classGenerating}

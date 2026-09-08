@@ -7,6 +7,7 @@
     document,
     fileArtifacts,
     liveSourceAvailable = false,
+    testingResultAvailable = false,
     classPreview,
     classGenerating = false,
     selected,
@@ -15,6 +16,7 @@
     document?: ArtifactDocument | null;
     fileArtifacts: Record<string, FileArtifactSnapshot>;
     liveSourceAvailable?: boolean;
+    testingResultAvailable?: boolean;
     classPreview?: LiveDiagramPreview | null;
     classGenerating?: boolean;
     selected: string;
@@ -30,13 +32,15 @@
       label: 'Design',
       stages: ['class_diagram', 'sequence_diagram', 'api_spec', 'erd', 'deployment_diagram']
     },
-    { label: 'Implementation', stages: ['LIVE_SOURCE', ...fileArtifactTypes] }
+    { label: 'Implementation', stages: ['LIVE_SOURCE', ...fileArtifactTypes] },
+    { label: 'Testing', stages: ['testing_result'] }
   ];
 
   function available(stage: string) {
     return (
       Boolean(fileArtifacts[stage]) ||
       (stage === 'LIVE_SOURCE' && liveSourceAvailable) ||
+      (stage === 'testing_result' && testingResultAvailable) ||
       artifactPresent(document?.artifacts?.[stage]) ||
       (stage === 'class_diagram' && (classGenerating || Boolean(classPreview)))
     );
@@ -48,7 +52,7 @@
 
 </script>
 
-<nav class="scrollbar-thin grid max-h-72 grid-cols-3 gap-2 overflow-y-auto p-3" aria-label="Project artifacts">
+<nav class="scrollbar-thin grid max-h-72 grid-cols-4 gap-2 overflow-y-auto p-3" aria-label="Project artifacts">
     {#each groups as group}
       <section aria-label={group.label}>
         <h3 class="mb-1.5 px-1 text-[9px] font-bold uppercase tracking-[.12em] text-[#979990]">{group.label}</h3>
