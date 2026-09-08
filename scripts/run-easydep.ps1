@@ -13,7 +13,7 @@ param(
     [ValidateRange(1024, 65535)]
     [int]$Port = 8100,
     [ValidateRange(1024, 65535)]
-    [int]$FrontendPort = 5600,
+    [int]$FrontendPort = 5173,
     [ValidateRange(1024, 65535)]
     [int]$DatabasePort = 33060,
     [string]$DatabaseImage = "mysql:8.4"
