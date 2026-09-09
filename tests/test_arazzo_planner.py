@@ -78,6 +78,7 @@ def _openapi() -> dict[str, Any]:
             "/audit": {
                 "get": {
                     "operationId": "auditItem",
+                    "x-easydep-use-case-ids": ["UC-2"],
                     "responses": {"200": {"description": "ok"}},
                 }
             },
@@ -227,7 +228,7 @@ def test_exact_operation_link_supports_a_contract_only_workflow() -> None:
 
 
 def test_unlinked_use_case_without_a_functional_requirement_fails_closed() -> None:
-    with pytest.raises(ArazzoPlanningError, match="exact OpenAPI operation link"):
+    with pytest.raises(ArazzoPlanningError, match="no OpenAPI operation with an exact"):
         build_workflow_candidates(
             [{"id": "REQ-NFR", "type": "NFR", "text": "A constraint."}],
             {
@@ -244,18 +245,19 @@ def test_unlinked_use_case_without_a_functional_requirement_fails_closed() -> No
         )
 
 
-def test_all_unique_frozen_operations_remain_available_without_rtm_links() -> None:
+def test_each_candidate_contains_only_exactly_traced_operations() -> None:
     candidates = _candidates()
-    available = set().union(*(_operation_ids(candidate) for candidate in candidates))
 
-    assert {"createItem", "getItem", "auditItem", "health"} <= available
+    assert _operation_ids(_candidate_for(candidates, "UC-1")) == {"createItem", "getItem"}
+    assert _operation_ids(_candidate_for(candidates, "UC-2")) == {"auditItem"}
+    assert all("health" not in _operation_ids(candidate) for candidate in candidates)
 
 
-def test_trace_and_scenario_links_only_rank_or_annotate_operations() -> None:
+def test_trace_and_scenario_links_form_the_operation_allowlist() -> None:
     candidate = _candidate_for(_candidates(), "UC-1")
     before = deepcopy(candidate)
 
-    assert _operation_ids(candidate) >= {"createItem", "getItem"}
+    assert _operation_ids(candidate) == {"createItem", "getItem"}
     assert candidate["operations"][0]["traceHints"]["relevant"] is True
     assert candidate["operations"][0]["traceHints"]["scenarioRefs"]
     assert candidate["requirements"] == before["requirements"]

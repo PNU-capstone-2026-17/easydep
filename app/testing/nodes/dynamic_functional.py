@@ -24,21 +24,26 @@ from app.testing.utils.arazzo_planner import (
     build_workflow_candidates,
 )
 from app.testing.utils.functional_executor import InputValueRequest, UpstreamAmbiguity
+from app.testing.utils.functional_executor import resolve_schema
 from app.validation import stable_digest
 
 PLAN_SYSTEM_PROMPT = """Return exactly one Arazzo v1.1 Workflow Object as JSON.
-Use the supplied workflowId exactly. Use only listed operationId values, but treat traceHints as
-ranking evidence rather than an allowlist. Express ordering, repeated calls, data flow, assertions,
+Use the supplied workflowId exactly. The listed operationId values are the complete, trace-linked
+allowlist for this use case. Express ordering, repeated calls, data flow, assertions,
 retry, and cleanup only with standard Arazzo fields. Every OpenAPI parameter must include its
 declared `in` value. Use application/json request bodies and JSON Pointer replacements only.
+Include requestBody only when the listed operation declares a non-null requestBody contract.
 At workflow level use only workflowId, summary, description, and steps. Put parameters,
 requestBody, outputs, successCriteria, and onFailure on the operation step. A retry is an onFailure
 action with name, type `retry`, and retryLimit; never use request, response, retry, assertions, or a
 workflow-level successCriteria field.
+Write outputs as an object whose keys are output names and whose values are runtime-expression
+strings; never write outputs as a list of name/value objects.
 Use only literal values or an earlier `$steps.<stepId>.outputs.<name>` in request values. This
 profile declares no workflow inputs, so never emit `$inputs`, `{{name}}` placeholders, or bare
-JSONPath such as `$.response`; omit an unfrozen value and let the executor obtain a schema-valid
-value from OpenAPI. Every literal must satisfy its OpenAPI type, format, and enum. Runtime
+JSONPath such as `$.response`; omit the entire parameter item for an unfrozen value and let the
+executor obtain a schema-valid value from OpenAPI. Never use an empty object as a missing parameter
+value. Every literal must satisfy its OpenAPI type, format, and enum. Runtime
 expressions include `$statusCode` and `$response.body#/pointer`, not
 `$response.statusCode`. A simple criterion contains only condition; use context and type only for
 RFC 9535 JSONPath. Add successCriteria only when the frozen requirement
@@ -282,6 +287,193 @@ def _validate_authored_workflow(value: dict[str, Any]) -> None:
     )
 
 
+def _normalize_authored_workflow(
+    value: dict[str, Any], candidate: dict[str, Any]
+) -> dict[str, Any]:
+    """Project common model spellings onto the frozen OpenAPI/Arazzo contract.
+
+    The conversion is limited to representations with one unambiguous standard form. Invalid or
+    unknown content remains unchanged so the authoring-profile validator can reject it.
+    """
+
+    normalized = deepcopy(value)
+    operations = {
+        str(operation.get("operationId")): operation
+        for operation in candidate.get("operations") or []
+        if isinstance(operation, dict) and operation.get("operationId")
+    }
+    for step in normalized.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        operation = operations.get(str(step.get("operationId") or ""))
+        if operation is None:
+            continue
+        outputs = step.get("outputs")
+        if isinstance(outputs, list):
+            converted_outputs: dict[str, str] = {}
+            for output in outputs:
+                if (
+                    not isinstance(output, dict)
+                    or set(output) != {"name", "value"}
+                    or not isinstance(output.get("name"), str)
+                    or not isinstance(output.get("value"), str)
+                    or output["name"] in converted_outputs
+                ):
+                    break
+                converted_outputs[output["name"]] = output["value"]
+            else:
+                step["outputs"] = converted_outputs
+        if operation.get("requestBody") is None:
+            step.pop("requestBody", None)
+        if not isinstance(step.get("parameters"), list):
+            continue
+        declared = {
+            (parameter.get("in"), parameter.get("name"))
+            for parameter in operation.get("parameters") or []
+            if isinstance(parameter, dict)
+        }
+        parameters = [
+            parameter
+            for parameter in step["parameters"]
+            if not isinstance(parameter, dict)
+            or (
+                parameter.get("value") != {}
+                and (parameter.get("in"), parameter.get("name")) in declared
+            )
+        ]
+        if parameters:
+            step["parameters"] = parameters
+        else:
+            step.pop("parameters", None)
+    return normalized
+
+
+def _schema_supports_pointer(
+    schema: Any, pointer: str, openapi: dict[str, Any]
+) -> bool:
+    """Return whether a response-schema path can legally exist."""
+
+    try:
+        current = resolve_schema(openapi, schema)
+    except (TypeError, ValueError):
+        return False
+    if pointer in {"", "#"}:
+        return True
+    raw = pointer.removeprefix("#")
+    if not raw.startswith("/"):
+        return False
+    parts = raw[1:].split("/")
+
+    def walk(value: Any, remaining: list[str]) -> bool:
+        try:
+            resolved = resolve_schema(openapi, value)
+        except (TypeError, ValueError):
+            return False
+        if not remaining:
+            return True
+        alternatives = [
+            item
+            for key in ("allOf", "anyOf", "oneOf")
+            for item in resolved.get(key) or []
+            if isinstance(item, dict)
+        ]
+        if alternatives and any(walk(item, remaining) for item in alternatives):
+            return True
+        part = remaining[0].replace("~1", "/").replace("~0", "~")
+        if (resolved.get("type") == "array" or "items" in resolved) and part.isdigit():
+            return walk(resolved.get("items"), remaining[1:])
+        properties = resolved.get("properties")
+        if isinstance(properties, dict) and part in properties:
+            return walk(properties[part], remaining[1:])
+        additional = resolved.get("additionalProperties")
+        if isinstance(additional, dict):
+            return walk(additional, remaining[1:])
+        return False
+
+    return walk(current, parts)
+
+
+def _classify_missing_workflow_data(
+    result: dict[str, Any],
+    workflow: dict[str, Any],
+    candidate: dict[str, Any],
+    openapi: dict[str, Any],
+) -> None:
+    """Distinguish missing runtime data from an invented response pointer."""
+
+    finding = result.get("finding")
+    if not isinstance(finding, dict) or finding.get("code") != "RUNTIME_EXPRESSION_UNRESOLVED":
+        return
+    message = str(finding.get("message") or result.get("reason") or "")
+    marker = "JSON Pointer does not resolve: "
+    if marker not in message:
+        return
+    pointer = message.rsplit(marker, 1)[-1].strip()
+    failed_step_id = str(result.get("failedStepId") or finding.get("stepId") or "")
+    if not failed_step_id:
+        failed_step_id = str(
+            next(
+                (
+                    item.get("stepId")
+                    for item in result.get("steps") or []
+                    if isinstance(item, dict) and isinstance(item.get("finding"), dict)
+                ),
+                "",
+            )
+            or ""
+        )
+    step = next(
+        (
+            item
+            for item in workflow.get("steps") or []
+            if isinstance(item, dict) and str(item.get("stepId") or "") == failed_step_id
+        ),
+        None,
+    )
+    if not isinstance(step, dict):
+        return
+    operation_id = str(step.get("operationId") or "")
+    operation = next(
+        (
+            item
+            for item in candidate.get("operations") or []
+            if isinstance(item, dict) and str(item.get("operationId") or "") == operation_id
+        ),
+        None,
+    )
+    outputs = step.get("outputs")
+    if not isinstance(operation, dict) or not isinstance(outputs, dict):
+        return
+    matching_expression = any(
+        isinstance(value, str) and value == f"$response.body{pointer}"
+        for value in outputs.values()
+    )
+    if not matching_expression:
+        return
+    success_schemas = [
+        response.get("schema")
+        for response in operation.get("responses") or []
+        if isinstance(response, dict)
+        and str(response.get("status") or "").startswith("2")
+        and isinstance(response.get("schema"), dict)
+    ]
+    if not any(_schema_supports_pointer(schema, pointer, openapi) for schema in success_schemas):
+        return
+    reason = (
+        f"The application response for {operation_id} did not contain the data required by "
+        f"the next use-case step ({pointer})."
+    )
+    result["defectClass"] = "SUT_DEFECT"
+    result["reason"] = reason
+    finding.update(
+        {
+            "code": "REQUIRED_WORKFLOW_DATA_MISSING",
+            "message": reason,
+            "operationId": operation_id,
+        }
+    )
+
+
 def _prompt(candidate: dict[str, Any], validation_error: str = "") -> str:
     correction = (
         "\nThe previous output failed validation. Correct only this reported issue:\n"
@@ -310,6 +502,42 @@ def _client() -> OpenAI:
     )
 
 
+def _structured_output_extra_body(connection: Any, profile: Any) -> dict[str, Any]:
+    """Return provider options that preserve structured-output guarantees."""
+
+    body = dict(profile.extra_body(connection.provider) or {})
+    if connection.provider == "openrouter":
+        provider = dict(body.get("provider") or {})
+        # OpenRouter can otherwise route a request to an endpoint that silently
+        # ignores response_format. An executable Arazzo plan must not rely on
+        # prompted JSON alone.
+        provider["require_parameters"] = True
+        body["provider"] = provider
+    return body
+
+
+def _completion_content(response: Any, *, operation: str) -> str:
+    """Reject incomplete structured responses before attempting JSON parsing."""
+
+    choices = response.choices or []
+    if not choices:
+        raise ArazzoPlanningError(f"{operation} returned no completion choice.")
+    choice = choices[0]
+    finish_reason = str(getattr(choice, "finish_reason", "") or "").strip().lower()
+    if finish_reason in {"length", "max_tokens"}:
+        raise ArazzoPlanningError(
+            f"{operation} reached the completion token limit before producing complete JSON."
+        )
+    if finish_reason not in {"", "stop"}:
+        raise ArazzoPlanningError(
+            f"{operation} ended without a complete response (finish_reason={finish_reason})."
+        )
+    content = (getattr(choice.message, "content", "") or "").strip()
+    if not content:
+        raise ArazzoPlanningError(f"{operation} returned an empty response.")
+    return content
+
+
 def _generate(
     client: OpenAI,
     candidate: dict[str, Any],
@@ -332,13 +560,14 @@ def _generate(
         request["top_p"] = profile.top_p
     if reasoning_effort := profile.resolve_reasoning():
         request["reasoning_effort"] = reasoning_effort
-    if extra_body := profile.extra_body(connection.provider):
+    if extra_body := _structured_output_extra_body(connection, profile):
         request["extra_body"] = extra_body
     response = client.chat.completions.create(**request)
-    content = (response.choices[0].message.content if response.choices else "") or ""
+    content = _completion_content(response, operation="Arazzo workflow generation")
     value = json.loads(content)
     if not isinstance(value, dict):
         raise TypeError("The workflow response must be one JSON object.")
+    value = _normalize_authored_workflow(value, candidate)
     _validate_authored_workflow(value)
     return attach_workflow_trace(value, candidate)
 
@@ -394,16 +623,27 @@ def _generate_document(
     candidates: list[dict[str, Any]],
     openapi: dict[str, Any],
 ) -> dict[str, Any]:
-    error = ""
-    for attempt in range(2):
-        try:
-            workflows = [_generate(client, candidate, error) for candidate in candidates]
-            return _validate_document(build_arazzo_document(workflows), candidates, openapi)
-        except (ArazzoPlanningError, ArazzoValidationError, TypeError, ValueError) as exc:
-            error = str(exc)
-            if attempt:
-                raise ValueError(f"Arazzo workflow generation failed validation: {error}") from exc
-    raise AssertionError("The bounded workflow generation loop did not terminate.")
+    workflows: list[dict[str, Any]] = []
+    for candidate in candidates:
+        error = ""
+        for attempt in range(2):
+            try:
+                workflow = _generate(client, candidate, error)
+                validated = _validate_document(
+                    build_arazzo_document([workflow]), [candidate], openapi
+                )
+                workflows.append(validated["workflows"][0])
+                break
+            except (ArazzoPlanningError, ArazzoValidationError, TypeError, ValueError) as exc:
+                error = str(exc)
+                if attempt:
+                    workflow_id = str(candidate.get("workflowId") or "unknown")
+                    raise ValueError(
+                        f"Arazzo workflow {workflow_id} generation failed validation: {error}"
+                    ) from exc
+        else:  # pragma: no cover - both loop exits above are explicit
+            raise AssertionError("The bounded workflow generation loop did not terminate.")
+    return _validate_document(build_arazzo_document(workflows), candidates, openapi)
 
 
 def _preserved(
@@ -466,10 +706,10 @@ def _propose_input(client: OpenAI, request: InputValueRequest) -> Any:
         llm_request["top_p"] = profile.top_p
     if reasoning_effort := profile.resolve_reasoning():
         llm_request["reasoning_effort"] = reasoning_effort
-    if extra_body := profile.extra_body(connection.provider):
+    if extra_body := _structured_output_extra_body(connection, profile):
         llm_request["extra_body"] = extra_body
     response = client.chat.completions.create(**llm_request)
-    content = (response.choices[0].message.content if response.choices else "") or ""
+    content = _completion_content(response, operation="Functional input generation")
     parsed = json.loads(content)
     if not isinstance(parsed, dict) or "value" not in parsed:
         raise ValueError("The input suggestion response has no value field.")
@@ -817,6 +1057,9 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         }
 
     workflow_ids = {str(workflow["workflowId"]) for workflow in document["workflows"]}
+    candidate_by_workflow_id = {
+        str(candidate["workflowId"]): candidate for candidate in candidates
+    }
     emit_testing_progress(
         phase="dynamic",
         scope="phase",
@@ -852,8 +1095,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
     }
     results: list[dict[str, Any]] = []
     reused_workflow_ids: list[str] = []
-    first_failure: tuple[str, dict[str, Any]] | None = None
-    pending_workflow_ids: list[str] = []
+    failures: list[tuple[str, dict[str, Any]]] = []
     priority_workflow_id = str(state.get("priority_workflow_id") or "").strip()
     execution_workflows = list(document["workflows"])
     if priority_workflow_id:
@@ -958,6 +1200,12 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                 f"Functional workflow input or execution failed: {error}",
                 "ENVIRONMENT_DEFECT",
             )
+        _classify_missing_workflow_data(
+            result,
+            workflow,
+            candidate_by_workflow_id[workflow_id],
+            frozen["openapi"],
+        )
         saved_inputs = result.get("workflowInputs")
         if isinstance(saved_inputs, dict):
             workflow_inputs[workflow_id] = deepcopy(saved_inputs)
@@ -986,17 +1234,13 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                 used_input_values,
             )
         )
-        if first_failure is None and str(result.get("gateStatus") or "").upper() != "PASS":
-            first_failure = (
-                str(result.get("failedWorkflowId") or workflow_id),
-                result,
+        if str(result.get("gateStatus") or "").upper() != "PASS":
+            failures.append(
+                (
+                    str(result.get("failedWorkflowId") or workflow_id),
+                    result,
+                )
             )
-            pending_workflow_ids = [
-                str(item["workflowId"])
-                for item in execution_workflows[index + 1 :]
-                if str(item["workflowId"]) not in previous_results
-            ]
-            break
 
     fixed_inputs = {
         "workflowInputs": workflow_inputs,
@@ -1014,8 +1258,8 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         "requirements": _requirements(results, candidates),
         "targetUrl": target_url,
     }
-    if first_failure is not None:
-        workflow_id, failed_result = first_failure
+    if failures:
+        workflow_id, failed_result = failures[0]
         finding = _failure_finding(workflow_id, failed_result)
         report = {
             **failed_result,
@@ -1026,7 +1270,8 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             ),
             "failedWorkflowId": workflow_id,
             "failedStepId": finding.get("stepId") or "",
-            "pendingWorkflowIds": pending_workflow_ids,
+            "failedWorkflowIds": [item[0] for item in failures],
+            "pendingWorkflowIds": [],
         }
         report["defect"] = classify_dynamic_failure(report)
         return {"current_node": "dynamic_functional", "dynamic_functional_report": report}

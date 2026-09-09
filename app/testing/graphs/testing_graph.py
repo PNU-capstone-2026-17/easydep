@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from langgraph.graph import END, START, StateGraph
 
 from app.testing.nodes.dynamic_functional import dynamic_functional_node
@@ -10,49 +8,8 @@ from app.testing.progress import emit_testing_progress
 from app.testing.schemas.testing_state import TestingState
 from app.testing.utils.gates import gate_status
 
-
-def _deferred_report(gate: str, reason: str) -> dict[str, Any]:
-    return {
-        "status": "DEFERRED",
-        "gateStatus": "NOT_APPLICABLE",
-        "deferred": True,
-        "deferredGate": gate,
-        "reason": reason,
-    }
-
-
-def _defer_static_verification(_state: TestingState) -> dict[str, Any]:
-    """동적 차단 원인을 먼저 수리할 때 아직 실행하지 않은 gate를 명시한다."""
-
-    reason = "Deferred until the blocking dynamic functional failure is repaired."
-    trivy = _deferred_report("static", reason)
-    package = _deferred_report("package", reason)
-    dynamic = dict(_state.get("dynamic_functional_report") or {})
-    dynamic["deferredGates"] = ["static", "package", "iac"]
-    for gate in dynamic["deferredGates"]:
-        emit_testing_progress(
-            phase="static",
-            scope="gate",
-            status="DEFERRED",
-            label=f"Deferred {gate} verification",
-            detail=reason,
-            gate=gate,
-        )
-    return {
-        "current_node": "static_verification_deferred",
-        "dynamic_functional_report": dynamic,
-        "static_report": {
-            **_deferred_report("static", reason),
-            "issues": [],
-            "trivyScan": trivy,
-            "deploymentPackage": package,
-        },
-        "iac_report": _deferred_report("iac", reason),
-    }
-
-
 def _after_dynamic(state: TestingState) -> str:
-    """동적 gate가 이번 실행의 차단 원인이면 정적 도구를 뒤로 미룬다."""
+    """Record the dynamic result and continue with independent verification gates."""
 
     scope = state.get("gate_scope")
     selected = (
@@ -79,18 +36,15 @@ def _after_dynamic(state: TestingState) -> str:
         label="Completed dynamic API verification",
         gate="dynamicFunctional",
     )
-    if dynamic_status in {"FAIL", "INCONCLUSIVE"}:
-        return "defer_static_verification"
     return "static_verification"
 
 
 def create_testing_graph():
-    """동적 runtime 검사를 우선하고, 차단 실패면 후속 정적 gate를 미룬다."""
+    """Run dynamic verification first, then complete the independent static gates."""
     workflow = StateGraph(TestingState)
 
     workflow.add_node("dynamic_functional", dynamic_functional_node)
     workflow.add_node("static_verification", static_verification_node)
-    workflow.add_node("defer_static_verification", _defer_static_verification)
 
     workflow.add_edge(START, "dynamic_functional")
     workflow.add_conditional_edges(
@@ -98,13 +52,10 @@ def create_testing_graph():
         _after_dynamic,
         {
             "static_verification": "static_verification",
-            "defer_static_verification": "defer_static_verification",
             END: END,
         },
     )
     workflow.add_edge("static_verification", END)
-    workflow.add_edge("defer_static_verification", END)
-
     return workflow.compile()
 
 

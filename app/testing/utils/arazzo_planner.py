@@ -263,8 +263,12 @@ def _operations(
             )
     if not by_id:
         raise ArazzoPlanningError("Frozen OpenAPI document has no operationIds.")
+    # An LLM must not infer a use-case workflow from every operation in the API.
+    # Design traceability already carries exact use-case, scenario-step, and
+    # requirement links; only that closed projection belongs in this candidate.
     return sorted(
-        by_id.values(), key=lambda item: (not item["traceHints"]["relevant"], item["operationId"])
+        (item for item in by_id.values() if item["traceHints"]["relevant"]),
+        key=lambda item: item["operationId"],
     )
 
 
@@ -317,13 +321,10 @@ def build_workflow_candidates(
         )
         linked_ids.intersection_update(functional_requirements)
         operations = _operations(openapi, use_case_id, linked_ids)
-        has_exact_operation_link = any(
-            operation["traceHints"]["relevant"] for operation in operations
-        )
-        if not linked_ids and not has_exact_operation_link:
+        if not operations:
             raise ArazzoPlanningError(
-                "Functional use case has neither a functional requirement nor an exact "
-                f"OpenAPI operation link: {use_case_id}"
+                "Functional use case has no OpenAPI operation with an exact use-case, "
+                f"scenario-step, or requirement link: {use_case_id}"
             )
         selected = [functional_requirements[identifier] for identifier in linked_ids]
         selected.sort(key=lambda record: _id(record, "id", "requirement_id", "requirementId"))

@@ -145,8 +145,8 @@ def test_static_stage_reports_a_missing_iac_folder(tmp_path):
     assert result["iac_report"]["source"]["source"] == "none"
 
 
-def test_dynamic_blocking_failure_defers_static_and_iac_gates(monkeypatch):
-    """최초 dynamic 차단 뒤 아직 실행하지 않은 정적 gate를 deferred로 남긴다."""
+def test_dynamic_failure_does_not_skip_independent_static_and_iac_gates(monkeypatch):
+    """동적 실패가 있어도 독립적인 정적 gate를 끝까지 실행한다."""
 
     def failed_dynamic(_state):
         return {
@@ -160,13 +160,16 @@ def test_dynamic_blocking_failure_defers_static_and_iac_gates(monkeypatch):
         }
 
     progress_events = []
+    static_result = {
+        "current_node": "static_verification",
+        "static_report": {"status": "PASSED", "gateStatus": "PASS"},
+        "iac_report": {"status": "PASSED", "gateStatus": "PASS"},
+    }
     with (
         patch("app.testing.graphs.testing_graph.dynamic_functional_node", failed_dynamic),
         patch(
             "app.testing.graphs.testing_graph.static_verification_node",
-            side_effect=lambda *_args, **_kwargs: pytest.fail(
-                "static checks must be deferred after a blocking dynamic failure"
-            ),
+            return_value=static_result,
         ),
         _testing_progress_scope(progress_events.append),
     ):
@@ -174,17 +177,11 @@ def test_dynamic_blocking_failure_defers_static_and_iac_gates(monkeypatch):
             _initial_state(target_url="http://localhost:8080")
         )
 
-    assert result["current_node"] == "static_verification_deferred"
-    assert result["static_report"]["deferred"] is True
-    assert result["static_report"]["deferredGate"] == "static"
-    assert result["static_report"]["trivyScan"]["deferred"] is True
-    assert result["static_report"]["deploymentPackage"]["deferred"] is True
-    assert result["iac_report"]["deferred"] is True
-    assert {
-        event.get("gate")
-        for event in progress_events
-        if event.get("status") == "DEFERRED"
-    } == {"static", "package", "iac"}
+    assert result["current_node"] == "static_verification"
+    assert result["dynamic_functional_report"]["gateStatus"] == "FAIL"
+    assert result["static_report"]["gateStatus"] == "PASS"
+    assert result["iac_report"]["gateStatus"] == "PASS"
+    assert not [event for event in progress_events if event.get("status") == "DEFERRED"]
 
 
 # ---------------------------------------------------------------------------
