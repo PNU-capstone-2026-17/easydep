@@ -364,6 +364,18 @@ def test_compute_choices_reproject_without_private_constraint_kind() -> None:
         for unit in guidance["computeUnits"]
         for candidate in unit["candidates"]
     )
+    assert all(
+        candidate["performance"]["status"]
+        in {"ok", "warn", "partial", "no_record", "untracked", "not_built"}
+        for unit in guidance["computeUnits"]
+        for candidate in unit["candidates"]
+    )
+    assert all(
+        "sustainedCpu" in candidate["performance"]
+        and "attributes" in candidate["performance"]
+        for unit in guidance["computeUnits"]
+        for candidate in unit["candidates"]
+    )
     selections = [
         {
             "computeUnitId": unit["computeUnitId"],

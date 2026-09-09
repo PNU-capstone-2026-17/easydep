@@ -150,6 +150,61 @@ def recommend_note(
     return PerfNote(NOTE_OK)
 
 
+def recommendation_profile(
+    provider: str,
+    spec_name: str,
+    spec_id: str | None = None,
+    output_dir: Path | str | None = None,
+) -> dict:
+    """Return structured performance evidence for a VM selection surface.
+
+    The recommendation UI must not reconstruct provider-specific burst rules from
+    SKU names.  This projection therefore carries the same status and evidence as
+    :func:`recommend_note`, plus the provider-specific fields that are actually
+    present in perfkb.  Missing data remains explicit and never blocks sizing.
+    """
+
+    note = recommend_note(provider, spec_name, spec_id, output_dir)
+    result: dict = {
+        "status": note.status,
+        "warning": note.text,
+        "sustainedCpu": None,
+        "attributes": [],
+    }
+    if note.status in {NOTE_NOT_BUILT, NOTE_NO_RECORD, NOTE_UNTRACKED}:
+        return result
+
+    rec = get_by_id(spec_id, output_dir) if spec_id else None
+    if rec is None:
+        rec = get_by_spec_name(provider, spec_name, output_dir)
+    if rec is None:
+        return result
+
+    sustained = rec.get("sustainedCpu")
+    if isinstance(sustained, dict):
+        result["sustainedCpu"] = {
+            key: sustained.get(key)
+            for key in ("value", "note", "evidence", "basis")
+        }
+
+    attributes = []
+    for field in FIELDS:
+        value = rec.get(field.key)
+        if value is None:
+            continue
+        item = {
+            "key": field.key,
+            "label": field.label,
+            "value": value,
+            "display": field.render(value),
+        }
+        if field.key == "networkPerformance" and rec.get("networkIsBurst") is True:
+            item["warning"] = "Advertised network bandwidth is burst, not sustained."
+        attributes.append(item)
+    result["attributes"] = attributes
+    return result
+
+
 def _describe(rec: dict) -> str:
     lines = []
     sustained = rec.get("sustainedCpu")

@@ -7,7 +7,7 @@
 | 패키지 | 역할 |
 |---|---|
 | `depkb` | 실측 기반 VM 리소스 의존관계 |
-| `costkb` | VM 사양·가격과 비용 계산 |
+| `costkb` | VM 사양·가격과 배포 리소스 과금 규칙 |
 | `perfkb` | VM 성능 특성과 추천 보강 |
 | `kbcommon` | 공통 데이터 로더·출처·데이터 일관성 검사 |
 | `speckb` | CSP가 발행한 VM 카탈로그 원본 응답 (무가공 보관) |
@@ -49,6 +49,12 @@ application requirements
 - `costkb/free_tier.json`은 AWS·Azure·GCP가 공식 문서에 공개한 VM 무료 사용 정책과
   계정·기간·리전·사용량 한계를 보관한다. 무료 여부는 SKU 가격의 고정 속성이 아니므로
   가격 미러와 분리하며, 설계 단계가 후보에 현재 정책 판정을 덧붙인다.
+- `costkb/resource_pricing_rules.json`은 현재 Docker-on-VM ResourcePlan 어휘 전체를
+  공식 가격 문서에 근거한 과금 규칙 또는 `no separate meter`로 분류한다. VM·디스크·
+  L4 로드밸런서·NAT·공인 IP·컨테이너 레지스트리·송신 트래픽·기존 시크릿 접근을
+  다루며, 변동 단가는 복제하지 않고 CSP 가격 API의 조회 차원을 기록한다. 이 파일의
+  계산식은 조사 지식이며 실행 문자열이 아니다. 계산기는 명명된 입력과 단가를
+  결정론적으로 구현해야 하고, 없는 사용량을 0으로 간주하면 안 된다.
 - `provider_primitives.py`는 설계 단계가 ResourcePlan을 만들 때 사용하는 CSP별 리소스 이름과
   연결 규칙이다.
 - `depkb/native/`의 JSON, `depkb/replications/`와 `document/archive/`는 조사 참고 자료로
@@ -73,8 +79,8 @@ application requirements
 `app.cloudkb`는 클라우드 사실과 그 사실에서 파생한 후보·의존관계만 소유한다.
 
 - **입력:** 커밋된 `data/*.json.gz`, `depkb/claims.json`과 provider primitive.
-- **출력:** 검증된 카탈로그, 의존관계·비용·성능 조회 결과, `ResourcePlan`에 넘길
-  공급자별 후보.
+- **출력:** 검증된 카탈로그, 의존관계·비용·성능 조회 결과, 배포 리소스의 과금 규칙,
+  `ResourcePlan`에 넘길 공급자별 후보.
 - **부수효과:** 기본 조회는 저장소의 번들 데이터를 읽기만 한다. fetch/rebuild CLI가
   요청된 경우에만 네트워크를 읽고 `output/`·`.cache/`에 작업 산출물을 쓴다.
 - **사용하면 안 되는 import:** `app.requirements`, `app.design`, `app.implementation`을 import하지

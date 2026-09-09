@@ -15,6 +15,7 @@ from app.cloudkb.costkb.free_tier import (
     vm_free_tier_notice,
     vm_free_tier_status,
 )
+from app.cloudkb.perfkb.agent_api import recommendation_profile
 from app.design.services.deployment_diagram.bundle import select_deployment_target
 from app.design.services.deployment_diagram.planner import (
     build_deployment_plan,
@@ -272,6 +273,11 @@ def compute_sizing_guidance(
                         provider=provider,
                         region=region,
                         sku=str(row["specName"]),
+                    ),
+                    "performance": recommendation_profile(
+                        provider=provider,
+                        spec_name=str(row["specName"]),
+                        spec_id=str(row.get("id") or "") or None,
                     ),
                 }
             )

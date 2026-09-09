@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.requirements.runtime.structured_llm import invoke_structured
 
+from .cloud_guidance import CloudTopic, cloud_guidance_evidence
 from .context import ConversationContext
 from .contracts import (
     Clarification,
@@ -28,6 +29,7 @@ from .project_tools import ProjectTools
 
 T = TypeVar("T", bound=BaseModel)
 ProposalCall = Callable[[type[T], list], T]
+CloudGuidanceCall = Callable[[str, CloudTopic, str], dict[str, object]]
 ConversationResult = Reply | Clarification | CommandIntent
 
 
@@ -50,6 +52,7 @@ class _ConversationPlan(BaseModel):
     reply: str = ""
     question: str = ""
     stage: Literal["", "requirements", "design", "implementation", "testing"] = ""
+    cloud_topic: Literal["", "provider_region", "sku", "free_tier", "topology"] = ""
 
     @model_validator(mode="after")
     def validate_kind_fields(self) -> _ConversationPlan:
@@ -79,7 +82,9 @@ _PLAN_SYSTEM = """You are the conversational boundary of a software delivery wor
 Classify the user's utterance without inventing state or artifact references.
 - reply: ordinary social conversation that needs no project data or workflow execution.
 - project_question: a question about this project's current state or artifacts. Supply a concise
-  search query, not an answer from memory.
+  search query, not an answer from memory. Set cloud_topic only when the question concerns the
+  current cloud provider or region, VM SKU, cost or performance, VM Free Tier, or deployment resource topology;
+  otherwise leave it empty.
 - command: an explicit request to advance, answer a pending question, revise project content,
   delegate an offered repair, approve or dismiss a pending revision plan, create a checkpoint
   branch, or rerun a delivery stage. Select confirm_revision or dismiss_revision only when the
@@ -93,8 +98,13 @@ branch or rerun request. Buttons and explicit action payloads do not pass throug
 
 
 class ConversationAgent:
-    def __init__(self, proposal_call: ProposalCall | None = None) -> None:
+    def __init__(
+        self,
+        proposal_call: ProposalCall | None = None,
+        cloud_guidance_call: CloudGuidanceCall | None = None,
+    ) -> None:
         self._propose = proposal_call or invoke_structured
+        self._cloud_guidance = cloud_guidance_call or cloud_guidance_evidence
 
     def respond(
         self,
@@ -150,6 +160,8 @@ class ConversationAgent:
                 utterance,
                 plan.query,
                 project_tools,
+                app_id=app_id,
+                cloud_topic=plan.cloud_topic,
                 context=context,
             )
 
@@ -341,6 +353,8 @@ class ConversationAgent:
         query: str,
         tools: ProjectTools,
         *,
+        app_id: str,
+        cloud_topic: CloudTopic | Literal[""],
         context: ConversationContext | None = None,
     ) -> Reply | Clarification:
         workspace = tools.read_workspace()
@@ -357,6 +371,12 @@ class ConversationAgent:
             "selection": self._selection(context),
             "matches": candidates,
         }
+        if cloud_topic:
+            evidence["cloud"] = self._cloud_guidance(
+                app_id,
+                cloud_topic,
+                f"{query}\n{text}",
+            )
         if candidates:
             refs = [str(item.get("ref") or "") for item in candidates[:5]]
             validation = tools.validate_targets(refs)
@@ -371,7 +391,10 @@ class ConversationAgent:
                     content=(
                         "Answer the project question using only the supplied tool evidence. "
                         "Say explicitly when the evidence is insufficient. Do not claim that a "
-                        "workflow action ran and do not recommend unlisted artifact refs."
+                        "workflow action ran and do not recommend values or artifact refs absent "
+                        "from the evidence. Treat cloud catalog data as guidance, not a selection "
+                        "or a guarantee of availability, performance, Free Tier eligibility, or "
+                        "zero cost. The user chooses provider, region, and SKU. Answer in English."
                     )
                 ),
                 HumanMessage(

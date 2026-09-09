@@ -8,6 +8,7 @@
 4. [`evaluation-protocol.md`](evaluation-protocol.md): 대조실험과 효과 측정 방법
 5. [`terminology-ledger.md`](terminology-ledger.md): 용어 출처·조작적 정의·하면 안 되는 해석
 6. [`resource-coverage.md`](resource-coverage.md): 현재 자원 어휘의 충족 범위와 미측정 후보
+7. [`resource-pricing-formulas.md`](resource-pricing-formulas.md): AWS·Azure·GCP 과금 리소스별 비용 계산식과 공식 근거
 
 연구 질문과 지표는 이 디렉터리의 평가 프로토콜에 남긴다. 과거 채점기는 현재 제품 경로와
 달라 보류했으며, 새 실행 확인은 프론트엔드와 같은 Workspace API를 사용한다.

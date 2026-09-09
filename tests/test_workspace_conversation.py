@@ -149,6 +149,56 @@ def test_project_question_is_answered_from_read_only_tool_evidence() -> None:
     ]
 
 
+def test_cloud_question_adds_local_guidance_to_the_grounded_answer() -> None:
+    guidance_calls: list[tuple[str, str, str]] = []
+
+    def guidance(app_id: str, topic: str, query: str):
+        guidance_calls.append((app_id, topic, query))
+        return {
+            "topic": "free_tier",
+            "current": {"provider": "aws", "region": "ap-northeast-2"},
+            "requestedSkus": [
+                {
+                    "sku": "t3.micro",
+                    "status": "found",
+                    "matches": [{"freeTier": {"status": "conditional"}}],
+                }
+            ],
+        }
+
+    def propose(schema, messages):
+        if schema.__name__ == "_ConversationPlan":
+            return schema(
+                kind="project_question",
+                query="t3.micro Free Tier",
+                cloud_topic="free_tier",
+            )
+        prompt = str(messages[-1].content)
+        assert '"cloud"' in prompt
+        assert '"status": "conditional"' in prompt
+        return schema(text="t3.micro eligibility is account-dependent in this evidence.")
+
+    tools = FakeTools()
+    result = ConversationAgent(
+        propose, cloud_guidance_call=guidance
+    ).respond(
+        "app-1",
+        "Is t3.micro in the Free Tier for this app?",
+        context(),
+        tools=tools,
+    )
+
+    assert isinstance(result, Reply)
+    assert "account-dependent" in result.text
+    assert guidance_calls == [
+        (
+            "app-1",
+            "free_tier",
+            "t3.micro Free Tier\nIs t3.micro in the Free Tier for this app?",
+        )
+    ]
+
+
 def test_revision_can_only_select_a_finite_validated_ref() -> None:
     def propose(schema, _messages):
         if schema.__name__ == "_ConversationPlan":

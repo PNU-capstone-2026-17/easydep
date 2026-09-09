@@ -173,6 +173,21 @@
       : `$${candidate.monthlyComputeUSD.toFixed(2)}/mo`;
   }
 
+  function performanceLabel(candidate: ComputeSizingCandidate | undefined) {
+    if (!candidate) return 'Performance unknown';
+    if (candidate.performance.sustainedCpu?.value === false) {
+      return 'Sustained CPU not guaranteed';
+    }
+    if (candidate.performance.sustainedCpu?.value === true) {
+      return candidate.performance.sustainedCpu.basis === 'inferred'
+        ? 'Sustained CPU indicated'
+        : 'Sustained CPU supported';
+    }
+    return candidate.performance.status === 'not_built'
+      ? 'Performance data not built'
+      : 'Sustained CPU unknown';
+  }
+
   function hasUnpricedSelection(stored = false) {
     if (stored) {
       return (response?.selected ?? []).some(
@@ -255,7 +270,7 @@
         <div class="mt-2 space-y-1.5">
           {#each response.selected as selection}
             <div class="flex items-center justify-between gap-2 rounded-md bg-[#f6f8f4] px-2 py-1.5 text-[10px] text-[#59645b]">
-              <span class="min-w-0 truncate"><strong>{selection.computeUnitId}</strong> · {selection.sku} · {savedCandidate(selection.computeUnitId, selection.sku)?.freeTier.label ?? 'Free Tier status unavailable'}</span>
+              <span class="min-w-0 truncate"><strong>{selection.computeUnitId}</strong> · {selection.sku} · {savedCandidate(selection.computeUnitId, selection.sku)?.freeTier.label ?? 'Free Tier status unavailable'} · {performanceLabel(savedCandidate(selection.computeUnitId, selection.sku))}</span>
               <span class="shrink-0">{selection.replicaCount} replica{selection.replicaCount === 1 ? '' : 's'}</span>
             </div>
           {/each}
@@ -318,7 +333,7 @@
                 onchange={(event) => update(unit.computeUnitId, { sku: event.currentTarget.value })}
               >
                 {#each unit.candidates as candidate}
-                  <option value={candidate.sku}>{candidate.sku} · {candidate.vCPU} vCPU · {candidate.memoryGiB} GiB · {priceLabel(candidate)} · {candidate.freeTier.label}</option>
+                  <option value={candidate.sku}>{candidate.sku} · {candidate.vCPU} vCPU · {candidate.memoryGiB} GiB · {priceLabel(candidate)} · {candidate.freeTier.label} · {performanceLabel(candidate)}</option>
                 {/each}
               </select>
               <input
@@ -337,6 +352,28 @@
                   <a class="font-semibold text-[#477058] underline" href={selectedCandidate(unit)?.freeTier.sourceUrls[0]} target="_blank" rel="noreferrer">Official terms</a>
                 {/if}
               </p>
+              <div class="mt-2 rounded-md border border-[#dce2dc] bg-[#f7f9f6] p-2 text-[10px] leading-4 text-[#59645b]">
+                <strong class="text-[#315641]">{performanceLabel(selectedCandidate(unit))}</strong>
+                {#if selectedCandidate(unit)?.performance.warning}
+                  <p class="mt-0.5 text-[#8a5f2c]">{selectedCandidate(unit)?.performance.warning}</p>
+                {:else if selectedCandidate(unit)?.performance.status !== 'ok'}
+                  <p class="mt-0.5 text-[#737970]">No complete burst and generation assessment is available for this SKU.</p>
+                {/if}
+                {#if selectedCandidate(unit)?.performance.attributes.length}
+                  <details class="mt-1">
+                    <summary class="cursor-pointer font-semibold text-[#477058]">Performance details</summary>
+                    <dl class="mt-1 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-0.5">
+                      {#each selectedCandidate(unit)?.performance.attributes ?? [] as attribute}
+                        <dt>{attribute.label}</dt>
+                        <dd class="text-right font-medium">{attribute.display}</dd>
+                        {#if attribute.warning}
+                          <dd class="col-span-2 text-[#8a5f2c]">{attribute.warning}</dd>
+                        {/if}
+                      {/each}
+                    </dl>
+                  </details>
+                {/if}
+              </div>
             {/if}
             {#if unit.replicationSafety === 'unknown' && (selections[unit.computeUnitId]?.replicaCount ?? 1) > 1}
               <label class="mt-2 flex items-start gap-2 text-[10px] leading-4 text-[#696e67]">

@@ -16,6 +16,11 @@
 
 가격은 스냅샷이며 실제 청구액이 아니다. 네 파일 모두 AWS·Azure·GCP 레코드만 보존한다.
 
+`costkb/resource_pricing_rules.json`은 AWS·Azure·Google Cloud 공식 가격 페이지와
+가격 API 문서에서 확인한 과금 항목·계산 구조를 요약한 조사 지식이다. 공급자 응답이나
+가격표 원문을 복제하지 않으며, 각 레코드가 원문 URL과 확인일을 보존한다. 실제 단가와
+청구액은 변할 수 있으므로 실행 시점의 공식 가격과 계정 조건을 다시 적용해야 한다.
+
 `tumblebug-perf.json.gz`에는 다음 보강 소스의 필드도 포함한다.
 
 - MicrosoftDocs/azure-compute-docs, CC BY 4.0

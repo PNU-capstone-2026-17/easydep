@@ -350,6 +350,23 @@ export interface ComputeSizingCandidate {
     sourceUrls: string[];
     asOf: string;
   };
+  performance: {
+    status: 'ok' | 'warn' | 'partial' | 'no_record' | 'untracked' | 'not_built';
+    warning: string | null;
+    sustainedCpu: {
+      value: boolean;
+      note: string | null;
+      evidence: string;
+      basis: 'stated' | 'inferred';
+    } | null;
+    attributes: Array<{
+      key: string;
+      label: string;
+      value: string | number | boolean;
+      display: string;
+      warning?: string;
+    }>;
+  };
 }
 
 export interface ComputeSizingUnit {
