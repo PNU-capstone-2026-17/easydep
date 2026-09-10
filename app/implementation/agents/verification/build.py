@@ -163,6 +163,9 @@ def verify_agent_workspace(
         return evidence
     if task_type in {"frontend", "frontend-implementation"}:
         return verify_frontend_workspace(sandbox)
+    marker_evidence = _verify_absent_markers(sandbox, verification_profile)
+    if marker_evidence is not None:
+        raise WorkspaceVerificationError(marker_evidence)
     command = task_verification_command(
         gradle_command(),
         task_type,
@@ -205,6 +208,44 @@ def verify_agent_workspace(
     if result.returncode != 0:
         raise WorkspaceVerificationError(evidence)
     return evidence
+
+
+def _verify_absent_markers(
+    sandbox: Path,
+    verification_profile: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Reject a marker checkpoint that finished without replacing its placeholder."""
+
+    contracts = (verification_profile or {}).get("requiredAbsentMarkers", [])
+    if not isinstance(contracts, list):
+        return None
+    remaining: list[dict[str, str]] = []
+    for contract in contracts:
+        if not isinstance(contract, dict) or not isinstance(contract.get("path"), str):
+            continue
+        path = sandbox / str(contract["path"])
+        if not path.is_file():
+            continue
+        content = path.read_text(encoding="utf-8")
+        markers = contract.get("markers", [])
+        if not isinstance(markers, list):
+            continue
+        remaining.extend(
+            {"path": str(contract["path"]), "marker": marker}
+            for marker in markers
+            if isinstance(marker, str) and marker and marker in content
+        )
+    if not remaining:
+        return None
+    return {
+        "command": ["implementation-marker-contract"],
+        "exitCode": 1,
+        "durationMs": 0,
+        "stdout": "",
+        "stderr": "The assigned implementation marker is still present.",
+        "testResults": "",
+        "remainingMarkers": remaining,
+    }
 
 
 def _store_failed_verification_output(

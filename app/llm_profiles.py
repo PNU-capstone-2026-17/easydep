@@ -78,6 +78,16 @@ class LlmModelProfile:
 
 
 _PROFILES: dict[str, LlmModelProfile] = {
+    "zai-org/glm-5.3-flash": LlmModelProfile(
+        model_id="zai-org/glm-5.3-flash",
+        temperature=0.2,
+        top_p=None,
+        reasoning_effort="medium",
+        supported_reasoning=("low", "medium", "high"),
+        reasoning_budget=None,
+        default_max_tokens=8192,
+        max_tokens=16384,
+    ),
     "openai/gpt-oss-20b": LlmModelProfile(
         model_id="openai/gpt-oss-20b",
         temperature=0.6,

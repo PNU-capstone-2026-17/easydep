@@ -108,6 +108,22 @@ def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec
     task = _build_backend_owner_task(
         spec, run_root, ir, output, package_path, bce_paths, bundle
     )
+    if settings.implementation_backend_task_strategy == "marker":
+        marker_tasks = _build_backend_marker_tasks(
+            spec,
+            run_root,
+            output,
+            package_path,
+            bundle,
+            task,
+        )
+        if marker_tasks:
+            for marker_task in marker_tasks:
+                (output / f"{marker_task.task_id}.task.json").write_text(
+                    json.dumps(marker_task.to_dict(), ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+            return marker_tasks
     (output / f"{task.task_id}.task.json").write_text(
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
         encoding="utf-8",
@@ -140,9 +156,20 @@ def _build_backend_owner_task(
         f"application/src/test/java/{package_path}/application/impl/BackendApplicationTest.java"
     )
     controls = [item.name for item in bundle.components if item.stereotype.casefold() == "control"]
-    entities = [item.name for item in bundle.components if item.stereotype.casefold() == "entity"]
+    entity_components = [
+        item for item in bundle.components if item.stereotype.casefold() == "entity"
+    ]
+    entities = [item.name for item in entity_components]
     gateway_kinds = {item.name: item.kind for item in ir.gateways}
     gateways = [item for item in bundle.components if item.name in gateway_kinds]
+    entity_sources = [
+        f"application/src/main/java/{package_path}/bce/{name}.java" for name in entities
+    ]
+    entity_implementation_sources = [
+        f"application/src/main/java/{package_path}/bce/{item.name}.java"
+        for item in entity_components
+        if item.operations
+    ]
     required = sorted(
         {
             *(
@@ -157,12 +184,10 @@ def _build_backend_owner_task(
                 _gateway_adapter_path(package_path, item.name, gateway_kinds[item.name])
                 for item in gateways
             ),
+            *entity_implementation_sources,
             test_path,
         }
     )
-    entity_sources = [
-        f"application/src/main/java/{package_path}/bce/{name}.java" for name in entities
-    ]
     # persistence 골격은 LLM 작업보다 먼저 생성되고 이후 작업이 수정하지 않는다. 관련
     # Entity와 Repository는 source index가 가리키는 정확한 파일에서 필요한 선언만 읽는다.
     persistence_sources = [
@@ -332,7 +357,8 @@ def _build_backend_owner_task(
 Complete the generated backend implementation and its JUnit scenarios. Start with the existing
 Control service and test shells; their typed calls are already projected from the sequence model.
 
-- Preserve frozen BCE/API declarations, persistence projections, repositories, and migrations.
+- Preserve every generated BCE/API public declaration. Implement marked BCE Entity bodies without
+  changing their public signatures; keep API, persistence projections, repositories, and migrations frozen.
 - Resolve every `EASYDEP-IMPLEMENT` and named Controller marker with contracted behavior and
   meaningful assertions. Do not replace them with empty, demo, or always-passing behavior.
 - Before repository-wide search, batch-read each marker's `Context` path and its listed source
@@ -383,6 +409,518 @@ Control service and test shells; their typed calls are already projected from th
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return task
+
+
+def _build_backend_marker_tasks(
+    spec: JobSpec,
+    run_root: Path,
+    output: Path,
+    package_path: str,
+    bundle: _UseCaseBundle,
+    owner_task: TaskSpec,
+) -> list[TaskSpec]:
+    """Split backend discovery into sequential, evidence-backed marker tasks.
+
+    This is intentionally an experimental planning path. Each conversation owns
+    one concrete skeleton marker, may make supporting main-source edits, and
+    stops after a compile check. Test authoring is a later checkpoint once the
+    model/task contract is confirmed.
+    """
+
+    source_index_path = output / "implement-backend-application.source-index.json"
+    source_index = _read_json(source_index_path)
+    entries = source_index.get("methodContexts", [])
+    units: list[dict[str, object]] = []
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+                continue
+            method_context_path = run_root / str(entry["path"])
+            context = _read_json(method_context_path)
+            method = context.get("method")
+            if not isinstance(method, dict):
+                continue
+            stable_id = str(method.get("stable_id") or entry.get("stableId") or "")
+            if not stable_id:
+                continue
+            stereotype = str(method.get("stereotype") or "")
+            class_name = str(method.get("class_name") or "")
+            target = (
+                "application/src/main/java/"
+                f"{package_path}/application/impl/{class_name}Service.java"
+                if stereotype.casefold() == "control"
+                else f"application/src/main/java/{package_path}/bce/{class_name}.java"
+            )
+            target_path = run_root / target
+            completion_markers = [
+                f"EASYDEP-IMPLEMENT: complete {stable_id}",
+                f"EASYDEP-IMPLEMENT:{stable_id}",
+            ]
+            if not target_path.is_file() or not any(
+                marker in target_path.read_text(encoding="utf-8")
+                for marker in completion_markers
+            ):
+                continue
+            refs = [
+                str(value)
+                for value in context.get("refs", [])
+                if isinstance(value, str)
+            ]
+            use_case_ids = sorted(
+                {
+                    value.removeprefix("use_case:")
+                    for value in refs
+                    if value.startswith("use_case:")
+                },
+                key=_use_case_sort_key,
+            )
+            stage = (
+                "DOMAIN_READY"
+                if stereotype.casefold() == "entity"
+                else "APPLICATION_READY"
+            )
+            units.append(
+                {
+                    "key": stable_id,
+                    "kind": "method",
+                    "stage": stage,
+                    "stageOrder": 0 if stage == "DOMAIN_READY" else 1,
+                    "target": target,
+                    "completionMarkers": completion_markers,
+                    "methodContextPath": str(entry["path"]),
+                    "context": context,
+                    "refs": refs,
+                    "useCaseIds": use_case_ids,
+                    "requirementIds": sorted(
+                        value.removeprefix("requirement:")
+                        for value in refs
+                        if value.startswith("requirement:")
+                    ),
+                    "sourcePaths": [
+                        str(value)
+                        for value in context.get("sourcePaths", [])
+                        if isinstance(value, str)
+                    ],
+                }
+            )
+
+    owner_context = _read_json(run_root / owner_task.context_file)
+    endpoints = list(bundle.endpoints)
+    for raw_path in owner_context.get("controllerPaths", []):
+        if not isinstance(raw_path, str) or not (run_root / raw_path).is_file():
+            continue
+        source = (run_root / raw_path).read_text(encoding="utf-8")
+        for marker in sorted(set(re.findall(r"EASYDEP_CONTROLLER_BODY_REQUIRED:[^\"\s]+", source))):
+            _prefix, _separator, route = marker.partition(":")
+            method, _separator, path = route.partition(":")
+            endpoint = next(
+                (
+                    value
+                    for value in endpoints
+                    if str(value.get("method") or "").casefold() == method.casefold()
+                    and str(value.get("path") or "") == path
+                ),
+                {},
+            )
+            use_case_ids = sorted(_use_case_ids(endpoint), key=_use_case_sort_key)
+            operation_id = str(
+                endpoint.get("operation_id") or endpoint.get("operationId") or marker
+            )
+            matching_contexts = [
+                str(entry["path"])
+                for entry in entries
+                if isinstance(entry, dict)
+                and isinstance(entry.get("path"), str)
+                and f"api:{operation_id}" in entry.get("refs", [])
+            ]
+            contract_paths = _controller_contract_paths(
+                run_root,
+                package_path,
+                raw_path,
+                endpoint,
+            )
+            binding = endpoint.get("control_binding") or endpoint.get("controlBinding")
+            units.append(
+                {
+                    "key": "controller-"
+                    + hashlib.sha256(marker.encode("utf-8")).hexdigest()[:16],
+                    "kind": "controller",
+                    "stage": "ADAPTER_READY",
+                    "stageOrder": 2,
+                    "target": raw_path,
+                    "completionMarkers": [marker],
+                    "context": {"apiOperation": endpoint},
+                    "refs": [f"api:{operation_id}"],
+                    "useCaseIds": use_case_ids,
+                    "requirementIds": [],
+                    "sourcePaths": [
+                        *contract_paths,
+                        *([] if isinstance(binding, dict) else matching_contexts),
+                    ],
+                }
+            )
+
+    if not units:
+        return []
+    units.sort(
+        key=lambda value: (
+            _use_case_sort_key(str((value["useCaseIds"] or ["common"])[0])),
+            int(value["stageOrder"]),
+            str(value["key"]),
+        )
+    )
+    writable_root = f"application/src/main/java/{package_path}"
+    tasks: list[TaskSpec] = []
+    previous_task_id: str | None = None
+    for index, unit in enumerate(units, start=1):
+        final = index == len(units)
+        task_id = (
+            "implement-backend-application"
+            if final
+            else f"implement-backend-operation-{index:04d}-{unit['key']}"
+        )
+        target = str(unit["target"])
+        use_case_ids = [str(value) for value in unit["useCaseIds"]]
+        source_paths = list(
+            dict.fromkeys(
+                [
+                    *(
+                        [str(unit["methodContextPath"])]
+                        if unit.get("methodContextPath")
+                        else []
+                    ),
+                    target,
+                    *(str(value) for value in unit["sourcePaths"]),
+                ]
+            )
+        )
+        context = {
+            "schemaVersion": "backend-operation-context/v1alpha1",
+            "taskId": task_id,
+            "taskType": "backend-operation",
+            "parallelImplementation": False,
+            "dependsOn": [previous_task_id] if previous_task_id else [],
+            "useCaseCheckpoint": {
+                "useCaseIds": use_case_ids,
+                "stage": unit["stage"],
+                "operationOrdinal": index,
+                "operationCount": len(units),
+            },
+            "primarySourcePath": target,
+            "completionMarkers": list(unit["completionMarkers"]),
+            "readSourcePaths": source_paths,
+            "operationEvidence": unit["context"],
+        }
+        context_path = output / f"{task_id}.context.json"
+        context_path.write_text(
+            json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        prompt = _render_backend_marker_prompt(
+            spec,
+            unit=unit,
+            target=target,
+            source_paths=source_paths,
+        )
+        prompt_path = output / f"{task_id}.prompt.md"
+        prompt_path.write_text(prompt, encoding="utf-8")
+        verification_profile = {
+            "requiredAbsentMarkers": [
+                {
+                    "path": target,
+                    "markers": list(unit["completionMarkers"]),
+                }
+            ]
+        }
+        tasks.append(
+            TaskSpec(
+                task_id=task_id,
+                control=(
+                    f"{', '.join(use_case_ids) or 'common'} "
+                    f"{unit['stage']} {unit['key']}"
+                ),
+                prompt_file=_relative(run_root, prompt_path),
+                context_file=_relative(run_root, context_path),
+                allowed_write_paths=[target],
+                required_output_paths=[target],
+                immutable_paths=list(owner_task.immutable_paths),
+                source_artifacts=dict(owner_task.source_artifacts),
+                prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+                llm=llm_config(spec),
+                owner="backend",
+                task_type="backend-operation",
+                depends_on=[previous_task_id] if previous_task_id else [],
+                requirement_ids=[str(value) for value in unit["requirementIds"]],
+                use_case_ids=use_case_ids,
+                required_test_paths=[],
+                source_refs=[str(value) for value in unit["refs"]],
+                allowed_write_roots=[writable_root],
+                verification_profile=verification_profile,
+            )
+        )
+        previous_task_id = task_id
+    return tasks
+
+
+def _render_backend_marker_prompt(
+    spec: JobSpec,
+    *,
+    unit: dict[str, object],
+    target: str,
+    source_paths: list[str],
+) -> str:
+    """Render a compact behavior capsule without inferring new requirements."""
+
+    evidence = unit["context"] if isinstance(unit.get("context"), dict) else {}
+    lines = [
+        f"# Backend operation marker: {unit['key']}",
+        "",
+        f"Complete the single `{unit['stage']}` marker in `{target}`.",
+        "The paths below are starting hints, not read or edit limits. You may inspect nearby source and",
+        "make supporting changes under the assigned main-source root when the operation requires them.",
+        "Do not inventory the repository and do not reopen raw design inputs unless this capsule exposes",
+        "a concrete contract gap.",
+        "",
+        "- Preserve generated public BCE/API and persistence declarations.",
+        "- Treat names only as exact identifiers. Never infer validation, persistence, CRUD, error,",
+        "  or response behavior from class, method, parameter, or outcome-name wording.",
+        "- Implement only behavior expressible by this method and its direct calls. Cross-cutting",
+        "  requirements without matching inputs or calls belong to a later adapter/integration marker.",
+        "- Remove this marker's placeholder and implement production behavior; do not replace it with demo data.",
+        "- This discovery checkpoint does not own test authoring. Do not create or modify test files.",
+        "- Do not inspect test sources or search unrelated implementations for style examples before the first edit.",
+        "  The listed contracts and conventions below are sufficient; read each needed hint once, then edit.",
+        "- After the edit batch, call `run_task_check` once. It runs the assigned compile check.",
+        "- When that check passes, call `finish` immediately.",
+        "- Use English for source comments, validation messages, and user-visible text.",
+        "",
+        "## Behavior capsule",
+    ]
+    method = evidence.get("method")
+    if isinstance(method, dict):
+        lines.append(f"- Operation: `{method.get('operation_id') or unit['key']}`")
+        lines.append(f"- Return type: `{method.get('return_type') or 'void'}`")
+    for requirement in evidence.get("requirements", []):
+        if isinstance(requirement, dict) and requirement.get("text"):
+            lines.append(
+                f"- Requirement {requirement.get('id') or ''}: {requirement['text']}"
+            )
+    for step in evidence.get("scenarioSteps", []):
+        if isinstance(step, dict) and step.get("sentence"):
+            lines.append(f"- Scenario {step.get('ref') or ''}: {step['sentence']}")
+    for api in evidence.get("apiOperations", []):
+        if isinstance(api, dict):
+            lines.append(
+                "- API evidence: "
+                + json.dumps(api, ensure_ascii=False, separators=(",", ":"))
+            )
+    if unit.get("kind") == "controller":
+        api = evidence.get("apiOperation")
+        if isinstance(api, dict):
+            lines.extend(_render_adapter_contract(api))
+    outgoing = [
+        call
+        for method_slice in evidence.get("slices", [])
+        if isinstance(method_slice, dict)
+        for call in method_slice.get("outgoing", [])
+        if isinstance(call, dict)
+    ]
+    for call in outgoing:
+        target_call = call.get("target")
+        if not isinstance(target_call, dict):
+            continue
+        arguments = [
+            str(value.get("parameter"))
+            for value in call.get("arguments", [])
+            if isinstance(value, dict) and value.get("parameter")
+        ]
+        lines.append(
+            "- Direct call: `"
+            f"{target_call.get('class_name')}.{target_call.get('name')}"
+            f"({', '.join(arguments)})`"
+        )
+        conditions = [
+            str(value.get("condition"))
+            for value in call.get("fragments", [])
+            if isinstance(value, dict) and value.get("condition")
+        ]
+        lines.extend(f"- Call condition: {condition}" for condition in conditions)
+    lines.extend(
+        [
+            "",
+            "## Starting source hints",
+            *(f"- `{path}`" for path in source_paths),
+            "",
+            f"Application: `{spec.name}`",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _controller_contract_paths(
+    run_root: Path,
+    package_path: str,
+    controller_path: str,
+    endpoint: dict[str, object],
+) -> list[str]:
+    """Return the exact generated contracts needed to implement one adapter marker."""
+
+    java_root = f"application/src/main/java/{package_path}"
+    candidates = [controller_path]
+    controller_source = (run_root / controller_path).read_text(encoding="utf-8")
+    candidates.extend(_implemented_interface_paths(run_root, controller_source))
+
+    request_schema = endpoint.get("request_schema") or endpoint.get("requestSchema")
+    schema_names = [request_schema]
+    responses = endpoint.get("responses", [])
+    response_schema_names: list[object] = []
+    if isinstance(responses, list):
+        response_schema_names.extend(
+            response.get("schema_name") or response.get("schemaName")
+            for response in responses
+            if isinstance(response, dict)
+        )
+    schema_names.extend(response_schema_names)
+    candidates.extend(
+        f"{java_root}/api/model/{schema_name}.java"
+        for schema_name in schema_names
+        if isinstance(schema_name, str) and schema_name
+    )
+    binding = endpoint.get("control_binding") or endpoint.get("controlBinding")
+    if isinstance(binding, dict) and isinstance(binding.get("control"), str):
+        control = str(binding["control"])
+        candidates.append(f"{java_root}/bce/{control}.java")
+
+    return list(
+        dict.fromkeys(
+            path for path in candidates if (run_root / path).is_file()
+        )
+    )
+
+
+def _implemented_interface_paths(run_root: Path, source: str) -> list[str]:
+    """Resolve explicitly declared Java interfaces without filename conventions."""
+
+    declaration = re.search(
+        r"\bpublic\s+(?:final\s+)?class\s+[A-Za-z_$][A-Za-z0-9_$]*"
+        r"[^\{]*?\bimplements\s+(?P<interfaces>[^\{]+)\{",
+        source,
+        re.DOTALL,
+    )
+    if declaration is None:
+        return []
+    imports = {
+        value.rsplit(".", 1)[-1]: value
+        for value in re.findall(
+            r"(?m)^\s*import\s+([A-Za-z_$][A-Za-z0-9_$.]*)\s*;",
+            source,
+        )
+    }
+    paths: list[str] = []
+    for raw_name in declaration.group("interfaces").split(","):
+        name = raw_name.strip().split("<", 1)[0].strip()
+        qualified = imports.get(name, name if "." in name else "")
+        if not qualified:
+            continue
+        relative = "application/src/main/java/" + qualified.replace(".", "/") + ".java"
+        if (run_root / relative).is_file():
+            paths.append(relative)
+    return paths
+
+
+def _render_adapter_contract(api: dict[str, object]) -> list[str]:
+    """Render an executable adapter binding instead of making the model decode raw API JSON."""
+
+    method = str(api.get("method") or "").upper()
+    path = str(api.get("path") or "")
+    operation_id = str(api.get("operation_id") or api.get("operationId") or "")
+    lines = [f"- Endpoint: `{method} {path}` (`{operation_id}`)."]
+    request_schema = api.get("request_schema") or api.get("requestSchema")
+    if isinstance(request_schema, str) and request_schema:
+        lines.append(f"- Request body contract: generated `{request_schema}`.")
+    lines.append(
+        "- Read the target controller first. The binding below is complete; inspect an optional "
+        "contract hint only if the target scaffold contradicts it."
+    )
+
+    binding = api.get("control_binding") or api.get("controlBinding")
+    if not isinstance(binding, dict):
+        return lines
+    control = str(binding.get("control") or "")
+    bound_method = str(binding.get("method") or "")
+    arguments = binding.get("arguments", [])
+    argument_text = ", ".join(
+        f"{argument.get('name')} <- {argument.get('source')}"
+        for argument in arguments
+        if isinstance(argument, dict) and argument.get("name") and argument.get("source")
+    )
+    lines.append(
+        f"- Bound Control operation: `{control}::{bound_method}`"
+        + (f" with explicit sources `{argument_text}`." if argument_text else ".")
+    )
+
+    raw_outcomes = binding.get("outcomes", [])
+    outcomes = [value for value in raw_outcomes if isinstance(value, dict)]
+    successes = [
+        outcome
+        for outcome in outcomes
+        if (status := _http_status(outcome.get("status"))) is not None
+        and 200 <= status < 300
+    ]
+    success = successes[0] if len(successes) == 1 else None
+    if success is not None:
+        status = _http_status(success.get("status"))
+        lines.append(
+            f"- Bound success response: return HTTP `{status}` after `{bound_method}` succeeds."
+        )
+        responses = api.get("responses", [])
+        response = next(
+            (
+                value
+                for value in responses
+                if isinstance(value, dict) and _http_status(value.get("status")) == status
+            ),
+            None,
+        ) if isinstance(responses, list) else None
+        schema_name = (
+            response.get("schema_name") or response.get("schemaName")
+            if isinstance(response, dict)
+            else None
+        )
+        if isinstance(schema_name, str) and schema_name:
+            lines.append(
+                f"- Map the returned domain value to generated `{schema_name}`; use the injected "
+                "`ObjectMapper` when the controller already has it."
+            )
+
+    if len(successes) > 1:
+        lines.append(
+            "- Contract gap: multiple success statuses "
+            f"({', '.join(str(_http_status(value.get('status'))) for value in successes)}) "
+            "have no explicit selector or result discriminator. Do not choose one from the method "
+            "or outcome names; leave this adapter marker for design repair."
+        )
+    errors = [
+        outcome
+        for outcome in outcomes
+        if (status := _http_status(outcome.get("status"))) is not None
+        and status >= 400
+    ]
+    for error in errors:
+        lines.append(
+            "- Documented error outcome: HTTP "
+            f"`{_http_status(error.get('status'))}` is labeled "
+            f"`{error.get('outcome')}`. No exception or result binding is declared; do not infer one "
+            "from this label."
+        )
+    return lines
+
+
+def _http_status(value: object) -> int | None:
+    try:
+        status = int(str(value))
+    except (TypeError, ValueError):
+        return None
+    return status if 100 <= status <= 599 else None
 
 
 def _component_use_case_ids(spec: JobSpec) -> dict[str, set[str]]:
@@ -994,6 +1532,24 @@ def _method_context_evidence(
             step_ref = f"{use_case_id}:main:{step.get('step_number')}"
             if step_ref in step_refs:
                 scenario_steps.append({"ref": step_ref, **step})
+        for extension in value.get("extensions", []):
+            if not isinstance(extension, dict):
+                continue
+            label = str(extension.get("label") or "")
+            for step in extension.get("handling_steps", []):
+                if not isinstance(step, dict):
+                    continue
+                sub_step = str(step.get("sub_step") or "")
+                step_ref = f"{use_case_id}:extension:{label}:{sub_step}"
+                if step_ref in step_refs:
+                    scenario_steps.append(
+                        {
+                            "ref": step_ref,
+                            "branchCondition": extension.get("condition"),
+                            "outcome": extension.get("outcome"),
+                            **step,
+                        }
+                    )
 
     api_operations = []
     for endpoint in endpoints:

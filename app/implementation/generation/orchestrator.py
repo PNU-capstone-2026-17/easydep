@@ -1150,12 +1150,30 @@ def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> None:
 
 
 def plan_backend_owner_task(spec: JobSpec, run_root: Path) -> None:
-    """Replace prior backend work units with one application owner task."""
+    """Plan the configured backend owner or sequential marker strategy."""
     run_root = run_root.resolve()
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    if manifest_path.is_file():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if any(
+            isinstance(task, dict) and task.get("task_type") == "backend-operation"
+            for task in manifest.get("implementation_tasks", [])
+        ):
+            # Completed markers disappear from source. Replanning from that
+            # mutable tree would renumber the remaining operations and lose
+            # durable checkpoint identities, so reuse the first frozen plan.
+            # The run owns this decision even if a resumed process no longer
+            # has the opt-in environment variable that created it.
+            return
     _merge_implementation_tasks(
         run_root,
         generate_backend_owner_tasks(spec, run_root),
-        replace_types={"use-case", "wiring", "backend-implementation"},
+        replace_types={
+            "use-case",
+            "wiring",
+            "backend-implementation",
+            "backend-operation",
+        },
     )
 
 

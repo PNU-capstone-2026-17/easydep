@@ -1,7 +1,7 @@
 
 from typing import Literal
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -114,6 +114,76 @@ class Settings(BaseSettings):
     implementation_agent_temperature: float = 0.2
     implementation_agent_max_output_tokens: int = 16384
     implementation_reasoning_effort: str = "medium"
+    # ``marker`` is an opt-in discovery path until a representative use case
+    # has completed. It decomposes backend work into sequential operation
+    # markers and deliberately leaves test authoring for a later checkpoint.
+    implementation_backend_task_strategy: Literal["owner", "marker"] = "owner"
+    # Restricted owners use scoped file/search/check tools. ``terminal`` remains
+    # available as an explicit baseline for controlled comparison and rollback.
+    implementation_owner_tool_mode: Literal["restricted", "terminal"] = "restricted"
+    implementation_openhands_canary: bool = True
+    implementation_openhands_canary_repetitions: int = 3
+    # OpenHands names this value ``num_retries``, but SDK 1.36 applies it as
+    # the total number of physical attempts. Keep the EasyDep setting explicit
+    # so a provider upgrade cannot silently multiply a long agent run.
+    implementation_openhands_request_attempts: int = 3
+    implementation_openhands_retry_min_wait_seconds: int = 1
+    implementation_openhands_retry_max_wait_seconds: int = 8
+    # Tenacity/OpenHands uses this as the coefficient of a base-2 exponential
+    # wait, so 1.0 produces approximately 1, 2, 4 seconds before the cap.
+    implementation_openhands_retry_multiplier: float = 1.0
+    # A canary needs three successful tool round trips, but transient endpoint
+    # failures may consume two additional attempts. A failed transient batch is
+    # cached only briefly and acts as a small per-run circuit breaker.
+    implementation_openhands_canary_max_attempts: int = 5
+    implementation_openhands_canary_transient_ttl_seconds: int = 600
+
+    @field_validator(
+        "implementation_openhands_request_attempts",
+        "implementation_openhands_retry_max_wait_seconds",
+        "implementation_openhands_canary_repetitions",
+        "implementation_openhands_canary_max_attempts",
+    )
+    @classmethod
+    def require_positive_openhands_resilience_value(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("OpenHands retry and canary counts must be positive")
+        return value
+
+    @field_validator("implementation_openhands_retry_min_wait_seconds")
+    @classmethod
+    def require_nonnegative_openhands_wait(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("OpenHands retry wait cannot be negative")
+        return value
+
+    @field_validator("implementation_openhands_retry_multiplier")
+    @classmethod
+    def require_openhands_retry_multiplier(cls, value: float) -> float:
+        if value < 1:
+            raise ValueError("OpenHands retry multiplier must be at least one")
+        return value
+
+    @field_validator("implementation_openhands_canary_transient_ttl_seconds")
+    @classmethod
+    def require_nonnegative_canary_ttl(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("OpenHands canary transient TTL cannot be negative")
+        return value
+
+    @model_validator(mode="after")
+    def validate_openhands_resilience_policy(self) -> "Settings":
+        if (
+            self.implementation_openhands_retry_max_wait_seconds
+            < self.implementation_openhands_retry_min_wait_seconds
+        ):
+            raise ValueError("OpenHands retry max wait must cover the minimum wait")
+        if (
+            self.implementation_openhands_canary_max_attempts
+            < self.implementation_openhands_canary_repetitions
+        ):
+            raise ValueError("OpenHands canary max attempts must cover required successes")
+        return self
     implementation_command_timeout_seconds: int = 3600
     # 서버 시작 때 별도 Gradle compile을 실행하지 않는다. 첫 구현 요청 지연보다 시작 시간과
     # 디스크 사용량이 중요한 환경에서 기본 동작이 가벼워야 하며, 필요할 때만 env로 켠다.

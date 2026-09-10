@@ -27,6 +27,16 @@
 - `app/design/services/sequence_diagram/README.md`: 결정론적 시퀀스 투영과 피드백 경로
 - [상호작용 설계 개선과 LLM 호출 최적화](interaction-design-improvements.md): 남은 개선,
   호출 운영 원칙과 측정 항목
+- [API 명세와 실행 바인딩 생성 개선안](api-spec-executable-contract-plan.md): 공개 `ApiSpecModel`,
+  내부 `ApiBindingModel`, OpenAPI의 분리와 생성 작업 내부 검증·원자적 공개 경계
+- [구현 단계 OpenHands 효율 보완 계획](openhands-efficiency-improvement-plan.md): 종료 복구,
+  누적 예산, 반복 탐색, 재개 호환성과 성능 평가에 대한 검토용 상세 계획
+- [OpenHands 에이전트 하네스 안정화 계획](openhands-agent-harness-reliability-plan.md): 도구
+  프로토콜, 작업 공간, 권한 오류를 실제 구현 전에 검사하고 제한하는 계획
+- [OpenHands endpoint 복원력 계획](openhands-endpoint-resilience-plan.md): 일시적 provider 실패의
+  bounded retry, canary quorum, TTL circuit과 결정적 오류의 비재시도 경계
+- [OpenHands 하네스 구현 검증](openhands-agent-harness-validation.md): 현재 코드 반영 범위,
+  회귀 검사와 실제 모델 카나리 결과
 - [3사 클라우드 실배포 검증 기록](live-deployment-verification.md): 검증한 배포 템플릿,
   관찰 결과, 발견한 오류와 수정·정리 결과
 - [배포 템플릿·IaC·실행 스크립트 전수 점검](deployment-template-gap-audit.md): 공식 45개

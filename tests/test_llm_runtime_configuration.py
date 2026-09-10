@@ -173,6 +173,16 @@ def test_subprocess_restores_the_same_provider_endpoint_and_model(
     assert environment["BASE_URL"] == base_url
     assert environment["MODEL"] == model
     assert environment["API_KEY"] == expected_api_key
+    assert environment["IMPLEMENTATION_OPENHANDS_REQUEST_ATTEMPTS"] == "3"
+    assert environment["IMPLEMENTATION_OPENHANDS_RETRY_MIN_WAIT_SECONDS"] == "1"
+    assert environment["IMPLEMENTATION_OPENHANDS_RETRY_MAX_WAIT_SECONDS"] == "8"
+    assert environment["IMPLEMENTATION_OPENHANDS_RETRY_MULTIPLIER"] == "1.0"
+    assert environment["IMPLEMENTATION_OPENHANDS_CANARY_REPETITIONS"] == "3"
+    assert environment["IMPLEMENTATION_OPENHANDS_CANARY_MAX_ATTEMPTS"] == "5"
+    assert (
+        environment["IMPLEMENTATION_OPENHANDS_CANARY_TRANSIENT_TTL_SECONDS"]
+        == "600"
+    )
 
     child_values: dict[str, object] = {
         "_env_file": None,
@@ -194,6 +204,36 @@ def test_subprocess_restores_the_same_provider_endpoint_and_model(
     assert child.base_url == base_url
     assert child.model == model
     assert child.litellm_model() == litellm_model
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"implementation_openhands_request_attempts": 0},
+        {
+            "implementation_openhands_retry_min_wait_seconds": 9,
+            "implementation_openhands_retry_max_wait_seconds": 8,
+        },
+        {
+            "implementation_openhands_canary_repetitions": 3,
+            "implementation_openhands_canary_max_attempts": 2,
+        },
+        {"implementation_openhands_retry_multiplier": 0.5},
+        {"implementation_openhands_canary_transient_ttl_seconds": -1},
+    ],
+)
+def test_openhands_resilience_policy_rejects_invalid_bounds(overrides: dict) -> None:
+    values: dict[str, object] = {
+        "_env_file": None,
+        "llm_provider": "openrouter",
+        "api_key": "test-provider-secret",  # noqa: S105
+        "base_url": "https://example.invalid/v1",
+        "model": "openai/gpt-oss-120b",
+        **overrides,
+    }
+
+    with pytest.raises(ValidationError):
+        Settings(**values)
 
 
 def test_explicit_provider_wins_over_stale_cloudflare_environment() -> None:

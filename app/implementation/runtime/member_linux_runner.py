@@ -18,6 +18,7 @@ from app.implementation.runtime.linux_runner_transport import (
     OWNER_TERMINAL_SHELL_ENV,
     OWNER_TERMINAL_USER,
     OWNER_TERMINAL_USER_ENV,
+    OWNER_WORKSPACE_ALIAS,
 )
 from app.implementation.runtime.runner_compat import gradle_command, install
 
@@ -56,7 +57,7 @@ def _prepare_owner_terminal_identity() -> None:
         "#!/bin/sh\n"
         'export SPRING_PROFILES_ACTIVE="${SPRING_PROFILES_ACTIVE:-test}"\n'
         f'exec "{setpriv}" --reuid={account.pw_uid} --regid={account.pw_gid} '
-        f'--init-groups --no-new-privs "{bash}" "$@"\n',
+        f'--init-groups --no-new-privs "{bash}" -o pipefail "$@"\n',
         encoding="utf-8",
     )
     os.chown(shell, 0, 0)
@@ -183,6 +184,8 @@ def _preflight(arguments: list[str]) -> int:
         "schemaVersion": "easydep-member-runner-preflight/v1",
         "workspaceBindPassed": (RUNNER_WORKSPACE / "app" / "__init__.py").is_file(),
         "ownerIsolation": owner_isolation,
+        "ownerWorkspaceAlias": OWNER_WORKSPACE_ALIAS,
+        "ownerWorkspacePreflight": owner_isolation.get("workspacePreflight"),
         "tools": observed,
         "artifacts": jars,
     }
@@ -200,7 +203,12 @@ def _preflight(arguments: list[str]) -> int:
 def _probe_owner_isolation() -> dict[str, object]:
     """Exercise the same OS permission boundary used by live owner terminals."""
 
-    from app.implementation.agents.workspace import prepare_agent_workspace
+    from app.implementation.agents.workspace import (
+        preflight_owner_workspace,
+        prepare_agent_workspace,
+        prepare_owner_workspace_alias,
+        release_owner_workspace_alias,
+    )
     from app.implementation.runtime.linux_runner_transport import OWNER_CONTROL_ROOT_ENV
 
     previous_control = os.environ.get(OWNER_CONTROL_ROOT_ENV)
@@ -276,8 +284,19 @@ def _probe_owner_isolation() -> dict[str, object]:
                 and (sandbox / immutable.relative_to(run_root)).read_text(encoding="utf-8")
                 == "changed\n"
             )
+            logical_workspace = prepare_owner_workspace_alias(sandbox, "preflight")
+            workspace_preflight = preflight_owner_workspace(
+                sandbox,
+                editable_files=[str(sandbox / allowed.relative_to(run_root))],
+                editable_roots=[str(sandbox / source_root.relative_to(run_root))],
+                immutable_paths=[str(sandbox / immutable.parent.relative_to(run_root))],
+                logical_workspace=logical_workspace,
+                enforce_write_scope=True,
+            )
+            release_owner_workspace_alias(sandbox, logical_workspace)
             return {
                 "passed": passed,
+                "workspacePreflight": workspace_preflight,
                 "detail": (
                     "The owner can write its disposable candidate but cannot read job "
                     "control state; immutable changes are rejected only at promotion."

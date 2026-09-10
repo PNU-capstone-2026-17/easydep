@@ -3,14 +3,21 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
 from ..domain.implementation_ir import remove_readonly
 from ..runtime.linux_runner_transport import (
     OWNER_CONTROL_ROOT_ENV,
+    OWNER_GRADLE_CACHE,
+    OWNER_NPM_CACHE,
+    OWNER_TERMINAL_HOME,
+    OWNER_TERMINAL_SHELL_ENV,
     OWNER_TERMINAL_USER_ENV,
+    OWNER_WORKSPACE_ALIAS,
 )
 
 _IGNORED_WORKSPACE_PARTS = {
@@ -172,6 +179,179 @@ def prepare_agent_workspace(
     _copy_read_sources(run_root, sandbox, task)
     _apply_fixed_runner_permissions(run_root, sandbox, task)
     return sandbox
+
+
+def prepare_owner_workspace_alias(sandbox: Path, task_key: str = "owner") -> Path:
+    """Expose a short per-task path inside the fixed Linux owner container.
+
+    Owners may run concurrently, so changing one process-global ``/work`` symlink
+    would race.  ``/work/<task>`` keeps the visible structure stable while giving
+    every conversation an independent link.
+    """
+
+    resolved = sandbox.resolve()
+    if os.name != "posix" or os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") != "1":
+        return resolved
+    if os.geteuid() != 0:
+        raise RuntimeError("Owner workspace alias requires a root coordinator.")
+    safe_key = re.sub(r"[^a-zA-Z0-9._-]+", "-", task_key).strip("-.") or "owner"
+    if len(safe_key) > 48:
+        digest = hashlib.sha256(safe_key.encode("utf-8")).hexdigest()[:10]
+        safe_key = f"{safe_key[:37]}-{digest}"
+    alias_root = Path(OWNER_WORKSPACE_ALIAS)
+    alias_root.mkdir(mode=0o755, parents=True, exist_ok=True)
+    alias = alias_root / safe_key
+    if alias.is_symlink():
+        if alias.resolve() == resolved:
+            return alias
+        alias.unlink()
+    elif alias.exists():
+        raise RuntimeError(f"Owner workspace alias is occupied by a non-symlink: {alias}")
+    alias.symlink_to(resolved, target_is_directory=True)
+    return alias
+
+
+def release_owner_workspace_alias(sandbox: Path, logical_workspace: Path | None = None) -> None:
+    """Remove only the fixed alias when it still points at this owner's sandbox."""
+
+    if os.name != "posix" or os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") != "1":
+        return
+    alias = logical_workspace or Path(OWNER_WORKSPACE_ALIAS) / "owner"
+    if alias.parent != Path(OWNER_WORKSPACE_ALIAS):
+        return
+    if alias.is_symlink() and alias.resolve() == sandbox.resolve():
+        alias.unlink()
+
+
+def preflight_owner_workspace(
+    sandbox: Path,
+    *,
+    editable_files: list[str],
+    editable_roots: list[str],
+    immutable_paths: list[str],
+    logical_workspace: Path | None = None,
+    enforce_write_scope: bool = True,
+) -> dict[str, object]:
+    """Check the real owner identity, workspace and shell before an LLM call."""
+
+    resolved = sandbox.resolve()
+    if not resolved.is_dir():
+        raise RuntimeError(f"ENV_WORKSPACE_PERMISSION: workspace is missing: {resolved}")
+    resolved_editable_files = [Path(path).resolve() for path in editable_files]
+    resolved_editable_roots = [Path(path).resolve() for path in editable_roots]
+    resolved_immutable = [Path(path).resolve() for path in immutable_paths]
+    assigned_paths = [
+        *resolved_editable_files,
+        *resolved_editable_roots,
+        *resolved_immutable,
+    ]
+    if any(path != resolved and resolved not in path.parents for path in assigned_paths):
+        raise RuntimeError("ENV_WORKSPACE_PERMISSION: assigned path escaped the workspace")
+    relative_editable_files = [path.relative_to(resolved).as_posix() for path in resolved_editable_files]
+    relative_editable_roots = [path.relative_to(resolved).as_posix() for path in resolved_editable_roots]
+    relative_immutable = [path.relative_to(resolved).as_posix() for path in resolved_immutable]
+    if path_is_editable(
+        "../outside",
+        relative_editable_files,
+        relative_editable_roots,
+        relative_immutable,
+    ):
+        raise RuntimeError("ENV_WORKSPACE_PERMISSION: outside path passed the write policy")
+    if any(
+        path_is_editable(
+            path,
+            relative_editable_files,
+            relative_editable_roots,
+            relative_immutable,
+        )
+        for path in relative_immutable
+    ):
+        raise RuntimeError("ENV_WORKSPACE_PERMISSION: immutable path passed the write policy")
+    candidates = list(resolved_editable_roots)
+    candidates.extend(path.parent for path in resolved_editable_files)
+    probe_root = next(
+        (
+            path
+            for path in candidates
+            if path == resolved or resolved in path.parents
+        ),
+        resolved,
+    )
+    probe_root.mkdir(parents=True, exist_ok=True)
+
+    # On development hosts there is no unprivileged owner shell. The same path
+    # containment checks still run, while the Linux image probe covers UID/GID.
+    shell = os.environ.get(OWNER_TERMINAL_SHELL_ENV, "").strip()
+    if os.name != "posix" or not shell:
+        sentinel = probe_root / ".easydep-owner-preflight"
+        try:
+            sentinel.write_text("probe\n", encoding="utf-8")
+            if sentinel.read_text(encoding="utf-8") != "probe\n":
+                raise OSError("workspace read-back did not match")
+            sentinel.unlink()
+        except OSError as error:
+            raise RuntimeError(
+                f"ENV_WORKSPACE_PERMISSION: cannot write assigned workspace: {probe_root}"
+            ) from error
+        return {
+            "schemaVersion": "easydep-owner-workspace-preflight/v1",
+            "passed": True,
+            "mode": "coordinator-host",
+            "workspace": str(resolved),
+            "logicalWorkspace": str(resolved),
+            "pipefailPassed": None,
+            "ownerIdentity": None,
+            "coordinatorIdentity": None,
+            "assignedPathsContained": True,
+            "outsideWorkspaceRejected": True,
+            "immutableWritesRejectedByExecutor": enforce_write_scope,
+        }
+
+    logical = logical_workspace or prepare_owner_workspace_alias(resolved)
+    if not logical.is_symlink() or logical.resolve() != resolved:
+        raise RuntimeError("ENV_WORKSPACE_PERMISSION: logical workspace mapping is invalid")
+    relative_probe = probe_root.relative_to(resolved)
+    logical_probe = logical / relative_probe
+    command = (
+        "set -o pipefail; "
+        'test "$(pwd -P)" = "$(readlink -f "' + str(logical) + '")"; '
+        'printf "probe\\n" > "' + str(logical_probe / ".easydep-owner-preflight") + '"; '
+        'test "$(cat "' + str(logical_probe / ".easydep-owner-preflight") + '")" = probe; '
+        'rm -f "' + str(logical_probe / ".easydep-owner-preflight") + '"; '
+        "set +e; (exit 7) | cat >/dev/null; status=$?; set -e; test \"$status\" -eq 7; "
+        'test -w "' + OWNER_TERMINAL_HOME + '"; '
+        'test -w "' + OWNER_NPM_CACHE + '"; '
+        'test -w "' + OWNER_GRADLE_CACHE + '"; '
+        'test "$(id -u)" -ne 0; printf "%s:%s" "$(id -u)" "$(id -g)"'
+    )
+    result = subprocess.run(
+        [shell, "-c", command],
+        cwd=logical,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "owner shell probe failed"
+        raise RuntimeError(f"ENV_WORKSPACE_PERMISSION: {detail}")
+
+    return {
+        "schemaVersion": "easydep-owner-workspace-preflight/v1",
+        "passed": True,
+        "mode": "fixed-linux-owner",
+        "workspace": str(resolved),
+        "logicalWorkspace": str(logical),
+        "pipefailPassed": True,
+        "ownerIdentity": {
+            "name": os.environ.get(OWNER_TERMINAL_USER_ENV),
+            "uidGid": result.stdout.strip(),
+        },
+        "coordinatorIdentity": {"uid": os.geteuid(), "gid": os.getegid()},
+        "assignedPathsContained": True,
+        "outsideWorkspaceRejected": True,
+        "immutableWritesRejectedByExecutor": enforce_write_scope,
+    }
 
 
 def _restore_coordinator_access(sandbox: Path) -> None:
@@ -343,7 +523,11 @@ def _copy_read_sources(
     if run_root not in context_path.parents or not context_path.is_file():
         return
     context = json.loads(context_path.read_text(encoding="utf-8"))
-    for value in context.get("readSourcePaths") or []:
+    values = [
+        *(context.get("readSourcePaths") or []),
+        *(context.get("availableReadPaths") or []),
+    ]
+    for value in values:
         if not isinstance(value, str):
             continue
         source = (run_root / value).resolve()

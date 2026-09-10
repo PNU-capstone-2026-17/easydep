@@ -151,9 +151,12 @@ def test_renders_only_explicit_bce_contracts() -> None:
 
     # field에서 getter/setter를 자동으로 만들지 않는다. 설계에 명시한 getQuantity도
     # 정확히 한 번만 출력되므로 과거의 중복 Java signature가 다시 생기지 않는다.
-    assert entity.count("getQuantity()") == 1
+    assert entity.count("public Integer getQuantity()") == 1
     assert "getPayload()" not in entity
     assert "setQuantity(" not in entity
+    assert entity.count("// EASYDEP-IMPLEMENT: complete ") == 2
+    assert entity.count('throw new UnsupportedOperationException("EASYDEP-IMPLEMENT:') == 2
+    assert "return null;" not in entity
 
 
 def test_java_keyword_operation_keeps_its_meaning_with_safe_method_name() -> None:
@@ -331,6 +334,68 @@ def test_persistence_collapses_columns_with_the_same_database_name() -> None:
     assert "private UUID studentId;" in entity
     assert "private UUID student_id;" not in entity
     assert migration.count("student_id BINARY(16)") == 1
+
+
+def test_persistence_uses_projected_scalar_type_for_entity_foreign_key() -> None:
+    """BCE의 Entity 관계 타입이 JPA 외래 키 열의 스칼라 타입을 덮어쓰지 않는다."""
+
+    model = BCEModel.model_validate(
+        {
+            "Classes": [
+                {
+                    "className": "Student",
+                    "stereotype": "Entity",
+                    "fields": ["studentId : String"],
+                    "use_case_ids": ["UC1"],
+                    "identifier": ["studentId"],
+                    "operations": [],
+                },
+                {
+                    "className": "WaitlistEntry",
+                    "stereotype": "Entity",
+                    "fields": ["entryId : String", "studentId : Student"],
+                    "use_case_ids": ["UC1"],
+                    "identifier": ["entryId"],
+                    "operations": [],
+                },
+            ],
+            "DataTypes": [],
+            "Relationships": [],
+            "Collaborations": [],
+        }
+    )
+    logical_model = {
+        "Tables": [
+            {
+                "name": "WaitlistEntry",
+                "primaryKey": ["entryId"],
+                "columns": [
+                    {"name": "entryId", "type": "VARCHAR(255)", "role": "pk"},
+                    {
+                        "name": "studentId",
+                        "type": "VARCHAR(255)",
+                        "role": "fk",
+                        "references": "Student",
+                        "referencesColumn": "studentId",
+                    },
+                ],
+                "origin": {"kind": "class", "className": "WaitlistEntry"},
+            }
+        ]
+    }
+
+    files = render_persistence_scaffold(
+        model,
+        "com.example.registration",
+        logical_model=logical_model,
+    )
+
+    entity = files[
+        "src/main/java/com/example/registration/persistence/entity/WaitlistEntryEntity.java"
+    ]
+    assert "private String studentId;" in entity
+    assert "private Student studentId;" not in entity
+    assert "import com.example.registration.bce.Student;" not in entity
 
 
 def test_controller_scaffold_preserves_generated_openapi_declarations() -> None:

@@ -91,6 +91,12 @@ def _bce_model() -> BCEModel:
                                 "CatalogControl::searchCatalog(filter:CourseFilter)"
                             ),
                             "stepRefs": ["UC1:main:1", "UC1:main:2"],
+                            "argumentBindings": [
+                                {
+                                    "parameter": "filter",
+                                    "sourceRef": "UC1::call:1#filter",
+                                }
+                            ],
                         },
                     ],
                 }
@@ -333,6 +339,74 @@ def test_body_uses_the_existing_control_parameter_type() -> None:
     assert [
         argument.model_dump() for argument in normalized.Endpoints[0].control_binding.arguments
     ] == [{"name": "filter", "source": "$body"}]
+
+
+def test_control_arguments_follow_explicit_collaboration_sources_not_names() -> None:
+    payload = _bce_model().model_dump(by_alias=True)
+    boundary = payload["Classes"][0]["operations"][0]
+    boundary["parameters"] = [
+        {"name": "leftInput", "type": "String"},
+        {"name": "rightInput", "type": "String"},
+    ]
+    control = payload["Classes"][1]["operations"][0]
+    control["parameters"] = [
+        {"name": "firstValue", "type": "String"},
+        {"name": "secondValue", "type": "String"},
+    ]
+    calls = payload["Collaborations"][0]["calls"]
+    calls[0]["receiverOperationId"] = (
+        "CatalogBoundary::browseCatalog(leftInput:String,rightInput:String)"
+    )
+    calls[1]["receiverOperationId"] = (
+        "CatalogControl::searchCatalog(firstValue:String,secondValue:String)"
+    )
+    calls[1]["argumentBindings"] = [
+        {"parameter": "firstValue", "sourceRef": "UC1::call:1#rightInput"},
+        {"parameter": "secondValue", "sourceRef": "UC1::call:1#leftInput"},
+    ]
+    bce_model = BCEModel.model_validate(payload)
+    proposal = _proposal().model_dump()
+    proposal["Endpoints"][0]["interaction_id"] = (
+        "CatalogBoundary::browseCatalog(leftInput:String,rightInput:String) -> "
+        "CatalogControl::searchCatalog(firstValue:String,secondValue:String)"
+    )
+
+    endpoint = normalize_api_spec_model(
+        ApiSpecProposal.model_validate(proposal), bce_model
+    ).Endpoints[0]
+
+    assert endpoint.control_binding is not None
+    assert [item.model_dump() for item in endpoint.control_binding.arguments] == [
+        {"name": "firstValue", "source": "$query.rightInput"},
+        {"name": "secondValue", "source": "$query.leftInput"},
+    ]
+
+
+def test_control_arguments_do_not_fall_back_to_matching_names_or_types() -> None:
+    payload = _bce_model().model_dump(by_alias=True)
+    payload["Collaborations"][0]["calls"][1]["argumentBindings"] = []
+
+    endpoint = normalize_api_spec_model(
+        _proposal(),
+        BCEModel.model_validate(payload),
+    ).Endpoints[0]
+
+    assert endpoint.control_binding is not None
+    assert endpoint.control_binding.arguments == []
+
+
+def test_path_placeholder_does_not_assume_a_nested_field_role_from_its_name() -> None:
+    proposal = _proposal().model_dump()
+    proposal["Endpoints"][0]["path"] = "/courses/{keyword}"
+
+    with pytest.raises(
+        ValueError,
+        match="must exactly identify a Boundary parameter",
+    ):
+        normalize_api_spec_model(
+            ApiSpecProposal.model_validate(proposal),
+            _bce_model(),
+        )
 
 
 def test_generation_service_accepts_typed_inputs_and_returns_normalized_model() -> None:

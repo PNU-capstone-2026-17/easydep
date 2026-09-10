@@ -2103,7 +2103,15 @@ class Order <<Entity>> { - id: UUID }
                 "use_case_ids": ["UC1"],
                 "identifier": ["id"],
                 "fields": ["id : UUID"],
-                "operations": [],
+                "operations": [
+                    {
+                        "operationId": "Order::describe()",
+                        "name": "describe",
+                        "parameters": [],
+                        "returnType": "String",
+                        "stepRefs": ["UC1:main:1"],
+                    }
+                ],
             },
             {
                 "className": "CancelControl",
@@ -2340,6 +2348,9 @@ class Order <<Entity>> { - id: UUID }
     assert set(context["requirementIds"]) == {"FR-ORDER", "FR-CANCEL"}
     assert "application/src/main/java/com/example/orders/bce/Order.java" in set(
         backend["allowed_write_paths"]
+    )
+    assert "application/src/main/java/com/example/orders/bce/Order.java" in set(
+        backend["required_output_paths"]
     )
     generated_api = {
         "application/src/main/java/com/example/orders/api/OrdersApi.java",

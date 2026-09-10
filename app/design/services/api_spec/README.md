@@ -63,6 +63,12 @@ graph adapter는 저장 모델의 타입을 확인한 뒤 `api_spec_findings`를
 설계 수리 흐름이 현재 HTTP 제안과 수리 이력을 LLM에 전달한다. API 서비스 안에 별도 수리
 루프는 두지 않는다.
 
+이 문단은 현재 구현을 설명한다. 목표 계약에서는 공개 `ApiSpecModel`, 내부 `ApiBindingModel`,
+OpenAPI를 분리하고 검증과 제한 수리를 API 생성 작업 안으로 이동한다. 오류가 0건일 때만 세
+산출물을 원자적으로 공개한다. 자세한 형태와 전환 순서는
+[API 명세와 실행 바인딩 생성 개선안](../../../../docs/api-spec-executable-contract-plan.md)에 정의한다.
+전환 후 graph와 하류 단계는 API 의미 검사를 다시 실행하지 않는다.
+
 ## 의존 관계와 부작용
 
 - LLM 호출은 `service.py`에서만 발생한다.

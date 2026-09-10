@@ -16,6 +16,16 @@
 - **실패 조건:** 필수 설계 입력이 없거나 작업 식별자가 잘못되면 검증 오류를
   반환한다.
 
+## 이름과 역할 연결
+
+- 문자열 이름은 대소문자까지 일치하는 canonical ID나 선언 식별자를 찾을 때만 사용한다.
+  `sourceRef`, `operationId`, `control_binding`, BCE stereotype, HTTP status와 schema처럼
+  구조화된 관계가 역할의 근거다.
+- `create*`, `update*`, `*Id`, `*Start/*End` 같은 접두사·접미사, 비슷한 이름, 같은 타입이라는
+  이유로 CRUD, 영속성, 검증, 인자 원천, 성공 분기나 예외를 정하지 않는다.
+- 명시된 관계가 없거나 여러 분기를 구분할 selector가 없으면 하나를 추측하지 않는다. 입력
+  검증에서 실패시키거나 작업 capsule에 계약 공백으로 기록해 설계 수리 대상으로 남긴다.
+
 ## 유스케이스 작업
 
 - planner는 `bceModel`과 `apiModel`의 `use_case_ids`를 읽는다. 같은 Control이 처리하는

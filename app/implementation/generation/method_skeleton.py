@@ -5,9 +5,7 @@ from __future__ import annotations
 from app.design.schemas.class_model import BCEModel, ClassOperation
 
 from ..planning.method_projection import MethodProjection, MethodProjectionResult
-from .java_scaffold import java_method_name, java_type
-
-IMPLEMENTATION_MARKER = "EASYDEP-IMPLEMENT"
+from .java_scaffold import IMPLEMENTATION_MARKER, java_method_name, java_type
 
 
 def render_backend_method_skeletons(

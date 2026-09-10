@@ -15,7 +15,6 @@ from app.design.contracts.type_system import (
     api_type_for_design,
     parse_type_expression,
     render_design_type,
-    wire_types_equivalent,
 )
 from app.design.schemas.class_model import BCEModel
 
@@ -27,9 +26,12 @@ class InteractionContract:
     interaction_id: str
     boundary_class: str
     boundary_method: str
+    boundary_parameters: tuple[tuple[str, str], ...]
+    boundary_call_id: str
     control_class: str
     control_method: str
-    parameters: tuple[tuple[str, str], ...]
+    control_parameters: tuple[tuple[str, str], ...]
+    control_argument_sources: tuple[tuple[str, str], ...]
     return_type: str
     use_case_ids: tuple[str, ...]
     scenario_step_refs: tuple[str, ...]
@@ -73,10 +75,20 @@ def interaction_contracts(bce_model: BCEModel) -> tuple[InteractionContract, ...
                 interaction_id=interaction_id,
                 boundary_class=boundary_class.class_name,
                 boundary_method=boundary_operation.name,
+                boundary_parameters=tuple(
+                    (parameter.name, parameter.type)
+                    for parameter in boundary_operation.parameters
+                ),
+                boundary_call_id=root.call_id,
                 control_class=control_class.class_name,
                 control_method=control_operation.name,
-                parameters=tuple(
-                    (parameter.name, parameter.type) for parameter in control_operation.parameters
+                control_parameters=tuple(
+                    (parameter.name, parameter.type)
+                    for parameter in control_operation.parameters
+                ),
+                control_argument_sources=tuple(
+                    (binding.parameter, binding.source_ref)
+                    for binding in handoff_call.argument_bindings
                 ),
                 return_type=control_operation.return_type,
                 use_case_ids=tuple(
@@ -243,7 +255,6 @@ def _materialize_endpoint(
     if contract is None:
         return ApiEndpoint.model_validate(endpoint)
 
-    expected = dict(contract.parameters)
     request_name = str(endpoint.get("request_schema") or "").strip()
     request_schema = schemas.get(request_name)
     response_type, response_is_array = response_contract_for_control(contract.return_type)
@@ -288,7 +299,7 @@ def _materialize_endpoint(
             "control_binding": {
                 "control": contract.control_class,
                 "method": contract.control_method,
-                "arguments": _control_arguments(endpoint, request_schema, expected),
+                "arguments": _control_arguments(endpoint, request_schema, contract),
                 "outcomes": [
                     {
                         "status": int(response["status"]),
@@ -358,24 +369,15 @@ def _unique_operation_id(base: str, owner: str, used: set[str]) -> str:
 def _field_type_for_placeholder(
     name: str,
     expected: dict[str, str],
-    schemas: dict[str, dict[str, Any]],
 ) -> str:
-    """경로 이름과 같은 직접 parameter 또는 DTO field의 wire 타입을 찾는다."""
+    """Resolve a path placeholder only as an exact Boundary parameter reference."""
 
-    direct = next(
-        (type_name for key, type_name in expected.items() if key.casefold() == name.casefold()),
-        None,
-    )
-    if direct:
-        return _api_contract_type_for_control(direct)
-    nested = {
-        str(field.get("type") or "string")
-        for type_name in expected.values()
-        for schema_name, _is_array in [_type_parts(type_name)]
-        for field in schemas.get(schema_name, {}).get("fields", [])
-        if str(field.get("name") or "").casefold() == name.casefold()
-    }
-    return next(iter(nested)) if len(nested) == 1 else "string"
+    if name not in expected:
+        raise ValueError(
+            f"path placeholder {{{name}}} must exactly identify a Boundary parameter; "
+            "nested fields require an explicit HTTP input binding"
+        )
+    return _api_contract_type_for_control(expected[name])
 
 
 def _http_inputs(
@@ -385,22 +387,22 @@ def _http_inputs(
 ) -> dict[str, Any]:
     """Control 서명과 HTTP 방식에서 path/query/body 입력을 결정한다."""
 
-    expected = dict(contract.parameters)
+    expected = dict(contract.boundary_parameters)
     placeholders = list(dict.fromkeys(re.findall(r"\{([^{}]+)\}", str(endpoint.get("path") or ""))))
     path_params = [
         {
             "name": name,
-            "type": _field_type_for_placeholder(name, expected, schemas),
+            "type": _field_type_for_placeholder(name, expected),
             "required": True,
             "description": "",
         }
         for name in placeholders
     ]
-    placeholder_names = {name.casefold() for name in placeholders}
+    placeholder_names = set(placeholders)
     consumed = {
         parameter_name
         for parameter_name in expected
-        if parameter_name.casefold() in placeholder_names
+        if parameter_name in placeholder_names
     }
     remaining = [(name, type_name) for name, type_name in expected.items() if name not in consumed]
     method = str(endpoint.get("method") or "get").lower()
@@ -490,55 +492,76 @@ def _complete_responses(
 def _control_arguments(
     endpoint: dict[str, Any],
     request_schema: dict[str, Any] | None,
-    expected: dict[str, str],
+    contract: InteractionContract,
 ) -> list[dict[str, str]]:
-    """각 Control parameter에 대응하는 유일한 HTTP 입력을 고른다."""
+    """Project accepted Boundary→Control provenance into HTTP sources.
 
-    available: list[tuple[str, str, str]] = []
-    for prefix, key in (("$path.", "path_params"), ("$query.", "query_params")):
-        available.extend(
-            (
-                prefix + str(field.get("name") or "").strip(),
-                str(field.get("name") or "").strip(),
-                str(field.get("type") or "string").strip(),
-            )
-            for field in endpoint.get(key) or []
-            if isinstance(field, dict) and str(field.get("name") or "").strip()
-        )
-    request_name = str(endpoint.get("request_schema") or "").strip()
-    if request_schema is not None and request_name:
-        available.append(("$body", "", request_name))
-        available.extend(
-            (
-                "$body." + str(field.get("name") or "").strip(),
-                str(field.get("name") or "").strip(),
-                str(field.get("type") or "string").strip(),
-            )
-            for field in request_schema.get("fields") or []
-            if isinstance(field, dict) and str(field.get("name") or "").strip()
-        )
+    Parameter names and types are not semantic routing hints.  A Control input is
+    connected only when the accepted collaboration explicitly points at the entry
+    Boundary call and that Boundary input has an HTTP representation.
+    """
 
-    arguments = []
-    for name, expected_type in expected.items():
-        compatible = [item for item in available if _input_types_compatible(item[2], expected_type)]
-        exact = [item for item in compatible if item[1].casefold() == name.casefold()]
-        whole_body = [item for item in compatible if item[0] == "$body"]
-        selected = (
-            exact[0]
-            if len(exact) == 1
-            else whole_body[0]
-            if len(whole_body) == 1
-            else compatible[0]
-            if len(compatible) == 1
-            else None
-        )
-        if selected is not None:
-            arguments.append({"name": name, "source": selected[0]})
+    boundary_sources = _boundary_http_sources(endpoint, request_schema, contract)
+    arguments: list[dict[str, str]] = []
+    expected_parameters = {name for name, _type in contract.control_parameters}
+    for parameter, source_ref in contract.control_argument_sources:
+        if parameter not in expected_parameters:
+            continue
+        source_call, separator, source_path = source_ref.partition("#")
+        if not separator or source_call != contract.boundary_call_id:
+            continue
+        boundary_parameter, dot, nested_path = source_path.partition(".")
+        source = boundary_sources.get(boundary_parameter)
+        if source is None:
+            continue
+        if dot:
+            if source == "$body":
+                source = f"$body.{nested_path}"
+            elif source.startswith("$body."):
+                source = f"{source}.{nested_path}"
+            else:
+                continue
+        arguments.append({"name": parameter, "source": source})
     return arguments
 
 
-def _input_types_compatible(actual: str, expected: str) -> bool:
-    return wire_types_equivalent(actual, expected)
+def _boundary_http_sources(
+    endpoint: dict[str, Any],
+    request_schema: dict[str, Any] | None,
+    contract: InteractionContract,
+) -> dict[str, str]:
+    """Return exact Boundary parameter identifiers exposed by the HTTP contract."""
+
+    boundary_types = dict(contract.boundary_parameters)
+    result: dict[str, str] = {}
+    for prefix, key in (("$path.", "path_params"), ("$query.", "query_params")):
+        for field in endpoint.get(key) or []:
+            if not isinstance(field, dict):
+                continue
+            name = str(field.get("name") or "").strip()
+            if name in boundary_types:
+                result[name] = prefix + name
+
+    request_name = str(endpoint.get("request_schema") or "").strip()
+    if request_schema is None or not request_name:
+        return result
+    remaining = [
+        (name, type_name)
+        for name, type_name in contract.boundary_parameters
+        if name not in result
+    ]
+    if len(remaining) == 1 and _type_parts(remaining[0][1])[0] == request_name:
+        result[remaining[0][0]] = "$body"
+        return result
+    request_fields = {
+        str(field.get("name") or "").strip()
+        for field in request_schema.get("fields") or []
+        if isinstance(field, dict) and str(field.get("name") or "").strip()
+    }
+    for name, _type_name in remaining:
+        if name in request_fields:
+            result[name] = f"$body.{name}"
+    return result
 
 
 def _outcome_name(status: int) -> str:

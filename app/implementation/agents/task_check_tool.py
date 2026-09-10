@@ -16,6 +16,7 @@ from openhands.sdk.tool import (
 )
 
 from .task_check import TASK_CHECK_TOOL_NAME, TaskCheckSession
+from .harness import render_harness_error
 
 
 class TaskCheckAction(Action):
@@ -43,6 +44,14 @@ class TaskCheckExecutor(ToolExecutor):
 
     def __call__(self, _action, conversation=None):  # noqa: ANN001, ARG002
         passed, output = self.session.run()
+        if not passed:
+            no_progress = output.startswith("TASK CHECK NOT RUN")
+            output = render_harness_error(
+                "NO_PROGRESS_REPEAT" if no_progress else "COMMAND_FAILED",
+                output,
+                retryable=not no_progress,
+                workspace=str(self.session.sandbox),
+            )
         return TaskCheckObservation.from_text(text=output, is_error=not passed)
 
 
@@ -65,7 +74,7 @@ class TaskCheckTool(ToolDefinition[TaskCheckAction, TaskCheckObservation]):
         allowed_write_paths: list[str],
         verification_profile: dict[str, object] | None = None,
     ) -> Sequence[Self]:
-        sandbox = Path(conv_state.workspace.working_dir).resolve()
+        sandbox = Path(conv_state.workspace.working_dir)
         return [
             cls(
                 description=(

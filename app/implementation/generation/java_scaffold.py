@@ -25,7 +25,8 @@ from app.design.schemas.class_model import (
     DataType,
 )
 
-JAVA_SCAFFOLDER_VERSION = "1.4.0"
+JAVA_SCAFFOLDER_VERSION = "1.5.0"
+IMPLEMENTATION_MARKER = "EASYDEP-IMPLEMENT"
 CONTROLLER_BODY_REQUIRED = "EASYDEP_CONTROLLER_BODY_REQUIRED"
 
 _JAVA_IDENTIFIER = re.compile(r"^[A-Za-z_$][A-Za-z0-9_$]*$")
@@ -888,11 +889,21 @@ def _render_component(
     ]
     for name, field_type in fields:
         lines.append(f"    private {field_type} {name};")
-    for declaration, return_type in methods:
+    for operation, (declaration, _return_type) in zip(
+        component.operations, methods, strict=True
+    ):
+        stable_id = operation.stable_id or operation.operation_id
         lines.append("")
         lines.append(f"    public {declaration} {{")
-        if return_type != "void":
-            lines.append("        return null;")
+        lines.extend(
+            [
+                f"        // {IMPLEMENTATION_MARKER}: complete {stable_id}",
+                "        // Context: reports/implementation-tasks/method-context/"
+                f"{stable_id}.json",
+                "        throw new UnsupportedOperationException("
+                f'"{IMPLEMENTATION_MARKER}:{stable_id}");',
+            ]
+        )
         lines.append("    }")
     lines.append("}")
     return "\n".join(lines) + "\n"

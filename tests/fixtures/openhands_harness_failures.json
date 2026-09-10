@@ -1,0 +1,25 @@
+{
+  "sourceRunId": "run_0b7e5a6306fe",
+  "events": [
+    {
+      "sequence": 41,
+      "message": "attempted to call tool 'repo_browser.exec' which was not in request.tools",
+      "expectedErrorCode": "TOOL_NOT_AVAILABLE"
+    },
+    {
+      "sequence": 57,
+      "message": "attempted to call tool 'terminal<|channel|>commentary' which was not in request.tools",
+      "expectedErrorCode": "TOOL_PROTOCOL_TOKEN_LEAK"
+    },
+    {
+      "sequence": 73,
+      "message": "parameters for tool file_editor did not match schema",
+      "expectedErrorCode": "TOOL_SCHEMA_INVALID"
+    },
+    {
+      "sequence": 88,
+      "message": "Path is outside the assigned workspace: /other",
+      "expectedErrorCode": "PATH_OUTSIDE_WORKSPACE"
+    }
+  ]
+}

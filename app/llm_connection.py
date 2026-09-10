@@ -162,6 +162,31 @@ def llm_subprocess_environment(config: Settings = settings) -> dict[str, str]:
         "API_KEY": connection.api_key,
         "BASE_URL": connection.base_url,
         "MODEL": connection.model,
+        "IMPLEMENTATION_OWNER_TOOL_MODE": config.implementation_owner_tool_mode,
+        "IMPLEMENTATION_OPENHANDS_CANARY": str(
+            config.implementation_openhands_canary
+        ).lower(),
+        "IMPLEMENTATION_OPENHANDS_CANARY_REPETITIONS": str(
+            config.implementation_openhands_canary_repetitions
+        ),
+        "IMPLEMENTATION_OPENHANDS_REQUEST_ATTEMPTS": str(
+            config.implementation_openhands_request_attempts
+        ),
+        "IMPLEMENTATION_OPENHANDS_RETRY_MIN_WAIT_SECONDS": str(
+            config.implementation_openhands_retry_min_wait_seconds
+        ),
+        "IMPLEMENTATION_OPENHANDS_RETRY_MAX_WAIT_SECONDS": str(
+            config.implementation_openhands_retry_max_wait_seconds
+        ),
+        "IMPLEMENTATION_OPENHANDS_RETRY_MULTIPLIER": str(
+            config.implementation_openhands_retry_multiplier
+        ),
+        "IMPLEMENTATION_OPENHANDS_CANARY_MAX_ATTEMPTS": str(
+            config.implementation_openhands_canary_max_attempts
+        ),
+        "IMPLEMENTATION_OPENHANDS_CANARY_TRANSIENT_TTL_SECONDS": str(
+            config.implementation_openhands_canary_transient_ttl_seconds
+        ),
     }
     # URL과 key는 위에서 최종값으로 바꿨으므로 account/token을 중복 전달하지 않는다.
     # Gateway 선택 header에 실제로 쓰이는 ID만 Cloudflare 하위 프로세스에 보낸다.

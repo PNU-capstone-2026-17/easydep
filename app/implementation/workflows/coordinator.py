@@ -51,6 +51,7 @@ PHASES = (
         (),
         {
             "backend-implementation",
+            "backend-operation",
             "control",
             "testing-static",
             "testing-package",

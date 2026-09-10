@@ -24,13 +24,32 @@ from ..runtime.linux_runner_transport import (
     OWNER_TERMINAL_SHELL_ENV,
 )
 from ..workflows.repair import active_repair_for_task
+from .canary import (
+    TRANSIENT_CANARY_FAILURES,
+    classify_canary_exception,
+    ensure_model_tool_canary,
+    model_tool_canary_id,
+    open_endpoint_circuit,
+)
+from .harness import (
+    EndpointRetryRecorder,
+    HarnessCompatibilityError,
+    HarnessErrorGuard,
+    HarnessProgressTracker,
+    build_harness_manifest,
+    classify_harness_error_text,
+    is_provider_output_parse_failure,
+    owner_prompt_path,
+    render_harness_error,
+    verify_or_store_harness_manifest,
+)
 from .provider import (
-    configured_max_output_tokens,
     openhands_compatibility,
     openhands_connection,
 )
 from .task_check import (
     consume_successful_task_check,
+    has_successful_task_check,
     register_task_check_tool,
 )
 from .verification.build import (
@@ -45,7 +64,10 @@ from .workspace import (
     load_task,
     missing_required_outputs,
     path_is_editable,
+    preflight_owner_workspace,
     prepare_agent_workspace,
+    prepare_owner_workspace_alias,
+    release_owner_workspace_alias,
     snapshot_files,
 )
 
@@ -58,6 +80,11 @@ MAX_AGENT_TURN_ITERATIONS = 32
 # retry resumes the same persisted conversation.
 OWNER_TURN_ITERATIONS = 96
 OWNER_TASK_TYPES = frozenset({"backend-implementation", "frontend-implementation"})
+# Operation-marker conversations use the same verified tool harness but do not
+# persist the old conversation. A retry starts a fresh, short conversation over
+# the preserved candidate source instead of nudging a read-only loop forever.
+MARKER_TURN_ITERATIONS = 16
+HARNESS_TASK_TYPES = OWNER_TASK_TYPES | {"backend-operation"}
 OWNER_CONTINUATION_MESSAGE = (
     "Continue from the current candidate; do not restart repository discovery. Run the "
     "canonical verification command now, inspect only its concrete compiler or test failures, "
@@ -65,7 +92,7 @@ OWNER_CONTINUATION_MESSAGE = (
 )
 OWNER_STUCK_RECOVERY_MESSAGE = (
     "OpenHands detected a repeated-action loop. Continue in this same conversation with a "
-    "different action. Use the absolute project path from the workspace facts, run the "
+    "different action. Use an absolute path rooted at the assigned /work task directory, run the "
     "canonical verification command, and fix only its concrete failures."
 )
 OWNER_FINISH_RECOVERY_MESSAGE = (
@@ -83,6 +110,10 @@ class OwnerConversationIncomplete(WorkspaceVerificationError):
 
 def _is_owner_task(task_type: str) -> bool:
     return task_type in OWNER_TASK_TYPES
+
+
+def _is_harness_task(task_type: str) -> bool:
+    return task_type in HARNESS_TASK_TYPES
 
 
 def _owner_conversation_identity(run_root: Path, task_id: str) -> tuple[Path, uuid.UUID]:
@@ -273,20 +304,19 @@ class NoActionResponseGuard:
 
 def _owner_workspace_guidance(
     task_type: str,
-    sandbox: Path,
+    workspace: Path | str,
     owner_roots: list[str],
+    owner_tool_mode: str = "terminal",
 ) -> str:
     """Return stable runner facts, not implementation instructions."""
 
-    workspace = sandbox.resolve()
+    logical_workspace = Path(workspace)
     common = [
         "## EasyDep implementation workspace",
         "",
-        f"- Workspace and terminal starting directory: `{sandbox.resolve()}`",
-        "- The terminal session preserves `cd` and environment changes between calls.",
-        "- Use `file_editor` for source edits and `terminal` for inspection, search, build, and tests.",
+        f"- Complete workspace: `{logical_workspace}`. For file_editor, use absolute paths rooted at this directory.",
         "- Source locations and RTM references are investigation hints, not a required edit list.",
-        "- Candidate contract copies may be inspected, but promotion rejects changes to generated contracts.",
+        "- Preserve generated public declarations. Only task-authorized implementation bodies may change; immutable API and persistence contracts remain protected.",
         "- Start from generated skeletons and their local context; open raw design inputs only for a concrete contract gap.",
         "- Batch related source reads into as few terminal calls as practical, and use build/test results rather than file counts as completion evidence.",
         "- After an edit batch, run the canonical verification once. If it fails, inspect that output and its existing diagnostic files before rerunning; do not rerun only to obtain more detail.",
@@ -294,12 +324,30 @@ def _owner_workspace_guidance(
         "- Prefer the lowest-cost test level that proves the behavior; avoid restarting a full application context for every assertion.",
         "- Use English for source comments and user-visible text.",
     ]
-    if task_type == "backend-implementation":
+    if owner_tool_mode == "terminal":
+        common.extend(
+            [
+                "- The terminal session preserves `cd` and environment changes between calls.",
+                "- Use `file_editor` for source edits and `terminal` for inspection, search, build, and tests.",
+            ]
+        )
+    else:
+        common.extend(
+            [
+                "- Use `file_editor` for source reads and edits, `grep` for search, and `run_task_check` for verification.",
+                "- No terminal is available. Do not invent shell or repository-browser tools.",
+            ]
+        )
+    if task_type in {"backend-implementation", "backend-operation"}:
         common.extend(
             [
                 "- Backend project root: `application`.",
                 "- Gradle is installed as `gradle`; this project has no Gradle wrapper.",
-                f"- Canonical backend verification: `cd {workspace / 'application'} && gradle test --build-cache`.",
+                (
+                    f"- Canonical backend verification: `cd {logical_workspace / 'application'} && gradle test --build-cache`."
+                    if owner_tool_mode == "terminal"
+                    else "- Canonical backend verification is the argument-free `run_task_check` tool."
+                ),
                 "- The terminal exports `SPRING_PROFILES_ACTIVE=test` and Gradle uses the shared `GRADLE_USER_HOME` cache.",
             ]
         )
@@ -308,7 +356,11 @@ def _owner_workspace_guidance(
             [
                 "- Frontend project root: `application/frontend`.",
                 "- If dependencies are absent, run `npm ci --ignore-scripts --no-audit --no-fund --prefer-offline` once.",
-                f"- Canonical frontend verification: `cd {workspace / 'application' / 'frontend'} && npm run build`.",
+                (
+                    f"- Canonical frontend verification: `cd {logical_workspace / 'application' / 'frontend'} && npm run build`."
+                    if owner_tool_mode == "terminal"
+                    else "- Canonical frontend verification is the argument-free `run_task_check` tool."
+                ),
                 f"- npm uses the shared cache at `{OWNER_NPM_CACHE}`.",
             ]
         )
@@ -496,9 +548,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     task = load_task(run_root, task_id)
     task_type = str(task.get("task_type", ""))
     owner_task = _is_owner_task(task_type)
-    if owner_task and os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") != "1":
+    harness_task = _is_harness_task(task_type)
+    if harness_task and os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") != "1":
         raise RuntimeError(
-            "Autonomous OpenHands owners require the isolated EasyDep Linux runner."
+            "Harnessed OpenHands tasks require the isolated EasyDep Linux runner."
         )
     active_repair = active_repair_for_task(run_root, task_id)
     editable_paths, editable_roots, immutable = _task_execution_scope(task, active_repair)
@@ -525,6 +578,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         preserve_failed_edits=True,
         persistent=owner_task,
     )
+    owner_tool_mode = (
+        str(task.get("owner_tool_mode") or settings.implementation_owner_tool_mode)
+        if owner_task
+        else "restricted"
+    )
+    logical_workspace = (
+        prepare_owner_workspace_alias(sandbox, task_id) if owner_task else sandbox
+    )
     before = snapshot_files(sandbox)
     prompt_file = task.get("repair_prompt_file") if active_repair is not None else task.get("prompt_file")
     if not isinstance(prompt_file, str) or not (run_root / prompt_file).is_file():
@@ -548,11 +609,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     writable_files = [str((sandbox / path).resolve()) for path in editable_paths]
     writable_roots = [str((sandbox / root).resolve()) for root in editable_roots]
     immutable_absolute = [str((sandbox / path).resolve()) for path in immutable]
-    if owner_task:
-        prompt += "\n\n" + _owner_workspace_guidance(
+    owner_system_context = ""
+    if harness_task:
+        owner_system_context = _owner_workspace_guidance(
             task_type,
-            sandbox,
+            logical_workspace,
             editable_roots,
+            owner_tool_mode,
         )
     else:
         prompt += (
@@ -578,7 +641,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     execution_dir = run_root / "reports" / "agent-executions"
     attempt = execution_attempt(run_root, task_id)
     journal = EventJournal(execution_dir / f"{task_id}.attempt-{attempt:03d}.events.jsonl")
-    no_action_guard = NoActionResponseGuard() if owner_task else None
+    no_action_guard = NoActionResponseGuard() if harness_task else None
+    harness_guard = HarnessErrorGuard() if harness_task else None
+    progress_tracker = HarnessProgressTracker(sandbox) if harness_task else None
     stuck_recovery_used = False
     finish_recovery_used = False
     started = time.monotonic()
@@ -587,6 +652,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     persistence_dir: Path | None = None
     conversation_id: uuid.UUID | None = None
     resumed_conversation = False
+    workspace_preflight: dict[str, object] | None = None
+    harness_manifest: dict[str, object] | None = None
+    canary_result: dict[str, object] | None = None
+    endpoint_retry_recorder = EndpointRetryRecorder() if harness_task else None
     if owner_task:
         persistence_dir, conversation_id = _owner_conversation_identity(run_root, task_id)
         resumed_conversation = (
@@ -597,6 +666,35 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             "OPENHANDS_REASONING_EFFORT",
             str(task["llm"].get("reasoningEffort", settings.implementation_reasoning_effort)),
         )
+        if harness_task:
+            workspace_preflight = preflight_owner_workspace(
+                sandbox,
+                editable_files=writable_files,
+                editable_roots=writable_roots,
+                immutable_paths=immutable_absolute,
+                logical_workspace=logical_workspace,
+                enforce_write_scope=owner_tool_mode != "terminal",
+            )
+            expected_canary_id = (
+                model_tool_canary_id(
+                    connection,
+                    owner_tool_mode=owner_tool_mode,
+                    reasoning_effort=reasoning_effort,
+                )
+                if settings.implementation_openhands_canary
+                and isinstance(connection, LlmConnection)
+                else None
+            )
+            harness_manifest = build_harness_manifest(
+                connection,
+                owner_tool_mode=owner_tool_mode,
+                reasoning_effort=reasoning_effort,
+                canary_result_id=expected_canary_id,
+            )
+            verify_or_store_harness_manifest(
+                run_root / "reports" / "openhands-harness" / f"{task_id}.manifest.json",
+                harness_manifest,
+            )
         conversation, agent = create_openhands_conversation(
             sandbox,
             connection,
@@ -607,18 +705,70 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             editable_files=writable_files,
             editable_roots=writable_roots,
             immutable_paths=immutable_absolute,
-            callbacks=[journal, *([no_action_guard] if no_action_guard else [])],
+            callbacks=[
+                journal,
+                *([no_action_guard] if no_action_guard else []),
+                *([harness_guard] if harness_guard else []),
+                *([progress_tracker] if progress_tracker else []),
+            ],
+            retry_listener=endpoint_retry_recorder,
             max_iterations=(
-                OWNER_TURN_ITERATIONS if owner_task else MAX_AGENT_TURN_ITERATIONS
+                OWNER_TURN_ITERATIONS
+                if owner_task
+                else (
+                    MARKER_TURN_ITERATIONS
+                    if task_type == "backend-operation"
+                    else MAX_AGENT_TURN_ITERATIONS
+                )
             ),
             reasoning_effort=reasoning_effort,
-            native_owner_tools=owner_task,
-            enable_native_terminal=owner_task,
+            native_owner_tools=harness_task,
+            enable_native_terminal=harness_task and owner_tool_mode == "terminal",
+            owner_tool_mode=owner_tool_mode,
+            workspace=logical_workspace,
+            owner_system_context=owner_system_context,
             persistence_dir=persistence_dir,
             conversation_id=conversation_id,
         )
         if no_action_guard is not None:
             no_action_guard.bind(conversation)
+        if harness_guard is not None:
+            harness_guard.bind(conversation)
+        if progress_tracker is not None:
+            progress_tracker.bind(conversation)
+        # The task conversation construction above instantiates and serializes
+        # every real executor without calling its LLM. Only after that
+        # deterministic check may the live protocol canary use the endpoint.
+        if harness_task and settings.implementation_openhands_canary and isinstance(
+            connection, LlmConnection
+        ):
+            canary_result = ensure_model_tool_canary(
+                run_root,
+                connection,
+                task["llm"],
+                owner_tool_mode=owner_tool_mode,
+                reasoning_effort=reasoning_effort,
+                repetitions=settings.implementation_openhands_canary_repetitions,
+                max_attempts=settings.implementation_openhands_canary_max_attempts,
+                transient_failure_ttl_seconds=(
+                    settings.implementation_openhands_canary_transient_ttl_seconds
+                ),
+                retry_min_wait_seconds=(
+                    settings.implementation_openhands_retry_min_wait_seconds
+                ),
+                retry_max_wait_seconds=(
+                    settings.implementation_openhands_retry_max_wait_seconds
+                ),
+                retry_multiplier=settings.implementation_openhands_retry_multiplier,
+            )
+            if (
+                harness_manifest is None
+                or canary_result["canaryResultId"]
+                != harness_manifest["canaryResultId"]
+            ):
+                raise HarnessCompatibilityError(
+                    "MODEL_TOOL_PROTOCOL_INCOMPATIBLE: canary contract ID changed"
+                )
         # The SDK loads persisted events when the stable conversation exists.
         # Compare the exact user message in that public event history: a new
         # repair is appended, while a crash after event persistence resumes
@@ -643,7 +793,16 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 no_action_guard.reset()
             conversation.send_message(OWNER_STUCK_RECOVERY_MESSAGE)
             conversation.run()
-        if owner_task and _conversation_needs_finish_recovery(conversation):
+        if (
+            harness_task
+            and _conversation_needs_finish_recovery(conversation)
+            and has_successful_task_check(
+                sandbox,
+                task_type,
+                editable_paths,
+                verification_profile,
+            )
+        ):
             # OpenHands can stop after a prose response even when FinishTool is
             # available. Give that state one narrow completion-only recovery.
             finish_recovery_used = True
@@ -708,6 +867,61 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     except Exception as error:
         if conversation is not None:
             conversation.close()
+        provider_failure_reason = classify_canary_exception(error)
+        if (
+            harness_task
+            and isinstance(connection, LlmConnection)
+            and provider_failure_reason in TRANSIENT_CANARY_FAILURES
+        ):
+            open_endpoint_circuit(
+                run_root,
+                connection,
+                owner_tool_mode=owner_tool_mode,
+                reasoning_effort=reasoning_effort,
+                ttl_seconds=(
+                    settings.implementation_openhands_canary_transient_ttl_seconds
+                ),
+                reason=provider_failure_reason,
+            )
+        classified_error = classify_harness_error_text(str(error))
+        compatibility_prefix = str(error).partition(":")[0]
+        compatibility_reasons = {
+            "MODEL_NOT_FOUND",
+            "MODEL_TOOL_PROTOCOL_INCOMPATIBLE",
+            "TOOL_PROTOCOL_TOKEN_LEAK",
+            "TOOL_NOT_AVAILABLE",
+            "TOOL_SCHEMA_INVALID",
+            "PROVIDER_RATE_LIMIT",
+            "PROVIDER_TIMEOUT",
+            "PROVIDER_STREAM_INCOMPLETE",
+            "NETWORK_CONNECTION_ERROR",
+            "CANARY_EXECUTION_ERROR",
+            "ENDPOINT_DEGRADED",
+            "PROVIDER_OUTPUT_PARSE_TRANSIENT",
+        }
+        deterministic_termination = (
+            harness_guard.terminal_code
+            if harness_guard is not None and harness_guard.terminal_code
+            else (
+                classified_error.code
+                if classified_error is not None
+                else (
+                    compatibility_prefix
+                    if isinstance(error, HarnessCompatibilityError)
+                    and compatibility_prefix in compatibility_reasons
+                    else (
+                        "HARNESS_CONTRACT_INCOMPATIBLE"
+                        if isinstance(error, HarnessCompatibilityError)
+                        else None
+                    )
+                )
+            )
+        )
+        if (
+            deterministic_termination is None
+            and provider_failure_reason in TRANSIENT_CANARY_FAILURES
+        ):
+            deterministic_termination = provider_failure_reason
         failure = {
             "taskId": task_id,
             "taskType": task_type,
@@ -731,9 +945,17 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             "resumedConversation": resumed_conversation,
             "executionStatus": _conversation_execution_status(conversation),
             "terminationReason": (
-                "consecutive_no_action_responses"
-                if no_action_guard is not None and no_action_guard.triggered
-                else None
+                deterministic_termination
+                if deterministic_termination is not None
+                else (
+                    progress_tracker.terminal_code
+                    if progress_tracker is not None and progress_tracker.terminal_code
+                    else (
+                        "consecutive_no_action_responses"
+                        if no_action_guard is not None and no_action_guard.triggered
+                        else None
+                    )
+                )
             ),
             "maxConsecutiveNoActionResponses": (
                 no_action_guard.max_consecutive_count
@@ -742,6 +964,18 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             ),
             "stuckRecoveryUsed": stuck_recovery_used,
             "finishRecoveryUsed": finish_recovery_used,
+            "harnessErrorCounts": harness_guard.counts if harness_guard else {},
+            "harnessProgress": progress_tracker.snapshot() if progress_tracker else None,
+            "workspacePreflight": workspace_preflight,
+            "harnessManifest": harness_manifest,
+            "canaryResultId": (
+                canary_result.get("canaryResultId") if canary_result else None
+            ),
+            "endpointRetries": (
+                endpoint_retry_recorder.snapshot()
+                if endpoint_retry_recorder is not None
+                else None
+            ),
         }
         if isinstance(error, WorkspaceVerificationError):
             failure["verificationEvidence"] = error.evidence
@@ -784,11 +1018,23 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         ),
         "stuckRecoveryUsed": stuck_recovery_used,
         "finishRecoveryUsed": finish_recovery_used,
+        "harnessErrorCounts": harness_guard.counts if harness_guard else {},
+        "harnessProgress": progress_tracker.snapshot() if progress_tracker else None,
+        "workspacePreflight": workspace_preflight,
+        "harnessManifest": harness_manifest,
+        "canaryResultId": canary_result.get("canaryResultId") if canary_result else None,
+        "endpointRetries": (
+            endpoint_retry_recorder.snapshot()
+            if endpoint_retry_recorder is not None
+            else None
+        ),
         "conversationStats": _conversation_stats_snapshot(conversation),
         "status": "SUCCEEDED",
     }
     write_execution_result(execution_dir, task_id, attempt, result)
     shutil.copyfile(journal.path, execution_dir / f"{task_id}.events.jsonl")
+    if owner_task:
+        release_owner_workspace_alias(sandbox, logical_workspace)
     cleanup_agent_workspace(sandbox, run_root=run_root if owner_task else None)
     return result
 
@@ -974,20 +1220,34 @@ def create_openhands_conversation(
     editable_roots: list[str] | None = None,
     immutable_paths: list[str] | None = None,
     callbacks: list[object] | None = None,
+    retry_listener: object | None = None,
     max_iterations: int = MAX_AGENT_TURN_ITERATIONS,
     reasoning_effort: str = "medium",
     native_owner_tools: bool = False,
     enable_native_terminal: bool = False,
+    owner_tool_mode: str | None = None,
+    workspace: Path | None = None,
+    owner_system_context: str = "",
+    canary_tools: bool = False,
+    system_prompt_text: str | None = None,
     persistence_dir: Path | None = None,
     conversation_id: uuid.UUID | None = None,
 ):
     global _SANDBOX_TOOLS_REGISTERED
 
-    from openhands.sdk import LLM, Agent, Conversation, Tool, register_tool
+    # Preserve the direct-call baseline for older callers. Production owners
+    # always pass the configured mode explicitly; omitted mode means the former
+    # broad owner editor contract, whether or not its terminal is enabled.
+    effective_owner_tool_mode = owner_tool_mode or (
+        "terminal" if native_owner_tools else "restricted"
+    )
+
+    from openhands.sdk import LLM, Agent, AgentContext, Conversation, Tool, register_tool
     from openhands.sdk.context.condenser import default_condenser
     from openhands.sdk.llm.exceptions import (
         FunctionCallValidationError,
         LLMBadRequestError,
+        LLMNoResponseError,
     )
     from openhands.tools.file_editor import FileEditorTool
     from openhands.tools.file_editor.definition import FileEditorObservation
@@ -1020,7 +1280,29 @@ def create_openhands_conversation(
             raise FunctionCallValidationError(message) from error
 
     class ProviderToolValidationLLM(LLM):
-        """Route provider-side validation 400s into OpenHands' native recovery."""
+        """Route narrow provider 400s into the matching safe SDK recovery."""
+
+        def _transport_call(self, **kwargs):
+            try:
+                return super()._transport_call(**kwargs)
+            except Exception as error:
+                if is_provider_output_parse_failure(error):
+                    raise LLMNoResponseError(
+                        "PROVIDER_OUTPUT_PARSE_TRANSIENT: provider could not parse "
+                        "the generated model output before dispatching a tool"
+                    ) from error
+                raise
+
+        async def _atransport_call(self, **kwargs):
+            try:
+                return await super()._atransport_call(**kwargs)
+            except Exception as error:
+                if is_provider_output_parse_failure(error):
+                    raise LLMNoResponseError(
+                        "PROVIDER_OUTPUT_PARSE_TRANSIENT: provider could not parse "
+                        "the generated model output before dispatching a tool"
+                    ) from error
+                raise
 
         def _handle_error(self, error, fallback_call_fn):
             try:
@@ -1048,6 +1330,7 @@ def create_openhands_conversation(
             enforce_write_scope: bool,
         ):
             super().__init__(workspace_root=workspace_root)
+            self.logical_workspace = Path(workspace_root)
             self.workspace_root = Path(workspace_root).resolve()
             self.writable_files = {Path(path).resolve() for path in writable_files}
             self.writable_roots = {Path(path).resolve() for path in writable_roots}
@@ -1065,14 +1348,24 @@ def create_openhands_conversation(
                 target.relative_to(self.workspace_root)
             except ValueError:
                 return FileEditorObservation.from_text(
-                    text=f"Path is outside the assigned workspace: {target}",
+                    text=render_harness_error(
+                        "PATH_OUTSIDE_WORKSPACE",
+                        "The path is outside the assigned workspace. Use an absolute path rooted at the assigned /work task directory.",
+                        retryable=True,
+                        workspace=str(self.logical_workspace),
+                    ),
                     command=action.command,
                     is_error=True,
                 )
             if action.command != "view" and self.enforce_write_scope:
                 if any(target == path or path in target.parents for path in self.immutable):
                     return FileEditorObservation.from_text(
-                        text=f"Generated contract is read-only: {target}",
+                        text=render_harness_error(
+                            "WRITE_OUTSIDE_OWNER_SCOPE",
+                            "Generated contracts are read-only.",
+                            retryable=False,
+                            workspace=str(self.logical_workspace),
+                        ),
                         command=action.command,
                         is_error=True,
                     )
@@ -1080,7 +1373,12 @@ def create_openhands_conversation(
                     target == root or root in target.parents for root in self.writable_roots
                 ):
                     return FileEditorObservation.from_text(
-                        text=f"Write is outside the assigned implementation roots: {target}",
+                        text=render_harness_error(
+                            "WRITE_OUTSIDE_OWNER_SCOPE",
+                            "The write is outside the assigned implementation roots.",
+                            retryable=False,
+                            workspace=str(self.logical_workspace),
+                        ),
                         command=action.command,
                         is_error=True,
                     )
@@ -1104,6 +1402,13 @@ def create_openhands_conversation(
             return [
                 instance.model_copy(
                     update={
+                        "description": (
+                            "Read or edit plain-text files inside the assigned workspace. "
+                            "The canonical FileEditor requires an absolute path rooted at that "
+                            "workspace, for example /work/application/src/main/java/example/App.java. "
+                            "Paths resolving outside the workspace are rejected. Use view before "
+                            "an edit and preserve generated public declarations."
+                        ),
                         "executor": SandboxFileEditorExecutor(
                             conv_state.workspace.working_dir,
                             writable_files,
@@ -1117,6 +1422,10 @@ def create_openhands_conversation(
             ]
 
     class SandboxGrepExecutor(GrepExecutor):
+        def __init__(self, working_dir: str):
+            self.logical_workspace = Path(working_dir)
+            super().__init__(working_dir)
+
         def __call__(self, action, conversation=None):
             supplied = Path(action.path) if action.path else None
             target = (
@@ -1130,7 +1439,12 @@ def create_openhands_conversation(
                 target.relative_to(self.working_dir)
             except ValueError:
                 return GrepObservation.from_text(
-                    text=f"Search path is outside the assigned workspace: {target}",
+                    text=render_harness_error(
+                        "PATH_OUTSIDE_WORKSPACE",
+                        "The search path is outside the assigned workspace. Search a path relative to /work.",
+                        retryable=True,
+                        workspace=str(self.logical_workspace),
+                    ),
                     matches=[],
                     pattern=action.pattern,
                     search_path=str(target),
@@ -1146,7 +1460,13 @@ def create_openhands_conversation(
         def create(cls, conv_state):
             return [
                 instance.model_copy(
-                    update={"executor": SandboxGrepExecutor(conv_state.workspace.working_dir)}
+                    update={
+                        "description": (
+                            "Search text files inside /work. Use a path relative to /work and "
+                            "do not search parent directories."
+                        ),
+                        "executor": SandboxGrepExecutor(conv_state.workspace.working_dir),
+                    }
                 )
                 for instance in super().create(conv_state)
             ]
@@ -1171,6 +1491,11 @@ def create_openhands_conversation(
         fallback_temperature=float(raw_temperature),
         fallback_max_tokens=int(raw_max_output),
     )
+    requested_max_output = (
+        int(settings.openhands_max_output_tokens)
+        if settings.openhands_max_output_tokens is not None
+        else min(int(raw_max_output), profile.default_max_tokens)
+    )
     llm_options: dict[str, Any] = {
         "model": model,
         "usage_id": "implementation_agent",
@@ -1179,10 +1504,22 @@ def create_openhands_conversation(
         "extra_headers": connection.default_headers(),
         "temperature": profile.temperature,
         "max_output_tokens": profile.completion_limit(
-            configured_max_output_tokens(int(raw_max_output))
+            requested_max_output
         ),
+        "num_retries": settings.implementation_openhands_request_attempts,
+        "retry_min_wait": settings.implementation_openhands_retry_min_wait_seconds,
+        "retry_max_wait": settings.implementation_openhands_retry_max_wait_seconds,
+        "retry_multiplier": settings.implementation_openhands_retry_multiplier,
     }
+    if retry_listener is not None:
+        llm_options["retry_listener"] = retry_listener
     llm_options.update(connection.openhands_options())
+    # Cloudflare's OpenAI-compatible endpoint controls thinking with
+    # ``reasoning_effort``. OpenHands otherwise keeps its provider-agnostic
+    # 200k extended-thinking default on the LLM object even though that is not
+    # part of this endpoint's contract.
+    if connection.provider == "cloudflare":
+        llm_options["extended_thinking_budget"] = None
     if profile.top_p is not None:
         llm_options["top_p"] = profile.top_p
     if resolved_reasoning := profile.resolve_reasoning(reasoning_effort):
@@ -1195,7 +1532,12 @@ def create_openhands_conversation(
         module=r"openhands\.sdk\.llm\.utils\.telemetry",
     )
     llm = ProviderToolValidationLLM(**llm_options)
-    if native_owner_tools:
+    if canary_tools:
+        from .canary_tool import register_canary_tools
+
+        read_tool, check_tool = register_canary_tools()
+        tools = [Tool(name=read_tool, params={}), Tool(name=check_tool, params={})]
+    elif native_owner_tools:
         tools = [
             Tool(
                 name=editor_registry_name,
@@ -1203,11 +1545,30 @@ def create_openhands_conversation(
                     "writable_files": editable_files or [],
                     "writable_roots": editable_roots or [],
                     "immutable_paths": immutable_paths or [],
-                    "enforce_write_scope": False,
+                    "enforce_write_scope": effective_owner_tool_mode != "terminal",
                 },
             ),
         ]
-        if enable_native_terminal:
+        if effective_owner_tool_mode == "restricted":
+            task_check_tool_name = register_task_check_tool()
+            tools.extend(
+                [
+                    Tool(name=grep_registry_name, params={}),
+                    Tool(
+                        name=task_check_tool_name,
+                        params={
+                            "task_type": task_type,
+                            "allowed_write_paths": verification_paths or [],
+                            "verification_profile": verification_profile or {},
+                        },
+                    ),
+                ]
+            )
+        elif effective_owner_tool_mode != "terminal":
+            raise ValueError(
+                f"Unsupported OpenHands owner tool mode: {effective_owner_tool_mode}"
+            )
+        if enable_native_terminal and effective_owner_tool_mode == "terminal":
             tools.append(
                 Tool(
                     name=TerminalTool.name,
@@ -1243,19 +1604,29 @@ def create_openhands_conversation(
                 },
             ),
         ]
+    agent_options: dict[str, object] = {}
+    if native_owner_tools or canary_tools:
+        # Read the versioned prompt directly. OpenHands 1.36's custom Jinja path
+        # writes bytecode below the process home, which is outside EasyDep's
+        # controlled temporary state and can itself fail on Windows permissions.
+        agent_options["system_prompt"] = system_prompt_text or owner_prompt_path().read_text(
+            encoding="utf-8"
+        )
+        agent_options["agent_context"] = AgentContext(
+            system_message_suffix=owner_system_context
+        )
     agent = Agent(
         llm=llm,
         tools=tools,
         include_default_tools=["FinishTool"],
-        # Do not override OpenHands' built-in system behavior. EasyDep's
-        # task-specific constraints are appended to the user task message.
         condenser=default_condenser(
             llm=llm.model_copy(update={"usage_id": "implementation_condenser"}),
         ),
+        **agent_options,
     )
     conversation = Conversation(
         agent=agent,
-        workspace=str(sandbox),
+        workspace=str(workspace or sandbox),
         callbacks=callbacks,
         max_iteration_per_run=max_iterations,
         stuck_detection=True,

@@ -159,6 +159,26 @@ def consume_successful_task_check(
     return {**cached.evidence, "reusedFromTaskCheck": True}
 
 
+def has_successful_task_check(
+    sandbox: Path,
+    task_type: str,
+    allowed_write_paths: list[str],
+    verification_profile: dict[str, object] | None = None,
+) -> bool:
+    """Return whether the unchanged candidate has already passed its assigned check."""
+
+    key = str(sandbox.resolve())
+    with _SUCCESSFUL_CHECKS_LOCK:
+        cached = _SUCCESSFUL_CHECKS.get(key)
+    return bool(
+        cached is not None
+        and cached.task_type == task_type
+        and cached.allowed_paths == _normalized_paths(allowed_write_paths)
+        and cached.verification_profile_digest == _profile_digest(verification_profile)
+        and cached.source_snapshot == snapshot_files(sandbox)
+    )
+
+
 def _normalized_paths(paths: list[str]) -> tuple[str, ...]:
     return tuple(sorted(str(path).replace("\\", "/") for path in paths))
 

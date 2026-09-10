@@ -16,7 +16,7 @@ from app.design.schemas.class_model import AcceptedBCEClass, BCEModel
 
 from .java_scaffold import java_type
 
-PERSISTENCE_SCAFFOLDER_VERSION = "1.4.0"
+PERSISTENCE_SCAFFOLDER_VERSION = "1.5.0"
 
 _FIELD = re.compile(r"^\s*[+#~\-]?\s*(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(?P<type>.+?)\s*$")
 _JAVA_IMPORTS = {
@@ -199,8 +199,7 @@ def _persistence_entities(
             ):
                 physical_columns[database_name] = column
         physical_fields = [
-            f"{column['name']} : "
-            f"{source_fields.get(str(column['name']), _design_type_from_sql(column.get('type')))}"
+            f"{column['name']} : {_physical_field_type(column, source_fields)}"
             for column in physical_columns.values()
         ]
         selected_names = {
@@ -236,6 +235,27 @@ def _declared_field_types(declarations: list[str]) -> dict[str, str]:
         if match is not None:
             result[match.group("name")] = match.group("type")
     return result
+
+
+def _physical_field_type(column: dict[str, Any], source_fields: dict[str, str]) -> str:
+    """물리 FK에는 도메인 Entity 타입이 아니라 투영된 키의 스칼라 타입을 사용한다.
+
+    BCE는 관계를 ``studentId : Student``처럼 표현할 수 있지만 ERD는 이를
+    ``student_id VARCHAR`` 같은 외래 키 열로 확정한다. 여기서 BCE 타입을 다시 복원하면
+    JPA 골격이 존재하지 않는 ``Student`` 영속 타입을 참조하게 된다. 일반 속성의 enum과
+    value object 타입은 기존처럼 보존하고, 관계 열만 ERD의 SQL 타입을 따른다.
+    """
+
+    is_foreign_key = (
+        str(column.get("role") or "").strip().casefold() == "fk"
+        or bool(str(column.get("references") or "").strip())
+    )
+    if is_foreign_key:
+        return _design_type_from_sql(column.get("type"))
+    return source_fields.get(
+        str(column.get("name") or ""),
+        _design_type_from_sql(column.get("type")),
+    )
 
 
 def _design_type_from_sql(value: Any) -> str:
