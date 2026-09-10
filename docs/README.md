@@ -31,6 +31,8 @@
   관찰 결과, 발견한 오류와 수정·정리 결과
 - [배포 템플릿·IaC·실행 스크립트 전수 점검](deployment-template-gap-audit.md): 공식 45개
   배포 경로에서 발견한 결함, 수정 결과와 출시 검증 증거
+- [LLM 기반 배포 토폴로지 재구성 개선 계획](llm-deployment-topology-composition-plan.md):
+  후보 WorkloadGraph 생성, 근거·권한·요구 보존 검증, 독립 평가와 점진적 KB 외부화 계획
 - [LLM provider 설정](llm-provider-configuration.md): provider 선택, 직접 SDK·OpenHands·하위
   프로세스 연결과 비밀값 기록 정책
 - `app/workspace/README.md`: 프론트엔드 명령, 진행 이벤트와 단계 전환 계약
