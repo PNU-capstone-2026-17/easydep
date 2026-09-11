@@ -196,9 +196,13 @@ ChangeSet
   changeSetId
   appId
   decisionId
+  decisionSnapshot
+  decisionDigest
   baseHead
-  baseArtifactVersions[]
+  baseRevisions[]
+  artifactSnapshot[]: {target, versionId | digest}
   preChangeTraceDigest
+  preChangeImpact[]
   authoritativeTargets[]
   executionUnits[]
   unresolvedImpact[]
@@ -217,11 +221,10 @@ execution unit은 계획과 checkpoint가 공통으로 참조하는 명시적 �
 ExecutionUnit
   executionUnitId
   owner
-  targets[]
+  artifact
   action
-  producerRefs[]
+  dependencies[]: {producerRef, producerRevisionOrDigest, relation}
   dependsOnUnitIds[]
-  expectedInputDigests[]
   status
 ```
 
@@ -239,6 +242,10 @@ version을 다시 확인한 뒤에만 재사용한다. 승인이 필요한 계�
 | `reproject` | accepted source 또는 같은 ChangeSet에서 검증된 새 source revision을 순수 변환 | source/target digest와 projection version |
 | `reuse` | 입력이 동일하거나 안전성이 이미 증명됨 | 동일 input digest 또는 지원 단위의 재검증 |
 | `stale` | 아직 갱신·검증되지 않아 소비할 수 없음 | stale 원인과 producer revision |
+
+첫 pure planning 하위 작업은 `rebuild`, 등록된 `reproject`, `stale`만 생성한다. `revalidate`와
+`reuse`는 action vocabulary에는 남기되 validator·projection version과 input fingerprint를
+checkpoint에서 다시 증명하는 계약이 구현되기 전에는 계획 결과로 만들지 않는다.
 
 RTM에 항목이 없다는 이유만으로 `reuse`를 선택할 수 없다. 추적이 부족하면 지원되는 더 큰
 단위로 확대하거나 `unresolvedImpact`와 `stale`로 기록한다.
@@ -286,6 +293,12 @@ RTM은 step·guarantee·constraint 등 세밀한 provenance를 포함하고 설�
 binding 행이 있지만, 그 행이 모두 독립된 전파·merge 단위라는 뜻은 아니다. 첫 수직 경로는
 UC 명세와 안전한 class bundle을 revision 단위로 사용한다.
 
+따라서 `ChangeSet`에 들어가는 입력은 raw RTM 행을 그대로 execution unit으로 바꾼 그래프가
+아니다. 서버 소유 adapter가 UC 명세·안전한 class bundle·sequence 단위로 정규화한 planning
+trace다. raw operation·call·binding은 이 adapter가 bundle 영향과 근거를 계산할 때 사용하되,
+독립 실행 단위로 승격하지 않는다. `ProjectionContract`도 RTM 연결에서 추론하지 않고 등록된
+순수 adapter의 consumer, exact producer refs, adapter ID와 version으로 구성한다.
+
 ### 6.1 변경 전후 추적
 
 계획할 때 current accepted head의 RTM, artifact versions와 trace digest를 고정한다. 변경 뒤에는
@@ -300,6 +313,10 @@ UC 명세와 안전한 class bundle을 revision 단위로 사용한다.
 새 영향이 plan 범위를 넘으면 자동으로 mutation 범위를 넓히지 않는다. 안전한 revalidation만
 수행할 수 있으면 추가하고, 수정 권한이나 LLM 재생성이 필요하면 `STALE` 또는 `REPLAN_REQUIRED`
 상태로 전환한다.
+
+pre/post diff의 `unchanged`는 노드와 edge 구조가 같다는 뜻일 뿐, 산출물 내용의 유효성이나
+projection 입력 digest가 같다는 증명이 아니다. 내용 재사용은 별도의 artifact fingerprint와
+validator·projection version 증거를 만족할 때만 허용한다.
 
 `REPLAN_REQUIRED`에서는 실행 중인 unit을 중단하고 새 pre-change snapshot과 plan version을
 만든다. 이전 계획의 승인과 미실행 unit의 실행 예약은 새 계획에 승계하지 않는다. 이미 만든
