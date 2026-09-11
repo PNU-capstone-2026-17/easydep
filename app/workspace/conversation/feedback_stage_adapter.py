@@ -1,8 +1,9 @@
 """Pure adapters from frozen feedback execution units to stage inputs.
 
-These values only describe stage request shapes. Producing a
-``DesignStageInput`` does not prove that the current design cascade will run
-the class unit in isolation; the vertical executor must enforce that boundary.
+These values only describe stage request shapes. ``DesignStageInput`` is
+consumed by the existing class cascade, which may complete its related
+deterministic sequence projection in the same composite operation. There is no
+separate sequence execution input here.
 """
 
 from __future__ import annotations
@@ -10,7 +11,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from app.artifact_trace import TraceRef
 from app.design.service import ReviseRequest
 from app.requirements.contracts.request import FeedbackEdit
 from app.workspace.conversation.feedback_change_plan import (
@@ -39,15 +39,7 @@ class DesignStageInput:
     revision: ReviseRequest
 
 
-@dataclass(frozen=True)
-class SequenceProjectionInput:
-    execution_unit_id: str
-    source_refs: tuple[str, ...]
-    adapter: str
-    version: str
-
-
-StageInput = RequirementsStageInput | DesignStageInput | SequenceProjectionInput
+StageInput = RequirementsStageInput | DesignStageInput
 
 
 def adapt_execution_unit(
@@ -70,8 +62,6 @@ def adapt_execution_unit(
     if unit.owner == "requirements":
         return _requirements(decision, unit)
     if unit.owner == "design":
-        if unit.action is ExecutionAction.REPROJECT:
-            return _sequence_projection(change_set, unit)
         return _design(decision, unit)
     raise StageAdapterError(f"unsupported execution owner: {unit.owner}")
 
@@ -115,36 +105,6 @@ def _design(decision: Decision, unit: ExecutionUnit) -> DesignStageInput:
     )
 
 
-def _sequence_projection(change_set: ChangeSet, unit: ExecutionUnit) -> SequenceProjectionInput:
-    if unit.artifact.kind != "sequence":
-        raise StageAdapterError("reproject is supported only for sequence targets")
-    sources = tuple(sorted({dependency.producer_ref.format() for dependency in unit.dependencies}))
-    if not sources:
-        raise StageAdapterError("sequence projection requires explicit source refs")
-    consumer_ref = TraceRef(unit.artifact.kind, unit.artifact.element_id)
-    consumer = (
-        next(
-            contract
-            for contract in change_set.pre_change_trace.projection_contracts
-            if contract.consumer == consumer_ref
-        )
-        if sum(
-            contract.consumer == consumer_ref
-            for contract in change_set.pre_change_trace.projection_contracts
-        )
-        == 1
-        else None
-    )
-    if consumer is None or tuple(sorted(ref.format() for ref in consumer.producer_refs)) != sources:
-        raise StageAdapterError("sequence projection contract is missing or mismatched")
-    return SequenceProjectionInput(
-        execution_unit_id=unit.execution_unit_id,
-        source_refs=sources,
-        adapter=consumer.adapter,
-        version=consumer.version,
-    )
-
-
 def _validate_common(decision: Decision, unit: ExecutionUnit) -> None:
     if decision.status != "NORMALIZED" or decision.normalized_meaning is None:
         raise StageAdapterError("adapter requires a NORMALIZED decision")
@@ -155,7 +115,6 @@ def _validate_common(decision: Decision, unit: ExecutionUnit) -> None:
 __all__ = [
     "DesignStageInput",
     "RequirementsStageInput",
-    "SequenceProjectionInput",
     "StageAdapterError",
     "StageInput",
     "adapt_execution_unit",

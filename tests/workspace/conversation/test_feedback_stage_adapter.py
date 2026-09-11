@@ -22,7 +22,6 @@ from app.workspace.conversation.feedback_envelope import (
 from app.workspace.conversation.feedback_stage_adapter import (
     DesignStageInput,
     RequirementsStageInput,
-    SequenceProjectionInput,
     StageAdapterError,
     adapt_execution_unit,
 )
@@ -111,7 +110,7 @@ def unit_id(change_set, action):
     )
 
 
-def test_real_plan_adapts_requirements_class_bundle_and_sequence():
+def test_real_plan_adapts_requirements_and_class_and_rejects_sequence():
     change_set = plan()
     requirements = adapt_execution_unit(
         change_set,
@@ -131,10 +130,9 @@ def test_real_plan_adapts_requirements_class_bundle_and_sequence():
     assert design.revision.target == "class_diagram:Enrollment"
     assert design.revision.approved_authority_targets == ["class_diagram:Enrollment"]
 
-    sequence = adapt_execution_unit(change_set, unit_id(change_set, ExecutionAction.REPROJECT))
-    assert isinstance(sequence, SequenceProjectionInput)
-    assert sequence.source_refs == ("class:Enrollment",)
-    assert (sequence.adapter, sequence.version) == ("class_to_sequence", "v1")
+    sequence_id = unit_id(change_set, ExecutionAction.REPROJECT)
+    with pytest.raises(StageAdapterError, match="rebuild only"):
+        adapt_execution_unit(change_set, sequence_id)
 
 
 def test_missing_unit_and_stale_action_fail_closed():
