@@ -30,6 +30,9 @@ class _Tools:
             "class_diagram:Order": _target("class_diagram:Order", "class", "design", 21),
             "file:src/order.py": _target("file:src/order.py", "file", "implementation", 31),
             "requirement:REQ-1": _target("requirement:REQ-1", "requirement", "requirements", 11),
+            "use_case_spec:UC-1": _target(
+                "use_case_spec:UC-1", "use_case_spec", "requirements", 12
+            ),
             "api_spec:createOrder": _target("api_spec:createOrder", "api", "design", 23),
         }
         self.versions = {"CLASS": 21, "SOURCE_CODE": 31, "REQUIREMENTS": 11, "API": 23}
@@ -39,6 +42,10 @@ class _Tools:
             "class_diagram:Order": {"upstream": [], "downstream": ["api_spec:createOrder"]},
             "file:src/order.py": {"upstream": [], "downstream": []},
             "requirement:REQ-1": {"upstream": [], "downstream": ["class_diagram:Order"]},
+            "use_case_spec:UC-1": {
+                "upstream": [],
+                "downstream": ["class_diagram:Order"],
+            },
             "api_spec:createOrder": {"upstream": ["class_diagram:Order"], "downstream": []},
         }
         self.write_calls = 0
@@ -46,7 +53,7 @@ class _Tools:
         self.api_path_scope = None
 
     def read_workspace(self):
-        return {"stage": self.current_stage}
+        return {"current_stage": self.current_stage}
 
     def normalize_revision_targets(self, refs):
         result = []
@@ -179,6 +186,26 @@ def test_local_revision_of_an_earlier_delivery_stage_requires_confirmation() -> 
 
     assert plan.status == "needs_confirmation"
     assert "earlier_delivery_stage_requires_confirmation" in plan.reason_codes
+
+
+def test_design_feedback_routes_exact_spec_edit_back_to_requirements_confirmation() -> None:
+    tools = _Tools()
+    tools.current_stage = "design"
+
+    plan = RevisionPlanner(tools).plan(  # type: ignore[arg-type]
+        RevisionInterpretation(
+            targets=["use_case_spec:UC-1"],
+            semantic_scope="behavior",
+            requested_effect="Clarify the success scenario.",
+        )
+    )
+
+    assert plan.status == "needs_confirmation"
+    assert [target.ref for target in plan.authority_targets] == ["use_case_spec:UC-1"]
+    assert [target.ref for target in plan.downstream_targets] == [
+        "class_diagram:Order"
+    ]
+    assert plan.reason_codes == ["earlier_delivery_stage_requires_confirmation"]
 
 
 def test_explicit_api_path_value_outside_contract_routes_to_boundary_confirmation() -> None:

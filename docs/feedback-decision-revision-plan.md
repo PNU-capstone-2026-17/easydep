@@ -10,9 +10,10 @@
 ```text
 설계에서 UC 명세 공백 발견
   → 사용자 질문과 Decision
-  → 별도 Requirements command에서 UC 수정
-  → 별도 `start_design` command에서 class 재생성·검토
-  → 별도 진행 command에서 sequence를 결정론적으로 투영
+  → 별도 Requirements command에서 정확한 UC 명세만 수정·검토
+  → 현재 RTM으로 Design 범위를 새로 계획하고 사용자 승인
+  → 별도 Design command에서 class를 수정·검토
+  → sequence를 결정론적으로 재투영
 ```
 
 현재 `Question`·`Decision`은 기존 `RevisionPlan`과 Workspace command 경로에 연결돼 있다.
@@ -160,14 +161,18 @@ Workspace가 별도 Requirements command를 만들고 다음 정보만 전달한
 
 ### 6.3 Design 재실행
 
-Requirements가 완료되면 `start_design`을 노출한다. 새 Design command는 수정된 UC 명세를
-입력으로 설계 checkpoint를 초기화하고 class를 처음부터 생성한 뒤 기존 class 검토 gate에서
-멈춘다. class bundle은 클래스 구조, operation과 Collaboration을 함께 검증하는 현재의 안전한
-단위로 유지한다.
+국소 Requirements revision의 검토가 끝나면 그 command에서 일반 `ADVANCE`로 기존 graph를
+재개하지 않는다. revision에 사용한 plan은 소진된 것으로 보고, 현재 artifact version과 RTM에서
+Design 영향 후보를 다시 읽어 새 `RevisionPlan`을 만든다. 사용자가 이 새 범위를 승인한 뒤에만
+별도 Design command를 시작한다.
 
-사용자가 기존 진행 action을 선택하면 별도 command가 새 class collaboration에서 sequence를
-코드로 투영한다. sequence를 만들기 위한 별도 LLM 호출이나 sequence 단계의 class 역수정은
-허용하지 않는다. 이 첫 경로에 targeted class cascade용 새 진입점은 만들지 않는다.
+현재 RTM에 정확히 연결된 class operation·collaboration이 있으면 targeted class cascade를 쓰고,
+새 UC 의미 때문에 아직 존재하지 않는 class 요소가 필요하면 이를 추측해 만들지 않는다. 이때는
+사용자가 broad class 재생성을 별도로 승인하거나 작업을 중단한다. `start_design`은 최초 Design
+생성용이며 이 feedback 경로의 묵시적 전체 재생성 action으로 사용하지 않는다.
+
+수락된 class collaboration에서 sequence는 코드로 투영한다. sequence를 만들기 위한 별도 LLM
+호출이나 sequence 단계의 class 역수정은 허용하지 않는다.
 
 ## 7. 현재까지 완료된 작업
 
@@ -175,7 +180,7 @@ Requirements가 완료되면 `start_design`을 노출한다. 새 Design command�
 - [x] 기존 `RevisionPlan`을 사용한 owner·stale 검증
 - [x] 기존 command payload·checkpoint를 사용한 중복 제출·재개 처리
 - [x] 별도 Requirements command와 기존 Design command 연결
-- [x] UC 수정 → class cascade → sequence projection 계약 테스트
+- [x] UC 수정 결과를 class cascade 입력으로 전달하고 sequence를 투영하는 내용 계약 테스트
 - [x] sequence의 class 역수정 제거
 - [x] Design에서 upstream owner로 보내는 경계 정리
 - [x] Testing 수리와 Implementation을 별도 command로 분리
@@ -194,7 +199,8 @@ Requirements가 완료되면 `start_design`을 노출한다. 새 Design command�
 
 - specification gap Question을 기존 Workspace 응답과 action으로 노출한다.
 - Decision을 검증하고 별도 Requirements command로 라우팅한다.
-- Requirements 완료 뒤 기존 `start_design` command로 class를 다시 생성·검토한다.
+- 국소 Requirements revision 뒤 일반 `ADVANCE`를 막고 현재 RTM에서 새 downstream plan을 만든다.
+- 새 plan을 사용자가 승인하면 별도 Design command로 class를 수정·검토한다.
 - 기존 진행 action으로 별도 command를 만들고 sequence를 결정론적으로 투영한다.
 - 기존 MySQL schema와 command payload만 사용한다.
 
@@ -312,6 +318,45 @@ GLM 5.3 Flash는 같은 위반 없이 통과했지만 181.0초와 11,048 출력 
 5. 같은 수강신청 피드백으로 비대상 의미 변경 0건을 확인한 뒤 커밋한다.
 6. 이 기준 구현 뒤 Requirements → Implementation → Testing 순서로 동일 경계를 얇게 점검한다.
 
+### Requirements RTM slice 감사
+
+현재 Requirements 경로에는 이미 쓸 수 있는 얇은 기반이 있다.
+
+- `use_case`와 `use_case_spec`은 catalog의 정확한 ID로 선택된다.
+- delivery adapter는 선택된 ID를 `FeedbackEdit(scope="local")`로 전달한다.
+- 해당 owning 생성기는 대상 항목만 LLM에 보내고 같은 stage의 형제 항목을 보존한다.
+- 저장 뒤 artifact trace는 산출물의 명시 ID 관계에서 다시 계산된다.
+
+하지만 이 보장은 owning 생성기까지만 유효하다. 완료된 Requirements checkpoint를 피드백
+게이트로 되돌린 뒤 다음 게이트로 진행하면 최초 `RevisionPlan.downstream_targets`가 전달되지
+않고, 일반 파이프라인이 specs와 relationships를 전체 재생성한다. 또한 현재 artifact trace에는
+개별 relationship node가 없어 이 전체 재생성을 정확한 영향 범위처럼 표시할 수도 없다.
+`refined_requirements`의 문장 자체를 국소 수정하는 adapter도 현재는 없다.
+
+감사 중에는 계획기가 공개 workspace의 `current_stage` 대신 존재하지 않는 `stage`를 읽어,
+Design에서 Requirements owner로 돌아가는 수정도 `ready_local`로 판정하는 결함을 발견했다.
+이 필드 연결은 즉시 수정했으며 같은 UC5 계획이 이제
+`earlier_delivery_stage_requires_confirmation`으로 멈춘다.
+
+따라서 다음 구현에서 새 상태기계나 범용 relationship 병합기를 먼저 만들지 않는다.
+
+1. 첫 Requirements 기준 경로는 이미 국소 편집을 지원하는 `use_case_spec:{id}`로 제한한다.
+2. 이 경로는 선택한 spec과 같은 stage 형제의 무변경을 검증하고 사용자 검토에서 멈춘다.
+3. 이 검토에서는 일반 `ADVANCE`를 노출하지 않는다. revision command를 종료하고 현재 artifact와
+   RTM에서 새 plan을 만드는 명시적 action만 제공한다.
+4. 소진된 원래 plan의 downstream을 실행 권한처럼 재사용하지 않는다. relationships 또는 Design
+   갱신은 현재 버전에서 새 `RevisionPlan`과 새 사용자 승인을 받아 각각 별도 owning-stage
+   command로 실행한다. relationships를 실행할 때 현재 지원 범위는 개별 관계가 아니라 승인된
+   `requirements_stage:relationships` 전체와 diagram 재생성이다.
+5. 새 spec 의미가 아직 존재하지 않는 class operation을 요구해 RTM 후보가 없으면 자동으로
+   추측하지 않는다. broad class 재생성을 별도로 제안하거나 사용자 입력을 기다린다.
+6. `use_case` 수정 뒤 specs 전체 재생성, `refined_requirements` 문장 수정, relationship 부분
+   재생성은 정확한 adapter가 생기기 전까지 자동 실행 범위로 확대하지 않는다.
+7. Requirements의 기존 선형 cascade를 범용적으로 고치는 작업은 첫 수직 경로의 비범위다.
+
+이 제한은 일관성을 포기하는 것이 아니다. downstream을 묵시적으로 전체 재생성하는 대신,
+현재 RTM으로 다시 계획하고 사용자에게 다음 변경 범위를 확인받는 일반 대화형 흐름이다.
+
 ## 9. Luna·Terra·Sol·Astra 활용
 
 서브에이전트는 서로 겹치지 않는 작은 파일 단위만 맡는다.
@@ -344,9 +389,9 @@ GLM 5.3 Flash는 같은 위반 없이 통과했지만 181.0초와 11,048 출력 
 첫 구현은 다음 문장이 실제 Workspace 통합 테스트로 성립할 때 완료다.
 
 > 설계에서 발견한 UC 명세 공백에 대한 사용자 Decision이 별도 Requirements command를
-> 실행하고, 완료된 새 UC를 입력으로 `start_design` command가 class를 다시 생성·검토한다.
-> 이후 별도 진행 command에서 sequence가 LLM 호출 없이 투영된다. 어느 stage도 이전 stage의
-> 산출물을 직접 수정하지 않고, 중복 답변과 실패 재개가 불필요한 LLM 재호출을 만들지 않는다.
+> 실행하고 정확한 UC 명세만 수정한 뒤 사용자 검토에서 멈춘다. 현재 RTM으로 새 Design plan을
+> 만들고 사용자가 승인하면 별도 Design command가 class를 수정·검토하며, sequence는 LLM 호출
+> 없이 투영된다. 어느 stage도 이전 stage의 산출물을 직접 수정하지 않고, 중복 답변과 실패
+> 재개가 불필요한 LLM 재호출을 만들지 않는다.
 
-이 경계가 검증된 뒤에만 클래스 설계 prototype을 축소·통합하고 실제 LLM 품질 비교를
-재개한다.
+이 경계가 검증된 뒤 Implementation과 Testing의 같은 경계를 차례로 점검한다.

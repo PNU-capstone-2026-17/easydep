@@ -478,7 +478,9 @@ class RevisionPlanner:
             workspace = self.tools.read_workspace()
         except AttributeError:
             return False
-        current = str(workspace.get("stage") or "")
+        # ProjectTools exposes the public workspace field as ``current_stage``.
+        # Keep ``stage`` only as a compatibility fallback for small test doubles.
+        current = str(workspace.get("current_stage") or workspace.get("stage") or "")
         order = {"requirements": 0, "design": 1, "implementation": 2, "testing": 3}
         current_index = order.get(current)
         if current_index is None:
