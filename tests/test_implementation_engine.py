@@ -2364,7 +2364,7 @@ class Order <<Entity>> { - id: UUID }
         agent_max_output_tokens=1000,
     )
 
-    plan_workflow(run, spec)
+    state = plan_workflow(run, spec)
     manifest = json.loads((run / "reports/run-manifest.json").read_text(encoding="utf-8"))
     tasks = manifest["implementation_tasks"]
     task_types = {task["task_type"] for task in tasks}
@@ -2396,6 +2396,7 @@ class Order <<Entity>> { - id: UUID }
         [],
         [backends[0]["task_id"]],
     ]
+    assert state["nextRunnableTasks"] == [backends[0]["task_id"]]
     assert {
         use_case_id
         for task in backends
@@ -2475,6 +2476,17 @@ class Order <<Entity>> { - id: UUID }
     assert all('"control_binding"' not in prompt for prompt in prompts)
     assert all("INTERNAL-REPAIR-MARKER" not in prompt for prompt in prompts)
     assert all("INTERNAL-USE-CASE-REPAIR" not in prompt for prompt in prompts)
+
+    backends[0]["depends_on"] = ["missing-backend-task"]
+    (run / "reports/run-manifest.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    orphaned = reconcile_workflow_state(run)
+    assert orphaned["status"] == "NEEDS_PLANNER"
+    assert orphaned["nextRunnableTasks"] == []
+    assert orphaned["blockingReason"]
+    assert orphaned["blockingDetails"]
 
 
 def test_completed_workflow_hands_full_verification_to_testing(

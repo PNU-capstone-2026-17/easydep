@@ -216,6 +216,25 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         "blockingReason": None,
         "blockingDetails": [],
     }
+    if not state["nextRunnableTasks"] and pending:
+        task_status = {str(task["task_id"]): str(task.get("status")) for task in tasks}
+        state["status"] = "NEEDS_PLANNER"
+        state["blockingReason"] = (
+            "No runnable implementation task; an incomplete task has a missing or "
+            "unsatisfied dependency."
+        )
+        state["blockingDetails"] = [
+            {
+                "taskId": task["task_id"],
+                "status": task.get("status"),
+                "blockedBy": [
+                    str(dependency)
+                    for dependency in task.get("dependsOn", [])
+                    if task_status.get(str(dependency)) != "SUCCEEDED"
+                ],
+            }
+            for task in pending
+        ]
     _write_json_atomic(state_path, state)
     return state
 
@@ -271,6 +290,8 @@ def _run_workflow(
             + ", ".join(failed_runnable)
         )
     if not runnable:
+        if state.get("status") == "NEEDS_PLANNER":
+            return state
         return _finalize_workflow(
             run_root,
             spec,
@@ -354,6 +375,8 @@ def _run_workflow(
 
     # Reconcile the completed owner result and any short repair directive.
     final_state = plan_workflow(run_root, spec)
+    if final_state.get("status") == "NEEDS_PLANNER":
+        return final_state
     if final_state.get("nextRunnableTasks"):
         # Every work unit performs its own focused verification.  Do not scan
         # the incomplete application after each work unit; the final audit and
@@ -1036,12 +1059,18 @@ def _next_runnable_tasks(
     tasks: list[dict[str, object]], phases: list[dict[str, object]]
 ) -> list[str]:
     phase_by_id = {phase["phaseId"]: phase for phase in phases}
+    task_by_id = {str(task["task_id"]): task for task in tasks}
     runnable: list[str] = []
     for phase_id, dependencies, _ in PHASES:
         candidates = [
             str(task["task_id"])
             for task in tasks
-            if task["phase"] == phase_id and task["status"] in {"PENDING", "INTERRUPTED", "FAILED"}
+            if task["phase"] == phase_id
+            and task["status"] in {"PENDING", "INTERRUPTED", "FAILED"}
+            and all(
+                task_by_id.get(str(dependency), {}).get("status") == "SUCCEEDED"
+                for dependency in task.get("dependsOn", [])
+            )
         ]
         if candidates and all(
             phase_by_id[dependency]["status"] in {"SUCCEEDED", "UNPLANNED"}
