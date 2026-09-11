@@ -226,6 +226,19 @@ def _entity_inventory_proposal(field_type: str) -> dict:
     return proposal
 
 
+def test_unambiguous_loose_container_notation_is_canonicalized() -> None:
+    proposal = InventoryProposal.model_validate(
+        _entity_inventory_proposal("list Operation")
+    )
+
+    candidate = inventory._normalize_inventory(proposal)
+    entity = next(
+        item for item in candidate["Classes"] if item["className"] == "RequestRecord"
+    )
+
+    assert entity["fields"] == ["id : UUID", "value : List<Operation>"]
+
+
 def test_malformed_inventory_type_reaches_semantic_repair(monkeypatch):
     malformed = _entity_inventory_proposal("array")
     repaired = _entity_inventory_proposal("List<Operation>")

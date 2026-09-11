@@ -578,12 +578,21 @@ def stream_structured_response(
         raise _IncompleteStructuredStream(
             "Structured stream ended without a finish reason."
         )
+    validation_text, trimmed_closers = _trim_redundant_json_closers(content_text)
+    if trimmed_closers:
+        observation.update(
+            jsonTrailingDelimiterTrimmed=True,
+            jsonTrailingDelimiterCount=trimmed_closers,
+            normalizedResponseSha256=hashlib.sha256(
+                validation_text.encode("utf-8")
+            ).hexdigest(),
+        )
     try:
-        parsed_input = json.loads(content_text)
+        parsed_input = json.loads(validation_text)
     except json.JSONDecodeError:
         parsed_input = None
     try:
-        return schema.model_validate_json(content_text)
+        return schema.model_validate_json(validation_text)
     except ValidationError as error:
         observation["schemaValidationErrors"] = [
             dict(item)
@@ -636,6 +645,21 @@ def _observe_stream_usage(observation: dict[str, Any], usage: Any) -> None:
         observation["outputTokens"] = int(completion_tokens)
     if total_tokens is not None:
         observation["totalTokens"] = int(total_tokens)
+
+
+def _trim_redundant_json_closers(content: str) -> tuple[str, int]:
+    """Remove only unmatched trailing ``}``/``]`` after one complete JSON value."""
+    try:
+        _, end = json.JSONDecoder().raw_decode(content.lstrip())
+    except json.JSONDecodeError:
+        return content, 0
+    leading = len(content) - len(content.lstrip())
+    absolute_end = leading + end
+    suffix = content[absolute_end:]
+    non_whitespace = "".join(character for character in suffix if not character.isspace())
+    if not non_whitespace or any(character not in "}]" for character in non_whitespace):
+        return content, 0
+    return content[:absolute_end], len(non_whitespace)
 
 
 def parse_structured(

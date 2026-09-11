@@ -63,10 +63,12 @@ class InventoryProposal(Proposal):
         return self
 
 
-StepRef = Annotated[
-    str,
-    Field(pattern=r"^[^:\s]+:(?:main:[^:\s]+|extension:[^:\s]+:[^:\s]+)$"),
-]
+# The structured-output boundary checks shape only. Exact scenario-reference syntax
+# and membership are slice-dependent and therefore belong to the deterministic
+# operation validator, where a semantic repair can see the finite allowed set.
+# Rejecting a plausible-but-wrong reference here loses that context and turns a local
+# contract defect into a blind schema-repair loop.
+StepRef = Annotated[str, Field(min_length=1)]
 
 
 class OperationProposal(Proposal):
