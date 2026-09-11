@@ -195,6 +195,11 @@ Requirements가 완료되면 `start_design`을 노출한다. 새 Design command�
 테스트는 먼저 Workspace service와 기존 repository 경계를 사용한다. 전체 브라우저·실제 LLM
 종단 실행은 이 계약이 통과한 뒤 별도 평가로 수행한다.
 
+검증 증거는 계층을 구분한다. Workspace 수직 테스트는 별도 command와 공개 action의 연결을
+검증하고 단계 서비스는 stub으로 둔다. Requirements 수정 내용이 class 입력으로 이어지는 계약과
+class에서 sequence로의 순수 투영은 기존 cascade·graph 테스트가 검증한다. 이들을 실제 LLM
+종단 실행으로 표현하지 않으며, 실제 모델 비교는 하위 작업 F에서 수행한다.
+
 ### 하위 작업 D — 사용되지 않은 prototype 축소
 
 수직 경로에서 실제 import되고 실행된 계약을 확인한다. 운영 경로가 사용하지 않는 다음 요소는
