@@ -444,6 +444,68 @@ def test_catalog_preserves_stable_ids_already_stored_in_accepted_artifact(
     assert call_target.element_id == "persisted-call"
 
 
+def test_requirements_handoff_resolves_only_the_current_rtm_linked_boundary_root(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _state()
+    boundary = state["extracted_bce_classes"]["Classes"][0]
+    boundary["className"] = "OrderBoundary"
+    boundary["stereotype"] = "Boundary"
+    operation = boundary["operations"][0]
+    operation.update(
+        operationId="OrderBoundary::placeOrder()",
+        stepRefs=["UC-ORDER:main:1"],
+    )
+    state["extracted_bce_classes"]["Collaborations"] = [
+        {
+            "collaborationId": "UC-ORDER",
+            "useCaseIds": ["UC-ORDER"],
+            "entryActor": "Member",
+            "calls": [
+                {
+                    "callId": "UC-ORDER::call:1",
+                    "parentCallId": None,
+                    "receiverOperationId": "OrderBoundary::placeOrder()",
+                    "stepRefs": ["UC-ORDER:main:1"],
+                    "argumentBindings": [],
+                }
+            ],
+        }
+    ]
+    monkeypatch.setattr(
+        project_tools_module.artifact_repository,
+        "load_state",
+        lambda _app_id: state,
+    )
+    monkeypatch.setattr(
+        project_tools_module.artifact_repository,
+        "load_file_snapshot",
+        lambda _app_id, _artifact_type: None,
+    )
+    monkeypatch.setattr(
+        project_tools_module.workspace_repository,
+        "latest_command",
+        lambda *_args, **_kwargs: None,
+    )
+
+    entries = ProjectTools(APP_ID).design_entry_targets_for_requirements(
+        ["use_case_spec:UC-ORDER"]
+    )
+
+    assert [target.ref for target in entries] == [
+        "class_diagram:OrderBoundary::placeOrder()"
+    ]
+    assert entries[0].kind == "operation"
+
+
+def test_requirements_handoff_without_an_exact_boundary_root_is_not_executable(
+    tools: ProjectTools,
+) -> None:
+    assert tools.design_entry_targets_for_requirements(
+        ["use_case_spec:UC-ORDER"]
+    ) == []
+
+
 def test_trace_views_do_not_mix_latest_editing_and_frozen_testing_evidence(
     tools: ProjectTools, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1412,6 +1412,7 @@ class WorkspaceService:
             if (
                 len(targets) != 1
                 or targets[0].owner != "requirements"
+                or targets[0].kind != "use_case_spec"
                 or targets[0].artifact_type != TYPE_USECASE_SPEC
             ):
                 raise ValueError("The feedback question must name one requirements use-case specification.")
@@ -1482,7 +1483,13 @@ class WorkspaceService:
             if not selected.get("valid"):
                 raise ValueError("The feedback question is stale.")
             plan = plan_revision(tools, interpretation)
-            if plan.status != "ready_local" or not validate_plan(tools, plan, interpretation):
+            decision_refs = [target.ref for target in decision.authoritative_targets]
+            if (
+                plan.status != "needs_confirmation"
+                or [target.ref for target in plan.requested_targets] != decision_refs
+                or [target.ref for target in plan.authority_targets] != decision_refs
+                or not validate_plan(tools, plan, interpretation)
+            ):
                 raise ValueError("The feedback question is stale.")
         except (TypeError, ValueError) as error:
             return self._clarification_message(
@@ -1514,6 +1521,7 @@ class WorkspaceService:
                     "instruction": interpretation.requested_effect,
                 },
                 "validated_targets": [target.model_dump(mode="json") for target in decision.authoritative_targets],
+                "_conversation_outcome": {"kind": "revision_plan"},
             },
             "requirements",
         )
@@ -1671,26 +1679,7 @@ class WorkspaceService:
                 )
                 if plan.status != "needs_confirmation":
                     raise ValueError("Only a confirmation plan can wait for approval.")
-                return {
-                    "awaiting_input": True,
-                    "kind": "action_required",
-                    "action": "confirm_change",
-                    "action_id": str(command["command_id"]),
-                    "message": plan.explanation,
-                    "revision_plan": plan.model_dump(mode="json"),
-                    "requested_targets": [
-                        target.model_dump(mode="json")
-                        for target in plan.requested_targets
-                    ],
-                    "authority_targets": [
-                        target.model_dump(mode="json")
-                        for target in plan.authority_targets
-                    ],
-                    "downstream_targets": [
-                        target.model_dump(mode="json")
-                        for target in plan.downstream_targets
-                    ],
-                }
+                return self._revision_plan_result(str(command["command_id"]), plan)
             raise ValueError("Unknown conversation outcome.")
         # 파일 복원이나 검사 도중 서버가 재시작되었다면 구현 수리부터 반복하지 않는다.
         # 현재 command에 저장한 Testing 체크포인트를 그대로 실행 서비스에 돌려준다.
@@ -1716,11 +1705,16 @@ class WorkspaceService:
             result = self._stage_message(
                 command, advance=action in {"advance", "start_design"}
             )
-            return (
-                self._attach_revision_execution(str(command["app_id"]), plan, result)
-                if plan is not None
-                else result
+            if plan is None:
+                return result
+            response = self._attach_revision_execution(
+                str(command["app_id"]), plan, result
             )
+            return self._attach_downstream_revision_handoff(
+                command, plan, interpretation, response
+            )
+        if handler == "plan_downstream_revision":
+            return self._plan_downstream_revision(command)
         if handler == "delegate_repair":
             action_id = str(command["payload"].get("action_id") or "")
             prior = repository.get_command(action_id) or {}
@@ -3081,7 +3075,10 @@ class WorkspaceService:
                 "payload": delegated_payload,
             }
             result = self._stage_message(delegated, advance=False)
-            return self._attach_revision_execution(app_id, plan, result)
+            response = self._attach_revision_execution(app_id, plan, result)
+            return self._attach_downstream_revision_handoff(
+                delegated, plan, interpretation, response
+            )
         context = original["payload"].get("context") or {}
         feedback = str(original["payload"].get("text") or "").strip()
         app_id = str(command["app_id"])
@@ -3115,6 +3112,157 @@ class WorkspaceService:
         return {
             "message": "Returned to the selected design stage and applied the feedback.",
             "design": result,
+        }
+
+    def _plan_downstream_revision(self, command: dict[str, Any]) -> dict[str, Any]:
+        """Build a fresh Design plan after a reviewed local UC-spec revision."""
+
+        source_id = str(command["payload"].get("action_id") or "")
+        source = repository.get_command(source_id)
+        if (
+            source is None
+            or source.get("status") != "AWAITING_INPUT"
+            or str(source.get("app_id") or "") != str(command["app_id"])
+        ):
+            raise ValueError("The requirements revision review is missing or already handled.")
+        handoff = (source.get("result") or {}).get("downstream_revision_handoff")
+        if not isinstance(handoff, dict):
+            raise TypeError("This review does not offer downstream revision planning.")
+        source_targets = [
+            dict(target)
+            for target in handoff.get("source_targets") or []
+            if isinstance(target, dict)
+        ]
+        if not source_targets or any(
+            not isinstance(target.get("artifact_version_id"), int)
+            for target in source_targets
+        ):
+            raise ValueError("The requirements revision has no exact source reference.")
+
+        app_id = str(command["app_id"])
+        tools = ProjectTools(app_id)
+        entries = tools.design_entry_targets_for_requirements(source_targets)
+        if entries is None:
+            clarification = Clarification(
+                question=(
+                    "The revised use-case specification changed after this review. "
+                    "Submit the feedback again from the current artifact."
+                )
+            )
+            return {
+                "awaiting_input": True,
+                "kind": "question",
+                "message": clarification.question,
+                "conversation": {
+                    "clarification": clarification.model_dump(mode="json")
+                },
+            }
+        requested_effect = str(handoff.get("requested_effect") or "").strip()
+        if not requested_effect:
+            raise ValueError("The requirements revision has no accepted instruction.")
+        target_refs = (
+            [target.ref for target in entries]
+            if entries
+            else ["design_stage:class_diagram"]
+        )
+        scope_label = "RTM-linked design" if entries else "full class design"
+        instruction = f"Reflect the accepted requirements revision in the {scope_label}: {requested_effect}"
+        interpretation = RevisionInterpretation(
+            targets=target_refs,
+            semantic_scope=str(handoff.get("semantic_scope") or "unknown"),
+            requested_effect=instruction,
+            change_type=str(handoff.get("change_type") or "unknown"),
+        )
+        plan = plan_revision(tools, interpretation)
+        if plan.status != "needs_confirmation":
+            clarification = Clarification(
+                question=(
+                    plan.explanation
+                    if plan.status in {"needs_clarification", "unsupported"}
+                    else "The Design scope could not be held for explicit confirmation."
+                ),
+                candidates=[target.display_label for target in plan.authority_targets],
+            )
+            return {
+                "awaiting_input": True,
+                "kind": "question",
+                "message": clarification.question,
+                "conversation": {
+                    "clarification": clarification.model_dump(mode="json")
+                },
+            }
+
+        payload = {
+            **dict(command["payload"]),
+            "text": instruction,
+            "revision_interpretation": interpretation.model_dump(mode="json"),
+            "revision_plan": plan.model_dump(mode="json"),
+            "validated_targets": [
+                target.model_dump(mode="json")
+                for target in (plan.authority_targets or plan.requested_targets)
+            ],
+        }
+        command["payload"] = payload
+        repository.update_command(str(command["command_id"]), payload=payload)
+        return self._revision_plan_result(str(command["command_id"]), plan)
+
+    @staticmethod
+    def _revision_plan_result(
+        command_id: str,
+        plan: RevisionPlan,
+    ) -> dict[str, Any]:
+        return {
+            "awaiting_input": True,
+            "kind": "action_required",
+            "action": "confirm_change",
+            "action_id": command_id,
+            "message": plan.explanation,
+            "revision_plan": plan.model_dump(mode="json"),
+            "requested_targets": [
+                target.model_dump(mode="json") for target in plan.requested_targets
+            ],
+            "authority_targets": [
+                target.model_dump(mode="json") for target in plan.authority_targets
+            ],
+            "downstream_targets": [
+                target.model_dump(mode="json") for target in plan.downstream_targets
+            ],
+        }
+
+    @staticmethod
+    def _attach_downstream_revision_handoff(
+        command: dict[str, Any],
+        plan: RevisionPlan,
+        interpretation: RevisionInterpretation | None,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Replace generic Requirements advance with a fresh-plan handoff marker."""
+
+        authority = plan.authority_targets or plan.requested_targets
+        if (
+            command.get("stage") != "requirements"
+            or interpretation is None
+            or not authority
+            or any(target.kind != "use_case_spec" for target in authority)
+            or result.get("awaiting_input") is not True
+        ):
+            return result
+        versions = (result.get("revision_execution") or {}).get("artifact_versions") or {}
+        return {
+            **result,
+            "downstream_revision_handoff": {
+                "source_targets": [
+                    {
+                        "ref": target.ref,
+                        "artifact_version_id": versions.get(target.artifact_type),
+                    }
+                    for target in authority
+                ],
+                "semantic_scope": interpretation.semantic_scope,
+                "requested_effect": str(command["payload"].get("text") or "").strip()
+                or interpretation.requested_effect,
+                "change_type": interpretation.change_type,
+            },
         }
 
     @staticmethod

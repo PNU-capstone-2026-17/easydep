@@ -39,6 +39,12 @@ _SPECS = (
         ("action_id",),
     ),
     ActionSpec(
+        WorkspaceAction.PLAN_DOWNSTREAM_REVISION,
+        "plan_downstream_revision",
+        StagePolicy.DESIGN,
+        ("action_id",),
+    ),
+    ActionSpec(
         WorkspaceAction.DELEGATE_REPAIR,
         "delegate_repair",
         StagePolicy.REFERENCE,
@@ -321,6 +327,19 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
         return AwaitingOutcome(
             wait_reason=WaitReason.QUESTION,
             actions=_answer_offers(command_id, result),
+        )
+
+    if isinstance(result.get("downstream_revision_handoff"), dict):
+        return AwaitingOutcome(
+            wait_reason=WaitReason.REVIEW,
+            actions=[
+                _offer(WorkspaceAction.MESSAGE, "Send revision feedback", common),
+                _offer(
+                    WorkspaceAction.PLAN_DOWNSTREAM_REVISION,
+                    "Plan affected design changes",
+                    common,
+                ),
+            ],
         )
 
     raw_feedback_question = result.get("feedback_question")

@@ -357,14 +357,16 @@ class RevisionPlanner:
             )
 
         if rule.local:
-            crosses_stage = self._crosses_delivery_stage(requested)
+            stage_transition_reason = self._delivery_stage_confirmation_reason(requested)
             identity_change = intent.change_type in {"rename", "remove"}
-            needs_confirmation = rule.confirmation or identity_change or crosses_stage
+            needs_confirmation = (
+                rule.confirmation or identity_change or stage_transition_reason is not None
+            )
             reasons = []
             if identity_change:
                 reasons.append("identity_change_requires_confirmation")
-            if crosses_stage:
-                reasons.append("earlier_delivery_stage_requires_confirmation")
+            if stage_transition_reason is not None:
+                reasons.append(stage_transition_reason)
             if not reasons:
                 reasons.append("local_authority")
             return self._result(
@@ -376,7 +378,7 @@ class RevisionPlanner:
                 downstream=downstream,
                 reasons=reasons,
                 explanation=(
-                    "This revision changes an earlier delivery stage or target identity. "
+                    "This revision changes another delivery stage or target identity. "
                     "Confirm the displayed downstream scope before continuing."
                     if needs_confirmation
                     else "The selected editable target can be revised in its owning delivery stage."
@@ -468,24 +470,33 @@ class RevisionPlanner:
     def plan_is_stale(self, plan: RevisionPlan) -> bool:
         return not self.validate_plan(plan)
 
-    def _crosses_delivery_stage(
+    def _delivery_stage_confirmation_reason(
         self,
         targets: tuple[RevisionTarget, ...],
-    ) -> bool:
-        """Return whether execution moves behind the current delivery stage."""
+    ) -> str | None:
+        """Require confirmation whenever a revision moves to another owner stage."""
 
         try:
             workspace = self.tools.read_workspace()
         except AttributeError:
-            return False
+            return None
         # ProjectTools exposes the public workspace field as ``current_stage``.
         # Keep ``stage`` only as a compatibility fallback for small test doubles.
         current = str(workspace.get("current_stage") or workspace.get("stage") or "")
         order = {"requirements": 0, "design": 1, "implementation": 2, "testing": 3}
         current_index = order.get(current)
         if current_index is None:
-            return False
-        return any(order.get(target.owner, current_index) < current_index for target in targets)
+            return None
+        owner_indexes = {
+            order[target.owner]
+            for target in targets
+            if target.owner in order and target.owner != current
+        }
+        if not owner_indexes:
+            return None
+        if any(owner_index < current_index for owner_index in owner_indexes):
+            return "earlier_delivery_stage_requires_confirmation"
+        return "delivery_stage_transition_requires_confirmation"
 
     def _upstream_candidates(
         self,

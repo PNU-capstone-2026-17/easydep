@@ -735,6 +735,75 @@ class ProjectTools:
             return None
         return matches[0]
 
+    def design_entry_targets_for_requirements(
+        self,
+        refs: Sequence[str | Mapping[str, Any]],
+    ) -> list[RevisionTarget] | None:
+        """Resolve current UC specs to their exact RTM-linked Boundary entry operations.
+
+        This is intentionally narrower than a generic downstream traversal. A targeted
+        class revision needs one current collaboration root per selected UC; ambiguity or
+        a missing explicit RTM edge returns no executable authority instead of guessing.
+        """
+
+        try:
+            sources = self.normalize_revision_targets(refs, require_editable=False)
+        except (TypeError, ValueError):
+            # ``None`` distinguishes a stale source selection from a valid current
+            # specification that simply has no exact Design entry yet.
+            return None
+        try:
+            model = BCEModel.model_validate(
+                self._catalog().state.get("extracted_bce_classes") or {}
+            )
+        except (TypeError, ValueError):
+            return []
+        if not sources or any(source.kind != "use_case_spec" for source in sources):
+            return None
+
+        relations = self.revision_relations(sources).get("relations")
+        if not isinstance(relations, Mapping):
+            return []
+        operation_owners = {
+            operation.operation_id: item
+            for item in model.Classes
+            for operation in item.operations
+        }
+        entries: list[RevisionTarget] = []
+        for source in sources:
+            use_case_id = TraceRef.parse(source.ref).id
+            roots = [
+                call
+                for collaboration in model.Collaborations
+                if use_case_id in collaboration.use_case_ids
+                for call in collaboration.calls
+                if call.parent_call_id is None
+            ]
+            if len(roots) != 1:
+                return []
+            root = roots[0]
+            owner = operation_owners.get(root.receiver_operation_id)
+            if owner is None or owner.stereotype != "Boundary":
+                return []
+            try:
+                target = self.normalize_revision_targets(
+                    [f"class_diagram:{root.receiver_operation_id}"]
+                )[0]
+            except (TypeError, ValueError, IndexError):
+                return []
+            source_relations = relations.get(source.ref)
+            downstream = (
+                set(source_relations.get("downstream") or [])
+                if isinstance(source_relations, Mapping)
+                else set()
+            )
+            if target.ref not in downstream:
+                return []
+            entries.append(target)
+        if len({target.ref for target in entries}) != len(entries):
+            return []
+        return sorted(entries, key=lambda target: target.ref)
+
     # Short alias for callers that describe the operation as normalization.
     canonical_revision_targets = normalize_revision_targets
 

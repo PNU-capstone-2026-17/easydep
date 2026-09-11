@@ -4,9 +4,6 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
-from app.design.schemas.class_model import BCEModel
-from app.design.services.class_diagram.scenario import build_scenario_index
-from app.design.services.sequence_diagram.projection import project_sequence_model
 from app.workspace import repository
 from app.workspace import service as workspace_module
 from app.workspace.conversation.contracts import RevisionPlan, RevisionTarget
@@ -18,13 +15,12 @@ from app.workspace.conversation.feedback_envelope import (
     QuestionOption,
 )
 from app.workspace.service import WorkspaceService
-from tests.design_validation_fixtures import CLEAN, CLEAN_STATE
 
 
-def test_feedback_option_revises_requirements_then_advances_design_to_sequence(
+def test_feedback_option_requires_confirmation_then_revises_requirements(
     monkeypatch,
 ) -> None:
-    """A design Question crosses command boundaries; sequence remains a projection."""
+    """A typed Design question cannot execute its Requirements revision directly."""
 
     target = RevisionTarget(
         ref="use_case_spec:UC1",
@@ -34,6 +30,15 @@ def test_feedback_option_revises_requirements_then_advances_design_to_sequence(
         artifact_type="USECASE_SPEC",
         artifact_version_id=1,
         display_label="UC1",
+    )
+    design_entry = RevisionTarget(
+        ref="class_diagram:OrderBoundary::approve()",
+        kind="operation",
+        element_id="operation-1",
+        owner="design",
+        artifact_type="CLASS",
+        artifact_version_id=2,
+        display_label="OrderBoundary::approve()",
     )
     question = Question(
         question_id="design-gap",
@@ -112,17 +117,27 @@ def test_feedback_option_revises_requirements_then_advances_design_to_sequence(
         def validate_targets(self, _targets: list[dict[str, Any]]) -> dict[str, bool]:
             return {"valid": True}
 
+        def design_entry_targets_for_requirements(self, _targets):
+            return [design_entry]
+
     monkeypatch.setattr(workspace_module, "ProjectTools", Tools)
     monkeypatch.setattr(workspace_module, "validate_plan", lambda *_args: True)
     monkeypatch.setattr(
         WorkspaceService,
         "_attach_revision_execution",
-        staticmethod(lambda _app_id, _plan, result: result),
+        staticmethod(
+            lambda _app_id, _plan, result: {
+                **result,
+                "revision_execution": {
+                    "artifact_versions": {"USECASE_SPEC": 2}
+                },
+            }
+        ),
     )
 
-    plan = RevisionPlan(
+    requirements_plan = RevisionPlan(
         plan_digest="a" * 64,
-        status="ready_local",
+        status="needs_confirmation",
         requested_targets=[target],
         authority_targets=[target],
         execution_mode="targeted_revision",
@@ -130,13 +145,36 @@ def test_feedback_option_revises_requirements_then_advances_design_to_sequence(
         artifact_versions={"USECASE_SPEC": 1},
         trace_digest="b" * 64,
     )
-    monkeypatch.setattr(workspace_module, "plan_revision", lambda *_args: plan)
+    design_plan = RevisionPlan(
+        plan_digest="c" * 64,
+        status="needs_confirmation",
+        requested_targets=[design_entry],
+        authority_targets=[design_entry],
+        execution_mode="targeted_revision",
+        explanation="Revise the linked Boundary operation.",
+        artifact_versions={"CLASS": 2},
+        trace_digest="d" * 64,
+    )
+    monkeypatch.setattr(
+        workspace_module,
+        "plan_revision",
+        lambda _tools, interpretation: (
+            requirements_plan
+            if interpretation.targets == [target.ref]
+            else design_plan
+        ),
+    )
     revised: list[Any] = []
     monkeypatch.setattr(
         workspace_module,
         "revise_requirements_analysis",
         lambda edit, *_args, **_kw: (
-            revised.append(edit) or {"status": "completed", "saved_stages": []}
+            revised.append(edit)
+            or {
+                "status": "need_feedback",
+                "phase": "specs",
+                "use_case_specs": [{"use_case_id": "UC1"}],
+            }
         ),
     )
     monkeypatch.setattr(
@@ -164,53 +202,39 @@ def test_feedback_option_revises_requirements_then_advances_design_to_sequence(
         assert requirement["stage"] == "requirements"
         assert requirement["payload"]["feedback_decision"]["selected_option_id"] == "approve"
         service._execute_command(requirement["command_id"], requirement)
-        assert len(revised) == 1
+        assert revised == []
+        assert commands[requirement["command_id"]]["status"] == "AWAITING_INPUT"
         assert commands["design-question"]["status"] == "COMPLETED"
 
-        # Class review and sequence review are separate design commands.  The resume
-        # stub invokes the real deterministic projection, never a sequence generator.
-        session = {"stage": "class_diagram", "retryable": False, "active": True}
-        monkeypatch.setattr(workspace_module, "session_status", lambda _app: dict(session))
-        start_design = service.submit(
-            "app-1", action="start_design", payload={"action_id": requirement["command_id"]}
+        confirmation = service.submit(
+            "app-1",
+            action="confirm_change",
+            payload={"action_id": requirement["command_id"]},
         )
-        assert start_design["stage"] == "design"
-        monkeypatch.setattr(
-            workspace_module,
-            "start_design_session",
-            lambda app_id: {"app_id": app_id, "status": "need_feedback", "stage": "class_diagram"},
-        )
-        service._execute_command(start_design["command_id"], start_design)
-        assert commands[start_design["command_id"]]["status"] == "AWAITING_INPUT"
-        projected: list[dict[str, Any]] = []
+        service._execute_command(confirmation["command_id"], confirmation)
+        assert len(revised) == 1
+        review = commands[confirmation["command_id"]]
+        assert review["status"] == "AWAITING_INPUT"
+        assert [item["action"] for item in review["result"]["actions"]] == [
+            "message",
+            "plan_downstream_revision",
+        ]
 
-        def resume(app_id: str, text: str):
-            assert app_id == "app-1" and text == ""
-            assert session["stage"] == "class_diagram"
-            model = project_sequence_model(
-                build_scenario_index(CLEAN_STATE["usecase_spec"]), BCEModel.model_validate(CLEAN)
-            ).model_dump(mode="json")
-            projected.append(model)
-            session["stage"] = "sequence_diagram"
-            return {
-                "app_id": app_id,
-                "status": "need_feedback",
-                "stage": "sequence_diagram",
-                "sequence_diagram_model": model,
-            }
-
-        monkeypatch.setattr(workspace_module, "resume_design_session", resume)
-        sequence = service.submit(
-            "app-1", action="advance", payload={"action_id": start_design["command_id"]}
+        downstream = service.submit(
+            "app-1",
+            action="plan_downstream_revision",
+            payload={"action_id": confirmation["command_id"]},
         )
-        service._execute_command(sequence["command_id"], sequence)
-        assert commands[sequence["command_id"]]["status"] == "AWAITING_INPUT"
-        assert session["stage"] == "sequence_diagram"
-        assert projected and projected[0]["Diagrams"]
+        assert downstream["stage"] == "design"
+        service._execute_command(downstream["command_id"], downstream)
+        assert review["status"] == "COMPLETED"
+        planned = commands[downstream["command_id"]]
+        assert planned["status"] == "AWAITING_INPUT"
+        assert planned["result"]["action"] == "confirm_change"
         assert [item["action"] for item in list(commands.values())[1:]] == [
             "message",
-            "start_design",
-            "advance",
+            "confirm_change",
+            "plan_downstream_revision",
         ]
     finally:
         service.shutdown()

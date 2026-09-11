@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from app.workspace import service as workspace_module
 from app.workspace.conversation.contracts import (
     CommandIntent,
@@ -252,6 +254,129 @@ def test_confirmation_plan_dispatches_without_running_a_stage_service() -> None:
     assert result["action"] == "confirm_change"
     assert result["requested_targets"][0]["ref"] == requested.ref
     assert result["authority_targets"][0]["ref"] == authority.ref
+
+
+@pytest.mark.parametrize("exact_entry", [True, False])
+def test_reviewed_spec_revision_builds_and_persists_a_fresh_design_plan(
+    monkeypatch,
+    exact_entry: bool,
+) -> None:
+    entry = _target(
+        "class_diagram:OrderBoundary::placeOrder()",
+        kind="operation",
+    )
+    broad = _target(
+        "design_stage:class_diagram",
+        kind="design_stage",
+    )
+    expected = entry if exact_entry else broad
+    plan = _plan(
+        "needs_confirmation",
+        requested=[expected],
+        execution_mode="targeted_revision" if exact_entry else "stage_rewind",
+    )
+    source = {
+        **_latest(),
+        "command_id": "requirements-review",
+        "stage": "requirements",
+        "status": "AWAITING_INPUT",
+        "result": {
+            "downstream_revision_handoff": {
+                "source_targets": [
+                    {
+                        "ref": "use_case_spec:UC-ORDER",
+                        "artifact_version_id": 8,
+                    }
+                ],
+                "semantic_scope": "behavior",
+                "requested_effect": "Add the accepted exception.",
+                "change_type": "modify",
+            }
+        },
+    }
+    persisted: dict[str, Any] = {}
+    observed: dict[str, Any] = {}
+
+    class DownstreamTools(_Tools):
+        def design_entry_targets_for_requirements(self, refs):
+            observed["source_targets"] = list(refs)
+            return [entry] if exact_entry else []
+
+    def make_plan(_tools, interpretation):
+        observed["interpretation"] = interpretation
+        return plan
+
+    monkeypatch.setattr(workspace_module, "ProjectTools", DownstreamTools)
+    monkeypatch.setattr(workspace_module, "plan_revision", make_plan)
+    monkeypatch.setattr(
+        workspace_module.repository,
+        "get_command",
+        lambda command_id: source if command_id == "requirements-review" else None,
+    )
+    monkeypatch.setattr(
+        workspace_module.repository,
+        "update_command",
+        lambda command_id, **changes: persisted.update(
+            command_id=command_id, **changes
+        ),
+    )
+    command = {
+        **_latest(),
+        "command_id": "downstream-plan",
+        "action": "plan_downstream_revision",
+        "stage": "design",
+        "payload": {"action_id": "requirements-review"},
+    }
+
+    service = WorkspaceService()
+    try:
+        result = service._dispatch(command)
+    finally:
+        service.shutdown()
+
+    assert observed["source_targets"] == [
+        {"ref": "use_case_spec:UC-ORDER", "artifact_version_id": 8}
+    ]
+    assert observed["interpretation"].targets == [expected.ref]
+    assert result["action"] == "confirm_change"
+    assert persisted["command_id"] == "downstream-plan"
+    assert persisted["payload"]["revision_plan"]["plan_digest"] == plan.plan_digest
+    assert "_conversation_outcome" not in persisted["payload"]
+
+
+def test_exact_spec_revision_review_is_marked_for_fresh_downstream_planning() -> None:
+    target = _target(
+        "use_case_spec:UC-ORDER",
+        kind="use_case_spec",
+        owner="requirements",
+        artifact_type="USECASE_SPEC",
+    )
+    plan = _plan("ready_local", requested=[target])
+    interpretation = RevisionInterpretation(
+        targets=[target.ref],
+        semantic_scope="behavior",
+        requested_effect="Add the accepted exception.",
+    )
+
+    result = WorkspaceService._attach_downstream_revision_handoff(
+        {
+            "stage": "requirements",
+            "payload": {"text": interpretation.requested_effect},
+        },
+        plan,
+        interpretation,
+        {
+            "awaiting_input": True,
+            "phase": "specs",
+            "revision_execution": {
+                "artifact_versions": {"USECASE_SPEC": 8}
+            },
+        },
+    )
+
+    assert result["downstream_revision_handoff"]["source_targets"] == [
+        {"ref": target.ref, "artifact_version_id": 8}
+    ]
 
 
 def test_stale_confirmation_never_calls_a_stage_service(monkeypatch) -> None:

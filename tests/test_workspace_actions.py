@@ -54,6 +54,30 @@ def test_every_awaiting_result_gets_a_reason_and_real_actions() -> None:
     ]
 
 
+def test_reviewed_local_requirements_revision_offers_fresh_plan_not_advance() -> None:
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT"),
+        {
+            "kind": "action_required",
+            "downstream_revision_handoff": {
+                "source_targets": [
+                    {"ref": "use_case_spec:UC1", "artifact_version_id": 8}
+                ],
+                "semantic_scope": "behavior",
+                "requested_effect": "Add the accepted exception.",
+                "change_type": "modify",
+            },
+        },
+    )
+
+    assert [item["action"] for item in shaped["actions"]] == [
+        "message",
+        "plan_downstream_revision",
+    ]
+    assert [item["auto_selectable"] for item in shaped["actions"]] == [False, False]
+    assert "advance" not in {item["action"] for item in shaped["actions"]}
+
+
 def test_choice_actions_carry_the_answer_in_their_payload() -> None:
     shaped = result_with_contract(
         command(status="AWAITING_INPUT"),

@@ -188,6 +188,22 @@ def test_local_revision_of_an_earlier_delivery_stage_requires_confirmation() -> 
     assert "earlier_delivery_stage_requires_confirmation" in plan.reason_codes
 
 
+def test_local_revision_of_a_later_owner_stage_requires_confirmation() -> None:
+    tools = _Tools()
+    tools.current_stage = "requirements"
+
+    plan = RevisionPlanner(tools).plan(  # type: ignore[arg-type]
+        RevisionInterpretation(
+            targets=["class_diagram:Order"],
+            semantic_scope="contract",
+            requested_effect="Reflect the accepted use-case revision.",
+        )
+    )
+
+    assert plan.status == "needs_confirmation"
+    assert "delivery_stage_transition_requires_confirmation" in plan.reason_codes
+
+
 def test_design_feedback_routes_exact_spec_edit_back_to_requirements_confirmation() -> None:
     tools = _Tools()
     tools.current_stage = "design"

@@ -93,7 +93,7 @@ def _plan() -> RevisionPlan:
     target = _target()
     return RevisionPlan(
         plan_digest="a" * 64,
-        status="ready_local",
+        status="needs_confirmation",
         requested_targets=[target],
         authority_targets=[target],
         upstream_candidates=[],
@@ -183,8 +183,9 @@ def test_option_answer_routes_without_llm_to_requirements(monkeypatch) -> None:
     assert (action, stage) == ("message", "requirements")
     assert payload["feedback_decision"]["selected_option_id"] == "reject_when_full"
     assert payload["feedback_decision"]["status"] == "NORMALIZED"
-    assert payload["revision_plan"]["status"] == "ready_local"
+    assert payload["revision_plan"]["status"] == "needs_confirmation"
     assert payload["validated_targets"][0]["ref"] == "use_case_spec:UC1"
+    assert payload["_conversation_outcome"] == {"kind": "revision_plan"}
 
 
 def test_free_text_answer_uses_existing_normalizer_and_same_decision(monkeypatch) -> None:

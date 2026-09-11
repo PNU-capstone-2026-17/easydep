@@ -76,7 +76,9 @@ artifact version, 하류 영향은 코드가 검증한다. 검증된 명령은 �
 설계 단계가 `specification_gap` 타입의 `feedback_question`을 반환하면 Workspace는 선택지를
 기존 `message` action으로 노출한다. 선택지는 LLM 없이 정규화된 `Decision`이 되고, 자유 입력만
 기존 수정 해석기를 거친다. 답은 설계 산출물을 직접 바꾸지 않고 별도의 요구사항 수정 command로
-전달되며, 수정 완료 뒤에도 사용자가 기존 `start_design` action을 선택해야 설계를 다시 실행한다.
+전달된다. 국소 UC 명세 수정 검토에서는 일반 `advance`를 노출하지 않고, 사용자가
+`plan_downstream_revision`을 선택하면 현재 RTM에서 정확한 설계 진입점을 다시 계산한다. 그 새
+범위를 승인한 뒤에만 별도 설계 수정 command를 실행한다.
 현재 연결부는 단계가 완성된 typed Question을 반환할 때만 작동하며 질문 생성 자체는 하지 않는다.
 
 ## 분기와 단계 재실행
