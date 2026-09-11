@@ -43,6 +43,7 @@ class _Tools:
         }
         self.write_calls = 0
         self.current_stage = "design"
+        self.api_path_scope = None
 
     def read_workspace(self):
         return {"stage": self.current_stage}
@@ -68,6 +69,9 @@ class _Tools:
             "design_links": deepcopy(self.links),
             "relations": {ref: deepcopy(self.relations.get(ref, {"upstream": [], "downstream": []})) for ref in refs},
         }
+
+    def api_path_change_scope(self, _ref, _requested_effect):
+        return self.api_path_scope
 
 
 def test_same_snapshot_and_interpretation_produce_identical_read_only_plan() -> None:
@@ -175,6 +179,43 @@ def test_local_revision_of_an_earlier_delivery_stage_requires_confirmation() -> 
 
     assert plan.status == "needs_confirmation"
     assert "earlier_delivery_stage_requires_confirmation" in plan.reason_codes
+
+
+def test_explicit_api_path_value_outside_contract_routes_to_boundary_confirmation() -> None:
+    tools = _Tools()
+    boundary = _target(
+        "class_diagram:OrderBoundary::createOrder(orderId:UUID)",
+        "operation",
+        "design",
+        21,
+    )
+    tools.targets[boundary.ref] = boundary
+    tools.relations[boundary.ref] = {
+        "upstream": [],
+        "downstream": ["api_spec:createOrder"],
+    }
+    tools.api_path_scope = {
+        "unsupported": ("orderId",),
+        "authority_targets": [boundary],
+    }
+
+    plan = RevisionPlanner(tools).plan(  # type: ignore[arg-type]
+        RevisionInterpretation(
+            targets=["api_spec:createOrder"],
+            semantic_scope="contract",
+            requested_effect="Use DELETE /orders/{orderId}.",
+        )
+    )
+
+    assert plan.status == "needs_confirmation"
+    assert [target.ref for target in plan.requested_targets] == [
+        "api_spec:createOrder"
+    ]
+    assert [target.ref for target in plan.authority_targets] == [boundary.ref]
+    assert [target.ref for target in plan.downstream_targets] == [
+        "api_spec:createOrder"
+    ]
+    assert "api_path_requires_upstream_contract" in plan.reason_codes
 
 
 def test_version_or_trace_change_makes_approved_plan_stale() -> None:

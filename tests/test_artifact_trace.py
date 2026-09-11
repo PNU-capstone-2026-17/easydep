@@ -174,6 +174,16 @@ def test_projection_uses_stable_operation_and_call_refs_with_legacy_aliases():
             "extracted_bce_classes": {
                 "Classes": [
                     {
+                        "className": "OrderBoundary",
+                        "operations": [
+                            {
+                                "operationId": "OrderBoundary::submit(request:OrderRequest)",
+                                "stableId": "boundary_stable",
+                                "name": "submit",
+                            }
+                        ],
+                    },
+                    {
                         "className": "OrderControl",
                         "operations": [
                             {
@@ -209,6 +219,10 @@ def test_projection_uses_stable_operation_and_call_refs_with_legacy_aliases():
                 "Endpoints": [
                     {
                         "operation_id": "createOrder",
+                        "interaction_id": (
+                            "OrderBoundary::submit(request:OrderRequest) -> "
+                            "OrderControl::createOrder()"
+                        ),
                         "control_binding": {
                             "control": "OrderControl",
                             "method": "createOrder",
@@ -221,6 +235,7 @@ def test_projection_uses_stable_operation_and_call_refs_with_legacy_aliases():
 
     legacy_operation = TraceRef("operation", "OrderControl::createOrder()")
     stable_operation = TraceRef("operation", "op_stable")
+    boundary_operation = TraceRef("operation", "boundary_stable")
     legacy_call = TraceRef("call", "UC-1::call:1")
     stable_call = TraceRef("call", "call_stable")
 
@@ -230,6 +245,7 @@ def test_projection_uses_stable_operation_and_call_refs_with_legacy_aliases():
     assert trace.sources(stable_call) == (legacy_call,)
     assert TraceRef("message", "UC-1::call:1") in trace.downstream(stable_call)
     assert TraceRef("api", "createOrder") in trace.downstream(stable_operation)
+    assert TraceRef("api", "createOrder") in trace.downstream(boundary_operation)
 
 
 def test_projection_connects_requirement_source_refs_to_deployment_implementation_and_testing():

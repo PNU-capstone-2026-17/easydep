@@ -307,6 +307,44 @@ class RevisionPlanner:
         relations = self.tools.revision_relations(requested)
         downstream = self._downstream_targets(relations, requested)
 
+        api_path_scope = self._api_path_change_scope(intent, requested)
+        if api_path_scope is not None:
+            authority = tuple(api_path_scope.get("authority_targets") or ())
+            unsupported = ", ".join(api_path_scope.get("unsupported") or ())
+            if len(authority) != 1:
+                return self._result(
+                    intent,
+                    snapshot,
+                    status="needs_clarification",
+                    requested=requested,
+                    downstream=downstream,
+                    reasons=("api_path_missing_boundary_authority",),
+                    explanation=(
+                        f"The requested path value ({unsupported}) is not exposed by the "
+                        "current Boundary contract, and no exact editable Boundary operation "
+                        "could be resolved."
+                    ),
+                )
+            authority_relations = self.tools.revision_relations(authority)
+            return self._result(
+                intent,
+                snapshot,
+                status="needs_confirmation",
+                requested=requested,
+                authority=authority,
+                upstream=authority,
+                downstream=self._downstream_targets(authority_relations, authority),
+                reasons=(
+                    "api_path_requires_upstream_contract",
+                    "target_outside_request",
+                ),
+                explanation=(
+                    f"The requested path value ({unsupported}) is not exposed by the current "
+                    f"Boundary contract. Confirm revising {authority[0].display_label} and "
+                    "regenerating its linked downstream artifacts."
+                ),
+            )
+
         if not rule.local and intent.change_type == "unknown":
             return self._result(
                 intent,
@@ -389,6 +427,23 @@ class RevisionPlanner:
                 else "No linked upstream authority establishes the scope of this behavior change."
             ),
         )
+
+    def _api_path_change_scope(
+        self,
+        intent: RevisionInterpretation,
+        requested: tuple[RevisionTarget, ...],
+    ) -> Mapping[str, object] | None:
+        if (
+            intent.semantic_scope != "contract"
+            or len(requested) != 1
+            or requested[0].kind != "api"
+        ):
+            return None
+        resolve = getattr(self.tools, "api_path_change_scope", None)
+        if not callable(resolve):
+            return None
+        scope = resolve(requested[0].ref, intent.requested_effect)
+        return scope if isinstance(scope, Mapping) else None
 
     def validate_plan(
         self,
