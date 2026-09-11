@@ -323,6 +323,38 @@ def test_optional_results_use_explicit_unwrap_sources(monkeypatch):
         "sourceRef": "UC1::call:2#result.unwrap.id",
     }]
 
+    missing_source_model = json.loads(json.dumps(model))
+    registration = missing_source_model["Classes"][3]["operations"][0]
+    registration["parameters"].append({"name": "instructorId", "type": "String"})
+    registration["operationId"] = (
+        "Registration::create(student:Student,"
+        "failureCode:ValidationFailureCode,instructorId:String)"
+    )
+    missing_source_plan = plan.model_copy(deep=True)
+    missing_source_plan.calls[3].receiver_operation_id = registration["operationId"]
+
+    with pytest.raises(collaboration.BindingSourceViolation) as source_error:
+        collaboration.materialize(
+            build_scenario_index(single_use_case()),
+            BCEModel.model_validate(missing_source_model),
+            build_scenario_index(single_use_case()).use_case("UC1"),
+            missing_source_plan,
+        )
+    assert source_error.value.repair_context == {
+        "code": "BINDING_SOURCE_UNAVAILABLE",
+        "useCaseId": "UC1",
+        "location": "UC1::call:4#instructorId",
+        "receiverOperationId": registration["operationId"],
+        "parameter": {"name": "instructorId", "type": "String"},
+        "searchedSourceScopes": [
+            "ancestor-call-parameter",
+            "earlier-root-input",
+            "previous-call-result",
+            "derived-structured-value",
+            "runtime-value",
+        ],
+    }
+
     entity_to_control = CallPlanProposal.model_validate({
         "calls": [
             {"receiverOperationId": "RequestBoundary::start()", "parentCallIndex": None},

@@ -119,6 +119,17 @@ class CallPlanViolation(ValueError):
         )
 
 
+class BindingSourceViolation(ValueError):
+    """A parameter whose finite source search returned no candidate."""
+
+    def __init__(self, repair_context: dict[str, Any]) -> None:
+        self.repair_context = repair_context
+        super().__init__(
+            f"no finite source for {repair_context['location']}; repairContext="
+            + json.dumps(repair_context, ensure_ascii=False, separators=(",", ":"))
+        )
+
+
 def _communication_allowed(
     source: str,
     target: str,
@@ -513,6 +524,28 @@ def _binding_candidates(
     return list(dict.fromkeys(candidates))
 
 
+def _binding_search_scopes(
+    use_case: UseCase,
+    actor_step: str | None,
+    is_root: bool,
+) -> list[str]:
+    """Describe the source categories actually considered by the finite search."""
+
+    scopes: list[str] = []
+    if is_root and actor_step:
+        scopes.append("actor-entry-input")
+    if is_root and use_case.precondition_refs:
+        scopes.append("use-case-precondition")
+    scopes.extend([
+        "ancestor-call-parameter",
+        "earlier-root-input",
+        "previous-call-result",
+        "derived-structured-value",
+        "runtime-value",
+    ])
+    return scopes
+
+
 def select_ambiguous_bindings(
     use_case: UseCase, ambiguous: dict[str, list[str]],
 ) -> dict[str, str]:
@@ -659,7 +692,21 @@ def materialize(
             )
             location = f"{call['callId']}#{text(parameter.get('name'))}"
             if not candidates:
-                raise ValueError(f"no finite source for {location}")
+                raise BindingSourceViolation({
+                    "code": "BINDING_SOURCE_UNAVAILABLE",
+                    "useCaseId": use_case.id,
+                    "location": location,
+                    "receiverOperationId": call["receiverOperationId"],
+                    "parameter": {
+                        "name": text(parameter.get("name")),
+                        "type": text(parameter.get("type")),
+                    },
+                    "searchedSourceScopes": _binding_search_scopes(
+                        use_case,
+                        group.actor_step,
+                        call_index + 1 in root_set,
+                    ),
+                })
             if len(candidates) == 1:
                 call["argumentBindings"].append({
                     "parameter": text(parameter.get("name")), "sourceRef": candidates[0],
@@ -811,6 +858,7 @@ def process_use_case(
 
 
 __all__ = [
+    "BindingSourceViolation",
     "CallPlanViolation",
     "CombinedReplacementRequired",
     "materialize",
