@@ -1,6 +1,8 @@
 """클래스 호출 관계와 실제 값의 출처를 검사한다."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.design.schemas.class_model import BCEModel
@@ -169,7 +171,7 @@ def test_structured_parameter_is_derived_from_upstream_fields(monkeypatch):
     }
 
 
-def test_optional_results_use_explicit_unwrap_sources():
+def test_optional_results_use_explicit_unwrap_sources(monkeypatch):
     model = {
         "Classes": [
             {
@@ -341,6 +343,33 @@ def test_optional_results_use_explicit_unwrap_sources():
         )
     assert caught.value.repair_context["location"] == "calls[3].parentCallIndex"
     assert caught.value.repair_context["allowedParentCallIndexes"] == [2, 1]
+
+    def select_control_parent(messages, _schema, **_kwargs):
+        payload = json.loads(messages[-1]["content"])
+        assert [item["selection"] for item in payload["alternatives"]] == [
+            "parent:2",
+            "parent:1",
+        ]
+        return {"selection": "parent:2"}
+
+    monkeypatch.setattr(collaboration, "parse_structured", select_control_parent)
+    repaired = collaboration.repair_communication_parent(
+        build_scenario_index(single_use_case()),
+        BCEModel.model_validate(model),
+        build_scenario_index(single_use_case()).use_case("UC1"),
+        entity_to_control,
+        caught.value,
+    )
+    assert repaired is not None
+    expected = entity_to_control.model_dump(by_alias=True)
+    expected["calls"][3]["parentCallIndex"] = 2
+    assert repaired.model_dump(by_alias=True) == expected
+    collaboration.materialize(
+        build_scenario_index(single_use_case()),
+        BCEModel.model_validate(model),
+        build_scenario_index(single_use_case()).use_case("UC1"),
+        repaired,
+    )
 
     same_boundary_response = CallPlanProposal.model_validate({
         "calls": [

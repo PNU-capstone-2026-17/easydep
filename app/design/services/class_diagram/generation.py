@@ -294,7 +294,27 @@ def _materialize_use_case(
         )
     except ValueError as error:
         finding = f"{type(error).__name__}: {error}"
-        budget.consume(finding)
+        allowed_parents = (
+            error.repair_context.get("allowedParentCallIndexes") or []
+            if isinstance(error, collaboration.CallPlanViolation)
+            else []
+        )
+        if previous is not None and allowed_parents:
+            budget.consume(finding)
+            repaired = collaboration.repair_communication_parent(
+                index, skeleton, use_case, previous, error,
+            )
+            if repaired is not None:
+                try:
+                    return collaboration.materialize(
+                        index, skeleton, use_case, repaired,
+                    )
+                except ValueError as repaired_error:
+                    previous = repaired
+                    finding = f"{type(repaired_error).__name__}: {repaired_error}"
+            budget.consume(finding)
+        else:
+            budget.consume(finding)
         return collaboration.process_use_case(
             index,
             skeleton,
@@ -604,8 +624,9 @@ def _model_cache_key(index: ScenarioIndex, inventory: AcceptedInventory) -> str:
             "operationFragmentSchema": OperationFragment.model_json_schema(),
             "callPlanPrompt": collaboration.CALL_PLAN_PROMPT,
             "callPlanCap": collaboration.call_plan_max_completion_tokens(),
+            "parentSelectionPrompt": collaboration.PARENT_SELECTION_PROMPT,
             "bindingPrompt": collaboration.BINDING_PROMPT,
-            "version": 3,
+            "version": 4,
         },
     )
 

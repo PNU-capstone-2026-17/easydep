@@ -73,6 +73,15 @@ Select one sourceRef for each supplied finite choice. Prefer the source whose
 name and role match the receiver parameter. Return no explanation.
 """.strip()
 
+PARENT_SELECTION_PROMPT = """
+Choose whether one supplied earlier call should become the parent of the rejected
+target call. Select parent:N only when the scenario and operation meanings show
+that call N should invoke the target. Select fallback when the target call should
+instead be omitted, the operation selection or ordering is wrong, or none of the
+offered parents is semantically justified. Return only selection. Do not redesign
+the call plan.
+""".strip()
+
 
 def call_plan_reasoning_effort() -> str:
     return str(getattr(
@@ -242,6 +251,88 @@ def propose_call_plan(
     return CallPlanProposal.model_validate(
         finite_plan.model_validate(parsed).model_dump(by_alias=True),
     )
+
+
+def repair_communication_parent(
+    index: ScenarioIndex,
+    model: BCEModel,
+    use_case: UseCase,
+    previous: CallPlanProposal,
+    violation: CallPlanViolation,
+) -> CallPlanProposal | None:
+    """Select one admissible parent and patch only the rejected edge.
+
+    ``None`` explicitly hands the candidate to the existing full-plan repair.
+    Local BCE compatibility is not treated as proof of semantic correctness.
+    """
+
+    context = violation.repair_context
+    allowed = tuple(dict.fromkeys(
+        int(value) for value in context.get("allowedParentCallIndexes") or []
+    ))
+    if not allowed:
+        return None
+    location = str(context.get("location") or "")
+    prefix = "calls["
+    suffix = "].parentCallIndex"
+    if not location.startswith(prefix) or not location.endswith(suffix):
+        raise ValueError(f"invalid call-plan repair location: {location}")
+    offset = int(location[len(prefix):-len(suffix)])
+    if offset < 0 or offset >= len(previous.calls):
+        raise ValueError(f"call-plan repair location is out of range: {location}")
+    if any(position < 1 or position > len(previous.calls) for position in allowed):
+        raise ValueError("allowed parent call index is out of range")
+
+    selections = (*(f"parent:{position}" for position in allowed), "fallback")
+    finite_selection = cast(type[BaseModel], create_model(
+        "FiniteParentRepairSelection",
+        __config__=ConfigDict(extra="forbid", populate_by_name=True),
+        selection=(Literal.__getitem__(selections), Field()),
+    ))
+    use_case_payload = _use_case_payload(
+        index, model.model_dump(by_alias=True), use_case,
+    )
+    payload = {
+        "actorEntries": use_case_payload["actorEntries"],
+        "steps": use_case_payload["steps"],
+        "previousPlan": previous.model_dump(by_alias=True),
+        "target": context.get("observed") or {},
+        "alternatives": [
+            {
+                "selection": f"parent:{position}",
+                "sourceOperationId": previous.calls[
+                    position - 1
+                ].receiver_operation_id,
+            }
+            for position in allowed
+        ],
+        "fallback": {
+            "selection": "fallback",
+            "meaning": "Use the existing full-plan repair path.",
+        },
+    }
+    parsed = parse_structured(
+        [
+            {"role": "system", "content": PARENT_SELECTION_PROMPT},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ],
+        finite_selection,
+        reasoning_effort=call_plan_reasoning_effort(),
+        max_completion_tokens=min(call_plan_max_completion_tokens(), 1024),
+        operation="InteractionParentSelectionRepair",
+        metadata={
+            "useCaseId": use_case.id,
+            "executionSlice": use_case.id,
+            "candidateCount": len(selections),
+        },
+    )
+    selection = str(finite_selection.model_validate(parsed).selection)
+    if selection == "fallback":
+        return None
+    selected_parent = int(selection.partition(":")[2])
+    repaired = previous.model_dump(by_alias=True)
+    repaired["calls"][offset]["parentCallIndex"] = selected_parent
+    return CallPlanProposal.model_validate(repaired)
 
 
 def _root_assignments(
@@ -725,5 +816,6 @@ __all__ = [
     "materialize",
     "process_use_case",
     "propose_call_plan",
+    "repair_communication_parent",
     "select_ambiguous_bindings",
 ]
