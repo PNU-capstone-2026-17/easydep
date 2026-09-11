@@ -384,6 +384,10 @@ def test_resume_and_revision_keep_errors_and_use_case_ownership(monkeypatch):
     assert {item[1] for item in previews} == {"operations", "collaborations"}
 
     failure = ""
+    before_revision_call_plans = call_plan_calls
+    parents_before = [
+        call.parent_call_id for call in resumed.Collaborations[0].calls
+    ]
     result = service.revise_class_model(
         resumed, index, "Rename the actor-facing operation.", {"UC1"},
     )
@@ -391,3 +395,7 @@ def test_resume_and_revision_keep_errors_and_use_case_ownership(monkeypatch):
     boundary = next(item for item in result.Classes if item.class_name == "RequestBoundary")
     assert boundary.operations[0].name == "send"
     assert [item.collaboration_id for item in result.Collaborations] == ["UC1"]
+    assert call_plan_calls == before_revision_call_plans
+    assert [
+        call.parent_call_id for call in result.Collaborations[0].calls
+    ] == parents_before

@@ -37,6 +37,27 @@
 8. 환경이나 한 단계만 실패하면 전체 파이프라인을 다시 시작하지 않고 해당 owning stage의
    저장된 checkpoint에서 재개한다.
 
+### 2.1 RTM 기반 생성 경계
+
+`RevisionPlan`의 authority와 downstream을 모든 단계가 공유하는 고정 실행 경계로 사용한다.
+별도 실행 계약이나 DB 필드는 추가하지 않는다.
+
+1. authority target은 해당 command에서 의미를 바꿀 수 있는 항목이다.
+2. downstream target은 RTM이 확정한 재투영·갱신 범위다. 같은 클래스나 파일을 참조한다는
+   이유로 형제 항목까지 넓히지 않는다.
+3. 단계 adapter는 이 범위를 버리거나 다시 추측하지 않고 생성기에 그대로 전달한다.
+4. LLM에는 선택된 항목, 그 항목의 근거와 필요한 직접 연결만 입력한다. 응답 schema도 같은
+   항목만 반환하게 하고, 병합기는 대상 밖 기존 값을 그대로 보존한다.
+5. 결정론적으로 투영할 수 있는 downstream은 LLM에 보내지 않는다.
+6. 갱신 뒤 RTM은 LLM이 작성하지 않고 저장 모델의 stable ID와 provenance에서 다시 계산한다.
+7. 실행 중 범위 밖 변경 필요성이 발견되면 조용히 확장하지 않고 새 계획과 사용자 확인으로
+   돌아간다.
+
+적용 순서는 Design의 class → sequence → API 수직 경로를 기준 구현으로 완성한 뒤,
+Requirements의 local target, Implementation의 file/task 경계, Testing의 evidence handoff를
+차례로 점검하는 것이다. Testing은 구현을 직접 수정하지 않고 Implementation command에
+증거와 승인 범위를 전달한다.
+
 ## 3. 소유권 경계
 
 | 발견 위치 | 변경 대상 | 처리하는 stage | 처리 방식 |
@@ -274,6 +295,22 @@ GLM 5.3 Flash는 같은 위반 없이 통과했지만 181.0초와 11,048 출력 
 입력 3,064·출력 2,893 token으로 13개 endpoint를 정규화했고 구조·중첩 placeholder는 없었다.
 단일 실행이므로 일반적인 성공률 결론이 아니라, 수강신청 실패를 만든 결함 종류가 사례별
 예외 없이 입력 후보 제한으로 제거됐다는 근거로만 사용한다.
+
+### 하위 작업 G — RTM slice를 생성 경계까지 연결
+
+수강 취소 API 피드백 실험에서 계획기는 정확한 Boundary operation과 `dropRegistration`을
+찾았지만, Design 실행기가 operation을 Boundary class 전체로 확대하고 승인된 downstream을
+전달하지 않아 비대상 API 두 건과 UC5 호출 부모 관계가 함께 바뀌었다. validator는 모델
+무결성만 확인해 이 범위 드리프트를 clean으로 판정했다.
+
+다음 순서로 보완한다.
+
+1. Design 계획의 고정 downstream을 cascade에 전달한다.
+2. operation → collaboration/sequence/API의 정확한 RTM 링크를 실행에서도 사용한다.
+3. API 수정 입력·응답을 선택된 interaction으로 제한하고 비대상 endpoint를 보존한다.
+4. operation signature 수정은 기존 call topology를 유지한 채 parameter binding만 다시 만든다.
+5. 같은 수강신청 피드백으로 비대상 의미 변경 0건을 확인한 뒤 커밋한다.
+6. 이 기준 구현 뒤 Requirements → Implementation → Testing 순서로 동일 경계를 얇게 점검한다.
 
 ## 9. Luna·Terra·Sol·Astra 활용
 

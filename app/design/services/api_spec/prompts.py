@@ -108,14 +108,39 @@ def proposal_messages(
     ]
 
 
-def revision_context(scenario_text: str, bce_model: BCEModel) -> str:
-    """수정에도 최초 제안과 같은 작은 입력만 제공한다."""
+def revision_context(
+    scenario_text: str,
+    bce_model: BCEModel,
+    *,
+    interaction_ids: set[str] | None = None,
+    reserved_routes: set[tuple[str, str]] | None = None,
+) -> str:
+    """수정 대상 interaction과 그 UC만 LLM 입력에 포함한다."""
 
-    return json.dumps(
-        {
-            "useCases": _api_use_case_context(scenario_text),
-            "interactionCandidates": interaction_context(bce_model),
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    candidates = interaction_context(bce_model)
+    if interaction_ids is not None:
+        candidates = [
+            item for item in candidates if item["interactionId"] in interaction_ids
+        ]
+    use_case_ids = {
+        str(use_case_id)
+        for candidate in candidates
+        for use_case_id in candidate.get("useCaseIds") or []
+    }
+    use_cases = _api_use_case_context(scenario_text)
+    if interaction_ids is not None and isinstance(use_cases, list):
+        use_cases = [
+            item
+            for item in use_cases
+            if isinstance(item, dict) and str(item.get("id") or "") in use_case_ids
+        ]
+    payload = {
+        "useCases": use_cases,
+        "interactionCandidates": candidates,
+    }
+    if reserved_routes:
+        payload["reservedRoutes"] = [
+            {"method": method, "path": path}
+            for method, path in sorted(reserved_routes)
+        ]
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))

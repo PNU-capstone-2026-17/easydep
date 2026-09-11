@@ -2202,8 +2202,13 @@ class WorkspaceService:
                         else None
                     ),
                     approved_downstream_targets=(
-                        # RTM downstream entries are impact hints, not a write deny-list.
-                        None
+                        {
+                            str(ref)
+                            for ref in context.get("approved_downstream_targets") or []
+                            if str(ref)
+                        }
+                        if "approved_downstream_targets" in context
+                        else None
                     ),
                 )
                 return {

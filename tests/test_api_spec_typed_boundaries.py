@@ -482,6 +482,111 @@ def test_revision_service_uses_one_structured_call_and_returns_typed_model() -> 
     assert revised.Endpoints[0].query_params[0].type == "CourseFilter"
 
 
+def test_targeted_revision_sends_and_returns_only_the_selected_interaction() -> None:
+    bce_payload = _bce_model().model_dump(by_alias=True)
+    bce_payload["Classes"].extend(
+        [
+            {
+                "className": "AdminBoundary",
+                "stereotype": "Boundary",
+                "use_case_ids": ["UC2"],
+                "operations": [
+                    {
+                        "operationId": "AdminBoundary::refreshCatalog()",
+                        "name": "refreshCatalog",
+                        "parameters": [],
+                        "returnType": "void",
+                        "stepRefs": ["UC2:main:1"],
+                    }
+                ],
+            },
+            {
+                "className": "AdminControl",
+                "stereotype": "Control",
+                "use_case_ids": ["UC2"],
+                "operations": [
+                    {
+                        "operationId": "AdminControl::refreshCatalog()",
+                        "name": "refreshCatalog",
+                        "parameters": [],
+                        "returnType": "void",
+                        "stepRefs": ["UC2:main:2"],
+                    }
+                ],
+            },
+        ]
+    )
+    bce_payload["Collaborations"].append(
+        {
+            "collaborationId": "UC2",
+            "useCaseIds": ["UC2"],
+            "entryActor": "Admin",
+            "calls": [
+                {
+                    "callId": "UC2::call:1",
+                    "receiverOperationId": "AdminBoundary::refreshCatalog()",
+                    "stepRefs": ["UC2:main:1"],
+                },
+                {
+                    "callId": "UC2::call:2",
+                    "parentCallId": "UC2::call:1",
+                    "receiverOperationId": "AdminControl::refreshCatalog()",
+                    "stepRefs": ["UC2:main:2"],
+                },
+            ],
+        }
+    )
+    bce_model = BCEModel.model_validate(bce_payload)
+    proposal = _proposal().model_dump()
+    proposal["Endpoints"].append(
+        {
+            "interaction_id": (
+                "AdminBoundary::refreshCatalog() -> AdminControl::refreshCatalog()"
+            ),
+            "path": "/admin/catalog/refresh",
+            "method": "post",
+            "summary": "Refresh the catalog",
+            "responses": [{"status": 204, "description": "Catalog refreshed"}],
+        }
+    )
+    current = normalize_api_spec_model(
+        ApiSpecProposal.model_validate(proposal), bce_model
+    )
+
+    def revise(messages, _schema):
+        content = "\n".join(message["content"] for message in messages)
+        assert "AdminBoundary::refreshCatalog" not in content
+        assert '"path":"/admin/catalog/refresh"' in content
+        selected = _proposal().model_dump()
+        selected["Endpoints"][0]["summary"] = "Browse the current catalog"
+        return selected
+
+    revised = service.revise_api_spec_model(
+        current,
+        "Clarify only the browse endpoint summary.",
+        json.dumps(
+            {
+                "use_cases": [
+                    {"id": "UC1", "name": "Browse"},
+                    {"id": "UC2", "name": "Refresh"},
+                ],
+                "use_case_specs": [
+                    {"use_case_id": "UC1", "main_scenario": []},
+                    {"use_case_id": "UC2", "main_scenario": []},
+                ],
+            }
+        ),
+        bce_model,
+        {"browseCatalog"},
+        proposal_call=revise,
+    )
+
+    assert [endpoint.operation_id for endpoint in revised.Endpoints] == [
+        "browseCatalog"
+    ]
+    assert revised.Endpoints[0].summary == "Browse the current catalog"
+
+
 def test_accepted_model_round_trips_existing_json_and_openapi_contract() -> None:
     normalized = normalize_api_spec_model(_proposal(), _bce_model())
 

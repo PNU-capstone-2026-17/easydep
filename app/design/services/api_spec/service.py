@@ -29,16 +29,25 @@ from app.design.services.common.structured import parse_structured, revision_mes
 ProposalCall = Callable[[list[dict[str, str]], type[BaseModel]], dict[str, Any]]
 
 
-def _finite_proposal_schema(bce_model: BCEModel) -> type[ApiSpecProposal]:
+def _finite_proposal_schema(
+    bce_model: BCEModel,
+    *,
+    interaction_ids: set[str] | None = None,
+    reserved_routes: set[tuple[str, str]] | None = None,
+) -> type[ApiSpecProposal]:
     """이번 입력에 실제로 존재하는 상호작용만 고를 수 있는 응답 스키마를 만든다.
 
     HTTP 메서드와 경로는 여전히 LLM이 판단한다. 코드는 후보 ID와 필요한 endpoint 개수만
     알려 주어, 한 항목을 길게 쓰느라 나머지를 빠뜨리거나 같은 후보를 반복하지 못하게 한다.
     """
 
-    contracts = interaction_contracts(bce_model)
-    interaction_ids = tuple(item.interaction_id for item in contracts)
-    if not interaction_ids:
+    contracts = tuple(
+        item
+        for item in interaction_contracts(bce_model)
+        if interaction_ids is None or item.interaction_id in interaction_ids
+    )
+    accepted_interaction_ids = tuple(item.interaction_id for item in contracts)
+    if not accepted_interaction_ids:
         return ApiSpecProposal
     allowed_placeholders = {
         item.interaction_id: set(allowed_path_parameter_names(item, bce_model))
@@ -65,13 +74,23 @@ def _finite_proposal_schema(bce_model: BCEModel) -> type[ApiSpecProposal]:
                 "path placeholders must exactly name top-level Boundary parameters: "
                 f"{invalid}"
             )
+        collisions = [
+            f"{endpoint.method.upper()} {endpoint.path}"
+            for endpoint in value.Endpoints
+            if (endpoint.method, endpoint.path) in (reserved_routes or set())
+        ]
+        if collisions:
+            raise ValueError(
+                "targeted API routes must not collide with preserved endpoints: "
+                + ", ".join(collisions)
+            )
         return value
 
     finite_endpoint = create_model(
         "FiniteApiEndpointProposal",
         __base__=ApiEndpointProposal,
         interaction_id=(
-            Literal.__getitem__(interaction_ids),
+            Literal.__getitem__(accepted_interaction_ids),
             Field(description="One supplied interaction candidate copied exactly."),
         ),
     )
@@ -85,7 +104,10 @@ def _finite_proposal_schema(bce_model: BCEModel) -> type[ApiSpecProposal]:
         },
         Endpoints=(
             list[finite_endpoint],  # type: ignore[valid-type]
-            Field(min_length=len(interaction_ids), max_length=len(interaction_ids)),
+            Field(
+                min_length=len(accepted_interaction_ids),
+                max_length=len(accepted_interaction_ids),
+            ),
         ),
     )
 
@@ -152,8 +174,30 @@ def revise_api_spec_model(
 
     if not feedback:
         return current_model
-    current_proposal = api_spec_proposal_from_model(current_model, bce_model)
-    proposal_schema = _finite_proposal_schema(bce_model)
+    selected_endpoints = [
+        endpoint
+        for endpoint in current_model.Endpoints
+        if not targets or endpoint.operation_id in targets
+    ]
+    if targets and not selected_endpoints:
+        raise ValueError("API revision targets do not name a current endpoint")
+    selected_model = current_model.model_copy(
+        update={"Endpoints": selected_endpoints, "Schemas": []}
+    )
+    current_proposal = api_spec_proposal_from_model(selected_model, bce_model)
+    selected_interaction_ids = {
+        endpoint.interaction_id for endpoint in current_proposal.Endpoints
+    }
+    reserved_routes = {
+        (endpoint.method, endpoint.path)
+        for endpoint in current_model.Endpoints
+        if endpoint not in selected_endpoints
+    }
+    proposal_schema = _finite_proposal_schema(
+        bce_model,
+        interaction_ids=selected_interaction_ids if targets else None,
+        reserved_routes=reserved_routes if targets else None,
+    )
     propose = proposal_call or parse_structured
     revised = ApiSpecProposal.model_validate(
         proposal_schema.model_validate(
@@ -161,7 +205,14 @@ def revise_api_spec_model(
                 revision_messages(
                     API_SPEC_REVISION_SYSTEM_PROMPT,
                     "Use Cases and Accepted Interaction Candidates",
-                    revision_context(scenario_text, bce_model),
+                    revision_context(
+                        scenario_text,
+                        bce_model,
+                        interaction_ids=(
+                            selected_interaction_ids if targets else None
+                        ),
+                        reserved_routes=reserved_routes if targets else None,
+                    ),
                     "Current HTTP Proposal",
                     current_proposal.model_dump(),
                     feedback,
@@ -171,4 +222,29 @@ def revise_api_spec_model(
             )
         )
     )
-    return normalize_api_spec_model(revised, bce_model)
+    normalized = normalize_api_spec_model(revised, bce_model)
+    if not targets:
+        return normalized
+    operation_ids = {
+        proposal.interaction_id: endpoint.operation_id
+        for proposal, endpoint in zip(
+            current_proposal.Endpoints,
+            selected_endpoints,
+            strict=True,
+        )
+    }
+    return normalized.model_copy(
+        update={
+            "Endpoints": [
+                endpoint.model_copy(
+                    update={
+                        "operation_id": operation_ids.get(
+                            endpoint.interaction_id,
+                            endpoint.operation_id,
+                        )
+                    }
+                )
+                for endpoint in normalized.Endpoints
+            ]
+        }
+    )

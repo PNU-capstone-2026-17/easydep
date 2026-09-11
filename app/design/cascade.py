@@ -383,7 +383,10 @@ def _frozen_cascade_scope(
             for item in (state.get(DESIGN_SPECS["class_diagram"].model_key) or {}).get("Classes") or []
             if isinstance(item, dict) and str(item.get("className") or "").strip()
         }
-        classes_for_forward = class_units & class_names
+        # Exact operation targets use exact contract links. Expanding their
+        # owner class would turn one operation edit into every artifact that
+        # merely mentions the same Boundary or Control.
+        classes_for_forward = class_units & class_names if element in class_names else set()
         for class_name in classes_for_forward:
             for affected in affected_by_element(rtm, "class_diagram", class_name):
                 affected_ref = _design_target(affected)

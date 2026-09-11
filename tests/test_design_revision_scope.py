@@ -134,6 +134,93 @@ def test_frozen_downstream_scope_rejects_an_untargeted_edit_before_reviser(monke
     assert calls == []
 
 
+def test_operation_scope_uses_exact_contract_links_not_its_whole_boundary() -> None:
+    state = _state()
+    state["extracted_bce_classes"] = {
+        "Classes": [
+            {
+                "className": "OrderBoundary",
+                "operations": [
+                    {
+                            "operationId": "OrderBoundary::createOrder(orderId:UUID)",
+                            "name": "createOrder",
+                    },
+                    {
+                            "operationId": "OrderBoundary::cancelOrder(orderId:UUID)",
+                            "name": "cancelOrder",
+                    },
+                ],
+            },
+            {
+                "className": "OrderControl",
+                "operations": [
+                    {
+                        "operationId": "OrderControl::createOrder(orderId:UUID)",
+                        "name": "createOrder",
+                    },
+                    {
+                        "operationId": "OrderControl::cancelOrder(orderId:UUID)",
+                        "name": "cancelOrder",
+                    },
+                ],
+            },
+        ],
+        "Collaborations": [
+            {
+                "collaborationId": use_case,
+                "calls": [
+                    {
+                        "receiverOperationId": (
+                            f"OrderBoundary::{operation}Order(orderId:UUID)"
+                        )
+                    },
+                    {
+                        "receiverOperationId": (
+                            f"OrderControl::{operation}Order(orderId:UUID)"
+                        )
+                    },
+                ],
+            }
+            for use_case, operation in (("UC1", "create"), ("UC2", "cancel"))
+        ],
+    }
+    state["sequence_diagram_model"] = {
+        "Diagrams": [{"use_case_id": "UC1"}, {"use_case_id": "UC2"}]
+    }
+    state["api_spec_model"] = {
+        "Endpoints": [
+            {
+                "operation_id": operation,
+                "interaction_id": (
+                        f"OrderBoundary::{operation}Order(orderId:UUID) -> "
+                        f"OrderControl::{operation}Order(orderId:UUID)"
+                ),
+                "source_classes": ["OrderBoundary", "OrderControl"],
+                "use_case_ids": [use_case],
+                "control_binding": {
+                    "control": "OrderControl",
+                    "method": f"{operation}Order",
+                },
+            }
+            for use_case, operation in (("UC1", "create"), ("UC2", "cancel"))
+        ],
+        "Schemas": [],
+    }
+
+    scope = cascade._frozen_cascade_scope(
+        state,
+        cascade.build_design_rtm(state),
+        "class_diagram",
+        "OrderBoundary::createOrder(orderId:UUID)",
+        {"sequence_diagram:UC1", "api_spec:create"},
+    )
+
+    assert scope == {
+        "sequence_diagram": {"UC1"},
+        "api_spec": {"create"},
+    }
+
+
 def test_class_operation_uses_owning_class_merge_unit_without_widening_reviser(monkeypatch) -> None:
     operation = "OrderControl::createOrder(): void"
     state = _state()

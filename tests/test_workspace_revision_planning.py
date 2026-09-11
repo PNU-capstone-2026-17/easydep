@@ -119,6 +119,51 @@ def test_ready_local_plan_is_attached_to_the_bounded_design_message(monkeypatch)
     assert payload["context"]["approved_downstream_targets"] == [downstream.ref]
 
 
+def test_design_execution_passes_the_frozen_downstream_scope(monkeypatch) -> None:
+    observed: dict[str, Any] = {}
+    monkeypatch.setattr(
+        workspace_module,
+        "session_status",
+        lambda _app_id: {"stage": "class_diagram", "retryable": False},
+    )
+
+    def revise(_app_id, _request, **kwargs):
+        observed.update(kwargs)
+        return {"changed": [], "touched": {}, "related": {}}
+
+    monkeypatch.setattr(workspace_module, "revise_design_elements", revise)
+    service = WorkspaceService()
+    try:
+        service._stage_message(
+            {
+                **_latest(),
+                "payload": {
+                    "text": "Change the selected operation.",
+                    "context": {
+                        "validated_target_feedbacks": [
+                            {
+                                "target": "class_diagram:OrderControl::create()",
+                                "feedback": "Change the selected operation.",
+                            }
+                        ],
+                        "approved_authority_targets": [
+                            "class_diagram:OrderControl::create()"
+                        ],
+                        "approved_downstream_targets": ["api_spec:createOrder"],
+                    },
+                },
+            },
+            advance=False,
+        )
+    finally:
+        service.shutdown()
+
+    assert observed["approved_authority_targets"] == {
+        "class_diagram:OrderControl::create()"
+    }
+    assert observed["approved_downstream_targets"] == {"api_spec:createOrder"}
+
+
 def test_revision_after_a_reply_and_clarification_uses_the_stage_action_anchor(monkeypatch) -> None:
     target = _target("class_diagram:OrderControl")
     plan = _plan("ready_local", requested=[target])

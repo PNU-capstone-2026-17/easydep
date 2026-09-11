@@ -630,10 +630,11 @@ def api_spec_proposal_from_model(
     """저장 모델에서 코드 생성 필드를 제외한 수정용 proposal을 만든다."""
 
     contracts = interaction_contracts(bce_model)
+    valid_interaction_ids = {item.interaction_id for item in contracts}
     endpoints = []
     for endpoint in model.Endpoints:
         interaction_id = endpoint.interaction_id
-        if not interaction_id and endpoint.control_binding is not None:
+        if interaction_id not in valid_interaction_ids and endpoint.control_binding is not None:
             interaction_id = next(
                 (
                     item.interaction_id

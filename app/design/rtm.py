@@ -171,24 +171,60 @@ def _direct_links(state: dict, known_classes: set[str]) -> list[dict[str, str]]:
     evidence for changing an earlier contract.  Reverse propagation is allowed
     only for these stronger links:
 
-    * a sequence *call* whose receiver is a declared class;
-    * an API operation whose Control binding names that receiver and a declared method;
+    * a sequence projection whose collaboration names an exact declared operation;
+    * an API operation whose interaction names its exact Boundary operation;
+    * an API Control binding that resolves to one exact declared operation;
     * the API operation and sequence call share a use-case id.
 
     No fuzzy name match and no LLM-derived edge is accepted.  If an existing
     artifact lacks the exact binding, it simply has no reverse-cascade path.
     """
     sequence_calls = _sequence_call_links(state.get("sequence_diagram_model") or {})
-    declared_methods = {
-        str(item.get("className") or "").strip(): {
-            method_name(str(method))
-            for method in _class_method_signatures(item)
-            if method_name(str(method))
-        }
-        for item in (state.get("extracted_bce_classes") or {}).get("Classes", []) or []
+    class_model = state.get("extracted_bce_classes") or {}
+
+    def declared_method(operation: dict[str, Any]) -> str:
+        operation_id = str(operation.get("operationId") or "").strip()
+        signature = operation_id.partition("::")[2] or operation_id
+        return method_name(str(operation.get("name") or signature).strip())
+
+    declared_operations = {
+        (
+            str(item.get("className") or "").strip(),
+            declared_method(operation),
+        ): str(operation.get("operationId") or "").strip()
+        for item in class_model.get("Classes", []) or []
         if isinstance(item, dict) and str(item.get("className") or "").strip()
+        for operation in item.get("operations") or []
+        if isinstance(operation, dict)
+        and str(operation.get("operationId") or "").strip()
+        and declared_method(operation)
     }
+    declared_operation_ids = set(declared_operations.values())
     links: set[tuple[str, str, str]] = set()
+
+    available_sequences = {
+        str(item.get("use_case_id") or "").strip()
+        for item in (state.get("sequence_diagram_model") or {}).get("Diagrams", []) or []
+        if isinstance(item, dict) and str(item.get("use_case_id") or "").strip()
+    }
+    for item in class_model.get("Collaborations", []) or []:
+        if not isinstance(item, dict):
+            continue
+        collaboration_id = str(item.get("collaborationId") or "").strip()
+        if collaboration_id not in available_sequences:
+            continue
+        for call in item.get("calls") or []:
+            operation_id = (
+                str(call.get("receiverOperationId") or "").strip()
+                if isinstance(call, dict)
+                else ""
+            )
+            if operation_id in declared_operation_ids:
+                links.add((
+                    f"sequence_diagram:{collaboration_id}",
+                    f"class_diagram:{operation_id}",
+                    "projects",
+                ))
 
     for call in sequence_calls:
         receiver = call["receiver_class"]
@@ -215,14 +251,24 @@ def _direct_links(state: dict, known_classes: set[str]) -> list[dict[str, str]]:
         # second, weaker name-matching rule.
         method = method_name(str(binding.get("method") or "").strip())
         endpoint_use_cases = set(_as_list(endpoint.get("use_case_ids")))
-        if (
-            control not in known_classes
-            or method not in declared_methods.get(control, set())
-            or not endpoint_use_cases
-        ):
+        control_operation = declared_operations.get((control, method))
+        if control not in known_classes or not control_operation or not endpoint_use_cases:
             continue
 
         links.add((f"api_spec:{operation}", f"class_diagram:{control}", "binds"))
+        links.add((
+            f"api_spec:{operation}",
+            f"class_diagram:{control_operation}",
+            "binds_operation",
+        ))
+        interaction_id = str(endpoint.get("interaction_id") or "").strip()
+        boundary_operation = interaction_id.partition(" -> ")[0].strip()
+        if boundary_operation in declared_operation_ids:
+            links.add((
+                f"api_spec:{operation}",
+                f"class_diagram:{boundary_operation}",
+                "accepts",
+            ))
         for call in sequence_calls:
             if control != call["receiver_class"] or method != call["method"]:
                 continue
