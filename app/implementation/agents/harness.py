@@ -124,7 +124,7 @@ def render_harness_error(
         "TOOL_PROTOCOL_TOKEN_LEAK": "Stop this model/tool transport.",
         "TOOL_SCHEMA_INVALID": "Retry once with the declared tool schema.",
         "PATH_OUTSIDE_WORKSPACE": "Use an absolute path rooted at the logical workspace.",
-        "READ_OUTSIDE_TASK_EVIDENCE": "Report the design contract gap without broadening discovery.",
+        "READ_OUTSIDE_TASK_EVIDENCE": "Report the missing implementation context without broadening discovery.",
         "WRITE_OUTSIDE_OWNER_SCOPE": "Edit only an assigned implementation root.",
         "ENV_WORKSPACE_PERMISSION": "Repair the runner environment without an LLM retry.",
         "COMMAND_FAILED": "Fix the representative command failure before retrying.",
@@ -187,7 +187,7 @@ def classify_harness_error_text(text: str) -> HarnessError | None:
         return HarnessError(
             "READ_OUTSIDE_TASK_EVIDENCE",
             False,
-            "The requested read was outside the behavior task evidence.",
+            "The requested read was outside the behavior task implementation context.",
         )
     if "WRITE_OUTSIDE_OWNER_SCOPE" in text or "outside the assigned implementation roots" in text.casefold():
         return HarnessError(

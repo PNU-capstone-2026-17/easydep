@@ -294,6 +294,15 @@ def _build_fixture(
     )
     owner_context = output / "implement-backend-application.context.json"
     _write_json(owner_context, {"controllerPaths": [controller]})
+    owner_test = (
+        f"application/src/test/java/{package_path}/BackendApplicationTest.java"
+    )
+    owner_test_path = run / owner_test
+    owner_test_path.parent.mkdir(parents=True, exist_ok=True)
+    owner_test_path.write_text(
+        "class BackendApplicationTest { /* EASYDEP-IMPLEMENT */ }\n",
+        encoding="utf-8",
+    )
 
     spec = JobSpec(
         job_type="implementation",
@@ -327,6 +336,7 @@ def _build_fixture(
         llm={},
         owner="backend",
         task_type="backend-implementation",
+        required_test_paths=[owner_test],
         allowed_write_roots=[
             f"application/src/main/java/{package_path}",
             f"application/src/test/java/{package_path}",
@@ -378,8 +388,25 @@ def test_exact_uc_api_components_form_deterministic_sequential_tasks(
     assert all(task.allowed_write_roots == [] for task in first)
     assert all(len(task.required_test_paths) == 1 for task in first)
     assert len({task.required_test_paths[0] for task in first}) == len(first)
+    assert all(
+        Path(task.required_test_paths[0]).name.startswith("Behavior")
+        for task in first
+    )
 
     run = tmp_path / "first/run"
+    owner_test = "application/src/test/java/com/example/app/BackendApplicationTest.java"
+    contexts = [_task_context(run, task) for task in first]
+    assert all(context["requiredTestPath"] != owner_test for context in contexts)
+    assert all(
+        marker.get("path") != owner_test
+        for context in contexts
+        for marker in context["completionMarkers"]
+    )
+    assert all(
+        marker.get("path") != owner_test
+        for task in first
+        for marker in task.verification_profile["requiredAbsentMarkers"]
+    )
     operations_by_component = {
         frozenset(task.use_case_ids): set(
             _task_context(run, task)["apiOperationIds"]
@@ -416,7 +443,8 @@ def test_exact_uc_api_components_form_deterministic_sequential_tasks(
     assert expected_read_only_contracts.isdisjoint(connected.allowed_write_paths)
     prompt = (run / connected.prompt_file).read_text(encoding="utf-8")
     assert "Do not infer behavior from names" in prompt
-    assert "report the concrete contract gap" in prompt
+    assert "gap only when the behavior capsule itself is insufficient" in prompt
+    assert "report missing implementation context; do not read it" in prompt
 
 
 def test_mechanical_vocabulary_rename_preserves_id_topology(

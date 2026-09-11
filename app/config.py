@@ -113,10 +113,6 @@ class Settings(BaseSettings):
     implementation_agent_temperature: float = 0.2
     implementation_agent_max_output_tokens: int = 16384
     implementation_reasoning_effort: str = "medium"
-    # ``marker`` is an opt-in discovery path until a representative use case
-    # has completed. It decomposes backend work into sequential operation
-    # markers and deliberately leaves test authoring for a later checkpoint.
-    implementation_backend_task_strategy: Literal["owner", "marker"] = "owner"
     # Restricted owners use scoped file/search/check tools. ``terminal`` remains
     # available as an explicit baseline for controlled comparison and rollback.
     implementation_owner_tool_mode: Literal["restricted", "terminal"] = "restricted"

@@ -330,7 +330,7 @@ def _owner_workspace_guidance(
             [
                 "- Before the first edit, read only the task context and its readSourcePaths; do not list or grep broader directories.",
                 "- Treat behaviorCapsule endpoints, directMethods, and directCalls as the authoritative behavior boundary.",
-                "- If that evidence cannot express required behavior, call finish with the exact contract gap instead of inventing collaborators or broadening discovery. If verification names an unlisted file, do not read it; report that missing evidence as a contract gap.",
+                "- If that evidence cannot express required behavior, call finish with the exact design contract gap instead of inventing collaborators or broadening discovery. If verification names an unlisted file, do not read it; report the missing implementation context.",
             ]
         )
     else:
@@ -1413,7 +1413,7 @@ def create_openhands_conversation(
                 return FileEditorObservation.from_text(
                     text=render_harness_error(
                         "READ_OUTSIDE_TASK_EVIDENCE",
-                        "The path is not part of this behavior task's evidence. Report the concrete design contract gap instead of reading more files.",
+                        "The path is not part of this behavior task's implementation context. Report the missing context instead of reading more files.",
                         retryable=False,
                         workspace=str(self.logical_workspace),
                         requestedPath=str(target),
@@ -1526,7 +1526,7 @@ def create_openhands_conversation(
                 return GrepObservation.from_text(
                     text=render_harness_error(
                         "READ_OUTSIDE_TASK_EVIDENCE",
-                        "Search only one explicitly listed evidence file. Report the concrete design contract gap instead of broadening discovery.",
+                        "Search only one explicitly listed evidence file. Report the missing implementation context instead of broadening discovery.",
                         retryable=False,
                         workspace=str(self.logical_workspace),
                         requestedPath=str(target),

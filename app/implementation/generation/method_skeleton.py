@@ -42,27 +42,6 @@ def render_backend_method_skeletons(
     return result
 
 
-def render_backend_test_shell(base_package: str) -> tuple[str, str]:
-    package_path = base_package.replace(".", "/")
-    relative = (
-        f"src/test/java/{package_path}/application/impl/BackendApplicationTest.java"
-    )
-    source = f"""package {base_package}.application.impl;
-
-import org.junit.jupiter.api.Test;
-
-import static org.junit.jupiter.api.Assertions.fail;
-
-final class BackendApplicationTest {{
-    @Test
-    void implementsTheContractedScenarios() {{
-        fail("{IMPLEMENTATION_MARKER}: read reports/implementation-tasks/implement-backend-application.source-index.json and replace this shell with contracted assertions");
-    }}
-}}
-"""
-    return relative, source
-
-
 def _dependencies(
     methods: list[MethodProjection | None],
 ) -> tuple[str, ...]:

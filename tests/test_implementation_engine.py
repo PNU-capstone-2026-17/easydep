@@ -1723,7 +1723,8 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
         bounded_evidence=True,
     )
     assert "read only the task context and its readSourcePaths" in bounded
-    assert "call finish with the exact contract gap" in bounded
+    assert "call finish with the exact design contract gap" in bounded
+    assert "report the missing implementation context" in bounded
     assert "investigation hints" not in bounded
     assert "open raw design inputs" not in bounded
 
@@ -2212,13 +2213,19 @@ class Order <<Entity>> { - id: UUID }
                     "id": "UC1",
                     "use_case_id": "UC1",
                     "name": "Place order",
+                    "requirement_ids": ["FR-ORDER"],
                     "main_scenario": [
                         {"step_number": 1, "sentence": "The customer places an order."}
                     ],
                     "repair_iters": 7,
                     "repair_history": {"marker": "INTERNAL-USE-CASE-REPAIR"},
                 },
-                {"id": "UC2", "use_case_id": "UC2", "name": "Cancel order"},
+                {
+                    "id": "UC2",
+                    "use_case_id": "UC2",
+                    "name": "Cancel order",
+                    "requirement_ids": ["FR-CANCEL"],
+                },
             ]
         ),
         encoding="utf-8",
@@ -2357,7 +2364,7 @@ class Order <<Entity>> { - id: UUID }
         agent_max_output_tokens=1000,
     )
 
-    state = plan_workflow(run, spec)
+    plan_workflow(run, spec)
     manifest = json.loads((run / "reports/run-manifest.json").read_text(encoding="utf-8"))
     tasks = manifest["implementation_tasks"]
     task_types = {task["task_type"] for task in tasks}
@@ -2376,52 +2383,78 @@ class Order <<Entity>> { - id: UUID }
     for task in tasks:
         assert set(task["required_output_paths"]) <= set(task["allowed_write_paths"])
 
-    backend = next(task for task in tasks if task["owner"] == "backend")
+    backends = [task for task in tasks if task["owner"] == "backend"]
     frontend = next(task for task in tasks if task["owner"] == "frontend")
-    assert len(tasks) == 2
+    assert len(tasks) == 3
+    assert len(backends) == 2
     assert not any(task["task_id"] == "implement-use-cases-stale-common" for task in tasks)
-    assert backend["task_id"] == "implement-backend-application"
-    assert set(backend["use_case_ids"]) == {"UC1", "UC2"}
-    assert frontend["depends_on"] == ["implement-backend-application"]
-    assert state["nextRunnableTasks"] == ["implement-backend-application"]
-    context = json.loads((run / backend["context_file"]).read_text(encoding="utf-8"))
-    assert set(context["useCaseIds"]) == {"UC1", "UC2"}
-    assert set(context["requirementIds"]) == {"FR-ORDER", "FR-CANCEL"}
-    assert "application/src/main/java/com/example/orders/bce/Order.java" in set(
-        backend["allowed_write_paths"]
+    assert all(
+        task["task_id"].startswith("implement-backend-behavior-")
+        for task in backends
     )
-    assert "application/src/main/java/com/example/orders/bce/Order.java" in set(
-        backend["required_output_paths"]
-    )
+    assert [task["depends_on"] for task in backends] == [
+        [],
+        [backends[0]["task_id"]],
+    ]
+    assert {
+        use_case_id
+        for task in backends
+        for use_case_id in task["use_case_ids"]
+    } == {"UC1", "UC2"}
+    assert frontend["depends_on"] == [backends[-1]["task_id"]]
+    contexts = [
+        json.loads((run / task["context_file"]).read_text(encoding="utf-8"))
+        for task in backends
+    ]
+    assert [context["useCaseIds"] for context in contexts] == [["UC1"], ["UC2"]]
+    assert {requirement_id for task in backends for requirement_id in task["requirement_ids"]} == {
+        "FR-ORDER",
+        "FR-CANCEL",
+    }
+    assert all("behaviorCapsule" in context for context in contexts)
+    assert all(context["requiredTestPath"] for context in contexts)
     generated_api = {
         "application/src/main/java/com/example/orders/api/OrdersApi.java",
         "application/src/main/java/com/example/orders/api/CancelApi.java",
     }
-    assert not set(backend["allowed_write_paths"]).intersection(generated_api)
+    assert all(
+        not set(task["allowed_write_paths"]).intersection(generated_api)
+        for task in backends
+    )
     immutable_bce = {
         "application/src/main/java/com/example/orders/bce/OrderBoundary.java",
         "application/src/main/java/com/example/orders/bce/OrderControl.java",
         "application/src/main/java/com/example/orders/bce/CancelControl.java",
     }
-    assert not set(backend["allowed_write_paths"]).intersection(immutable_bce)
+    assert all(
+        not set(task["allowed_write_paths"]).intersection(immutable_bce)
+        for task in backends
+    )
     persistence_root = (
         "application/src/main/java/com/example/orders/persistence"
     )
-    assert persistence_root in backend["immutable_paths"]
-    assert "application/src/main/resources/db/migration" in backend["immutable_paths"]
+    assert all(persistence_root in task["immutable_paths"] for task in backends)
+    assert all(
+        "application/src/main/resources/db/migration" in task["immutable_paths"]
+        for task in backends
+    )
     assert not any(
         path == persistence_root or path.startswith(persistence_root + "/")
-        for path in backend["allowed_write_paths"]
+        for task in backends
+        for path in task["allowed_write_paths"]
     )
-    assert backend["allowed_write_roots"]
+    assert all(task["allowed_write_roots"] == [] for task in backends)
     assert frontend["allowed_write_roots"] == ["application/frontend"]
     source_index = json.loads(
-        (run / context["sourceIndexPath"]).read_text(encoding="utf-8")
+        (
+            run
+            / "reports/implementation-tasks/"
+            "implement-backend-application.source-index.json"
+        ).read_text(encoding="utf-8")
     )
     assert source_index["hintsOnly"] is True
     assert source_index["startingSourcePaths"]
     assert source_index["methodContexts"]
-    assert context["methodContextRoot"].endswith("method-context")
     assert all(
         (run / item["path"]).is_file()
         for item in source_index["methodContexts"]
@@ -2431,20 +2464,17 @@ class Order <<Entity>> { - id: UUID }
     )
     assert method_context["refs"]
     assert method_context["designInputs"] == source_index["designInputs"]
-    assert context["sourceIndexPath"] in context["readSourcePaths"]
-    assert all(
-        path not in context["readSourcePaths"]
-        for path in source_index["startingSourcePaths"]
-    )
-    assert {"api:placeOrder", "api:cancelOrder"} <= set(backend["source_refs"])
-    prompt = (run / backend["prompt_file"]).read_text(encoding="utf-8")
-    assert "The customer can place an order." not in prompt
-    assert '"call_id"' not in prompt
-    assert '"control_binding"' not in prompt
-    assert context["sourceIndexPath"] in prompt
-    assert context["methodContextRoot"] in prompt
-    assert "INTERNAL-REPAIR-MARKER" not in prompt
-    assert "INTERNAL-USE-CASE-REPAIR" not in prompt
+    assert {"api:placeOrder", "api:cancelOrder"} <= {
+        source_ref for task in backends for source_ref in task["source_refs"]
+    }
+    prompts = [
+        (run / task["prompt_file"]).read_text(encoding="utf-8")
+        for task in backends
+    ]
+    assert all('"call_id"' not in prompt for prompt in prompts)
+    assert all('"control_binding"' not in prompt for prompt in prompts)
+    assert all("INTERNAL-REPAIR-MARKER" not in prompt for prompt in prompts)
+    assert all("INTERNAL-USE-CASE-REPAIR" not in prompt for prompt in prompts)
 
 
 def test_completed_workflow_hands_full_verification_to_testing(
