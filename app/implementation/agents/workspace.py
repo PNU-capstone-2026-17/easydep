@@ -520,8 +520,16 @@ def _copy_read_sources(
         return
     context_path = (run_root / context_file).resolve()
     run_root = run_root.resolve()
-    if run_root not in context_path.parents or not context_path.is_file():
+    resolved_sandbox = sandbox.resolve()
+    context_target = (resolved_sandbox / context_file).resolve()
+    if (
+        run_root not in context_path.parents
+        or resolved_sandbox not in context_target.parents
+        or not context_path.is_file()
+    ):
         return
+    context_target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(context_path, context_target)
     context = json.loads(context_path.read_text(encoding="utf-8"))
     values = [
         *(context.get("readSourcePaths") or []),
@@ -531,10 +539,10 @@ def _copy_read_sources(
         if not isinstance(value, str):
             continue
         source = (run_root / value).resolve()
-        target = (sandbox / value).resolve()
+        target = (resolved_sandbox / value).resolve()
         if (
             run_root not in source.parents
-            or sandbox.resolve() not in target.parents
+            or resolved_sandbox not in target.parents
             or not source.is_file()
         ):
             continue

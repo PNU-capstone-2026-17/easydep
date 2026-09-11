@@ -39,6 +39,7 @@ from app.implementation.agents.verification.build import (
 )
 from app.implementation.agents.workspace import (
     _apply_fixed_runner_permissions,
+    _copy_read_sources,
     _harden_control_tree,
     cleanup_agent_workspace,
     grant_owner_file_access,
@@ -633,6 +634,35 @@ def _write_minimal_agent_task(tmp_path: Path) -> tuple[Path, str, str, Path]:
     }
     (tasks / "order.task.json").write_text(json.dumps(task), encoding="utf-8")
     return run, task_id, source_path, source
+
+
+def test_copy_read_sources_includes_task_context_and_external_source(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    sandbox = tmp_path / "sandbox"
+    context_path = run / "reports" / "implementation-tasks" / "orders.context.json"
+    source_path = run / "reports" / "testing-runtime.log"
+    context_path.parent.mkdir(parents=True)
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    context_path.write_text(
+        json.dumps({"readSourcePaths": ["reports/testing-runtime.log"]}),
+        encoding="utf-8",
+    )
+    source_path.write_text("test evidence", encoding="utf-8")
+
+    _copy_read_sources(
+        run,
+        sandbox,
+        {"context_file": "reports/implementation-tasks/orders.context.json"},
+    )
+
+    assert (sandbox / "reports/implementation-tasks/orders.context.json").read_text(
+        encoding="utf-8"
+    ) == context_path.read_text(encoding="utf-8")
+    assert (sandbox / "reports/testing-runtime.log").read_text(encoding="utf-8") == (
+        "test evidence"
+    )
 
 
 def test_runner_does_not_duplicate_openhands_provider_retries(
