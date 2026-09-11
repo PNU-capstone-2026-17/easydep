@@ -674,7 +674,11 @@ Implement this one API-to-result behavior using { _relative(run_root, context_pa
 
 - Preserve generated public BCE/API and persistence declarations.
 - Implement only the listed scenarios, endpoint bindings, direct calls, and markers.
-- Before the first edit, read only this context and `readSourcePaths`. The authoritative
+- Treat this behavior capsule as self-contained. Start with this context and the existing
+  writable implementation files; `readSourcePaths` is an optional readable allowlist, not a
+  checklist to open in full.
+- Open a listed contract only when a specific named type or member blocks an edit. Do not
+  reopen per-method context already projected into this behavior capsule. The authoritative
   behavior boundary is `endpoints`, `directMethods`, and their `directCalls`.
 - Do not infer behavior from names or inspect unrelated features. Report a design contract
   gap only when the behavior capsule itself is insufficient. If task-check names unlisted

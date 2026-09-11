@@ -1722,7 +1722,7 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
         [],
         bounded_evidence=True,
     )
-    assert "read only the task context and its readSourcePaths" in bounded
+    assert "readSourcePaths is an optional readable allowlist, not a checklist" in bounded
     assert "call finish with the exact design contract gap" in bounded
     assert "report the missing implementation context" in bounded
     assert "investigation hints" not in bounded

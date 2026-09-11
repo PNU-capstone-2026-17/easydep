@@ -328,7 +328,8 @@ def _owner_workspace_guidance(
     if bounded_evidence:
         common.extend(
             [
-                "- Before the first edit, read only the task context and its readSourcePaths; do not list or grep broader directories.",
+                "- Treat the behavior capsule as self-contained. Start with the task context and existing writable implementation files; readSourcePaths is an optional readable allowlist, not a checklist.",
+                "- Open a listed contract only when a specific named type or member blocks an edit. Do not reopen per-method context already projected into the behavior capsule; do not list or grep broader directories.",
                 "- Treat behaviorCapsule endpoints, directMethods, and directCalls as the authoritative behavior boundary.",
                 "- If that evidence cannot express required behavior, call finish with the exact design contract gap instead of inventing collaborators or broadening discovery. If verification names an unlisted file, do not read it; report the missing implementation context.",
             ]
