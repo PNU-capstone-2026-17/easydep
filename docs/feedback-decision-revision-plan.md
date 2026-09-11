@@ -167,7 +167,7 @@ Requirements가 완료되면 `start_design`을 노출한다. 새 Design command�
 
 - 이 문서와 현재 코드의 경계를 맞춘다.
 - schema 변경, lock, accepted-head manifest와 범용 상태기계를 제외한다.
-- Astra에게 prototype 범위의 치명적 결함만 검토받는다.
+- Sol에게 prototype 범위의 치명적 결함만 검토받는다.
 
 ### 하위 작업 B — 실제 Workspace 수직 연결
 
@@ -243,7 +243,30 @@ patch protocol, 전용 LLM 실험 runner와 그 전용 테스트가 포함된다
 
 한 쌍의 실행으로 계측 경로를 먼저 확인하고, 차이가 불명확할 때만 반복 횟수를 늘린다.
 
-## 9. Luna·Terra·Astra 활용
+2026-09-12 수강신청 앱(`522d73e6-3aee-42af-a787-15a22ab364b0`)을
+`openai/gpt-oss-120b`로 실행한 단일 사례 결과는 다음과 같다.
+
+| 실행 | 시간 | 실제 LLM 요청 | 입력/출력 토큰 | 결과 |
+|---|---:|---:|---:|---|
+| 초기 경로 | 86.0초 | 24 | 95,504 / 74,222 | 타입 alias를 다른 시그니처로 오판해 UC3 중단 |
+| alias·container 정규화 뒤 | 90.3초 | 35 | 102,573 / 63,721 | UC9의 현재 행위자 ID를 공급 불가능한 인자로 만들어 중단 |
+| current-actor·type-closure 지시 뒤 | 111.2초 | 38 | 105,359 / 64,978 | 클래스 생성 완료, 검토에서 같은 UUID끼리 의미가 다른 바인딩 2건 발견 |
+| UC2·UC3 국소 피드백 | 42.4초 | 8 | 20,305 / 9,423 | 두 바인딩 제거, 다른 UC·구조·타입·관계 보존 |
+
+최종 클래스는 결정론 검사와 Sol 검토를 통과했다. 이어 만든 11개 시퀀스는 LLM 호출 없이
+투영됐고 unresolved/narrative step과 finding이 모두 0이었다. 따라서 관측된 결함 종류를
+차단하고 국소 피드백으로 수렴시키는 효과는 확인했지만, 최초 전체 생성은 더 느리고 호출도
+많았다. 한 사례만으로 결함률 일반화를 주장하지 않으며 다음 개선 초점은 검사 계층 확대가
+아니라 최초 후보의 품질과 검토 뒤 대상 UC만 고치는 기존 국소 경로의 활용이다.
+
+API path 실패 입력을 같은 메시지·응답 스키마로 비교했을 때 OSS 120B는 14.4초에 응답했지만
+structured request의 내부 ID를 path placeholder로 쓴 2건 때문에 정규화를 통과하지 못했다.
+GLM 5.3 Flash는 같은 위반 없이 통과했지만 181.0초와 11,048 출력 토큰이 들었다. 모델을
+교체하지 않고 기존 schema-repair 경계에 top-level Boundary parameter 검사를 연결한 뒤 OSS
+120B는 40.8초·물리 요청 5회로 13개 endpoint를 생성했고 class·sequence·API readiness가 모두
+`READY`가 됐다. 이는 단일 응답 품질 차이이며 모델 전체의 우열로 일반화하지 않는다.
+
+## 9. Luna·Terra·Sol·Astra 활용
 
 서브에이전트는 서로 겹치지 않는 작은 파일 단위만 맡는다.
 
@@ -252,9 +275,10 @@ patch protocol, 전용 LLM 실험 runner와 그 전용 테스트가 포함된다
 | Luna | Question·Decision 순수 변환, action read model, 작은 fixture와 단위 테스트 | RTM 권한 판정, 저장 transaction, stage orchestration |
 | Terra | 기존 Workspace command 연결, owner routing, 재개·중복 실행 통합 테스트 | LLM prompt 확장, UI 의미 추측, 새 DB schema |
 | 주 에이전트 | 계약 동결, 변경 통합, 회귀 테스트와 범위 축소 | 미확정 계약의 병렬 구현 |
-| Astra | 각 하위 작업 뒤 치명적 권한·stage 경계·재호출 결함 검토 | 새 기능 제안과 범위 확대 |
+| Sol | 각 하위 작업 뒤 치명적 권한·stage 경계·재호출 결함 검토 | 새 기능 제안과 범위 확대 |
+| Astra | 방법론이나 시스템 경계가 바뀌는 예외적 고위험 검토 | 일상적인 코드 재검토 |
 
-각 하위 작업은 주 에이전트와 Astra의 검토를 받은 뒤 사용자 승인을 요청한다. 승인 전에는
+각 하위 작업은 주 에이전트와 Sol의 검토를 받은 뒤 사용자 승인을 요청한다. 승인 전에는
 커밋하거나 다음 하위 작업으로 넘어가지 않는다.
 
 ## 10. 비범위

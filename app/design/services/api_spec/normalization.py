@@ -380,6 +380,12 @@ def _field_type_for_placeholder(
     return _api_contract_type_for_control(expected[name])
 
 
+def path_placeholders(path: str) -> tuple[str, ...]:
+    """Return unique placeholder names using the accepted HTTP path grammar."""
+
+    return tuple(dict.fromkeys(re.findall(r"\{([^{}]+)\}", path)))
+
+
 def _http_inputs(
     endpoint: dict[str, Any],
     contract: InteractionContract,
@@ -388,7 +394,7 @@ def _http_inputs(
     """Control 서명과 HTTP 방식에서 path/query/body 입력을 결정한다."""
 
     expected = dict(contract.boundary_parameters)
-    placeholders = list(dict.fromkeys(re.findall(r"\{([^{}]+)\}", str(endpoint.get("path") or ""))))
+    placeholders = path_placeholders(str(endpoint.get("path") or ""))
     path_params = [
         {
             "name": name,

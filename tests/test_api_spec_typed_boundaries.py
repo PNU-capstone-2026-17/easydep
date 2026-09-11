@@ -409,6 +409,14 @@ def test_path_placeholder_does_not_assume_a_nested_field_role_from_its_name() ->
         )
 
 
+def test_finite_proposal_schema_rejects_nested_field_placeholder() -> None:
+    proposal = _proposal().model_dump()
+    proposal["Endpoints"][0]["path"] = "/courses/{keyword}"
+
+    with pytest.raises(ValidationError, match="top-level Boundary parameters"):
+        service._finite_proposal_schema(_bce_model()).model_validate(proposal)
+
+
 def test_generation_service_accepts_typed_inputs_and_returns_normalized_model() -> None:
     calls: list[type[ApiSpecProposal]] = []
 

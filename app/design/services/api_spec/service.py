@@ -4,7 +4,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, Field, create_model, model_validator
 
 from app.design.contracts.api_spec import (
     ApiEndpointProposal,
@@ -16,6 +16,7 @@ from app.design.services.api_spec.normalization import (
     api_spec_proposal_from_model,
     interaction_contracts,
     normalize_api_spec_model,
+    path_placeholders,
 )
 from app.design.services.api_spec.prompts import (
     API_SPEC_REVISION_SYSTEM_PROMPT,
@@ -34,9 +35,37 @@ def _finite_proposal_schema(bce_model: BCEModel) -> type[ApiSpecProposal]:
     알려 주어, 한 항목을 길게 쓰느라 나머지를 빠뜨리거나 같은 후보를 반복하지 못하게 한다.
     """
 
-    interaction_ids = tuple(item.interaction_id for item in interaction_contracts(bce_model))
+    contracts = interaction_contracts(bce_model)
+    interaction_ids = tuple(item.interaction_id for item in contracts)
     if not interaction_ids:
         return ApiSpecProposal
+    allowed_placeholders = {
+        item.interaction_id: {name for name, _type in item.boundary_parameters}
+        for item in contracts
+    }
+
+    def validate_path_placeholders(value: ApiSpecProposal) -> ApiSpecProposal:
+        invalid = [
+            {
+                "interactionId": endpoint.interaction_id,
+                "path": endpoint.path,
+                "invalid": sorted(
+                    set(path_placeholders(endpoint.path))
+                    - allowed_placeholders.get(endpoint.interaction_id, set())
+                ),
+                "allowed": sorted(allowed_placeholders.get(endpoint.interaction_id, set())),
+            }
+            for endpoint in value.Endpoints
+            if set(path_placeholders(endpoint.path))
+            - allowed_placeholders.get(endpoint.interaction_id, set())
+        ]
+        if invalid:
+            raise ValueError(
+                "path placeholders must exactly name top-level Boundary parameters: "
+                f"{invalid}"
+            )
+        return value
+
     finite_endpoint = create_model(
         "FiniteApiEndpointProposal",
         __base__=ApiEndpointProposal,
@@ -48,6 +77,11 @@ def _finite_proposal_schema(bce_model: BCEModel) -> type[ApiSpecProposal]:
     return create_model(
         "FiniteApiSpecProposal",
         __base__=ApiSpecProposal,
+        __validators__={
+            "path_placeholders_are_boundary_parameters": model_validator(mode="after")(
+                validate_path_placeholders
+            )
+        },
         Endpoints=(
             list[finite_endpoint],  # type: ignore[valid-type]
             Field(min_length=len(interaction_ids), max_length=len(interaction_ids)),

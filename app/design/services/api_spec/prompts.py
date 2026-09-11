@@ -18,7 +18,9 @@ and useful response status descriptions.
 - Choose a concrete resource path such as /registrations or /offerings/{offeringId};
   never use the API root path by itself.
 - Every method and path pair must be unique because duplicate pairs overwrite each other.
-- Include identifiers in path placeholders when they make a resource path clearer.
+- Include identifiers in path placeholders when they make a resource path clearer, but
+  only when the placeholder exactly names a top-level Boundary parameter visible in the
+  interactionId signature. Never use a field nested inside a structured request parameter.
 - Include the successful status and failures stated by the use-case extensions.
 - Do not return operation IDs, parameters, schemas, Control bindings, argument sources,
   result names, class traces, or use-case traces. The application derives all of them
@@ -34,6 +36,8 @@ grounded in the supplied candidates and return the full minimal API proposal.
 Return only path, method, summary, and response statuses in addition to interactionId.
 The application derives operation IDs, parameters, schemas, Control bindings, argument
 mappings, outcomes, and trace fields from the accepted class collaboration.
+Use a path placeholder only when it exactly names a top-level Boundary parameter visible
+in the interactionId signature; never use a nested field of a structured request.
 """.strip()
 
 
