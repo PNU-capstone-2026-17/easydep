@@ -150,7 +150,8 @@ def _created(repository, key="k1"):
 
 
 def test_create_is_idempotent_and_conflicts_on_payload(repository):
-    decision, _, _, _ = _created(repository)
+    decision, _, _, attached = _created(repository)
+    assert "stage" not in attached.model_dump()
     assert repository.create(
         app_id="app", idempotency_key="k1", source_identity="source", decision=decision
     ) == repository.load("app", "k1")
@@ -320,6 +321,7 @@ def test_publish_rejects_old_base_and_accepts_correct_head(repository):
         entries=entries,
     )
     assert repository.current_head("app") == published.manifest.head_id
+    assert "source_change_set_id" not in published.manifest.model_dump()
     _, cs2, versions2 = _bundle("2")
     second = repository.create(
         app_id="app",

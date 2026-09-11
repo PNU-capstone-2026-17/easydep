@@ -112,14 +112,12 @@ class AcceptedManifest(_Frozen):
     head_id: str
     previous_head_id: str | None
     publish_sequence: int
-    source_change_set_id: str
     entries: tuple[AcceptedArtifactEntry, ...]
 
 
 class FeedbackAggregate(_Frozen):
     idempotency_key: str
     source_identity: str
-    stage: Literal["requirements", "design", "implementation", "testing"]
     decision: Decision
     change_set: ChangeSet | None = None
     execution_versions: tuple[ExecutionVersionSpec, ...] = ()
@@ -217,7 +215,6 @@ class FeedbackRepository:
         value = FeedbackAggregate(
             idempotency_key=idempotency_key,
             source_identity=source_identity,
-            stage=stage,
             decision=decision,
         )
         with self._tx() as s:
@@ -229,7 +226,7 @@ class FeedbackRepository:
                 if (
                     old.decision == decision
                     and old.source_identity == source_identity
-                    and old.stage == stage
+                    and row.stage == stage
                 ):
                     return old
                 raise FeedbackRepositoryError("idempotency conflict")
@@ -542,7 +539,6 @@ class FeedbackRepository:
                 ),
                 previous_head_id=base,
                 publish_sequence=sequence + 1,
-                source_change_set_id=old.change_set.change_set_id,
                 entries=entries,
             )
             new = old.model_copy(update={"manifest": manifest, "revision": old.revision + 1})
