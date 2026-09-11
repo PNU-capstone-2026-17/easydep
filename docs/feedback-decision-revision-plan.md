@@ -1,659 +1,273 @@
-# 전역 사용자 피드백과 revision 개선안
+# 전역 사용자 피드백과 단계 revision 개선안
 
-## 1. 문서 상태와 결정
+## 1. 문서 상태
 
-이 문서는 요구사항·설계·구현·테스트에서 발생하는 사용자 질문과 답변을 하나의 변경
-계약으로 처리하기 위한 목표 설계다. 현재 운영 경로를 설명하는 문서가 아니라, 기존의
-단계별 feedback gate, Workspace revision planner, RTM과 cascade를 어떤 공통 경계로
-연결할지 정한다.
+이 문서는 요구사항·설계·구현·Testing에서 받은 사용자 피드백을 어느 단계가 처리할지
+정하는 목표 설계다. 범용 workflow engine을 만드는 계획이 아니다.
 
-다음 결정을 채택한다.
+첫 완료 범위는 다음 한 경로다.
 
-1. 전역 workflow engine을 새로 만들지 않는다. 현재 고정된 파이프라인과 단계별 adapter를
-   유지하고 `Question`, `Decision`, `ChangeSet` 계약만 공통화한다.
-2. 클래스 설계 개선을 운영 경로에 통합하기 전에 이 공통 계약을 먼저 확정한다.
-3. 피드백 시스템 전체를 별도 프로젝트로 완성한 뒤 클래스 설계로 돌아가지 않는다.
-   `UC 명세 → class bundle → sequence`를 첫 실제 적용 경로로 사용한다.
-4. RTM은 변경 영향의 후보와 검증 근거를 제공한다. 사용자 답변의 의미, 수정 권한과 최종
-   실행 범위는 RTM만으로 결정하지 않는다.
-5. 요구사항 의미 결정, 설계 선택, 생성 결함과 시스템 결함을 구분한다. 사용자에게는 실제
-   제품 의미를 결정해야 할 때만 질문한다.
-6. 선택지와 자유 답변은 같은 `Decision`으로 정규화한다. 모호한 답변은 승인으로 통과시키지
-   않고 다시 명확화한다.
-7. 변경 중간 상태는 재개할 수 있게 저장하되, 유효한 최신 산출물인 accepted head는 영향
-   범위의 정합성이 확보됐을 때만 교체한다. 갱신하지 못한 downstream은 같은 변경에서
-   `stale`로 표시하고 소비를 차단한다.
-8. 기본 실행 모델은 일반적인 대화형 AI 서비스의 workspace single-flight다. 한 사용자
-   메시지의 처리가 끝날 때까지 같은 workspace의 다음 메시지를 대기시키며, 실제 필요가
-   확인되기 전에는 별도 행 잠금·분산 상태기계·감사 프로토콜을 추가하지 않는다.
-9. 현재 stage는 이전 stage가 소유한 산출물을 직접 수정하지 않는다. upstream 변경이
-   필요하면 해당 owning stage로 명령을 보낸다. 새 upstream 결과를 검증된 draft로 확정한
-   뒤 downstream을 다시 실행하고 전체 변경은 하나의 accepted head로 공개한다. RTM은
-   rewind 후보와 재실행 범위의 근거이며, 최종 owner는 typed `Decision`과 ownership rule로
-   확정한다.
+```text
+설계에서 UC 명세 공백 발견
+  → 사용자 질문과 Decision
+  → 별도 Requirements command에서 UC 수정
+  → 별도 `start_design` command에서 class 재생성·검토
+  → 별도 진행 command에서 sequence를 결정론적으로 투영
+```
 
-핵심 원칙은 **사용자 의미 결정과 생성 수리를 분리하고 변경 전 영향 범위를 고정하는 것**이다.
-변경 후 추적 관계 재검증은 실제 소비 경계가 생기는 수직 통합의 후속 목표다.
+현재 `Question`·`Decision`·`ChangeSet`·저장 repository와 stage adapter는 격리된
+prototype이다. 계약과 상태 규칙은 테스트했지만 아직 Workspace 운영 경로에서 호출하지
+않는다. 운영 연결에서는 실제로 쓰는 계약만 채택하고 나머지는 삭제하거나 격리한다.
 
-## 2. 해결하려는 문제
+## 2. 고정 원칙
 
-현재 각 단계에는 피드백을 처리하는 기능이 있지만 수명주기가 하나로 연결되어 있지 않다.
+1. 현재 stage는 이전 stage가 소유한 산출물을 직접 수정하지 않는다. upstream 변경이
+   필요하면 해당 owning stage의 새 Workspace command를 만든다.
+2. 한 command는 한 stage의 작업만 수행한다. owner stage가 끝난 뒤 사용자가 다음 stage를
+   시작하며, 자동 모드는 노출된 action을 순서대로 선택할 뿐 stage를 합치지 않는다.
+3. 같은 workspace에서는 한 사용자 메시지의 처리가 끝날 때까지 다음 메시지를 기다린다.
+   별도 행 잠금, 분산 lock과 다중 worker 상태기계는 추가하지 않는다.
+4. 기존 MySQL 스키마를 변경하지 않는다. 필요한 입력과 재개 정보는 기존 command payload와
+   기존 단계 checkpoint에 저장한다.
+5. RTM은 정확히 연결된 영향 후보를 찾는 근거다. RTM 링크만으로 수정 권한을 부여하거나
+   링크가 없는 관계를 이름·LLM 추측으로 보완하지 않는다.
+6. 사용자에게는 제품 의미를 결정해야 할 때만 질문한다. schema 오류, provider 실패와 명백한
+   생성 결함은 사용자 질문으로 바꾸지 않는다.
+7. 토큰 절감보다 최초 결과의 결함과 결함-수정 반복을 줄이는 것을 우선한다.
+8. 환경이나 한 단계만 실패하면 전체 파이프라인을 다시 시작하지 않고 해당 owning stage의
+   저장된 checkpoint에서 재개한다.
 
-- 요구사항 feedback cascade는 상류 단계를 수정하면 뒤 단계를 새로 실행하는 선형 경로다.
-- 요구사항 resource question은 유한 선택지를 결정론적으로 적용하지만, 일반적인 자유 답변을
-  전역 revision으로 연결하는 공통 결정 기록은 아니다.
-- Workspace revision planner는 의미 범위, 수정 권한, exact upstream link와 stale plan을
-  검사하지만 모든 단계의 질문을 만들고 보존하는 주체는 아니다.
-- 설계 RTM과 cascade는 정확한 설계 링크, 국소 merge와 결정론적 재투영을 지원하지만
-  요구사항으로 돌아가는 변경은 Workspace의 별도 stage rewind에 의존한다.
+## 3. 소유권 경계
 
-이 상태에서 클래스 생성기만 질문 기능을 가지면 같은 문제가 반복된다.
+| 발견 위치 | 변경 대상 | 처리하는 stage | 처리 방식 |
+|---|---|---|---|
+| Design | UC 명세 | Requirements | 별도 Requirements command |
+| Sequence | class·operation·call | Design의 class 단계 | class 수정 후 sequence 재투영 |
+| Implementation | class·API 등 설계 계약 | Design | 별도 Design command |
+| Testing | 생성된 source·test | Implementation | 별도 Implementation command |
+| 임의 stage | 같은 stage가 소유한 산출물 | 현재 owning stage | 지원되는 bounded reviser |
 
-- 클래스 단계에서 발견한 요구사항 공백을 operation repair로 덮을 수 있다.
-- 같은 요구사항을 사용하는 다른 산출물에는 사용자의 결정이 반영되지 않는다.
-- 사용자의 답변과 그 답변이 바꾼 authoritative artifact 사이의 계보가 남지 않는다.
-- 상류 변경 뒤 어떤 checkpoint를 재사용할 수 있는지 설명하거나 검증하기 어렵다.
-- 실패하면 이미 유효한 형제 작업까지 다시 호출하는 결함-수정 루프가 생긴다.
+Sequence는 class collaboration의 projection이므로 sequence 단계에서 class를 역수정하지 않는다.
+Testing도 구현 파일을 직접 수정하지 않는다. 이 두 경계는 현재 코드에 반영되어 있다.
 
-따라서 질문 UI 자체보다 먼저 답변을 변경으로 승격하는 공통 프로토콜이 필요하다.
+하나의 질문이 여러 owning stage를 동시에 수정해야 한다면 한 command에서 함께 실행하지
+않는다. 가장 upstream인 owner부터 실행하고, 완료 결과를 입력으로 다음 stage command를
+시작한다.
 
-## 3. 범위와 비범위
+## 4. 최소 피드백 계약
 
-### 3.1 이번 개선의 범위
+### 4.1 Question
 
-- 선택지와 자유 답변을 표현하는 공통 질문 계약
-- 사용자 원문과 정규화된 의미를 보존하는 결정 기록
-- 의미 소유권과 RTM 영향을 결합한 변경 계획
-- 변경 전 revision·digest 고정과 실행 직전·publish 직전 stale 검사
-- 단계별 `rebuild`, `reproject`, `stale` 처리
-- durable checkpoint, 중복 제출 방지와 멱등 재개
-- accepted head와 변경 draft의 분리
-- 첫 수직 경로의 요구사항→클래스→시퀀스 전파
+Question은 다음 정보만 필요로 한다.
 
-### 3.2 이번 개선의 비범위
+- 질문 ID와 version
+- app ID와 질문을 만든 command ID
+- 질문이 근거한 artifact version
+- 발견 stage와 finding 종류
+- 사용자에게 보여 줄 질문
+- stable option ID가 있는 선택지
+- 자유 답변 허용 여부
+- 코드가 검증할 수 있는 owner 후보
 
-- 임의 노드와 동적 분기를 정의하는 범용 workflow DSL
-- 모든 필드와 문장에 대한 완전한 dependency graph
-- RTM 링크가 없는 관계를 LLM이나 이름 유사도로 추측하는 기능
-- 클래스 effect·obligation ontology의 확장
-- 사용자에게 schema·참조·타입 오류를 고치게 하는 기능
-- 첫 수직 경로에서 모든 API·ERD·배포 산출물을 즉시 다시 생성하는 기능
+오래된 artifact version에 대한 답변은 실행하지 않는다. 같은 질문을 다시 만들 때에는 기존
+option의 의미를 바꾸지 않고 question version을 올린다.
 
-최소 변경 단위는 이론적으로 가장 작은 필드가 아니라, 현재 추적 정보와 reviser가 안전하게
-지원하는 단위 중 가장 작은 것으로 정의한다. 처음에는 `UC 명세`와 `class bundle`이면 충분하다.
+### 4.2 Decision
 
-## 4. 피드백이 필요한 문제의 분류
+Decision은 선택지와 자유 답변을 같은 형태로 보존한다.
 
-질문을 만들기 전에 finding을 다음 네 종류로 분류한다.
+- Decision ID와 원본 Question ID·version
+- 사용자의 원문 또는 선택한 option ID
+- 정규화된 의미와 요청 효과
+- 확정된 authoritative target
+- `NORMALIZED` 또는 `NEEDS_CLARIFICATION` 상태
 
-| 종류 | 예시 | 처리 |
+선택지는 미리 정의된 payload를 사용한다. 자유 답변은 LLM이 정규화 후보를 만들 수 있지만,
+target 존재 여부, owner, 현재 version과 허용 change type은 코드가 검증한다. 의미가 여러
+가지면 실행하지 않고 다시 질문한다.
+
+### 4.3 실행 계획
+
+첫 운영 경로에서는 범용 execution graph를 만들지 않는다. 검증된 Decision을 기존
+`RevisionPlan`과 공개 action으로 변환하여 다음 command 하나를 만든다.
+
+- owner stage
+- 대상 artifact ref와 고정 version
+- 사용자 결정에서 나온 수정 지시
+- source question·decision·command ID
+- 다음 stage가 사용할 공개 action
+
+prototype `ChangeSet`을 사용해야 할 때에도 첫 경로에 필요한 `rebuild`와 등록된
+`reproject`만 허용한다. `reuse`, `revalidate`, 범용 `stale` 전파는 추가하지 않는다.
+
+## 5. 중복 실행과 재개
+
+기존 Workspace single-flight와 단계 checkpoint를 사용해 다음 규칙만 지킨다.
+
+- 같은 Question version의 Decision을 두 번 제출해도 새 revision을 두 번 만들지 않는다.
+- 같은 Decision에서 같은 owner command를 두 번 만들지 않는다.
+- command 실행 직전에 대상 artifact version이 질문의 base version과 같은지 검사한다.
+- LLM 호출이 필요한 stage는 기존 단계 checkpoint와 attempt 기록을 사용한다.
+- 입력 digest와 prompt·validator version이 같은 완료 checkpoint만 재사용한다.
+- 실패 checkpoint는 다시 실행할 수 있지만 완료 checkpoint는 같은 입력으로 재호출하지 않는다.
+- 결과 수신 여부가 불명확한 원격 호출은 성공으로 간주하지 않고 `OUTCOME_UNKNOWN`으로 남긴다.
+- 오래된 base version이면 publish하지 않고 새 질문 또는 재계획으로 돌아간다.
+
+별도의 accepted-head manifest, manifest chain과 전역 artifact validity 표는 만들지 않는다.
+완료된 stage artifact와 command 상태가 현재 공개 경계다. upstream command가 실패하면 기존
+완료 산출물은 그대로 유지하고 downstream command를 시작하지 않는다.
+
+## 6. 첫 운영 수직 경로
+
+### 6.1 질문 생성
+
+Class 설계기가 deterministic validator로 해결할 수 없는 specification gap을 발견하면
+Workspace에 질문을 반환한다. 질문은 가능한 UC 명세 target을 유한 후보로 제공하고 선택지와
+자유 답변을 함께 허용한다.
+
+Class schema·참조·타입 결함, LLM 응답 오류와 provider failure는 이 경로로 보내지 않는다.
+
+### 6.2 Requirements로 이동
+
+사용자 답변이 특정 UC 명세 변경으로 확정되면 Design command 안에서 UC를 수정하지 않는다.
+Workspace가 별도 Requirements command를 만들고 다음 정보만 전달한다.
+
+- UC 명세 ID
+- 검증된 사용자 수정 지시
+- base artifact version
+- source question·decision ID
+
+기존 requirements feedback adapter가 해당 UC를 수정하고 기존 validation·저장 경계를 그대로
+사용한다. 실패하면 Requirements command만 재개한다.
+
+### 6.3 Design 재실행
+
+Requirements가 완료되면 `start_design`을 노출한다. 새 Design command는 수정된 UC 명세를
+입력으로 설계 checkpoint를 초기화하고 class를 처음부터 생성한 뒤 기존 class 검토 gate에서
+멈춘다. class bundle은 클래스 구조, operation과 Collaboration을 함께 검증하는 현재의 안전한
+단위로 유지한다.
+
+사용자가 기존 진행 action을 선택하면 별도 command가 새 class collaboration에서 sequence를
+코드로 투영한다. sequence를 만들기 위한 별도 LLM 호출이나 sequence 단계의 class 역수정은
+허용하지 않는다. 이 첫 경로에 targeted class cascade용 새 진입점은 만들지 않는다.
+
+## 7. 현재까지 완료된 작업
+
+- [x] version-pinned Question·Decision envelope prototype
+- [x] deterministic ownership·RTM ChangeSet planner prototype
+- [x] 중복 제출·checkpoint 재사용 규칙을 검증하는 repository prototype
+- [x] Requirements와 Design 입력으로 바꾸는 작은 stage adapter
+- [x] UC 수정 → class cascade → sequence projection 계약 테스트
+- [x] sequence의 class 역수정 제거
+- [x] Design에서 upstream owner로 보내는 경계 정리
+- [x] Testing 수리와 Implementation을 별도 command로 분리
+- [x] Testing 재실행을 별도 `start_testing` command로 분리
+
+위 항목 중 `prototype`으로 표시한 코드는 운영 완료를 뜻하지 않는다.
+
+## 8. 남은 구현 순서
+
+### 하위 작업 A — 문서와 범위 동결
+
+- 이 문서와 현재 코드의 경계를 맞춘다.
+- schema 변경, lock, accepted-head manifest와 범용 상태기계를 제외한다.
+- Astra에게 prototype 범위의 치명적 결함만 검토받는다.
+
+### 하위 작업 B — 실제 Workspace 수직 연결
+
+- specification gap Question을 기존 Workspace 응답과 action으로 노출한다.
+- Decision을 검증하고 별도 Requirements command로 라우팅한다.
+- Requirements 완료 뒤 기존 `start_design` command로 class를 다시 생성·검토한다.
+- 기존 진행 action으로 별도 command를 만들고 sequence를 결정론적으로 투영한다.
+- 기존 MySQL schema와 command payload만 사용한다.
+
+### 하위 작업 C — 최소 통합 검증
+
+다음 사례만 검증한다.
+
+1. 선택지 답변이 정확한 UC owner command를 만든다.
+2. 모호한 자유 답변은 실행되지 않고 다시 질문된다.
+3. 오래된 question/action은 stage를 호출하지 않는다.
+4. 같은 Decision의 중복 제출이 중복 revision을 만들지 않는다.
+5. Requirements 또는 Design 실패는 해당 command에서만 재개된다.
+6. class 변경 뒤 sequence projection에는 LLM 호출이 없다.
+
+테스트는 먼저 Workspace service와 기존 repository 경계를 사용한다. 전체 브라우저·실제 LLM
+종단 실행은 이 계약이 통과한 뒤 별도 평가로 수행한다.
+
+### 하위 작업 D — 사용되지 않은 prototype 축소
+
+수직 경로에서 실제 import되고 실행된 계약을 확인한다. 운영 경로가 사용하지 않는 다음 요소는
+삭제 또는 격리 후보로 본다.
+
+- 범용 RTM diff와 target remap
+- accepted manifest와 전역 stale 소비 차단
+- 미래 `reuse`·`revalidate` 상태
+- 별도 sequence 실행 입력
+- 모든 stage를 포괄하는 repository 상태기계
+
+### 하위 작업 E — 클래스 설계 prototype 축소와 통합
+
+피드백 수직 경로가 안정된 뒤 `executable_behavior` prototype에서 다음만 남긴다.
+
+- class bundle과 Collaboration의 동일 revision 검증
+- schema·type·parent·binding 검사
+- operation·call 참조 무결성
+- 생성 결함과 specification gap 구분
+- class 결과에서 sequence를 만드는 순수 projection
+- 핵심 결함만 확인하는 간단한 리뷰
+
+effect·obligation ontology 확장, 범용 finding 상태기계와 실행 group별 봉인은 운영 통합 범위에서
+제외한다.
+
+### 하위 작업 F — 실제 LLM 비교 평가
+
+수강신청 앱을 OSS 120B로 기존 경로와 개선 경로에 같은 입력으로 실행한다. 평가는 토큰량보다
+다음 지표를 우선한다.
+
+- 최초 validator 통과율
+- 최초 결과의 결함 수와 종류
+- 수정 LLM 호출 수
+- 같은 결함의 반복 횟수
+- 최종 class·sequence 무결성
+- 전체 소요 시간
+
+한 쌍의 실행으로 계측 경로를 먼저 확인하고, 차이가 불명확할 때만 반복 횟수를 늘린다.
+
+## 9. Luna·Terra·Astra 활용
+
+서브에이전트는 서로 겹치지 않는 작은 파일 단위만 맡는다.
+
+| 역할 | 맡길 작업 | 맡기지 않는 작업 |
 |---|---|---|
-| 요구사항 결정 | 철회 뒤 대기자를 자동 승급하는지 명시되지 않음 | 사용자에게 질문하고 authoritative requirements artifact를 revision |
-| 설계 선택 | 같은 요구사항을 만족하는 내부 책임 배치가 여러 개임 | 설계 단계가 선택하고 근거·검증을 기록 |
-| 생성 결함 | 존재하지 않는 operation ref, type mismatch, 잘못된 parent | 계약 소유 단위의 결정론 검사와 국소 repair |
-| 검사기·시스템 결함 | validator 모순, schema transport 실패, checkpoint 손상 | 후보를 다시 생성하지 않고 시스템 실패로 종료·재개 |
-
-사용자 질문은 첫 번째에만 필수다. 설계 선택을 모두 질문으로 바꾸면 사용자가 설계 validator가
-되고, 생성 결함을 질문으로 바꾸면 모델의 오류 비용이 사용자에게 이전된다.
-
-분류가 불가능하면 자동 repair하지 않고 `UNRESOLVED`로 남긴다. 분류 자체가 제품 의미에
-달려 있다면 제한된 선택지로 명확화할 수 있다.
-
-## 5. 공통 계약
-
-### 5.1 Question
-
-`Question`은 어느 실행에서 왜 질문이 생겼고 어떤 revision에 적용되는지를 고정한다.
-
-```text
-Question
-  questionId
-  questionVersion
-  appId
-  sourceExecutionId | draftId
-  detectedAt: {stage, artifactRef, elementRef?}
-  baseRevisions[]
-  trigger: {category, findingRefs[], evidenceRefs[]}
-  authorityCandidates[]
-  decisionPolicy:
-    allowedSemanticScopes[]
-    allowedChangeTypes[]
-    requiredPreservedConstraints[]
-  prompt
-  options[]
-  allowFreeText
-  blocking
-  status
-```
-
-accepted artifact가 아직 없는 최초 생성 도중의 질문은 `sourceExecutionId` 또는 `draftId`로
-출처를 식별한다. Question 상태는 `OPEN`, `ANSWERED`, `SUPERSEDED`, `DISMISSED`, `STALE`로
-제한하며, ChangeSet의 실행 상태와 섞지 않는다.
-
-각 option은 표시 문자열이 아니라 stable ID와 결정 payload를 가진다.
-
-```text
-QuestionOption
-  optionId
-  label
-  description
-  recommended
-  decisionPayload
-```
-
-`decisionPayload`는 허용된 의미 schema와 target 종류를 만족하는 서버 소유 값이다. 사용자가
-선택한 label을 다시 자연어 해석하지 않는다. `questionVersion`, `baseRevisions`와 적용 owner가
-일치할 때만 결정론적으로 적용한다.
-
-`decisionPolicy`는 자유문장의 의미 전체를 판정하지 않는다. 질문에서 허용한 semantic scope와
-change type, 반드시 보존해야 할 구조화 constraint만 고정한다. 선택지 payload는 질문을 열기
-전에 이 정책을 만족해야 하며, 자유 답변의 정규화 후보가 정책을 벗어나면 실행 가능한 결정으로
-만들지 않고 명확화로 돌린다.
-
-### 5.2 Decision
-
-선택지와 자유 답변은 동일한 결정 기록으로 들어간다.
-
-```text
-Decision
-  decisionId
-  appId
-  origin: question_answer | direct_feedback
-  questionId?
-  questionVersion?
-  sourceUserMessageId
-  answerMode: option | free_text
-  selectedOptionId?
-  rawAnswer
-  normalizedMeaning
-  authoritativeTargets[]
-  preservedConstraints[]
-  baseRevisions[]
-  status
-  supersedesDecisionId?
-```
-
-`direct_feedback`은 사용자가 질문을 거치지 않고 기존 산출물의 수정을 직접 요청한 경우다.
-이때 가짜 Question을 만들지 않고 사용자 메시지, 명시 target과 요청 범위를 근거로 사용한다.
-Decision 상태는 `RECEIVED`, `NORMALIZED`, `NEEDS_CLARIFICATION`, `SUPERSEDED`, `CANCELLED`로
-관리한다.
-
-`rawAnswer`는 앞뒤 공백과 줄바꿈을 포함해 변경하지 않는 사용자 원문이다.
-`normalizedMeaning`은 제한된 typed 의미 계약이다. `NORMALIZED`는 질문 정책 안에서 구조화가
-끝났다는 뜻이며 실행 승인, catalog 소속 또는 ownership 검증 완료를 뜻하지 않는다. 자유
-답변은 LLM이 정규화 후보를 만들 수 있지만 다음 항목은 코드가 검증한다.
-
-- 질문과 답변의 revision 대응
-- target kind와 stable ID의 존재
-- ownership registry가 허용하는 authoritative target
-- 질문이 허용한 semantic scope, change type과 필수 보존 제약
-- 코드로 표현된 보존 제약
-
-자유 답변의 의미가 하나로 좁혀지지 않거나 질문 범위를 넘어가면 `Decision`을 실행하지 않고
-새 clarification question을 만든다. 모호한 문장을 사용자에게 그대로 승인받는 방식은 의미를
-확정하지 못하므로 허용하지 않는다. 코드로 판정할 수 없는 비구조화 의미 충돌은 사용자 원문과
-근거를 포함한 명확화 또는 제한된 검토 대상으로 남긴다. 정규화 confidence가 높다는 이유로
-사용자가 승인한 의미나 변경 범위를 넓히지 않는다.
-
-### 5.3 ChangeSet
-
-`ChangeSet`은 하나의 결정이 어떤 revision과 downstream 유효성에 영향을 주는지 고정한다.
-
-```text
-ChangeSet
-  changeSetId
-  appId
-  decisionId
-  decisionSnapshot
-  decisionDigest
-  baseHead
-  baseRevisions[]
-  artifactSnapshot[]: {target, versionId | digest}
-  preChangeTraceDigest
-  preChangeImpact[]
-  authoritativeTargets[]
-  executionUnits[]
-  unresolvedImpact[]
-  planVersion
-  planDigest
-  approvedPlanDigest?
-  approvalEvidence?
-  status
-  checkpoints[]
-  publishedHead?
-```
-
-execution unit은 계획과 checkpoint가 공통으로 참조하는 명시적 단위다.
-
-```text
-ExecutionUnit
-  executionUnitId
-  owner
-  artifact
-  action
-  dependencies[]: {producerRef, producerRevisionOrDigest, relation}
-  dependsOnUnitIds[]
-  status
-```
-
-재계획하면 `planVersion`을 증가시키고 이전 승인과 아직 실행하지 않은 unit의 실행 예약을
-무효화한다. 완료 checkpoint는 근거로 보존하며 새 계획의 input digest와 schema·prompt·validator
-version을 다시 확인한 뒤에만 재사용한다. 승인이 필요한 계획은 실제 승인된 `planDigest`와
-근거를 저장한다.
-
-각 execution unit은 다음 동작 중 하나만 가진다.
-
-| 동작 | 의미 | 완료 증거 |
-|---|---|---|
-| `rebuild` | 입력 의미가 바뀌어 기존 결과를 재생성 | 새 input/output digest와 validator 결과 |
-| `reproject` | accepted source 또는 같은 ChangeSet에서 검증된 새 source revision을 순수 변환 | source/target digest와 projection version |
-| `stale` | 아직 갱신·검증되지 않아 소비할 수 없음 | stale 원인과 producer revision |
-
-현재 action vocabulary와 첫 수직 경로는 `rebuild`, 등록된 `reproject`, `stale`만 생성한다.
-`revalidate`와 `reuse`는 실제 consumer와 근거 계약이 생길 때만 추가할 미래 후보다. 완료
-checkpoint의 결과 재사용은 action이 아니라 input/version 일치 여부를 확인하는 별도 계약이다.
-
-RTM에 항목이 없다는 이유로 소비 가능하다고 볼 수 없다. 추적이 부족하면 지원되는 더 큰
-단위로 확대하거나 `unresolvedImpact`와 `stale`로 기록한다.
-
-같은 ChangeSet의 검증된 draft를 입력으로 만든 projection도 publish 전까지 draft다. 새 class
-revision을 먼저 공개한 뒤 sequence를 검사하지 않는다.
-
-## 6. RTM과 수정 권한의 경계
-
-RTM은 별도 LLM 호출로 만들지 않는다. 각 산출물이 보유한 provenance와 exact contract link를
-순수 함수로 집계하는 현재 원칙을 유지한다.
-
-RTM이 담당하는 일은 다음과 같다.
-
-1. 변경 전 영향 후보와 exact relation을 조회한다.
-2. 사용자에게 예상되는 upstream·downstream 범위를 설명한다.
-3. `ChangeSet.executionUnits`의 후보를 만든다.
-4. 변경 후 orphan, unknown ref와 새 의존성을 찾는다.
-5. 계획보다 영향이 넓어졌는지 검사한다.
-
-RTM이 담당하지 않는 일은 다음과 같다.
-
-1. 자연어 답변의 의미 결정
-2. provenance를 수정 권한으로 승격
-3. 여러 authority 후보 중 하나를 자동 선택
-4. 누락된 edge를 이름 유사도나 LLM 추정으로 생성
-5. 현재 reviser보다 더 세밀한 수정 단위를 약속
-
-`impact`와 `authority`는 별도 개념이다. broad provenance는 forward invalidation 근거가 될 수
-있지만 그 자체로 upstream 수정 권한이 되지 않는다.
-
-기존 파생 산출물에서 authority를 역추적할 때는 등록된 ownership rule과 exact contract link를
-사용한다. 반면 새 specification gap에는 아직 exact link가 없을 수 있다. 질문 생성 단계가
-명시한 UC 명세 owner를 사용자가 의미 결정 대상으로 선택한 경우에는 해당 owner의 존재,
-revision과 지원 adapter를 검증한 뒤 직접 authoritative target으로 계획할 수 있다. 이는 기존
-RTM provenance를 권한으로 승격하는 경로가 아니라, typed question과 사용자 Decision에서 새
-요구사항 authority를 확정하는 별도 경로다.
-
-현재 `RevisionPlanner`에는 class specification gap을 UC 명세로 올리는 ownership rule이 없으므로
-첫 수직 경로에서 `specification gap → UC spec owner` routing과 adapter를 명시적으로 추가해야
-한다. 현재 planner 연결만으로 지원된다고 가정하지 않는다.
-
-RTM의 표시 행, 영향 순회 노드와 revision adapter의 merge 단위는 서로 다를 수 있다. 요구사항
-RTM은 step·guarantee·constraint 등 세밀한 provenance를 포함하고 설계 RTM에도 operation·call·
-binding 행이 있지만, 그 행이 모두 독립된 전파·merge 단위라는 뜻은 아니다. 첫 수직 경로는
-UC 명세와 안전한 class bundle을 revision 단위로 사용한다.
-
-따라서 `ChangeSet`에 들어가는 입력은 raw RTM 행을 그대로 execution unit으로 바꾼 그래프가
-아니다. 서버 소유 adapter가 UC 명세·안전한 class bundle·sequence 단위로 정규화한 planning
-trace다. raw operation·call·binding은 이 adapter가 bundle 영향과 근거를 계산할 때 사용하되,
-독립 실행 단위로 승격하지 않는다. `ProjectionContract`도 RTM 연결에서 추론하지 않고 등록된
-순수 adapter의 consumer, exact producer refs, adapter ID와 version으로 구성한다.
-
-### 6.1 변경 전 RTM 고정과 후속 diff 경계
-
-계획할 때 current accepted head의 RTM, artifact versions와 trace digest를 고정한다. 현재
-prototype은 이 pre-change RTM으로 영향 범위와 실행 순서만 결정한다. post-change RTM diff는
-수직 통합에서 실제 필요가 확인될 때 구현할 후속 경계이며, 현재 완료 조건이나 실행 권한이 아니다.
-
-pipeline stage는 upstream 산출물을 직접 수정하지 않는다. typed `Decision`과 ownership rule이
-확정한 owning-stage command로 되돌려 보내고, 검증된 upstream draft를 입력으로 downstream을
-재실행한다. RTM은 rewind 후보와 downstream 재실행 범위를 제시할 뿐 mutation 권한을 부여하지
-않는다.
-
-`REPLAN_REQUIRED`에서는 실행 중인 unit을 중단하고 새 pre-change snapshot과 plan version을
-만든다. 이전 계획의 승인과 미실행 unit의 실행 예약은 새 계획에 승계하지 않는다. 이미 만든
-draft와 완료 checkpoint는 근거 기록으로 보존하되 새 계획의 입력 digest와 schema·prompt·
-validator version이 일치하는지 다시 검증하기 전에는 재사용하지 않는다.
-
-### 6.2 dependency 보완
-
-현재 RTM 행을 전부 범용 그래프로 바꾸지 않는다. 재개와 재사용에 필요한 최소 메타데이터만
-execution unit 또는 artifact metadata에 추가한다.
-
-```text
-DependencyRecord
-  consumerUnit
-  producerRef
-  producerRevisionOrDigest
-  relation: derives_from | uses_contract | projects
-```
-
-이 기록은 provenance를 복제하기 위한 것이 아니라, 특정 checkpoint가 어떤 입력 revision에서
-검증됐는지 증명하기 위한 것이다.
-
-## 7. 계획·확인·실행 상태
-
-공통 상태 흐름은 다음과 같다.
-
-```text
-ISSUE_IDENTIFIED
-  → QUESTION_OPEN
-  → ANSWER_RECEIVED
-  → DECISION_NORMALIZED
-  → CHANGE_PLANNED
-  → READY | NEEDS_CLARIFICATION | NEEDS_CONFIRMATION | UNSUPPORTED
-  → REVISING
-  → REVALIDATING_AND_REBUILDING
-  → COMMITTED
-```
-
-실행 중에는 `FAILED_RETRYABLE`, `FAILED_UNRESOLVED`, `STALE`, `REPLAN_REQUIRED`, `CANCELLED`로
-전환할 수 있다.
-
-`NEEDS_CLARIFICATION`과 `NEEDS_CONFIRMATION`은 다르다.
-
-- 의미가 하나로 정해지지 않았으면 clarification이 필요하다.
-- 의미는 정해졌지만 사용자가 허용한 범위를 넘어 다른 authoritative artifact를 바꿔야 하면
-  영향 범위를 보여주고 confirmation을 받는다.
-- 사용자가 처음부터 upstream 변경과 관련 설계 갱신을 명시했다면 같은 범위를 다시 확인하지
-  않는다.
-
-실행 직전에는 artifact versions와 trace digest를 다시 검사한다. 질문이 열린 뒤 입력이 바뀌면
-오래된 답변을 새 상태에 적용하지 않는다. publish 직전에는 `baseHead`가 여전히 현재 head인지
-compare-and-swap으로 다시 검사하여 긴 실행 중의 경쟁 변경도 차단한다.
-
-## 8. 저장, 원자성, 재개
-
-변경 draft와 accepted head를 구분한다.
-
-첫 검증 구현은 데이터베이스 schema를 추가하거나 바꾸지 않는다. 사용자 승인 한 건과 수명이
-같은 `workspace_commands` 행 하나를 durable aggregate로 사용하고, `payload.feedback_revision`에
-Decision·ChangeSet·checkpoint·remote attempt를 저장한다. 이 선택은 운영 저장소의 최종 형태가
-아니라 `UC 명세 → class bundle → sequence` 수직 경로의 결함·재호출 감소를 검증하기 위한
-경계다. 일반적인 대화형 AI 서비스처럼 workspace command executor가 한 메시지를 끝낼 때까지
-같은 workspace의 다음 메시지를 대기시킨다. 저장 repository는 이 single-flight 전제를
-재사용하며 checkpoint나 attempt마다 별도의 `App` 행 잠금을 추가하지 않는다.
-
-- `Decision`, plan, checkpoint와 부분 산출물은 durable draft로 저장한다.
-- draft 실패는 기존 accepted head를 변경하지 않는다.
-- 영향받은 산출물이 모두 갱신되거나 명시적으로 stale 분류되면 artifact revision과 validity를
-  함께 가진 manifest를 새 accepted head로 공개한다.
-- 첫 구현에서 일부 downstream을 즉시 다시 만들지 않는다면, 새 upstream과 함께 같은
-  transaction에서 해당 downstream을 `stale`로 표시한다.
-- `stale` 산출물은 화면·export·후속 구현 단계에서 최신 입력으로 소비할 수 없다.
-
-`baseHead` compare-and-swap, 새 artifact manifest, 각 artifact의 validity, ChangeSet의
-`COMMITTED` 상태와 `publishedHead` 기록은 같은 repository transaction에서 저장한다. commit은
-성공했지만 응답 전에 프로세스가 종료된 경우, 재개 경로는 `publishedHead`를 조회하여 중복
-publish 없이 완료로 복원한다.
-
-checkpoint는 완료 여부만 저장하지 않는다.
-
-```text
-Checkpoint
-  changeSetId
-  executionUnitId
-  action
-  inputDigests[]
-  outputDigest?
-  schemaPromptValidatorVersions
-  validationResult
-  attempts
-  failureCategory?
-  status
-```
-
-같은 `Decision` 또는 `ChangeSet`의 중복 제출은 같은 멱등성 키로 식별하여 중복 revision
-commit을 거부한다. 같은 workspace의 실행 직렬화는 command executor의 single-flight가
-담당한다. 재개할 때 완료가 기록된 unit의 실제 input digest와 validator version을 다시
-확인하고, 같으면 원격 호출 없이 재사용한다.
-
-Provider가 응답한 직후 checkpoint를 저장하기 전에 프로세스가 종료되면 물리적 LLM 호출의
-완료 여부를 일반적으로 증명할 수 없다. 이 구간은 `ATTEMPT_OUTCOME_UNKNOWN`으로 기록하고,
-provider의 idempotency 또는 응답 회수 지원 범위에서 재개한다. 불가피한 재호출은 새 attempt로
-기록하고 공유 호출·시간·token 예산에 포함한다. 원격 호출의 exactly-once를 보장한다고
-표현하지 않는다.
-
-이 prototype의 저장 계층 완료 범위는 중복 Decision·ChangeSet 차단, 입력 digest·prompt·validator
-버전이 같은 완료 checkpoint만의 재사용, 호출 전 attempt 저장, 실패 checkpoint 뒤 재시도와
-완료 checkpoint 뒤 재호출 금지, 오래된 base head publish 거부까지다. 임의 SQL 변조 방어,
-모든 manifest 손상 복구와 범용 상태 전이기는 이 단계에서 구현하지 않는다. SQLite 테스트는
-상태 규칙과 재시작 persistence를 검증한다. 다중 worker가 같은 workspace command를 병렬
-실행하는 구조가 필요해질 때에만 별도의 분산 동시성 제어를 추가한다. 실제 `ArtifactVersion`
-저장과 기존 reader의 stale 소비 차단은 첫 수직 통합에서 같은
-transaction·소비 경계로 연결한 뒤 전역 accepted head라고 부른다.
-
-## 9. 첫 수직 적용 경로
-
-첫 구현은 다음 사례 하나를 완결한다.
-
-```text
-클래스 설계에서 specification gap 발견
-  → 선택지와 자유 답변이 있는 질문
-  → 특정 UC 명세를 authoritative owner로 확정
-  → UC 명세 새 revision
-  → RTM으로 관련 class bundle 영향 계산
-  → 구조·operation·Collaborations rebuild
-  → 같은 class revision에서 sequence를 LLM 없이 reproject
-  → 나머지 영향 downstream은 재사용 근거를 검증하거나 stale 처리
-  → accepted head publish
-```
-
-`class bundle`은 함께 수락해야 하는 클래스 구조, operation catalog와 Collaborations의 안전한
-merge 단위다. RTM에 operation과 call 행이 있더라도 현재 reviser가 그 행만 독립적으로 merge할
-수 없다면 더 작은 단위로 표시하지 않는다.
-
-첫 경로에서 자동 갱신하는 산출물은 UC 명세, class bundle과 sequence로 제한한다. API 재생성
-adapter까지 완성할 필요는 없지만, 기존 API·ERD·배포·구현·테스트가 있으면 영향 분석 결과에
-따라 재사용 근거를 검증하거나 stale 처리한다. API는 필수 stale 테스트의 대표 사례다. 이
-경로가 안정된 뒤 API, ERD, 배포, 구현과 테스트 adapter를 같은 프로토콜에 순차 연결한다.
-
-최초 class 생성 중 gap을 발견하면 pre-change RTM에 class·call edge가 없을 수 있다. 첫 구현은
-accepted UC 명세를 기준으로 하고, class bundle이 아직 없으면 생성 unit을 미완료 draft로 둔 뒤
-새 UC revision에서 재개한다. 기존 accepted class가 있는 경우에만 frozen RTM을 이용한 영향
-재검증과 부분 보존을 수행한다.
-
-## 10. 클래스 설계 개선과의 관계
-
-[클래스 설계 실행 증거와 원자적 수락 개선안](class-design-executable-behavior-contract-plan.md)의
-격리 프로토타입은 폐기하지 않는다. 다음 요소는 공통 피드백 프로토콜의 첫 소비자에 필요한
-기반이므로 유지한다.
-
-- 클래스 구조와 Collaborations의 동일 revision 수락
-- schema·type·parent·binding의 결정론 검사
-- owner-scoped patch와 무관한 요소 보존
-- input/output digest, validator version과 checkpoint
-- 생성 결함, specification gap, provider failure와 시스템 결함의 구분
-- accepted behavior에서 sequence를 만드는 순수 projection
-- typed evidence와 finding ledger
-
-다음 작업은 피드백 수직 경로가 확정될 때까지 보류한다.
-
-- effect·obligation ontology의 추가 확장
-- 클래스 생성기 내부의 별도 범용 질문·revision 체계
-- 모든 execution group을 독립적으로 봉인하기 위한 추가 추상화
-- 불안정한 운영 구조를 전제로 한 모델별 세부 latency 최적화
-- 의미가 불명확한 값을 기본값이나 repair 규칙으로 채우는 기능
-
-클래스 개선은 중단되는 것이 아니라, 공통 `Question`, `Decision`, `ChangeSet`의 producer와
-reviser로 운영 통합 순서를 조정한다.
-
-## 11. 구현 순서
-
-1. `Question`, `Decision`, `ChangeSet`, execution action과 accepted/stale 의미를 확정한다.
-2. 현재 capability choice, requirements gate, revision planner와 design cascade의 대응표를 만들고
-   `specification gap → UC spec owner` ownership rule·adapter를 추가하며 중복 상태·명령 경로를
-   제거한다. 현재 capability answer의 pending 검사는 재사용하되, 새 question version과 base
-   revision 검증은 version-pinned envelope에서 추가한다.
-3. 질문·결정·변경 계획을 durable하게 저장하고 stable option ID와 중복 제출을 검사한다.
-4. 자유 답변 정규화와 deterministic target·authority·version 검증을 연결한다.
-5. frozen pre-change RTM에서 execution unit을 계획하고 각 unit을
-   `rebuild/reproject/stale`로 분류한다.
-6. scripted producer 또는 격리 adapter로 `UC 명세 → class bundle → sequence` 프로토콜과
-   checkpoint 재개를 검증한다.
-7. 수직 통합에서 필요가 확인되면 post-change RTM 비교와 target remap 경계를 구현한다.
-8. compare-and-swap accepted publish와 stale downstream 소비 차단을 구현한다.
-9. crash, 중복 제출, stale answer, 부분 실패와 경쟁 revision 테스트를 통과시킨다.
-10. API adapter부터 나머지 단계로 확대한다.
-11. 검증된 프로토콜 adapter 뒤에 격리 클래스 프로토타입을 실제 운영 생성·피드백 경로로
-    연결하고, 기존 운영 클래스 생성기를 대체한 뒤 품질·호출 실험을 재개한다.
-
-## 12. Luna·Terra 서브에이전트 활용
-
-서브에이전트는 모델별로 전체 기능을 나누지 않고, 변경 책임과 파일 소유권이 겹치지 않는
-검증 가능한 단위로 사용한다. 공통 계약이 바뀌는 동안 여러 에이전트가 planner, repository와
-단계별 adapter를 동시에 수정하지 않는다.
-
-### 12.1 역할 분리
-
-| 역할 | 주 책임 | 직접 수정하지 않는 경계 |
-|---|---|---|
-| Luna | 질문·답변 envelope, 기존 stage 입력으로의 순수 adapter, UI read model, fixture와 단위 테스트 | ownership 계산, RTM 순회, DB migration, checkpoint 저장, CAS publish |
-| Terra | ChangeSet·ExecutionUnit·manifest 계약, ownership routing, pre-change RTM planning, durable repository, transaction과 수직 통합 테스트 | 클래스 생성 세부, stage별 LLM prompt·repair, UI 표시 로직 |
-| 주 에이전트 | 공통 필드와 파일 소유권 확정, handoff 승인, 변경 통합과 전체 회귀 검사 | 계약 미확정 상태에서 서로 의존하는 작업의 동시 위임 |
-| Astra | 계약 확정 전 반례 검토와 수직 경로 완료 후 불변식 감사 | 구현 파일의 상시 공동 소유 |
-
-Luna와 Terra는 같은 파일을 공동 소유하지 않는다. 작업을 시작할 때 담당 파일과 수정 금지
-파일을 명시하며, 다른 에이전트의 변경을 되돌리지 않고 고정된 계약에 맞춰 자기 구현을
-조정한다.
-
-### 12.2 Luna 작업 단위
-
-Luna에는 입력·출력 schema가 이미 고정된 작은 작업을 맡긴다.
-
-1. **질문·답변 envelope와 단위 테스트**
-   - `QuestionOption`, `Question`과 `Decision`의 사용자 입력 부분을 순수 모델·helper로 구현한다.
-   - stable option ID, question version, base revisions, raw answer 보존과 허용 target을 검사한다.
-   - 선택지는 label을 재해석하지 않고 decision payload로 변환한다.
-   - 자유 답변은 정규화 결과가 없거나 target/schema 범위를 벗어나면
-     `NEEDS_CLARIFICATION`으로 남긴다.
-   - 저장소, 현재 head와 LLM provider를 직접 호출하지 않는다.
-2. **stage adapter wrapper**
-   - 검증된 `Decision`과 Terra가 확정한 `ExecutionUnit`을 기존 requirements/design delivery
-     payload로 바꾸는 순수 변환을 구현한다.
-   - 첫 수직 adapter는 requirements와 class `rebuild`만 변환한다. sequence `reproject`는
-     기존 class cascade 결과로 확인하고, `stale`은 실행 입력으로 변환하지 않는다.
-   - target 문자열을 추측하지 않고 catalog가 제공한 kind와 stable ID만 사용한다.
-   - 기존 delivery·cascade의 동작은 바꾸지 않고 wrapper와 회귀 테스트를 먼저 만든다.
-3. **UI read model과 stale 표시**
-   - backend 계약이 고정된 뒤 Question·Decision·ChangeSet 상태를 화면 모델로 투영한다.
-   - option 제출에는 표시 label이 아니라 stable option ID를 유지한다.
-   - stale artifact와 오래된 질문은 최신 결과나 실행 가능한 질문으로 표시하지 않는다.
-   - UI에서 stale을 재판정하거나 유효 상태로 승격하지 않는다.
-
-각 Luna 작업은 fixture, fail-closed 사례와 기존 회귀 테스트를 완료 산출물로 포함한다. Luna가
-작업 중 ownership 또는 transaction 변경이 필요하다고 발견하면 범위를 확장하지 않고 typed
-finding과 필요한 Terra 계약을 반환한다.
-
-### 12.3 Terra 작업 단위
-
-Terra에는 여러 stage에 걸친 정합성과 commit 경계를 맡긴다.
-
-1. **ChangeSet 핵심 계약과 ownership routing**
-   - `ChangeSet`, `ExecutionUnit`, `Checkpoint`, `AcceptedManifest`의 canonical schema를 소유한다.
-   - 기존 `OwnershipRegistry`를 fail-closed로 확장하고
-     `specification gap → UC spec owner` 경로를 추가한다.
-   - provenance, exact link, typed question authority를 서로 다른 권한 근거로 보존한다.
-2. **RTM snapshot과 pre-change planning**
-   - 현행 requirements/design RTM 생성은 유지하고, frozen RTM과 artifact revision을
-     ChangeSet 입력으로 고정하는 adapter를 구현한다.
-   - post-change diff는 수직 통합에서 실제 소비 경계가 확인된 뒤 별도 구현한다.
-3. **영속 저장과 publish**
-   - Decision·ChangeSet draft, unit checkpoint와 원격 attempt 상태를 저장한다.
-   - 멱등성 키, 완료 unit 재사용, `ATTEMPT_OUTCOME_UNKNOWN`과 재개 정책을 구현한다.
-   - base head CAS, artifact revision·validity manifest와 `COMMITTED/publishedHead`를 하나의
-     transaction에서 저장한다.
-4. **첫 수직 통합**
-   - Luna adapter의 검증된 결과를 받아 UC revision, class bundle, sequence projection을
-     ChangeSet으로 실행한다.
-   - crash, 중복 제출, stale answer, RTM plan escape와 publish 경쟁 조건을 통합 테스트한다.
-
-Terra는 단계별 LLM 생성기나 UI를 고치지 않는다. 공통 계약이 요구하는 새 필드가 필요하면
-먼저 계약 변경을 제안하고 주 에이전트가 Luna handoff와 fixture를 갱신한 뒤 통합한다.
-
-### 12.4 순서와 병렬화
-
-```text
-주 에이전트 + Astra: 최소 계약과 불변식 동결
-  → Luna: question/decision envelope + fixture
-  → Terra: ChangeSet/ownership/RTM pure planning
-  → Terra: repository/checkpoint/CAS publish
-     || Luna: 고정된 계약의 stage adapter와 UI read model
-  → Terra: UC spec → class bundle → sequence 수직 통합
-  → 주 에이전트: 전체 회귀·운영 경로 통합
-  → Astra: 최종 불변식 감사
-```
-
-첫 두 작업은 필드 이름과 ownership 의미가 확정될 때까지 병렬로 수정하지 않는다. Terra의
-backend JSON과 execution action이 동결된 뒤에는 repository 구현과 Luna의 adapter·read model을
-병렬화할 수 있다.
-
-handoff마다 다음을 기록한다.
-
-- 사용한 contract·schema·validator version
-- 담당 파일과 수정하지 않은 파일
-- input fixture와 output digest
-- 통과한 테스트와 아직 unsupported인 사례
-- downstream이 재사용할 수 있는 산출물과 stale인 산출물
-
-서브에이전트의 로컬 테스트 통과는 전역 수락이 아니다. Terra의 수직 통합과 주 에이전트의
-전체 회귀를 통과하고 Astra가 authority·RTM·publish 불변식을 확인한 뒤에만 첫 경로를 완료로
-본다.
-
-## 13. 수용 조건
-
-### 13.1 질문과 결정
-
-- 선택지는 stable option ID, question version, base revision과 결정 payload를 가진다.
-- 자유 답변 원문과 정규화 의미가 모두 보존된다.
-- 의미가 여러 개인 답변은 revision을 실행하지 않고 명확화 질문으로 돌아간다.
-- 생성 결함과 provider·검사기 실패를 사용자 의미 질문으로 잘못 전환하지 않는다.
-- 해결된 질문은 서버 재시작 뒤 다시 묻지 않는다.
-
-### 13.2 계획과 RTM
-
-- 모든 변경 계획이 frozen artifact versions와 pre-change trace digest를 가진다.
-- RTM provenance만으로 upstream mutation authority를 부여하지 않는다.
-- RTM 링크 누락을 영향 없음이나 소비 가능으로 해석하지 않는다.
-- 삭제·rename은 pre-change RTM과 target remap으로 검사한다.
-- 새 dependency가 계획 범위를 넘으면 재계획하거나 명시적으로 stale 처리한다.
-
-### 13.3 실행과 재개
-
-- 같은 Decision과 ChangeSet의 중복 제출이 병렬 실행이나 중복 revision commit을 만들지 않는다.
-- 완료 checkpoint가 있는 unit은 재호출하지 않으며, 결과가 불명확한 원격 attempt의 재호출은
-  별도 attempt와 예산으로 기록한다.
-- 오래된 질문 답변과 stale plan이 현재 artifact에 적용되지 않는다.
-- 완료 unit은 input digest와 validator version이 같을 때만 재사용한다.
-- 실패 뒤에는 완료된 무관 unit을 다시 생성하지 않고 실패 단위부터 재개한다.
-- 관련 없는 UC와 class bundle의 payload가 보존된다.
-- 공유 operation 변경은 이를 사용하는 모든 Collaborations를 적어도 재검증한다.
-- sequence 재투영에는 LLM 호출이 없다.
-
-### 13.4 공개와 소비
-
-- draft 실패가 기존 accepted head를 변경하지 않는다.
-- publish 직전 base head가 달라졌으면 commit을 거부하고 재계획한다.
-- accepted head는 artifact revision과 validity를 함께 보유한 manifest다.
-- 새 upstream과 낡은 downstream을 모두 최신인 하나의 manifest로 공개하지 않는다.
-- 갱신하지 않은 downstream은 같은 transaction에서 stale이 되며 화면·export·후속 단계가
-  최신 산출물로 소비할 수 없다.
-- post-change RTM diff의 unknown ref·orphan 검사는 수직 통합에서 실제 필요가 확인된 뒤 추가한다.
-
-## 14. 첫 완료 기준
-
-첫 구현은 다음 문장이 실제 테스트로 성립할 때 완료다.
-
-> 설계 중 받은 사용자 답변이 특정 UC 명세를 변경하면, 동일 결정을 중복 commit하지 않고 관련
-> class bundle과 sequence만 새 revision으로 갱신하며, 실패 후 재개해도 무관한 산출물과 기존
-> 유효 결과를 보존하고 미갱신 downstream은 명시적으로 stale 처리한다.
-
-이 기준은 모든 피드백 문제를 일반화한 완성형 workflow를 뜻하지 않는다. 기존 고정 파이프라인의
-첫 cross-stage revision을 안전하게 완결하는 최소 공통 척추다. 이 경계가 검증된 뒤에만 나머지
-단계와 클래스 실행 의미 모델을 확대한다.
+| Luna | Question·Decision 순수 변환, action read model, 작은 fixture와 단위 테스트 | RTM 권한 판정, 저장 transaction, stage orchestration |
+| Terra | 기존 Workspace command 연결, owner routing, 재개·중복 실행 통합 테스트 | LLM prompt 확장, UI 의미 추측, 새 DB schema |
+| 주 에이전트 | 계약 동결, 변경 통합, 회귀 테스트와 범위 축소 | 미확정 계약의 병렬 구현 |
+| Astra | 각 하위 작업 뒤 치명적 권한·stage 경계·재호출 결함 검토 | 새 기능 제안과 범위 확대 |
+
+각 하위 작업은 주 에이전트와 Astra의 검토를 받은 뒤 사용자 승인을 요청한다. 승인 전에는
+커밋하거나 다음 하위 작업으로 넘어가지 않는다.
+
+## 10. 비범위
+
+- MySQL schema 변경
+- workspace 내부 lock 또는 실제 MySQL 다중 process 동시성 보증
+- 범용 workflow DSL
+- 임의 SQL 변조와 모든 manifest 손상 방어
+- 시스템 전체 accepted-head manifest와 reader/writer 교체
+- post-change RTM 전체 diff와 unknown 관계 추측
+- 첫 수직 경로에서 API·ERD·배포·구현을 모두 재생성하는 기능
+- effect·obligation ontology 확장
+- 모델별 latency 최적화
+
+## 11. 첫 완료 기준
+
+첫 구현은 다음 문장이 실제 Workspace 통합 테스트로 성립할 때 완료다.
+
+> 설계에서 발견한 UC 명세 공백에 대한 사용자 Decision이 별도 Requirements command를
+> 실행하고, 완료된 새 UC를 입력으로 `start_design` command가 class를 다시 생성·검토한다.
+> 이후 별도 진행 command에서 sequence가 LLM 호출 없이 투영된다. 어느 stage도 이전 stage의
+> 산출물을 직접 수정하지 않고, 중복 답변과 실패 재개가 불필요한 LLM 재호출을 만들지 않는다.
+
+이 경계가 검증된 뒤에만 클래스 설계 prototype을 축소·통합하고 실제 LLM 품질 비교를
+재개한다.
