@@ -27,9 +27,7 @@ class ChangePlanError(ValueError):
 
 class ExecutionAction(StrEnum):
     REBUILD = "rebuild"
-    REVALIDATE = "revalidate"
     REPROJECT = "reproject"
-    REUSE = "reuse"
     STALE = "stale"
 
 

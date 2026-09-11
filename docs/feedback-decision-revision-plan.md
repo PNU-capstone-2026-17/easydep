@@ -60,7 +60,7 @@
 - 사용자 원문과 정규화된 의미를 보존하는 결정 기록
 - 의미 소유권과 RTM 영향을 결합한 변경 계획
 - 변경 전 revision·digest 고정과 실행 직전·publish 직전 stale 검사
-- 단계별 `rebuild`, `revalidate`, `reproject`, `reuse`, `stale` 처리
+- 단계별 `rebuild`, `reproject`, `stale` 처리
 - durable checkpoint, 중복 제출 방지와 멱등 재개
 - accepted head와 변경 draft의 분리
 - 첫 수직 경로의 요구사항→클래스→시퀀스 전파
@@ -241,16 +241,14 @@ version을 다시 확인한 뒤에만 재사용한다. 승인이 필요한 계�
 | 동작 | 의미 | 완료 증거 |
 |---|---|---|
 | `rebuild` | 입력 의미가 바뀌어 기존 결과를 재생성 | 새 input/output digest와 validator 결과 |
-| `revalidate` | 기존 결과를 새 입력에서 다시 검사 | validator version과 통과 결과 |
 | `reproject` | accepted source 또는 같은 ChangeSet에서 검증된 새 source revision을 순수 변환 | source/target digest와 projection version |
-| `reuse` | 입력이 동일하거나 안전성이 이미 증명됨 | 동일 input digest 또는 지원 단위의 재검증 |
 | `stale` | 아직 갱신·검증되지 않아 소비할 수 없음 | stale 원인과 producer revision |
 
-첫 pure planning 하위 작업은 `rebuild`, 등록된 `reproject`, `stale`만 생성한다. `revalidate`와
-`reuse`는 action vocabulary에는 남기되 validator·projection version과 input fingerprint를
-checkpoint에서 다시 증명하는 계약이 구현되기 전에는 계획 결과로 만들지 않는다.
+현재 action vocabulary와 첫 수직 경로는 `rebuild`, 등록된 `reproject`, `stale`만 생성한다.
+`revalidate`와 `reuse`는 실제 consumer와 근거 계약이 생길 때만 추가할 미래 후보다. 완료
+checkpoint의 결과 재사용은 action이 아니라 input/version 일치 여부를 확인하는 별도 계약이다.
 
-RTM에 항목이 없다는 이유만으로 `reuse`를 선택할 수 없다. 추적이 부족하면 지원되는 더 큰
+RTM에 항목이 없다는 이유로 소비 가능하다고 볼 수 없다. 추적이 부족하면 지원되는 더 큰
 단위로 확대하거나 `unresolvedImpact`와 `stale`로 기록한다.
 
 같은 ChangeSet의 검증된 draft를 입력으로 만든 projection도 publish 전까지 draft다. 새 class
@@ -311,7 +309,7 @@ trace다. raw operation·call·binding은 이 adapter가 bundle 영향과 근거
 - 새 산출물에서 생긴 dependency
 - plan에 없던 새 영향 대상
 - target remap 실패와 orphan·unknown ref
-- `reuse`로 분류했지만 producer digest가 달라진 항목
+- producer digest가 달라져 stale이 된 항목
 
 새 영향이 plan 범위를 넘으면 자동으로 mutation 범위를 넓히지 않는다. 안전한 revalidation만
 수행할 수 있으면 추가하고, 수정 권한이나 LLM 재생성이 필요하면 `STALE` 또는 `REPLAN_REQUIRED`
@@ -444,7 +442,7 @@ transaction·소비 경계로 연결한 뒤 전역 accepted head라고 부른다
   → 특정 UC 명세를 authoritative owner로 확정
   → UC 명세 새 revision
   → RTM으로 관련 class bundle 영향 계산
-  → 구조·operation·Collaborations rebuild 또는 revalidate
+  → 구조·operation·Collaborations rebuild
   → 같은 class revision에서 sequence를 LLM 없이 reproject
   → 나머지 영향 downstream은 재사용 근거를 검증하거나 stale 처리
   → post-change RTM·참조·보존 검사
@@ -500,7 +498,7 @@ reviser로 운영 통합 순서를 조정한다.
 3. 질문·결정·변경 계획을 durable하게 저장하고 stable option ID와 중복 제출을 검사한다.
 4. 자유 답변 정규화와 deterministic target·authority·version 검증을 연결한다.
 5. frozen pre-change RTM에서 execution unit을 계획하고 각 unit을
-   `rebuild/revalidate/reproject/reuse/stale`로 분류한다.
+   `rebuild/reproject/stale`로 분류한다.
 6. scripted producer 또는 격리 adapter로 `UC 명세 → class bundle → sequence` 프로토콜과
    checkpoint 재개를 검증한다.
 7. post-change RTM 비교, target remap, orphan·unknown ref와 plan extension을 검사한다.
@@ -543,7 +541,8 @@ Luna에는 입력·출력 schema가 이미 고정된 작은 작업을 맡긴다.
 2. **stage adapter wrapper**
    - 검증된 `Decision`과 Terra가 확정한 `ExecutionUnit`을 기존 requirements/design delivery
      payload로 바꾸는 순수 변환을 구현한다.
-   - `rebuild`, `revalidate`, `reproject`, `reuse`, `stale` 중 한 동작만 허용한다.
+   - 첫 수직 adapter는 requirements와 class `rebuild`만 변환한다. sequence `reproject`는
+     기존 class cascade 결과로 확인하고, `stale`은 실행 입력으로 변환하지 않는다.
    - target 문자열을 추측하지 않고 catalog가 제공한 kind와 stable ID만 사용한다.
    - 기존 delivery·cascade의 동작은 바꾸지 않고 wrapper와 회귀 테스트를 먼저 만든다.
 3. **UI read model과 stale 표시**
@@ -568,7 +567,7 @@ Terra에는 여러 stage에 걸친 정합성과 commit 경계를 맡긴다.
 2. **RTM snapshot과 pre/post diff**
    - 현행 requirements/design RTM 생성은 유지하고, frozen RTM과 artifact revision을
      ChangeSet 입력으로 고정하는 adapter를 구현한다.
-   - removed/new link, orphan, unknown ref, `reuse` 아래 producer digest 변경과 계획 밖 영향을
+   - removed/new link, orphan, unknown ref, producer digest 변경과 계획 밖 영향을
      순수하게 계산한다.
    - 계획 밖 LLM mutation을 자동 추가하지 않고 `REPLAN_REQUIRED` 또는 `stale`로 반환한다.
 3. **영속 저장과 publish**
@@ -627,7 +626,7 @@ handoff마다 다음을 기록한다.
 
 - 모든 변경 계획이 frozen artifact versions와 pre-change trace digest를 가진다.
 - RTM provenance만으로 upstream mutation authority를 부여하지 않는다.
-- RTM 링크 누락을 영향 없음이나 `reuse`로 해석하지 않는다.
+- RTM 링크 누락을 영향 없음이나 소비 가능으로 해석하지 않는다.
 - 삭제·rename은 pre-change RTM과 target remap으로 검사한다.
 - 새 dependency가 계획 범위를 넘으면 재계획하거나 명시적으로 stale 처리한다.
 
