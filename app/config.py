@@ -117,7 +117,8 @@ class Settings(BaseSettings):
     # available as an explicit baseline for controlled comparison and rollback.
     implementation_owner_tool_mode: Literal["restricted", "terminal"] = "restricted"
     implementation_openhands_canary: bool = True
-    implementation_openhands_canary_repetitions: int = 3
+    # One protocol probe is enough; the transport already retries each request.
+    implementation_openhands_canary_repetitions: int = 1
     # OpenHands names this value ``num_retries``, but SDK 1.36 applies it as
     # the total number of physical attempts. Keep the EasyDep setting explicit
     # so a provider upgrade cannot silently multiply a long agent run.
@@ -127,11 +128,9 @@ class Settings(BaseSettings):
     # Tenacity/OpenHands uses this as the coefficient of a base-2 exponential
     # wait, so 1.0 produces approximately 1, 2, 4 seconds before the cap.
     implementation_openhands_retry_multiplier: float = 1.0
-    # A canary needs three successful tool round trips, but transient endpoint
-    # failures may consume two additional attempts. A failed transient batch is
-    # cached only briefly and acts as a small per-run circuit breaker.
-    implementation_openhands_canary_max_attempts: int = 5
-    implementation_openhands_canary_transient_ttl_seconds: int = 600
+    # Canary policy is deliberately a single probe with no delayed circuit break.
+    implementation_openhands_canary_max_attempts: int = 1
+    implementation_openhands_canary_transient_ttl_seconds: int = 0
 
     @field_validator(
         "implementation_openhands_request_attempts",

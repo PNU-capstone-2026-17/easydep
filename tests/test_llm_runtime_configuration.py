@@ -177,11 +177,11 @@ def test_subprocess_restores_the_same_provider_endpoint_and_model(
     assert environment["IMPLEMENTATION_OPENHANDS_RETRY_MIN_WAIT_SECONDS"] == "1"
     assert environment["IMPLEMENTATION_OPENHANDS_RETRY_MAX_WAIT_SECONDS"] == "8"
     assert environment["IMPLEMENTATION_OPENHANDS_RETRY_MULTIPLIER"] == "1.0"
-    assert environment["IMPLEMENTATION_OPENHANDS_CANARY_REPETITIONS"] == "3"
-    assert environment["IMPLEMENTATION_OPENHANDS_CANARY_MAX_ATTEMPTS"] == "5"
+    assert environment["IMPLEMENTATION_OPENHANDS_CANARY_REPETITIONS"] == "1"
+    assert environment["IMPLEMENTATION_OPENHANDS_CANARY_MAX_ATTEMPTS"] == "1"
     assert (
         environment["IMPLEMENTATION_OPENHANDS_CANARY_TRANSIENT_TTL_SECONDS"]
-        == "600"
+        == "0"
     )
 
     child_values: dict[str, object] = {
