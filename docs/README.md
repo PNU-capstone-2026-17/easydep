@@ -26,8 +26,6 @@
 
 - [전역 사용자 피드백과 revision 개선안](feedback-decision-revision-plan.md):
   선택지·자유 답변의 결정 계약, RTM 기반 영향 계획, cross-stage revision과 원자적 공개 경계
-- [클래스 설계 실행 증거와 원자적 수락 개선안](class-design-executable-behavior-contract-plan.md):
-  operation·call·binding 생성 책임 분리, execution witness, revision 검증과 원자적 공개 경계
 
 ### 실행 상세와 개별 후속 계획
 

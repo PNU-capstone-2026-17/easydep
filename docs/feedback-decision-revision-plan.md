@@ -159,6 +159,7 @@ Requirements가 완료되면 `start_design`을 노출한다. 새 Design command�
 - [x] Design에서 upstream owner로 보내는 경계 정리
 - [x] Testing 수리와 Implementation을 별도 command로 분리
 - [x] Testing 재실행을 별도 `start_testing` command로 분리
+- [x] 운영에서 사용하지 않는 `executable_behavior` prototype 제거
 
 ## 8. 남은 구현 순서
 
@@ -211,17 +212,22 @@ UC 수정 → class → sequence 내용 계약 테스트는 운영 envelope·del
 
 ### 하위 작업 E — 클래스 설계 prototype 축소와 통합
 
-피드백 수직 경로가 안정된 뒤 `executable_behavior` prototype에서 다음만 남긴다.
+운영 import를 확인한 결과 `executable_behavior`는 실제 class 생성 경로와 분리된 두 번째
+구현이었다. 필요한 계약은 기존 `class_diagram`과 `sequence_diagram`에 이미 있으므로 일부를
+옮기거나 별도 runner로 남기지 않고 prototype 전체를 제거한다.
 
-- class bundle과 Collaboration의 동일 revision 검증
-- schema·type·parent·binding 검사
-- operation·call 참조 무결성
-- 생성 결함과 specification gap 구분
-- class 결과에서 sequence를 만드는 순수 projection
-- 핵심 결함만 확인하는 간단한 리뷰
+- `BCEModel` 하나가 class·operation·Collaboration을 함께 저장한다.
+- `validate_class_model`이 schema·type·parent·binding과 operation·call 참조를 검사한다.
+- schema·결정론 finding은 class 단계의 생성 결함으로만 수리한다.
+- 사용자나 review가 발견한 명세 공백은 `specification_gap` Question으로 upstream owner에게
+  보낸다. 현재 class validator에 의미 공백 자동 추론을 추가하지 않고 기존 피드백 envelope를
+  쓴다.
+- `project_sequence_model`이 수락된 class 결과를 LLM 호출 없이 투영하고 class hash를 기록한다.
+- graph의 기존 class check가 핵심 결정론 finding만 검토한다.
 
-effect·obligation ontology 확장, 범용 finding 상태기계와 실행 group별 봉인은 운영 통합 범위에서
-제외한다.
+삭제 범위에는 effect·obligation ontology, 범용 finding 상태기계, execution witness·봉인,
+patch protocol, 전용 LLM 실험 runner와 그 전용 테스트가 포함된다. 이들은 운영 수직 경로의
+품질을 높이지 않은 채 별도 acceptance 체계를 만들고 있었다.
 
 ### 하위 작업 F — 실제 LLM 비교 평가
 
