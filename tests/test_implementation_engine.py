@@ -1716,6 +1716,17 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
     assert "permission denied" not in guidance.casefold()
     assert OWNER_TURN_ITERATIONS < 500
 
+    bounded = _owner_workspace_guidance(
+        "backend-implementation",
+        tmp_path,
+        [],
+        bounded_evidence=True,
+    )
+    assert "read only the task context and its readSourcePaths" in bounded
+    assert "call finish with the exact contract gap" in bounded
+    assert "investigation hints" not in bounded
+    assert "open raw design inputs" not in bounded
+
 
 def test_repeated_typed_no_action_responses_stop_at_openhands_threshold() -> None:
     from openhands.sdk.conversation.state import ConversationExecutionStatus

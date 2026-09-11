@@ -661,6 +661,477 @@ def _build_backend_marker_tasks(
     return tasks
 
 
+def _build_backend_behavior_tasks(
+    spec: JobSpec,
+    run_root: Path,
+    output: Path,
+    package_path: str,
+    bundle: _UseCaseBundle,
+    owner_task: TaskSpec,
+) -> list[TaskSpec]:
+    """Build sequential work units from exact UC-to-API connectivity."""
+
+    source_index = _read_json(
+        output / "implement-backend-application.source-index.json"
+    )
+    raw_entries = source_index.get("methodContexts", [])
+    method_entries = [
+        (entry, _read_json(run_root / str(entry["path"])))
+        for entry in raw_entries
+        if isinstance(entry, dict) and isinstance(entry.get("path"), str)
+    ] if isinstance(raw_entries, list) else []
+    _requirements, use_cases, _sources = _all_requirement_artifacts(spec)
+    use_cases_by_id = {
+        str(value.get("use_case_id") or value.get("id")): value
+        for value in use_cases
+        if value.get("use_case_id") or value.get("id")
+    }
+    owner_context = _read_json(run_root / owner_task.context_file)
+    controller_paths = [
+        value
+        for value in owner_context.get("controllerPaths", [])
+        if isinstance(value, str) and (run_root / value).is_file()
+    ]
+    entity_names = {
+        item.name
+        for item in bundle.components
+        if item.stereotype.casefold() == "entity"
+    }
+    bce_model = _read_json(spec.inputs.get("bceModel"))
+    components = _backend_behavior_components(bundle.use_case_ids, list(bundle.endpoints))
+    owner_test_path = next(
+        (
+            path
+            for path in owner_task.required_test_paths
+            if (run_root / path).is_file()
+        ),
+        "",
+    )
+    tasks: list[TaskSpec] = []
+    previous_task_id: str | None = None
+
+    for component_index, (use_case_ids, api_operation_ids) in enumerate(components):
+        identity = json.dumps(
+            [use_case_ids, api_operation_ids],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        task_id = f"implement-backend-behavior-{digest}"
+        test_path = (
+            owner_test_path
+            if component_index == 0 and owner_test_path
+            else (
+                f"application/src/test/java/{package_path}/"
+                f"application/impl/Behavior{digest}Test.java"
+            )
+        )
+        selected_endpoints = [
+            endpoint
+            for endpoint in bundle.endpoints
+            if str(endpoint.get("operation_id") or endpoint.get("operationId") or "")
+            in api_operation_ids
+        ]
+        selected_methods = [
+            (entry, context)
+            for entry, context in method_entries
+            if {
+                str(value)
+                for value in entry.get("refs", [])
+                if isinstance(value, str)
+            }
+            & {
+                *(f"use_case:{value}" for value in use_case_ids),
+                *(f"api:{value}" for value in api_operation_ids),
+            }
+        ]
+
+        source_paths: set[str] = set()
+        read_dependency_paths: set[str] = set()
+        completion_markers: list[dict[str, object]] = []
+        if component_index == 0 and owner_test_path:
+            source_paths.add(owner_test_path)
+            owner_test_source = (run_root / owner_test_path).read_text(encoding="utf-8")
+            if "EASYDEP-IMPLEMENT" in owner_test_source:
+                completion_markers.append(
+                    {"path": owner_test_path, "markers": ["EASYDEP-IMPLEMENT"]}
+                )
+        endpoint_contracts: list[dict[str, object]] = []
+        for endpoint in selected_endpoints:
+            endpoint_contracts.append(
+                {
+                    key: endpoint[key]
+                    for key in (
+                        "operation_id",
+                        "operationId",
+                        "method",
+                        "path",
+                        "path_params",
+                        "query_params",
+                        "request_schema",
+                        "responses",
+                        "control_binding",
+                        "scenario_step_refs",
+                        "use_case_ids",
+                    )
+                    if key in endpoint
+                }
+            )
+            marker = controller_body_marker(
+                str(endpoint.get("method") or ""),
+                str(endpoint.get("path") or ""),
+            )
+            operation_id = str(
+                endpoint.get("operation_id") or endpoint.get("operationId") or ""
+            )
+            for controller_path in controller_paths:
+                controller_source = (run_root / controller_path).read_text(
+                    encoding="utf-8"
+                )
+                if (
+                    _controller_declares_operation(controller_source, operation_id)
+                    or marker in controller_source
+                ):
+                    read_dependency_paths.update(
+                        _controller_contract_paths(
+                            run_root, package_path, controller_path, endpoint
+                        )
+                    )
+                if marker in controller_source:
+                    completion_markers.append(
+                        {"path": controller_path, "markers": [marker]}
+                    )
+
+        direct_methods: list[dict[str, object]] = []
+        typed_method_metadata: list[dict[str, object]] = []
+        for entry, method_context in selected_methods:
+            paths = [
+                str(value)
+                for value in method_context.get(
+                    "sourcePaths", entry.get("sourcePaths", [])
+                )
+                if isinstance(value, str) and (run_root / value).is_file()
+            ]
+            source_paths.update(paths)
+            slices = [
+                method_slice
+                for method_slice in method_context.get("slices", [])
+                if isinstance(method_slice, dict)
+                and {
+                    str(value) for value in method_slice.get("use_case_ids", [])
+                }
+                & set(use_case_ids)
+            ]
+            method = method_context.get("method")
+            if isinstance(method, dict):
+                typed_method_metadata.append(method)
+            for method_slice in slices:
+                if not isinstance(method_slice, dict):
+                    continue
+                for call in method_slice.get("outgoing", []):
+                    if not isinstance(call, dict):
+                        continue
+                    target = call.get("target")
+                    if isinstance(target, dict):
+                        typed_method_metadata.append(target)
+            direct_methods.append(
+                {
+                    "method": method_context.get("method", {}),
+                    "stepRefs": sorted(
+                        {
+                            str(value)
+                            for method_slice in slices
+                            if isinstance(method_slice, dict)
+                            for value in method_slice.get("step_refs", [])
+                            if isinstance(value, str)
+                        }
+                    ),
+                    "directCalls": [
+                        call
+                        for method_slice in slices
+                        if isinstance(method_slice, dict)
+                        for call in method_slice.get("outgoing", [])
+                        if isinstance(call, dict)
+                    ],
+                    "sourcePaths": paths,
+                }
+            )
+            stable_id = str(
+                method.get("stable_id") if isinstance(method, dict) else ""
+            )
+            candidates = [
+                f"EASYDEP-IMPLEMENT: complete {stable_id}",
+                f"EASYDEP-IMPLEMENT:{stable_id}",
+            ]
+            for path in paths:
+                source = (run_root / path).read_text(encoding="utf-8")
+                present = [marker for marker in candidates if marker in source]
+                if present:
+                    completion_markers.append({"path": path, "markers": present})
+
+        selected_use_cases = [
+            {
+                key: use_cases_by_id[use_case_id][key]
+                for key in (
+                    "use_case_id",
+                    "id",
+                    "name",
+                    "requirement_ids",
+                    "nfr_ids",
+                    "preconditions",
+                    "trigger",
+                    "main_scenario",
+                    "extensions",
+                    "success_guarantee",
+                    "minimal_guarantee",
+                )
+                if key in use_cases_by_id[use_case_id]
+            }
+            for use_case_id in use_case_ids
+            if use_case_id in use_cases_by_id
+        ]
+        read_paths = sorted(
+            {
+                *source_paths,
+                *read_dependency_paths,
+                *_backend_behavior_typed_dependency_paths(
+                    run_root,
+                    package_path,
+                    entity_names,
+                    bce_model,
+                    typed_method_metadata,
+                ),
+                *(str(entry["path"]) for entry, _context in selected_methods),
+            }
+        )
+        editable_paths = _without_immutable_paths(
+            sorted(
+                {
+                    test_path,
+                    *(
+                        path
+                        for path in source_paths
+                        if path in owner_task.allowed_write_paths
+                    ),
+                    *(
+                        str(item["path"])
+                        for item in completion_markers
+                        if isinstance(item.get("path"), str)
+                    ),
+                }
+            ),
+            owner_task.immutable_paths,
+        )
+        context = {
+            "schemaVersion": "implementation-context/v1alpha3",
+            "taskId": task_id,
+            "taskType": "backend-implementation",
+            "dependsOn": [previous_task_id] if previous_task_id else [],
+            "useCaseIds": use_case_ids,
+            "apiOperationIds": api_operation_ids,
+            "behaviorCapsule": {
+                "useCases": selected_use_cases,
+                "endpoints": endpoint_contracts,
+                "directMethods": direct_methods,
+            },
+            "readSourcePaths": read_paths,
+            "completionMarkers": completion_markers,
+            "requiredTestPath": test_path,
+        }
+        context_path = output / f"{task_id}.context.json"
+        context_path.write_text(
+            json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        prompt = f"""# Backend observable behavior: {", ".join(use_case_ids)}
+
+Implement this one API-to-result behavior using { _relative(run_root, context_path) }.
+
+- Preserve generated public BCE/API and persistence declarations.
+- Implement only the listed scenarios, endpoint bindings, direct calls, and markers.
+- Before the first edit, read only this context and `readSourcePaths`. The authoritative
+  behavior boundary is `endpoints`, `directMethods`, and their `directCalls`.
+- Do not infer behavior from names or inspect unrelated features. If that evidence is
+  insufficient, report the concrete contract gap. If task-check names an unlisted file,
+  do not read it; report that missing evidence as a contract gap.
+- Preserve completed behavior in shared files.
+- Add focused JUnit coverage at {test_path}.
+- Run run_task_check once after the edit batch, then finish when it passes.
+- Use English for source comments, tests, validation messages, and user-visible text.
+
+API operations: {", ".join(api_operation_ids)}
+Application: {spec.name}
+"""
+        prompt_path = output / f"{task_id}.prompt.md"
+        prompt_path.write_text(prompt, encoding="utf-8")
+
+        requirement_ids = sorted(
+            {
+                value
+                for use_case in selected_use_cases
+                for field in ("requirement_ids", "nfr_ids")
+                for value in use_case.get(field, [])
+                if isinstance(value, str) and value
+            }
+        )
+        source_refs = sorted(
+            {
+                *(f"use_case:{value}" for value in use_case_ids),
+                *(f"api:{value}" for value in api_operation_ids),
+                *_operation_source_refs(spec, set(use_case_ids)),
+            }
+        )
+        task = TaskSpec(
+            task_id=task_id,
+            control="observable behavior " + ", ".join(use_case_ids),
+            prompt_file=_relative(run_root, prompt_path),
+            context_file=_relative(run_root, context_path),
+            allowed_write_paths=editable_paths,
+            required_output_paths=editable_paths,
+            immutable_paths=list(owner_task.immutable_paths),
+            source_artifacts=dict(owner_task.source_artifacts),
+            prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            llm=llm_config(spec),
+            owner="backend",
+            task_type="backend-implementation",
+            depends_on=[previous_task_id] if previous_task_id else [],
+            requirement_ids=requirement_ids,
+            use_case_ids=use_case_ids,
+            required_test_paths=[test_path],
+            source_refs=source_refs,
+            allowed_write_roots=[],
+            verification_profile={"requiredAbsentMarkers": completion_markers},
+        )
+        (output / f"{task_id}.task.json").write_text(
+            json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tasks.append(task)
+        previous_task_id = task_id
+    return tasks
+
+
+def _backend_behavior_components(
+    use_case_ids: tuple[str, ...], endpoints: list[dict[str, object]]
+) -> list[tuple[list[str], list[str]]]:
+    """Connected components of the exact use-case/API-operation graph."""
+
+    known_use_cases = set(use_case_ids)
+    graph: dict[str, set[str]] = {}
+    operation_use_cases: dict[str, set[str]] = {}
+    for endpoint in endpoints:
+        operation_id = str(
+            endpoint.get("operation_id") or endpoint.get("operationId") or ""
+        )
+        if not operation_id:
+            continue
+        for use_case_id in _use_case_ids(endpoint) & known_use_cases:
+            graph.setdefault(use_case_id, set()).add(operation_id)
+            operation_use_cases.setdefault(operation_id, set()).add(use_case_id)
+
+    result: list[tuple[list[str], list[str]]] = []
+    visited: set[str] = set()
+    for start in sorted(graph, key=_use_case_sort_key):
+        if start in visited:
+            continue
+        current_use_cases: set[str] = set()
+        current_operations: set[str] = set()
+        pending = [start]
+        while pending:
+            use_case_id = pending.pop()
+            if use_case_id in current_use_cases:
+                continue
+            current_use_cases.add(use_case_id)
+            for operation_id in graph[use_case_id]:
+                current_operations.add(operation_id)
+                pending.extend(operation_use_cases[operation_id] - current_use_cases)
+        visited.update(current_use_cases)
+        result.append(
+            (
+                sorted(current_use_cases, key=_use_case_sort_key),
+                sorted(current_operations),
+            )
+        )
+    return result
+
+
+def _backend_behavior_typed_dependency_paths(
+    run_root: Path,
+    package_path: str,
+    entity_names: set[str],
+    bce_model: dict[str, object],
+    methods: list[dict[str, object]],
+) -> list[str]:
+    """Return one-hop generated declarations named by direct typed contracts."""
+
+    classes = [
+        item
+        for item in bce_model.get("Classes", [])
+        if isinstance(item, dict) and isinstance(item.get("className"), str)
+    ]
+    data_types = [
+        item
+        for item in bce_model.get("DataTypes", [])
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    ]
+    declared_names = {
+        str(item["className"]) for item in classes
+    } | {str(item["name"]) for item in data_types}
+    selected_names = _typed_component_names(methods, declared_names)
+    entity_fields = {
+        str(item["className"]): item.get("fields", []) for item in classes
+    }
+    selected_entities = selected_names & entity_names
+    selected_names.update(
+        _typed_component_names(
+            [{"fields": entity_fields.get(name, [])} for name in selected_entities],
+            declared_names,
+        )
+    )
+    selected_entities.update(selected_names & entity_names)
+
+    java_root = f"application/src/main/java/{package_path}"
+    candidates = [f"{java_root}/bce/{name}.java" for name in selected_names]
+    candidates.extend(
+        f"{java_root}/persistence/{kind}/{name}{suffix}.java"
+        for name in selected_entities
+        for kind, suffix in (("entity", "Entity"), ("repository", "Repository"))
+    )
+    return sorted({path for path in candidates if (run_root / path).is_file()})
+
+
+def _typed_component_names(
+    metadata: list[dict[str, object]], known_names: set[str]
+) -> set[str]:
+    """Match only exact generated type identifiers; do not infer from prose."""
+
+    values: list[str] = []
+    for item in metadata:
+        for key in ("class_name", "return_type"):
+            value = item.get(key)
+            if isinstance(value, str):
+                values.append(value)
+        parameters = item.get("parameters", [])
+        if isinstance(parameters, list):
+            for parameter in parameters:
+                if isinstance(parameter, dict) and isinstance(parameter.get("type"), str):
+                    values.append(str(parameter["type"]))
+                elif (
+                    isinstance(parameter, (list, tuple))
+                    and len(parameter) > 1
+                    and isinstance(parameter[1], str)
+                ):
+                    values.append(parameter[1])
+        fields = item.get("fields", [])
+        if isinstance(fields, list):
+            values.extend(value for value in fields if isinstance(value, str))
+    return {
+        token
+        for value in values
+        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", value)
+        if token in known_names
+    }
+
+
 def _render_backend_marker_prompt(
     spec: JobSpec,
     *,
@@ -793,6 +1264,25 @@ def _controller_contract_paths(
     return list(
         dict.fromkeys(
             path for path in candidates if (run_root / path).is_file()
+        )
+    )
+
+
+def _controller_declares_operation(source: str, operation_id: str) -> bool:
+    """Identify a generated controller operation without guessing from its route."""
+
+    return bool(
+        operation_id
+        and (
+            re.search(
+                r'\boperationId\s*=\s*"' + re.escape(operation_id) + r'"', source
+            )
+            or re.search(
+                r"(?m)^\s*public\s+ResponseEntity\b[^\r\n{;]*\b"
+                + re.escape(operation_id)
+                + r"\s*\(",
+                source,
+            )
         )
     )
 

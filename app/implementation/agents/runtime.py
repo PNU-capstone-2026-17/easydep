@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -307,6 +308,8 @@ def _owner_workspace_guidance(
     workspace: Path | str,
     owner_roots: list[str],
     owner_tool_mode: str = "terminal",
+    *,
+    bounded_evidence: bool = False,
 ) -> str:
     """Return stable runner facts, not implementation instructions."""
 
@@ -315,15 +318,28 @@ def _owner_workspace_guidance(
         "## EasyDep implementation workspace",
         "",
         f"- Complete workspace: `{logical_workspace}`. For file_editor, use absolute paths rooted at this directory.",
-        "- Source locations and RTM references are investigation hints, not a required edit list.",
         "- Preserve generated public declarations. Only task-authorized implementation bodies may change; immutable API and persistence contracts remain protected.",
-        "- Start from generated skeletons and their local context; open raw design inputs only for a concrete contract gap.",
-        "- Batch related source reads into as few terminal calls as practical, and use build/test results rather than file counts as completion evidence.",
+        "- Batch related source reads into as few tool calls as practical, and use build/test results rather than file counts as completion evidence.",
         "- After an edit batch, run the canonical verification once. If it fails, inspect that output and its existing diagnostic files before rerunning; do not rerun only to obtain more detail.",
         "- When canonical verification passes, call the FinishTool immediately. A plain-text summary does not complete the task. Do not disable tests or alter test reporting to hide a failure.",
         "- Prefer the lowest-cost test level that proves the behavior; avoid restarting a full application context for every assertion.",
         "- Use English for source comments and user-visible text.",
     ]
+    if bounded_evidence:
+        common.extend(
+            [
+                "- Before the first edit, read only the task context and its readSourcePaths; do not list or grep broader directories.",
+                "- Treat behaviorCapsule endpoints, directMethods, and directCalls as the authoritative behavior boundary.",
+                "- If that evidence cannot express required behavior, call finish with the exact contract gap instead of inventing collaborators or broadening discovery. If verification names an unlisted file, do not read it; report that missing evidence as a contract gap.",
+            ]
+        )
+    else:
+        common.extend(
+            [
+                "- Source locations and RTM references are investigation hints, not a required edit list.",
+                "- Start from generated skeletons and their local context; open raw design inputs only for a concrete contract gap.",
+            ]
+        )
     if owner_tool_mode == "terminal":
         common.extend(
             [
@@ -348,7 +364,11 @@ def _owner_workspace_guidance(
                     if owner_tool_mode == "terminal"
                     else "- Canonical backend verification is the argument-free `run_task_check` tool."
                 ),
-                "- The terminal exports `SPRING_PROFILES_ACTIVE=test` and Gradle uses the shared `GRADLE_USER_HOME` cache.",
+                (
+                    "- The terminal exports `SPRING_PROFILES_ACTIVE=test` and Gradle uses the shared `GRADLE_USER_HOME` cache."
+                    if owner_tool_mode == "terminal"
+                    else "- `run_task_check` uses the configured test profile and shared Gradle cache."
+                ),
             ]
         )
     elif task_type == "frontend-implementation":
@@ -592,6 +612,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         prompt_file = str(task["prompt_file"])
     prompt = (run_root / prompt_file).read_text(encoding="utf-8")
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
+    bounded_evidence = isinstance(context.get("behaviorCapsule"), dict)
+    if bounded_evidence:
+        owner_tool_mode = "restricted"
     verification_profile = task.get("verification_profile")
     verification_profile = (
         dict(verification_profile)
@@ -609,6 +632,22 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     writable_files = [str((sandbox / path).resolve()) for path in editable_paths]
     writable_roots = [str((sandbox / root).resolve()) for root in editable_roots]
     immutable_absolute = [str((sandbox / path).resolve()) for path in immutable]
+    readable_files = (
+        sorted(
+            {
+                str(target)
+                for value in [
+                    task.get("context_file"),
+                    *context.get("readSourcePaths", []),
+                    *editable_paths,
+                ]
+                if isinstance(value, str)
+                and (target := (sandbox / value).resolve()).is_relative_to(sandbox_root)
+            }
+        )
+        if bounded_evidence
+        else None
+    )
     owner_system_context = ""
     if harness_task:
         owner_system_context = _owner_workspace_guidance(
@@ -616,6 +655,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             logical_workspace,
             editable_roots,
             owner_tool_mode,
+            bounded_evidence=bounded_evidence,
         )
     else:
         prompt += (
@@ -704,6 +744,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             verification_profile=verification_profile,
             editable_files=writable_files,
             editable_roots=writable_roots,
+            readable_files=readable_files,
             immutable_paths=immutable_absolute,
             callbacks=[
                 journal,
@@ -1218,6 +1259,7 @@ def create_openhands_conversation(
     verification_profile: dict[str, object] | None = None,
     editable_files: list[str] | None = None,
     editable_roots: list[str] | None = None,
+    readable_files: list[str] | None = None,
     immutable_paths: list[str] | None = None,
     callbacks: list[object] | None = None,
     retry_listener: object | None = None,
@@ -1328,6 +1370,7 @@ def create_openhands_conversation(
             writable_roots: list[str],
             immutable: list[str],
             enforce_write_scope: bool,
+            readable_files: list[str] | None,
         ):
             super().__init__(workspace_root=workspace_root)
             self.logical_workspace = Path(workspace_root)
@@ -1336,6 +1379,11 @@ def create_openhands_conversation(
             self.writable_roots = {Path(path).resolve() for path in writable_roots}
             self.immutable = {Path(path).resolve() for path in immutable}
             self.enforce_write_scope = enforce_write_scope
+            self.readable_files = (
+                {Path(path).resolve() for path in readable_files}
+                if readable_files is not None
+                else None
+            )
 
         def __call__(self, action, conversation=None):
             supplied = Path(action.path)
@@ -1353,6 +1401,22 @@ def create_openhands_conversation(
                         "The path is outside the assigned workspace. Use an absolute path rooted at the assigned /work task directory.",
                         retryable=True,
                         workspace=str(self.logical_workspace),
+                    ),
+                    command=action.command,
+                    is_error=True,
+                )
+            if (
+                action.command == "view"
+                and self.readable_files is not None
+                and target not in self.readable_files
+            ):
+                return FileEditorObservation.from_text(
+                    text=render_harness_error(
+                        "READ_OUTSIDE_TASK_EVIDENCE",
+                        "The path is not part of this behavior task's evidence. Report the concrete design contract gap instead of reading more files.",
+                        retryable=False,
+                        workspace=str(self.logical_workspace),
+                        requestedPath=str(target),
                     ),
                     command=action.command,
                     is_error=True,
@@ -1398,6 +1462,7 @@ def create_openhands_conversation(
             writable_roots,
             immutable_paths,
             enforce_write_scope,
+            readable_files,
         ):
             return [
                 instance.model_copy(
@@ -1415,6 +1480,7 @@ def create_openhands_conversation(
                             writable_roots,
                             immutable_paths,
                             enforce_write_scope,
+                            readable_files,
                         )
                     }
                 )
@@ -1422,9 +1488,14 @@ def create_openhands_conversation(
             ]
 
     class SandboxGrepExecutor(GrepExecutor):
-        def __init__(self, working_dir: str):
+        def __init__(self, working_dir: str, readable_files: list[str] | None):
             self.logical_workspace = Path(working_dir)
             super().__init__(working_dir)
+            self.readable_files = (
+                {Path(path).resolve() for path in readable_files}
+                if readable_files is not None
+                else None
+            )
 
         def __call__(self, action, conversation=None):
             supplied = Path(action.path) if action.path else None
@@ -1451,13 +1522,58 @@ def create_openhands_conversation(
                     include_pattern=action.include,
                     is_error=True,
                 )
+            if self.readable_files is not None and target not in self.readable_files:
+                return GrepObservation.from_text(
+                    text=render_harness_error(
+                        "READ_OUTSIDE_TASK_EVIDENCE",
+                        "Search only one explicitly listed evidence file. Report the concrete design contract gap instead of broadening discovery.",
+                        retryable=False,
+                        workspace=str(self.logical_workspace),
+                        requestedPath=str(target),
+                    ),
+                    matches=[],
+                    pattern=action.pattern,
+                    search_path=str(target),
+                    include_pattern=action.include,
+                    is_error=True,
+                )
+            if self.readable_files is not None:
+                try:
+                    pattern = re.compile(action.pattern, re.IGNORECASE)
+                except re.error as error:
+                    return GrepObservation.from_text(
+                        text=f"Invalid regex pattern: {error}",
+                        matches=[],
+                        pattern=action.pattern,
+                        search_path=str(target),
+                        include_pattern=action.include,
+                        is_error=True,
+                    )
+                try:
+                    matched = pattern.search(
+                        target.read_text(encoding="utf-8", errors="ignore")
+                    )
+                except OSError as error:
+                    return GrepObservation.from_text(
+                        text=str(error),
+                        matches=[],
+                        pattern=action.pattern,
+                        search_path=str(target),
+                        include_pattern=action.include,
+                        is_error=True,
+                    )
+                return self._build_observation(
+                    action,
+                    target.parent,
+                    [target] if matched else [],
+                )
             return super().__call__(action, conversation)
 
     class SandboxGrepTool(GrepTool):
         name = "grep"
 
         @classmethod
-        def create(cls, conv_state):
+        def create(cls, conv_state, readable_files):
             return [
                 instance.model_copy(
                     update={
@@ -1465,7 +1581,9 @@ def create_openhands_conversation(
                             "Search text files inside /work. Use a path relative to /work and "
                             "do not search parent directories."
                         ),
-                        "executor": SandboxGrepExecutor(conv_state.workspace.working_dir),
+                        "executor": SandboxGrepExecutor(
+                            conv_state.workspace.working_dir, readable_files
+                        ),
                     }
                 )
                 for instance in super().create(conv_state)
@@ -1546,6 +1664,7 @@ def create_openhands_conversation(
                     "writable_roots": editable_roots or [],
                     "immutable_paths": immutable_paths or [],
                     "enforce_write_scope": effective_owner_tool_mode != "terminal",
+                    "readable_files": readable_files,
                 },
             ),
         ]
@@ -1553,7 +1672,10 @@ def create_openhands_conversation(
             task_check_tool_name = register_task_check_tool()
             tools.extend(
                 [
-                    Tool(name=grep_registry_name, params={}),
+                    Tool(
+                        name=grep_registry_name,
+                        params={"readable_files": readable_files},
+                    ),
                     Tool(
                         name=task_check_tool_name,
                         params={
@@ -1592,9 +1714,13 @@ def create_openhands_conversation(
                     "writable_roots": editable_roots or [],
                     "immutable_paths": immutable_paths or [],
                     "enforce_write_scope": True,
+                    "readable_files": readable_files,
                 },
             ),
-            Tool(name=grep_registry_name, params={}),
+            Tool(
+                name=grep_registry_name,
+                params={"readable_files": readable_files},
+            ),
             Tool(
                 name=task_check_tool_name,
                 params={

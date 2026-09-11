@@ -86,7 +86,7 @@ def test_harness_error_has_a_machine_readable_first_line() -> None:
     payload = json.loads(prefix.removeprefix("EASYDEP_HARNESS_ERROR "))
     assert payload == {
         "errorCode": "PATH_OUTSIDE_WORKSPACE",
-        "nextAction": "Use a path relative to the logical workspace.",
+        "nextAction": "Use an absolute path rooted at the logical workspace.",
         "retryable": True,
         "workspace": "/work",
     }
@@ -340,6 +340,96 @@ def test_restricted_owner_uses_the_minimal_tools_and_custom_prompt(tmp_path: Pat
         assert agent.llm.retry_min_wait == 1
         assert agent.llm.retry_max_wait == 8
         assert agent.llm.retry_multiplier == 1.0
+    finally:
+        conversation.close()
+
+
+def test_restricted_owner_applies_only_an_explicit_read_evidence_boundary(
+    tmp_path: Path,
+) -> None:
+    evidence = tmp_path / "application/evidence/Allowed.java"
+    unrelated = tmp_path / "application/unrelated/Other.java"
+    evidence.parent.mkdir(parents=True)
+    unrelated.parent.mkdir(parents=True)
+    evidence.write_text("class Allowed { String needle; }\n", encoding="utf-8")
+    unrelated.write_text("class Other { String needle; }\n", encoding="utf-8")
+    connection = LlmConnection(
+        provider="openrouter",
+        api_key="validation-only-key",
+        base_url="https://example.invalid/v1",
+        model="openai/gpt-oss-20b",
+        litellm_provider="openrouter",
+    )
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        connection,
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        native_owner_tools=True,
+        owner_tool_mode="restricted",
+        editable_roots=[str((tmp_path / "application").resolve())],
+        readable_files=[str(evidence.resolve())],
+    )
+    try:
+        from openhands.tools.file_editor import FileEditorAction
+        from openhands.tools.grep import GrepAction
+
+        conversation.send_message("Initialize tools without calling the model.")
+        allowed_view = agent._tools["file_editor"].executor(
+            FileEditorAction(command="view", path=str(evidence.resolve()))
+        )
+        allowed_grep = agent._tools["grep"].executor(
+            GrepAction(pattern="needle", path=str(evidence.resolve()))
+        )
+        assert allowed_view.is_error is False
+        assert allowed_grep.is_error is False
+
+        rejected = [
+            agent._tools["file_editor"].executor(
+                FileEditorAction(command="view", path=str(unrelated.resolve()))
+            ),
+            agent._tools["grep"].executor(
+                GrepAction(pattern="needle", path=str(unrelated.resolve()))
+            ),
+            agent._tools["grep"].executor(
+                GrepAction(pattern="needle", path=str(evidence.parent.resolve()))
+            ),
+            agent._tools["grep"].executor(GrepAction(pattern="needle")),
+        ]
+        assert all(observation.is_error is True for observation in rejected)
+        assert all(
+            "READ_OUTSIDE_TASK_EVIDENCE" in observation.text
+            for observation in rejected
+        )
+        classified = classify_harness_error_text(rejected[0].text)
+        assert classified is not None
+        assert classified.retryable is False
+    finally:
+        conversation.close()
+
+    # Existing restricted owners do not receive an evidence allowlist and keep
+    # their established workspace-wide read/search behavior.
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        connection,
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        native_owner_tools=True,
+        owner_tool_mode="restricted",
+        editable_roots=[str((tmp_path / "application").resolve())],
+        readable_files=None,
+    )
+    try:
+        from openhands.tools.file_editor import FileEditorAction
+        from openhands.tools.grep import GrepAction
+
+        conversation.send_message("Initialize tools without calling the model.")
+        unbounded_view = agent._tools["file_editor"].executor(
+            FileEditorAction(command="view", path=str(unrelated.resolve()))
+        )
+        unbounded_grep = agent._tools["grep"].executor(
+            GrepAction(pattern="needle")
+        )
+        assert unbounded_view.is_error is False
+        assert unbounded_grep.is_error is False
     finally:
         conversation.close()
 

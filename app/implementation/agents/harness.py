@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from app.llm_connection import LlmConnection
 
-HARNESS_POLICY_VERSION = "easydep-openhands-harness/v2"
+HARNESS_POLICY_VERSION = "easydep-openhands-harness/v3"
 OWNER_PROMPT_VERSION = "easydep-owner-prompt/v4"
 WORKSPACE_PATH_VERSION = "easydep-owner-workspace/v3"
 OWNER_TOOL_MODES = frozenset({"restricted", "terminal"})
@@ -27,6 +27,7 @@ HarnessErrorCode = Literal[
     "TOOL_PROTOCOL_TOKEN_LEAK",
     "TOOL_SCHEMA_INVALID",
     "PATH_OUTSIDE_WORKSPACE",
+    "READ_OUTSIDE_TASK_EVIDENCE",
     "WRITE_OUTSIDE_OWNER_SCOPE",
     "ENV_WORKSPACE_PERMISSION",
     "COMMAND_FAILED",
@@ -123,6 +124,7 @@ def render_harness_error(
         "TOOL_PROTOCOL_TOKEN_LEAK": "Stop this model/tool transport.",
         "TOOL_SCHEMA_INVALID": "Retry once with the declared tool schema.",
         "PATH_OUTSIDE_WORKSPACE": "Use an absolute path rooted at the logical workspace.",
+        "READ_OUTSIDE_TASK_EVIDENCE": "Report the design contract gap without broadening discovery.",
         "WRITE_OUTSIDE_OWNER_SCOPE": "Edit only an assigned implementation root.",
         "ENV_WORKSPACE_PERMISSION": "Repair the runner environment without an LLM retry.",
         "COMMAND_FAILED": "Fix the representative command failure before retrying.",
@@ -180,6 +182,12 @@ def classify_harness_error_text(text: str) -> HarnessError | None:
             "PATH_OUTSIDE_WORKSPACE",
             True,
             "The resolved path was outside the owner workspace.",
+        )
+    if "READ_OUTSIDE_TASK_EVIDENCE" in text:
+        return HarnessError(
+            "READ_OUTSIDE_TASK_EVIDENCE",
+            False,
+            "The requested read was outside the behavior task evidence.",
         )
     if "WRITE_OUTSIDE_OWNER_SCOPE" in text or "outside the assigned implementation roots" in text.casefold():
         return HarnessError(
