@@ -180,6 +180,13 @@ start_testing, apply_deployment_preferences
 여부와 artifact version은 코드가 검증하고, 영향 범위는 design RTM과 implementation RTM에서
 계산한다. 최신 편집 범위와 frozen Testing 근거는 서로 다른 view로 조회한다.
 
+설계 단계가 요구사항 명세의 빈틈을 typed `feedback_question`으로 반환한 경우에도 같은 원칙을
+쓴다. 선택 답변은 LLM 없이 `Decision`으로 확정하고, 자유 입력만 기존 수정 해석기로 정규화한다.
+그 결과는 설계 command 안에서 요구사항을 고치는 대신 별도의 Requirements 수정 command를
+만든다. 요구사항 수정 완료 후 설계 재실행은 자동 연쇄하지 않고 기존 `start_design` action으로
+사용자가 명시적으로 시작한다. 이 절의 흐름은 질문 전달·응답 연결 계약이며 설계 질문 생성기는
+별도 단계에서 통합한다.
+
 ### 2.5 진행 이벤트
 
 ```ts

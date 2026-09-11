@@ -73,6 +73,12 @@ RTM을 읽는 도구 결과로 답한다.
 artifact version, 하류 영향은 코드가 검증한다. 검증된 명령은 공개 action registry와 같은
 실행 경로로 들어가므로 자연어 명령을 위한 별도 stage router는 없다.
 
+설계 단계가 `specification_gap` 타입의 `feedback_question`을 반환하면 Workspace는 선택지를
+기존 `message` action으로 노출한다. 선택지는 LLM 없이 정규화된 `Decision`이 되고, 자유 입력만
+기존 수정 해석기를 거친다. 답은 설계 산출물을 직접 바꾸지 않고 별도의 요구사항 수정 command로
+전달되며, 수정 완료 뒤에도 사용자가 기존 `start_design` action을 선택해야 설계를 다시 실행한다.
+현재 연결부는 단계가 완성된 typed Question을 반환할 때만 작동하며 질문 생성 자체는 하지 않는다.
+
 ## 분기와 단계 재실행
 
 분기는 요구사항·설계·구현 중 선택한 단계까지의 최신 산출물을 새 `app_id`로 복사한다.

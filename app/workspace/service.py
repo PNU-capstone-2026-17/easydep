@@ -15,6 +15,7 @@ from typing import Any, cast
 
 from fastapi import HTTPException
 
+from app.db.models import TYPE_USECASE_SPEC
 from app.design import progress as design_progress
 from app.design.graphs.design_graph import has_active_session, session_status
 from app.design.graphs.subgraphs import DESIGN_STAGES
@@ -89,6 +90,12 @@ from .conversation.delivery import (
     implementation_revision_payload,
     repair_payload_from_testing_evidence,
     requirements_feedback_edit,
+)
+from .conversation.feedback_envelope import (
+    Decision,
+    Question,
+    answer_option,
+    free_text_decision,
 )
 from .conversation.project_tools import ProjectTools
 from .conversation.revision_planner import plan_revision, validate_plan
@@ -563,6 +570,16 @@ class WorkspaceService:
             raise RuntimeError(
                 f"An active workspace command already exists: {latest['command_id']}"
             )
+        pending = repository.get_command(str(payload.get("action_id") or ""))
+        if pending is not None and pending.get("status") == "AWAITING_INPUT":
+            pending_result = pending.get("result") or {}
+            pending_question = pending_result.get("feedback_question")
+            if pending_question is None and isinstance(pending_result.get("validation"), dict):
+                pending_question = pending_result["validation"].get("feedback_question")
+            if isinstance(pending_question, dict):
+                return self._route_feedback_question_answer(
+                    app_id, payload, stage, latest, pending, pending_question
+                )
         explicit_instructions: dict[str, str] = {}
         element_ref = str(selected.get("element_ref") or "").strip()
         if element_ref and text:
@@ -1149,7 +1166,12 @@ class WorkspaceService:
         )
         try:
             result = self._dispatch(command)
-            self._complete_referenced_action(command)
+            feedback_command = self._feedback_question_command(command)
+            if feedback_command is not None:
+                if not result.get("stale_revision_plan"):
+                    self._complete_feedback_question_source(feedback_command)
+            else:
+                self._complete_referenced_action(command)
             awaiting_input = result.pop("awaiting_input", False) is True
             if awaiting_input:
                 result = result_with_contract(
@@ -1228,6 +1250,228 @@ class WorkspaceService:
         if prior is not None and prior["status"] == "AWAITING_INPUT":
             repository.update_command(action_id, status="COMPLETED", completed_at=repository.now())
 
+    def _route_feedback_question_answer(
+        self,
+        app_id: str,
+        payload: dict[str, Any],
+        stage: str | None,
+        latest: dict[str, Any],
+        prior: dict[str, Any],
+        raw_question: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], str | None]:
+        try:
+            question = Question.model_validate(raw_question)
+            if (
+                prior.get("stage") != "design"
+                or question.app_id != app_id
+                or question.detected_at.stage != "design"
+                or question.trigger.category != "specification_gap"
+            ):
+                raise ValueError("This feedback question is not an executable requirements gap.")
+            targets = question.authority_candidates
+            if (
+                len(targets) != 1
+                or targets[0].owner != "requirements"
+                or targets[0].artifact_type != TYPE_USECASE_SPEC
+            ):
+                raise ValueError("The feedback question must name one requirements use-case specification.")
+            option_id = str(payload.get("feedback_option_id") or "")
+            if option_id:
+                decision = answer_option(
+                    question,
+                    option_id=option_id,
+                    decision_id=str(uuid.uuid4()),
+                    source_user_message_id=str(prior["command_id"]),
+                )
+            else:
+                interpretation = conversation_agent.interpret_revision(
+                    str(payload.get("text") or ""),
+                    [target.ref for target in targets],
+                    tools=ProjectTools(app_id),
+                    context=build_conversation_context(app_id),
+                )
+                if isinstance(interpretation, Clarification):
+                    return self._feedback_question_clarification(
+                        payload, interpretation, stage, latest, prior
+                    )
+                if (
+                    not isinstance(interpretation, CommandIntent)
+                    or str(interpretation.intent) != ConversationIntent.REVISE.value
+                ):
+                    raise ValueError("Free-text answer needs clarification.")
+                revision = interpretation.revision
+                if revision is None:
+                    raise ValueError("Free-text answer needs a revision meaning.")
+                decision = free_text_decision(
+                    question,
+                    raw_answer=str(payload.get("text") or ""),
+                    decision_id=str(uuid.uuid4()),
+                    source_user_message_id=str(prior["command_id"]),
+                    normalization={
+                        "normalized_meaning": {
+                            "semantic_scope": revision.semantic_scope,
+                            "requested_effect": revision.requested_effect,
+                            "change_type": revision.change_type,
+                        },
+                        "authoritative_target_refs": revision.targets,
+                        "preserved_constraints": (
+                            question.decision_policy.required_preserved_constraints
+                        ),
+                    },
+                )
+            if decision.status != "NORMALIZED" or decision.normalized_meaning is None:
+                return self._feedback_question_clarification(
+                    payload,
+                    Clarification(
+                        question="The answer is outside the question authority or policy."
+                    ),
+                    stage,
+                    latest,
+                    prior,
+                )
+            interpretation = RevisionInterpretation(
+                targets=[target.ref for target in decision.authoritative_targets],
+                semantic_scope=decision.normalized_meaning.semantic_scope,
+                requested_effect=decision.normalized_meaning.requested_effect,
+                change_type=decision.normalized_meaning.change_type,
+            )
+            tools = ProjectTools(app_id)
+            selected = tools.validate_targets(
+                [target.model_dump(mode="json") for target in decision.authoritative_targets]
+            )
+            if not selected.get("valid"):
+                raise ValueError("The feedback question is stale.")
+            plan = plan_revision(tools, interpretation)
+            if plan.status != "ready_local" or not validate_plan(tools, plan, interpretation):
+                raise ValueError("The feedback question is stale.")
+        except (TypeError, ValueError) as error:
+            return self._clarification_message(
+                payload,
+                Clarification(question=str(error), candidates=[]),
+                stage,
+                latest,
+            )
+        return (
+            "message",
+            {
+                **payload,
+                "text": "\n".join(
+                    [
+                        interpretation.requested_effect,
+                        *(
+                            f"Preserve constraint: {constraint}"
+                            for constraint in decision.preserved_constraints
+                        ),
+                    ]
+                ),
+                "action_id": str(prior["command_id"]),
+                "feedback_decision": decision.model_dump(mode="json"),
+                "revision_interpretation": interpretation.model_dump(mode="json"),
+                "revision_plan": plan.model_dump(mode="json"),
+                "conversation_intent": {
+                    "intent": "revise",
+                    "targets": interpretation.targets,
+                    "instruction": interpretation.requested_effect,
+                },
+                "validated_targets": [target.model_dump(mode="json") for target in decision.authoritative_targets],
+            },
+            "requirements",
+        )
+
+    @staticmethod
+    def _feedback_question_clarification(
+        payload: dict[str, Any],
+        outcome: Clarification,
+        stage: str | None,
+        latest: dict[str, Any],
+        source: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], str | None]:
+        action, routed_payload, routed_stage = WorkspaceService._clarification_message(
+            payload, outcome, stage, latest
+        )
+        routed_payload["_conversation_actions"] = [
+            offer.model_dump(mode="json", exclude_none=True)
+            for offer in offered_actions(source)
+        ]
+        return action, routed_payload, routed_stage
+
+    @staticmethod
+    def _feedback_question_command(command: dict[str, Any]) -> dict[str, Any] | None:
+        current = command
+        visited: set[str] = set()
+        while len(visited) < 12:
+            payload = current.get("payload") or {}
+            if payload.get("feedback_decision") is not None:
+                return current
+            if current.get("action") != "retry_requirements":
+                return None
+            previous_id = str(payload.get("action_id") or "")
+            if not previous_id:
+                return None
+            if previous_id in visited:
+                raise ValueError("The Requirements retry chain contains a cycle.")
+            visited.add(previous_id)
+            previous = repository.get_command(previous_id)
+            if (
+                previous is None
+                or previous.get("app_id") != command.get("app_id")
+                or previous.get("stage") != "requirements"
+                or previous.get("status") not in {"FAILED", "INTERRUPTED"}
+            ):
+                return None
+            current = previous
+        raise ValueError("The Requirements feedback retry chain is too deep.")
+
+    @staticmethod
+    def _complete_feedback_question_source(command: dict[str, Any]) -> None:
+        """Close only the exact typed question represented by this Decision."""
+
+        payload = command.get("payload") or {}
+        try:
+            decision = Decision.model_validate(payload.get("feedback_decision"))
+        except (TypeError, ValueError) as error:
+            raise ValueError("The feedback Decision is invalid.") from error
+        if (
+            command.get("action") != "message"
+            or command.get("stage") != "requirements"
+            or decision.status != "NORMALIZED"
+            or decision.app_id != command.get("app_id")
+        ):
+            raise ValueError("The feedback Decision does not belong to this command.")
+        source_id = str(payload.get("action_id") or "")
+        source = repository.get_command(source_id) if source_id else None
+        raw_question = (
+            (source.get("result") or {}).get("feedback_question")
+            if source is not None
+            else None
+        )
+        try:
+            question = Question.model_validate(raw_question)
+        except (TypeError, ValueError) as error:
+            raise ValueError("The source feedback Question is missing or invalid.") from error
+        answered_by = (source.get("result") or {}).get("feedback_question_answered_by")
+        if source.get("status") == "COMPLETED" and answered_by == command.get("command_id"):
+            return
+        if (
+            source.get("status") != "AWAITING_INPUT"
+            or source.get("app_id") != command.get("app_id")
+            or decision.source_user_message_id != source_id
+            or question.question_id != decision.question_id
+            or question.question_version != decision.question_version
+            or {target.ref for target in decision.authoritative_targets}
+            - {target.ref for target in question.authority_candidates}
+        ):
+            raise ValueError("The feedback Decision does not match the open Question.")
+        repository.update_command(
+            source_id,
+            status="COMPLETED",
+            result={
+                **dict(source.get("result") or {}),
+                "feedback_question_answered_by": str(command["command_id"]),
+            },
+            completed_at=repository.now(),
+        )
+
     @staticmethod
     def _source_testing_command(command: dict[str, Any]) -> dict[str, Any] | None:
         """Follow an Implementation repair/retry chain back to its failed Testing command."""
@@ -1271,14 +1515,16 @@ class WorkspaceService:
                 clarification = Clarification.model_validate(
                     {key: value for key, value in conversation_outcome.items() if key != "kind"}
                 )
-                return {
-                    "awaiting_input": True,
+                result = {
                     "kind": "question",
                     "message": clarification.question,
                     "conversation": {
                         "clarification": clarification.model_dump(mode="json")
                     },
                 }
+                if not command["payload"].get("_conversation_actions"):
+                    result["awaiting_input"] = True
+                return result
             if kind == "revision_plan":
                 plan = RevisionPlan.model_validate(
                     command["payload"].get("revision_plan") or {}
@@ -1454,6 +1700,13 @@ class WorkspaceService:
             return self._stage_message(delegated, advance=False)
         if handler == "retry_requirements":
             app_id = str(command["app_id"])
+            feedback_command = self._feedback_question_command(command)
+            if feedback_command is not None:
+                replay = {
+                    **command,
+                    "payload": dict(feedback_command.get("payload") or {}),
+                }
+                return self._stage_message(replay, advance=False)
             progress = self._requirements_progress_reporter(app_id, str(command["command_id"]))
             with requirements_telemetry.progress_scope(progress):
                 result = retry_requirements_analysis(
@@ -1636,6 +1889,27 @@ class WorkspaceService:
         if stage == "requirements":
             action_id = str(payload.get("action_id") or "")
             previous = repository.get_command(action_id) if action_id else None
+            conversation_intent = payload.get("conversation_intent")
+            if (
+                isinstance(conversation_intent, dict)
+                and conversation_intent.get("intent") == "revise"
+                and payload.get("validated_targets")
+            ):
+                targets = [
+                    RevisionTarget.model_validate(target)
+                    for target in payload.get("validated_targets") or []
+                ]
+                if payload.get("feedback_decision") is not None:
+                    current = ProjectTools(app_id).validate_targets(
+                        [target.model_dump(mode="json") for target in targets]
+                    )
+                    if not current.get("valid"):
+                        raise ValueError("The feedback question is stale.")
+                edit = requirements_feedback_edit(targets, text)
+                progress = self._requirements_progress_reporter(app_id, str(command["command_id"]))
+                with requirements_telemetry.progress_scope(progress):
+                    result = revise_requirements_analysis(edit, app_id, app_id=app_id)
+                return self._requirements_result(result)
             continuation = bool(
                 action_id and previous is not None and previous["stage"] == "requirements"
             )
@@ -2390,6 +2664,41 @@ class WorkspaceService:
 
     def _design_result(self, result: dict[str, Any]) -> dict[str, Any]:
         session = result.get("session") or {}
+        stage_hint = (
+            session.get("current_stage")
+            or result.get("current_stage")
+            or result.get("stage")
+        )
+        raw_question = result.get("feedback_question")
+        stage_validation = (result.get("validation") or {}).get(stage_hint)
+        if raw_question is None and isinstance(stage_validation, dict):
+            raw_question = stage_validation.get("feedback_question")
+        if raw_question is not None:
+            try:
+                question = Question.model_validate(raw_question)
+                target = (
+                    question.authority_candidates[0]
+                    if len(question.authority_candidates) == 1
+                    else None
+                )
+                if (
+                    question.app_id != result.get("app_id")
+                    or question.detected_at.stage != "design"
+                    or question.trigger.category != "specification_gap"
+                    or target is None
+                    or target.owner != "requirements"
+                    or target.artifact_type != TYPE_USECASE_SPEC
+                ):
+                    raise ValueError("unsupported feedback question")
+            except (TypeError, ValueError) as error:
+                raise ValueError("Design produced an unsupported feedback question.") from error
+            return {
+                "awaiting_input": True,
+                "kind": "question",
+                "message": question.prompt,
+                "feedback_question": question.model_dump(mode="json"),
+                "design": result,
+            }
         # The design service reports completion as ``status: completed``.
         # Older stored command results can still contain the two flags below.
         finished = bool(

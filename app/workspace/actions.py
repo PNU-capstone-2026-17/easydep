@@ -141,6 +141,7 @@ _INTERNAL_CONVERSATION_FIELDS = {
     "validated_impact",
     "validated_target_feedbacks",
     "validated_targets",
+    "feedback_decision",
 }
 
 
@@ -289,6 +290,53 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
             actions=_answer_offers(command_id, result),
         )
 
+    raw_feedback_question = result.get("feedback_question")
+    if raw_feedback_question is None and isinstance(result.get("validation"), dict):
+        raw_feedback_question = result["validation"].get("feedback_question")
+    if isinstance(raw_feedback_question, dict):
+        try:
+            from .conversation.feedback_envelope import Question
+
+            question = Question.model_validate(raw_feedback_question)
+        except (TypeError, ValueError):
+            question = None
+        if question is not None:
+            actions = [
+                _offer(
+                    WorkspaceAction.MESSAGE,
+                    option.label,
+                    {
+                        **common,
+                        "feedback_option_id": option.option_id,
+                        "text": "\n".join(
+                            [
+                                option.decision_payload.normalized_meaning.requested_effect,
+                                *(
+                                    f"Preserve constraint: {constraint}"
+                                    for constraint in option.decision_payload.preserved_constraints
+                                ),
+                            ]
+                        ),
+                    },
+                    description=option.description or None,
+                )
+                for option in question.options
+            ]
+            if question.allow_free_text:
+                target_ref = question.authority_candidates[0].ref
+                actions.append(
+                    _offer(
+                        WorkspaceAction.MESSAGE,
+                        "Provide another answer",
+                        {
+                            **common,
+                            "feedback_free_text": True,
+                            "context": {"element_ref": target_ref},
+                        },
+                    )
+                )
+            return AwaitingOutcome(wait_reason=WaitReason.QUESTION, actions=actions)
+
     blockers = [item for item in result.get("blocking_findings") or [] if isinstance(item, dict)]
     blocking_route = str(result.get("blocking_route") or blocking_findings_route(blockers))
     repair_job_id = str(
@@ -419,6 +467,8 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
     command_id = str(command.get("command_id") or "")
     result = dict(command.get("result") or {})
     common = {"action_id": command_id}
+    if result.get("feedback_question_answered_by"):
+        return [_offer(WorkspaceAction.MESSAGE, "Continue conversation", common)]
     if status in {"FAILED", "INTERRUPTED"}:
         discuss = _offer(WorkspaceAction.MESSAGE, "Ask about this error", common)
         if stage == "requirements":

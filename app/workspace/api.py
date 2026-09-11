@@ -217,6 +217,8 @@ class WorkspaceCommandRequest(BaseModel):
     deployment_preferences: dict[str, Any] | None = None
     checkpoint_stage: CheckpointStage | None = None
     restart_stage: RestartStage | None = None
+    feedback_option_id: str | None = Field(default=None, min_length=1, max_length=200)
+    feedback_free_text: bool | None = None
 
 
 class ComputeSizingSelectionRequest(BaseModel):
