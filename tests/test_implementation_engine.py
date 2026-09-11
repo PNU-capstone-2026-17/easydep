@@ -2741,11 +2741,22 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
     prompt_path = task_dir / "backend.md"
     initial_prompt = "INITIAL IMPLEMENTATION CONTEXT\n" + ("all requirements\n" * 100)
     prompt_path.write_text(initial_prompt, encoding="utf-8")
+    context_path = task_dir / "backend.context.json"
+    context_path.write_text(
+        json.dumps(
+            {
+                "behaviorCapsule": {"useCases": [{"use_case_id": "UC1"}]},
+                "readSourcePaths": [source_path],
+            }
+        ),
+        encoding="utf-8",
+    )
     task = {
         "task_id": "implement-backend-application",
         "task_type": "backend-implementation",
         "owner": "backend",
         "prompt_file": str(prompt_path.relative_to(run)).replace("\\", "/"),
+        "context_file": str(context_path.relative_to(run)).replace("\\", "/"),
         "allowed_write_paths": [source_path],
         "allowed_write_roots": ["application/src/main/java/com/example"],
         "required_output_paths": [source_path],
@@ -2771,6 +2782,7 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
         },
     )
     assert entry is not None
+    assert entry["ownerTaskIds"] == ["implement-backend-application"]
     assert entry["repairPaths"] == [source_path]
     assert "application/src/main/java/com/example/api/Contract.java" in entry["relatedPaths"]
     assert "application/frontend/src/App.tsx" in entry["relatedPaths"]
@@ -2822,7 +2834,13 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
     assert "INITIAL IMPLEMENTATION CONTEXT" not in repair_prompt
     assert "401 Unauthorized" in repair_prompt
     assert "SecurityConfiguration.java was changed, but HTTP 401 persists" in repair_prompt
-    assert "Use the terminal to reproduce the failure" in repair_prompt
+    assert "with the file editor" in repair_prompt
+    assert "`run_task_check`" in repair_prompt
+    assert "terminal" not in repair_prompt
+    assert "trace evidence, not extra read permission" in repair_prompt
+    assert "only when the task context already lists it" in repair_prompt
+    assert "Use the terminal to reproduce the failure" not in repair_prompt
+    assert "not an exhaustive list of relevant source" not in repair_prompt
     assert "State new diagnostic hypothesis 2" in repair_prompt
     assert len({item["strategy"] for item in repeated_entries}) == 6
     assert source_path in repair_prompt

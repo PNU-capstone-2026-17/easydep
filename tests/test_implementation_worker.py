@@ -62,20 +62,30 @@ def test_testing_repair_reuses_the_declared_owner_job_and_checkpoint(
     reports.mkdir(parents=True)
     job_path = job_root / "job.json"
     job_path.write_text("{}", encoding="utf-8")
-    source = run_root / "application/src/main/java/com/example/Service.java"
-    source.parent.mkdir(parents=True)
-    source.write_text("class Service {}", encoding="utf-8")
+    source_a_path = "application/src/main/java/com/example/ServiceA.java"
+    source_b_path = "application/src/main/java/com/example/ServiceB.java"
+    source_a = run_root / source_a_path
+    source_b = run_root / source_b_path
+    source_a.parent.mkdir(parents=True)
+    source_a.write_text("class ServiceA {}", encoding="utf-8")
+    source_b.write_text("class ServiceB {}", encoding="utf-8")
     (reports / "run-manifest.json").write_text(
         json.dumps(
             {
                 "implementation_tasks": [
                     {
-                        "task_id": "implement-backend-application",
+                        "task_id": "implement-backend-behavior-a",
                         "task_type": "backend-implementation",
                         "owner": "backend",
-                        "allowed_write_paths": [
-                            "application/src/main/java/com/example/Service.java"
-                        ],
+                        "allowed_write_paths": [source_a_path],
+                        "source_refs": ["api:operation-a", "use_case:UC-A"],
+                    },
+                    {
+                        "task_id": "implement-backend-behavior-b",
+                        "task_type": "backend-implementation",
+                        "owner": "backend",
+                        "allowed_write_paths": [source_b_path],
+                        "source_refs": ["api:operation-b", "use_case:UC-B"],
                     },
                     {
                         "task_id": "implement-frontend-application",
@@ -105,9 +115,23 @@ def test_testing_repair_reuses_the_declared_owner_job_and_checkpoint(
 
     evidence = {
         "command": ["testing", "testing-dynamic-functional"],
-        "stderr": "application/src/main/java/com/example/Service.java failed",
+        "testResults": json.dumps(
+            {
+                "confirmedTargetRefs": ["api:operation-b", "use_case:UC-B"],
+                "fileHints": [source_b_path],
+            }
+        ),
     }
     with patch.object(worker.executor, "submit") as submit:
+        persistence_a, conversation_a = _owner_conversation_identity(
+            run_root,
+            "implement-backend-behavior-a",
+        )
+        checkpoint_a = persistence_a / conversation_a.hex / "base_state.json"
+        checkpoint_a.parent.mkdir(parents=True)
+        checkpoint_a.write_text("{}", encoding="utf-8")
+
+        # Exact evidence selects behavior B, so A's valid checkpoint cannot be reused.
         with pytest.raises(InvalidJobState, match="no reusable OpenHands conversation"):
             worker.request_owner_repair(
                 job_id,
@@ -116,13 +140,35 @@ def test_testing_repair_reuses_the_declared_owner_job_and_checkpoint(
             )
         submit.assert_not_called()
 
-        persistence_dir, conversation_id = _owner_conversation_identity(
+        ambiguous_evidence = {
+            "testResults": json.dumps(
+                {"confirmedTargetRefs": ["api:operation-a", "api:operation-b"]}
+            )
+        }
+        conflicting_evidence = {
+            "testResults": json.dumps(
+                {
+                    "confirmedTargetRefs": ["api:operation-a"],
+                    "fileHints": [source_b_path],
+                }
+            )
+        }
+        for invalid_evidence in (ambiguous_evidence, conflicting_evidence):
+            with pytest.raises(InvalidJobState, match="ambiguous"):
+                worker.request_owner_repair(
+                    job_id,
+                    owner="backend",
+                    evidence=invalid_evidence,
+                )
+        submit.assert_not_called()
+
+        persistence_b, conversation_b = _owner_conversation_identity(
             run_root,
-            "implement-backend-application",
+            "implement-backend-behavior-b",
         )
-        checkpoint = persistence_dir / conversation_id.hex / "base_state.json"
-        checkpoint.parent.mkdir(parents=True)
-        checkpoint.write_text("{}", encoding="utf-8")
+        checkpoint_b = persistence_b / conversation_b.hex / "base_state.json"
+        checkpoint_b.parent.mkdir(parents=True)
+        checkpoint_b.write_text("{}", encoding="utf-8")
         result = worker.request_owner_repair(
             job_id,
             owner="backend",
@@ -136,7 +182,80 @@ def test_testing_repair_reuses_the_declared_owner_job_and_checkpoint(
     assert result["job_id"] == job_id
     assert result["status"] == "QUEUED"
     assert result["owner_repair"]["owner"] == "backend"
-    assert plan["entries"][-1]["ownerTaskIds"] == ["implement-backend-application"]
+    assert result["owner_repair"]["task_id"] == "implement-backend-behavior-b"
+    assert plan["entries"][-1]["ownerTaskIds"] == [
+        "implement-backend-behavior-b"
+    ]
+    submit.assert_called_once()
+
+
+def test_frozen_backend_operation_queues_a_fresh_repair_without_base_state(
+    tmp_path: Path,
+) -> None:
+    worker = ImplementationWorker(settings(tmp_path))
+    job_id = "b" * 32
+    job_root = worker.settings.work_root / job_id
+    run_root = job_root / "generated/runs/run_legacy_operation"
+    reports = run_root / "reports"
+    reports.mkdir(parents=True)
+    job_path = job_root / "job.json"
+    job_path.write_text("{}", encoding="utf-8")
+    task_id = "implement-backend-operation-0001-legacy"
+    source_path = "application/src/main/java/com/example/LegacyService.java"
+    source = run_root / source_path
+    source.parent.mkdir(parents=True)
+    source.write_text("class LegacyService {}", encoding="utf-8")
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_id": task_id,
+                        "task_type": "backend-operation",
+                        "owner": "backend",
+                        "allowed_write_paths": [source_path],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (reports / "workflow-state.json").write_text(
+        json.dumps({"status": "COMPLETE"}), encoding="utf-8"
+    )
+    worker._write(
+        {
+            "job_id": job_id,
+            "app_id": "app-1",
+            "status": "COMPLETED",
+            "job_path": str(job_path),
+            "run_root": str(run_root),
+            "created_at": "now",
+            "updated_at": "now",
+        }
+    )
+    persistence_dir, conversation_id = _owner_conversation_identity(run_root, task_id)
+    checkpoint = persistence_dir / conversation_id.hex / "base_state.json"
+    assert not checkpoint.exists()
+
+    try:
+        with patch.object(worker.executor, "submit") as submit:
+            result = worker.request_owner_repair(
+                job_id,
+                owner="backend",
+                evidence={
+                    "failedTaskId": task_id,
+                    "testResults": f"{source_path}: verification failed",
+                },
+            )
+        plan = json.loads((reports / "repair-plan.json").read_text(encoding="utf-8"))
+    finally:
+        worker.shutdown()
+
+    assert result["status"] == "QUEUED"
+    assert result["owner_repair"]["task_id"] == task_id
+    assert plan["entries"][-1]["ownerTaskIds"] == [task_id]
+    assert not checkpoint.exists()
     submit.assert_called_once()
 
 

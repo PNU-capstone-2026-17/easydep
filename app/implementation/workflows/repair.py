@@ -12,12 +12,94 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.config import settings
+
 REPAIR_SCHEMA = "implementation-repair-plan/v4"
 REPAIR_PLAN = Path("reports/repair-plan.json")
 REPAIR_PROMPT_DIR = Path("reports/implementation-tasks")
 REPAIR_PROMPT_HEADING = "## Automatic repair task"
 REPAIR_PROMPT_START = "<!-- easydep:repair-directives:start -->"
 REPAIR_PROMPT_END = "<!-- easydep:repair-directives:end -->"
+
+
+class RepairRoutingError(ValueError):
+    """Structured repair evidence cannot identify one implementation task."""
+
+
+def select_repair_task(
+    run_root: Path,
+    *,
+    owner: str,
+    failed_task_id: str,
+    evidence: dict[str, object],
+) -> dict[str, object]:
+    """Choose one task from exact IDs, trace refs, or explicit source paths."""
+
+    manifest = _read_json(run_root / "reports" / "run-manifest.json")
+    tasks = [
+        task
+        for task in manifest.get("implementation_tasks", [])
+        if isinstance(task, dict) and isinstance(task.get("task_id"), str)
+    ]
+    failed = next((task for task in tasks if task["task_id"] == failed_task_id), None)
+    if failed is not None:
+        failed_owner = str(failed.get("owner", ""))
+        if owner and failed_owner and owner != failed_owner:
+            raise RepairRoutingError(
+                f"Failed task {failed_task_id} belongs to {failed_owner}, not {owner}"
+            )
+        return failed
+    evidence_refs, task_ids = _structured_repair_evidence(evidence)
+    task_ids |= {
+        value.removeprefix("task:")
+        for value in evidence_refs
+        if value.startswith("task:")
+    }
+    exact = [task for task in tasks if task["task_id"] in task_ids]
+    if len(exact) == 1:
+        exact_owner = str(exact[0].get("owner", ""))
+        if owner and exact_owner and owner != exact_owner:
+            raise RepairRoutingError(
+                f"Repair task {exact[0]['task_id']} belongs to {exact_owner}, not {owner}"
+            )
+        return exact[0]
+    if len(exact) > 1:
+        raise RepairRoutingError("Repair evidence names multiple implementation tasks")
+    owner_tasks = [task for task in tasks if str(task.get("owner", "")) == owner]
+    if len(owner_tasks) == 1:
+        return owner_tasks[0]
+    if not owner_tasks:
+        raise RepairRoutingError(f"No implementation tasks for repair owner {owner}")
+
+    evidence_paths = referenced_source_paths(evidence)
+    candidate_sets: list[set[str]] = []
+    if evidence_refs:
+        matched = {
+            str(task["task_id"])
+            for task in owner_tasks
+            if evidence_refs.intersection(_task_source_refs(task))
+        }
+        if matched:
+            candidate_sets.append(matched)
+    if evidence_paths:
+        matched = {
+            str(task["task_id"])
+            for task in owner_tasks
+            if any(path in _task_paths(run_root, task) for path in evidence_paths)
+        }
+        if matched:
+            candidate_sets.append(matched)
+    if not candidate_sets:
+        raise RepairRoutingError(
+            f"Repair routing for owner {owner} needs an exact task, source ref, or path"
+        )
+    candidates = set.intersection(*candidate_sets)
+    if len(candidates) != 1:
+        detail = ", ".join(sorted(candidates)) or "conflicting evidence"
+        raise RepairRoutingError(f"Repair routing is ambiguous for owner {owner}: {detail}")
+    task_id = next(iter(candidates))
+    return next(task for task in owner_tasks if task["task_id"] == task_id)
+
 
 def schedule_cross_phase_repair(
     run_root: Path,
@@ -34,8 +116,8 @@ def schedule_cross_phase_repair(
     ]
     if not tasks:
         return None
-
     paths = referenced_source_paths(evidence)
+
     failed = next(
         (task for task in tasks if str(task.get("task_id")) == failed_task_id),
         None,
@@ -51,13 +133,16 @@ def schedule_cross_phase_repair(
         owner = str(failed.get("owner", "")).strip()
     if not owner:
         owner = _owner_for_paths(tasks, paths)
-    owner_ids = {
-        str(task["task_id"])
-        for task in tasks
-        if owner and str(task.get("owner", "")) == owner
-    }
-    if not owner_ids:
+    if not owner:
         return None
+    selected = select_repair_task(
+        run_root,
+        owner=owner,
+        failed_task_id=failed_task_id,
+        evidence=evidence,
+    )
+    owner = str(selected.get("owner", owner))
+    owner_ids = {str(selected["task_id"])}
 
     current_text = _evidence_text(evidence)
     plan_path = run_root / REPAIR_PLAN
@@ -192,28 +277,80 @@ def apply_repair_directives(run_root: Path) -> None:
             immutable = "\n".join(
                 f"- `{path}`" for path in task.get("immutable_paths", [])
             ) or "- None"
+            context_file = task.get("context_file")
+            context_path = (
+                run_root / context_file if isinstance(context_file, str) else None
+            )
+            task_context = (
+                _read_json(context_path)
+                if context_path is not None and context_path.is_file()
+                else {}
+            )
+            bounded_behavior = isinstance(task_context.get("behaviorCapsule"), dict)
+            restricted_tools = (
+                bounded_behavior
+                or task.get("task_type") == "backend-operation"
+                or str(
+                    task.get("owner_tool_mode")
+                    or settings.implementation_owner_tool_mode
+                )
+                != "terminal"
+            )
+            if restricted_tools:
+                reproduce_instruction = (
+                    "Inspect the current source with the file editor, apply one focused edit "
+                    "batch, then use `run_task_check` to reproduce the assigned verification.\n\n"
+                )
+                verification_instruction = (
+                    "After editing, call `run_task_check`. Inspect its concrete failure and "
+                    "continue repairing in this conversation. "
+                )
+            else:
+                reproduce_instruction = (
+                    "Use the terminal to reproduce the assigned verification against the "
+                    "current source before editing.\n\n"
+                )
+                verification_instruction = (
+                    "After editing, rerun the relevant build or test in the terminal. Inspect "
+                    "its concrete failure and continue repairing in this conversation. "
+                )
+            if bounded_behavior:
+                hint_scope = (
+                    "These paths are trace evidence, not extra read permission. Use a path "
+                    "only when the task context already lists it.\n\n"
+                )
+            else:
+                hint_scope = (
+                    "These paths come from failure evidence and traceability. They are "
+                    "investigation hints, not an exhaustive list of relevant source.\n\n"
+                )
+            completion_instruction = (
+                verification_instruction
+                + (
+                    "If it names unlisted source, report missing implementation context. "
+                    if bounded_behavior
+                    else ""
+                )
+                + "When it passes, call FinishTool immediately; do not end with a plain-text "
+                "summary.\n"
+            )
             repair_prompt = (
                 f"# {REPAIR_PROMPT_HEADING.removeprefix('## ')}\n\n"
                 "Resolve the technical failure below. Choose the "
                 "implementation, tests, and edit order autonomously. Do not change unrelated "
                 "features or generated public contracts. Read needed source with the file editor.\n\n"
-                "Use the terminal to reproduce the failure against the current source before "
-                "editing. The history below may describe source that has already changed; do not "
-                "waste time searching for names absent from the current check and files.\n\n"
+                f"{reproduce_instruction}"
                 f"## Current approach\n\n{current.get('strategy', 'focused-fix')}\n\n"
                 "## Starting source hints\n\n"
                 f"{source_hints}\n\n"
-                "These paths come from failure evidence and traceability. They are investigation "
-                "hints, not an exhaustive list of relevant source.\n\n"
+                f"{hint_scope}"
                 f"## Read-only public contracts\n\n{immutable}\n\n"
                 f"## Previous failed approaches\n\n{history}\n\n"
                 "## Current failure\n\n```text\n"
                 f"{current.get('evidence', '')}\n```\n\n"
                 "Resolve every item in the current failure evidence before running verification; "
                 "a passing build alone does not clear implementation markers or controller stubs. "
-                "After editing, rerun the relevant build or test in the terminal. If it fails, "
-                "inspect the cause and continue repairing in this conversation. When it passes, "
-                "call FinishTool immediately; do not end with a plain-text summary.\n"
+                f"{completion_instruction}"
             )
             repair_prompt_path.write_text(repair_prompt, encoding="utf-8")
             task["repair_prompt_file"] = str(
@@ -290,6 +427,69 @@ def referenced_source_paths(evidence: dict[str, object]) -> list[str]:
         flags=re.IGNORECASE,
     )
     return list(dict.fromkeys(path.rstrip(".,;:)") for path in paths))
+
+
+def _structured_repair_evidence(
+    evidence: dict[str, object],
+) -> tuple[set[str], set[str]]:
+    """Read the exact refs already emitted by the Workspace Testing handoff."""
+
+    documents = [evidence]
+    test_results = evidence.get("testResults")
+    if isinstance(test_results, dict):
+        documents.append(test_results)
+    elif isinstance(test_results, str) and test_results.lstrip().startswith("{"):
+        try:
+            parsed = json.loads(test_results)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            documents.append(parsed)
+
+    refs: set[str] = set()
+    task_ids: set[str] = set()
+    for document in documents:
+        for key in (
+            "sourceRefs",
+            "source_refs",
+            "confirmedTargetRefs",
+            "confirmed_target_refs",
+        ):
+            value = document.get(key, [])
+            values = value if isinstance(value, list) else [value]
+            refs.update(item for item in values if isinstance(item, str) and item)
+        for key in ("taskId", "task_id", "failedTaskId", "failed_task_id"):
+            value = document.get(key)
+            if isinstance(value, str) and value:
+                task_ids.add(value)
+    return refs, task_ids
+
+
+def _task_source_refs(task: dict[str, object]) -> set[str]:
+    return {
+        str(value)
+        for value in task.get("source_refs", task.get("sourceRefs", []))
+        if isinstance(value, str)
+    }
+
+
+def _task_paths(run_root: Path, task: dict[str, object]) -> set[str]:
+    paths = {
+        str(value).replace("\\", "/")
+        for key in ("required_test_paths", "requiredTestPaths", "allowed_write_paths", "allowedWritePaths")
+        for value in task.get(key, [])
+        if isinstance(value, str)
+    }
+    context_file = task.get("context_file", task.get("contextFile"))
+    context_path = run_root / context_file if isinstance(context_file, str) else None
+    if context_path is not None and context_path.is_file():
+        context = _read_json(context_path)
+        paths.update(
+            str(value).replace("\\", "/")
+            for value in context.get("readSourcePaths", [])
+            if isinstance(value, str)
+        )
+    return paths
 
 
 def repair_rounds(plan: dict[str, object]) -> int:
