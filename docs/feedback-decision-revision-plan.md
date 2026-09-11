@@ -23,6 +23,9 @@
 7. 변경 중간 상태는 재개할 수 있게 저장하되, 유효한 최신 산출물인 accepted head는 영향
    범위의 정합성이 확보됐을 때만 교체한다. 갱신하지 못한 downstream은 같은 변경에서
    `stale`로 표시하고 소비를 차단한다.
+8. 기본 실행 모델은 일반적인 대화형 AI 서비스의 workspace single-flight다. 한 사용자
+   메시지의 처리가 끝날 때까지 같은 workspace의 다음 메시지를 대기시키며, 실제 필요가
+   확인되기 전에는 별도 행 잠금·분산 상태기계·감사 프로토콜을 추가하지 않는다.
 
 핵심 원칙은 **사용자 의미 결정과 생성 수리를 분리하고, 변경 전 영향 범위를 고정하며,
 변경 후 추적 관계를 다시 증명하는 것**이다.
@@ -374,6 +377,14 @@ compare-and-swap으로 다시 검사하여 긴 실행 중의 경쟁 변경도 �
 
 변경 draft와 accepted head를 구분한다.
 
+첫 검증 구현은 데이터베이스 schema를 추가하거나 바꾸지 않는다. 사용자 승인 한 건과 수명이
+같은 `workspace_commands` 행 하나를 durable aggregate로 사용하고, `payload.feedback_revision`에
+Decision·ChangeSet·checkpoint·remote attempt를 저장한다. 이 선택은 운영 저장소의 최종 형태가
+아니라 `UC 명세 → class bundle → sequence` 수직 경로의 결함·재호출 감소를 검증하기 위한
+경계다. 일반적인 대화형 AI 서비스처럼 workspace command executor가 한 메시지를 끝낼 때까지
+같은 workspace의 다음 메시지를 대기시킨다. 저장 repository는 이 single-flight 전제를
+재사용하며 checkpoint나 attempt마다 별도의 `App` 행 잠금을 추가하지 않는다.
+
 - `Decision`, plan, checkpoint와 부분 산출물은 durable draft로 저장한다.
 - draft 실패는 기존 accepted head를 변경하지 않는다.
 - 영향받은 산출물이 모두 갱신되거나 명시적으로 stale 분류되면 artifact revision과 validity를
@@ -403,15 +414,25 @@ Checkpoint
   status
 ```
 
-같은 `Decision` 또는 `ChangeSet`의 중복 제출은 같은 멱등성 키로 처리하여 병렬 실행과 중복
-revision commit을 막는다. 재개할 때 완료가 기록된 unit의 실제 input digest와 validator
-version을 다시 확인하고, 같으면 원격 호출 없이 재사용한다.
+같은 `Decision` 또는 `ChangeSet`의 중복 제출은 같은 멱등성 키로 식별하여 중복 revision
+commit을 거부한다. 같은 workspace의 실행 직렬화는 command executor의 single-flight가
+담당한다. 재개할 때 완료가 기록된 unit의 실제 input digest와 validator version을 다시
+확인하고, 같으면 원격 호출 없이 재사용한다.
 
 Provider가 응답한 직후 checkpoint를 저장하기 전에 프로세스가 종료되면 물리적 LLM 호출의
 완료 여부를 일반적으로 증명할 수 없다. 이 구간은 `ATTEMPT_OUTCOME_UNKNOWN`으로 기록하고,
 provider의 idempotency 또는 응답 회수 지원 범위에서 재개한다. 불가피한 재호출은 새 attempt로
 기록하고 공유 호출·시간·token 예산에 포함한다. 원격 호출의 exactly-once를 보장한다고
 표현하지 않는다.
+
+이 prototype의 저장 계층 완료 범위는 중복 Decision·ChangeSet 차단, 입력 digest·prompt·validator
+버전이 같은 완료 checkpoint만의 재사용, 호출 전 attempt 저장, 실패 checkpoint 뒤 재시도와
+완료 checkpoint 뒤 재호출 금지, 오래된 base head publish 거부까지다. 임의 SQL 변조 방어,
+모든 manifest 손상 복구와 범용 상태 전이기는 이 단계에서 구현하지 않는다. SQLite 테스트는
+상태 규칙과 재시작 persistence를 검증한다. 다중 worker가 같은 workspace command를 병렬
+실행하는 구조가 필요해질 때에만 별도의 분산 동시성 제어를 추가한다. 실제 `ArtifactVersion`
+저장과 기존 reader의 stale 소비 차단은 첫 수직 통합에서 같은
+transaction·소비 경계로 연결한 뒤 전역 accepted head라고 부른다.
 
 ## 9. 첫 수직 적용 경로
 
