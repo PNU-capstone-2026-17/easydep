@@ -78,6 +78,53 @@ def test_choice_actions_carry_the_answer_in_their_payload() -> None:
     assert shaped["actions"][0]["description"] == "AWS Seoul region"
 
 
+def test_class_choice_copies_pinned_context_and_offers_free_text() -> None:
+    context = {
+        "element_ref": "class_diagram:Registration",
+        "validated_target": {
+            "ref": "class_diagram:Registration",
+            "kind": "class",
+            "element_id": "Registration",
+            "owner": "design",
+            "artifact_type": "CLASS",
+            "artifact_version_id": 7,
+            "display_label": "Registration",
+        },
+    }
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT", stage="design"),
+        {
+            "resource_question": {
+                "choices": [{"value": "Add swap operation", "label": "Add operation"}],
+                "allowFreeText": True,
+                "context": context,
+            }
+        },
+    )
+
+    assert shaped["actions"][0]["payload"] == {
+        "action_id": "command-1",
+        "text": "Add swap operation",
+        "context": context,
+    }
+    assert shaped["actions"][1]["label"] == "Provide another answer"
+    assert shaped["actions"][1]["payload"] == {
+        "action_id": "command-1",
+        "context": context,
+    }
+
+    with pytest.raises(ValueError, match="must pin one validated target"):
+        result_with_contract(
+            command(status="AWAITING_INPUT", stage="design"),
+            {
+                "current_stage": "class_diagram",
+                "resource_question": {
+                    "choices": [{"value": "Regenerate the class diagram"}]
+                },
+            },
+        )
+
+
 def test_deployment_configuration_wait_does_not_offer_early_advance() -> None:
     shaped = result_with_contract(
         command(status="AWAITING_INPUT", stage="design"),

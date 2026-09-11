@@ -610,6 +610,153 @@ def test_artifact_stage_is_normalized_to_the_user_visible_workflow_stage() -> No
     assert repository.workflow_stage(None) == "requirements"
 
 
+def _pinned_class_question() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    target = {
+        "ref": "class_diagram:Registration::swap()",
+        "kind": "operation",
+        "element_id": "Registration.swap",
+        "owner": "design",
+        "artifact_type": "CLASS",
+        "artifact_version_id": 7,
+        "display_label": "Registration.swap",
+    }
+    context = {"element_ref": target["ref"], "validated_target": target}
+    pending = {
+        "command_id": "class-question",
+        "app_id": "app-1",
+        "action": "message",
+        "stage": "design",
+        "status": "AWAITING_INPUT",
+        "payload": {},
+        "result": {
+            "resource_question": {
+                "choices": [{"value": "Add swap operation"}],
+                "allowFreeText": True,
+                "context": context,
+            }
+        },
+    }
+    return target, context, pending
+
+
+def _install_pinned_class_question(monkeypatch, pending, target, *, latest=None) -> None:
+    monkeypatch.setattr(
+        repository, "latest_command", lambda _app_id, **_kwargs: latest or pending
+    )
+    monkeypatch.setattr(repository, "get_command", lambda _command_id: pending)
+    monkeypatch.setattr(
+        workspace_module,
+        "session_status",
+        lambda _app_id: {"active": True, "stage": "class_diagram", "retryable": False},
+    )
+
+    class FakeProjectTools:
+        def __init__(self, app_id: str) -> None:
+            assert app_id == "app-1"
+
+        def current_revision_target(self, selected):
+            return selected
+
+        def trace_impact(self, refs, *, view):
+            assert refs == [target["ref"]]
+            assert view == "editing"
+            return {"impacts": []}
+
+    monkeypatch.setattr(workspace_module, "ProjectTools", FakeProjectTools)
+
+
+def test_fixed_class_resource_choice_bypasses_conversation_and_revises_batch(
+    monkeypatch,
+) -> None:
+    target, context, pending = _pinned_class_question()
+    observed: dict[str, object] = {}
+    _install_pinned_class_question(monkeypatch, pending, target)
+    monkeypatch.setattr(
+        workspace_module.conversation_agent,
+        "interpret_revision",
+        lambda *_args, **_kwargs: pytest.fail("fixed class choice must not use ConversationAgent"),
+    )
+    monkeypatch.setattr(
+        workspace_module,
+        "revise_design_elements",
+        lambda app_id, request, **kwargs: observed.update(
+            app_id=app_id,
+            revisions=request.revisions,
+            authority=kwargs["approved_authority_targets"],
+        )
+        or {"changed": ["class_diagram"], "touched": {}, "related": []},
+    )
+    service = WorkspaceService()
+    try:
+        assert (
+            service._fixed_class_resource_choice(
+                "app-1",
+                {
+                    "action_id": "class-question",
+                    "text": "Use a different operation name.",
+                    "context": context,
+                },
+                pending,
+            )
+            is None
+        )
+        action, payload, stage = service._prepare_conversational_message(
+            "app-1",
+            action="message",
+            payload={
+                "action_id": "class-question",
+                "text": "Add swap operation",
+                "context": context,
+            },
+            stage=None,
+        )
+        result = service._stage_message(
+            {
+                "command_id": "answer",
+                "app_id": "app-1",
+                "action": action,
+                "stage": stage,
+                "payload": payload,
+            },
+            advance=False,
+        )
+    finally:
+        service.shutdown()
+
+    assert stage == "design"
+    assert observed["app_id"] == "app-1"
+    assert observed["revisions"][0].target == target["ref"]
+    assert observed["revisions"][0].feedback == "Add swap operation"
+    assert observed["authority"] == {target["ref"]}
+    assert result["design"]["changed"] == ["class_diagram"]
+
+
+def test_fixed_class_choice_rejects_an_old_question_before_conversation(monkeypatch) -> None:
+    target, context, old = _pinned_class_question()
+    old["command_id"] = "old-question"
+    latest = {**old, "command_id": "new-question"}
+    _install_pinned_class_question(monkeypatch, old, target, latest=latest)
+    monkeypatch.setattr(
+        workspace_module.conversation_agent,
+        "interpret_revision",
+        lambda *_args, **_kwargs: pytest.fail("stale choice must not be interpreted"),
+    )
+    service = WorkspaceService()
+    try:
+        with pytest.raises(ValueError, match="no longer the current design question"):
+            service._prepare_conversational_message(
+                "app-1",
+                action="message",
+                payload={
+                    "action_id": "old-question",
+                    "text": "Add swap operation",
+                    "context": context,
+                },
+                stage=None,
+            )
+    finally:
+        service.shutdown()
+
 def test_cross_stage_feedback_waits_before_mutating_artifacts(monkeypatch) -> None:
     service = WorkspaceService()
     service._stage_message = lambda *_args, **_kwargs: (_ for _ in ()).throw(

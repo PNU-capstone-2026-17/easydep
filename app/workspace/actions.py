@@ -131,6 +131,7 @@ _PASSIVE_REQUEST_DEFAULTS: dict[str, Any] = {
     "auto_approve_method_proposals": False,
 }
 _INTERNAL_CONVERSATION_FIELDS = {
+    "_resource_answer_context",
     "_conversation_actions",
     "_conversation_outcome",
     "conversation_intent",
@@ -181,23 +182,55 @@ def _offer(
 def _answer_offers(command_id: str, result: dict[str, Any]) -> list[ActionOffer]:
     question = result.get("resource_question") or {}
     choices = question.get("choices") or [] if isinstance(question, dict) else []
+    context = question.get("context") if isinstance(question, dict) else None
+    pinned_context = (
+        dict(context)
+        if isinstance(context, dict)
+        and context.get("element_ref")
+        and isinstance(context.get("validated_target"), dict)
+        else None
+    )
+    if result.get("current_stage") == "class_diagram" and pinned_context is None:
+        raise ValueError("A class design question must pin one validated target.")
     offers = [
         _offer(
             WorkspaceAction.MESSAGE,
             str(choice.get("label") or choice.get("value") or "Select"),
-            {"action_id": command_id, "text": str(choice.get("value") or "")},
+            {
+                "action_id": command_id,
+                "text": str(choice.get("value") or ""),
+                **({"context": pinned_context} if pinned_context is not None else {}),
+            },
             description=str(choice.get("description") or "") or None,
         )
         for choice in choices
         if isinstance(choice, dict) and choice.get("value") is not None
     ]
     if offers:
+        if question.get("allowFreeText") is True:
+            offers.append(
+                _offer(
+                    WorkspaceAction.MESSAGE,
+                    "Provide another answer",
+                    {
+                        "action_id": command_id,
+                        **(
+                            {"context": pinned_context}
+                            if pinned_context is not None
+                            else {}
+                        ),
+                    },
+                )
+            )
         return offers
     return [
         _offer(
             WorkspaceAction.MESSAGE,
             "Send answer",
-            {"action_id": command_id},
+            {
+                "action_id": command_id,
+                **({"context": pinned_context} if pinned_context is not None else {}),
+            },
         )
     ]
 

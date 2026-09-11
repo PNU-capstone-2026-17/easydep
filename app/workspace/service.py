@@ -15,7 +15,7 @@ from typing import Any, cast
 
 from fastapi import HTTPException
 
-from app.db.models import TYPE_USECASE_SPEC
+from app.db.models import TYPE_CLASS, TYPE_USECASE_SPEC
 from app.design import progress as design_progress
 from app.design.graphs.design_graph import has_active_session, session_status
 from app.design.graphs.subgraphs import DESIGN_STAGES
@@ -116,6 +116,13 @@ TERMINAL_JOB_STATUSES = {
 # 응답과 reasoning을 별도 ``responseContent``·``reasoningContent`` field로 기록하므로,
 # Workspace event에서도 같은 실행의 원문을 확인할 수 있다.
 _PRIVATE_DESIGN_TIMING_FIELDS = frozenset({"failureContentPrefix", "failureContentSuffix"})
+_DESIGN_DELIVERY_CONTEXT_FIELDS = frozenset(
+    {
+        "validated_target_feedbacks",
+        "approved_authority_targets",
+        "approved_downstream_targets",
+    }
+)
 _NUMBERED_REQUIREMENT_LINE = re.compile(
     r"^\s*[-*]\s*\[REQ[-_ ]?\d+\]\s*(?P<text>.+?)\s*$",
     re.IGNORECASE,
@@ -491,6 +498,99 @@ class WorkspaceService:
         # before any individual revision can run.
         return BatchReviseRequest(revisions=revisions).revisions
 
+    def _fixed_class_resource_choice(
+        self,
+        app_id: str,
+        payload: dict[str, Any],
+        latest: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Validate one server-pinned class choice without interpreting it again.
+
+        A resource question normally represents ordinary prose input.  The narrow
+        exception is a Design class-gate question whose server-provided context
+        pins one catalog target and version.  Its fixed choices are already typed
+        UI input; only free text continues to ConversationAgent.
+        """
+
+        action_id = str(payload.get("action_id") or "")
+        context = payload.get("context")
+        if not action_id or not isinstance(context, dict):
+            return None
+        offered_context = {
+            key: value
+            for key, value in context.items()
+            if key not in _DESIGN_DELIVERY_CONTEXT_FIELDS
+        }
+        raw_target = offered_context.get("validated_target")
+        if raw_target is None:
+            return None
+        pending = repository.get_command(action_id)
+        if (
+            pending is None
+            or pending.get("app_id") != app_id
+            or pending.get("command_id") != latest.get("command_id")
+            or pending.get("status") != "AWAITING_INPUT"
+            or pending.get("stage") != "design"
+        ):
+            raise ValueError("This class question is no longer the current design question.")
+        status = session_status(app_id)
+        if not status.get("active") or status.get("stage") != "class_diagram":
+            raise ValueError("The pinned class question is no longer at the class review gate.")
+        text = str(payload.get("text") or "").strip()
+        offers = offered_actions(pending)
+        fixed_choice = any(
+            str(offer.action) == "message"
+            and "text" in offer.payload
+            and offer.payload.get("text") == text
+            and offer.payload.get("context") == offered_context
+            for offer in offers
+        )
+        try:
+            target = RevisionTarget.model_validate(raw_target)
+        except (TypeError, ValueError) as error:
+            raise ValueError("The class question target is invalid.") from error
+        if (
+            target.owner != "design"
+            or target.artifact_type != TYPE_CLASS
+            or target.kind not in {"class", "operation"}
+            or target.ref != str(offered_context.get("element_ref") or "").strip()
+            or target.artifact_version_id is None
+        ):
+            raise ValueError("The question must pin one editable design class target.")
+        current = ProjectTools(app_id).current_revision_target(target)
+        if (
+            current is None
+            or current.ref != target.ref
+            or current.artifact_version_id != target.artifact_version_id
+            or current.owner != "design"
+            or current.artifact_type != TYPE_CLASS
+            or current.kind not in {"class", "operation"}
+        ):
+            raise ValueError("The pinned class target version is stale.")
+        if not fixed_choice:
+            # A matching pinned context with different prose is the explicitly
+            # offered free-text path, so leave it for normal interpretation.
+            if any(
+                str(offer.action) == "message"
+                and "text" not in offer.payload
+                and offer.payload.get("context") == offered_context
+                for offer in offers
+            ):
+                return None
+            raise ValueError("The submitted class answer does not match a fixed choice.")
+        return {
+            "validated_target_feedbacks": [
+                ReviseRequest(
+                    target=target.ref,
+                    feedback=text,
+                    approved_authority_targets=[target.ref],
+                    approved_downstream_targets=None,
+                ).model_dump(mode="json")
+            ],
+            "approved_authority_targets": [target.ref],
+            "approved_downstream_targets": [],
+        }
+
     def submit(
         self,
         app_id: str,
@@ -559,6 +659,10 @@ class WorkspaceService:
 
         if action != "message":
             return action, payload, stage
+        # This marker is created only below, after matching a stored server offer.
+        # Never accept a client-provided copy as evidence that an action was offered.
+        payload = dict(payload)
+        payload.pop("_resource_answer_context", None)
         text = str(payload.get("text") or "").strip()
         latest = repository.latest_command(app_id)
         if latest is None:
@@ -580,6 +684,22 @@ class WorkspaceService:
                 return self._route_feedback_question_answer(
                     app_id, payload, stage, latest, pending, pending_question
                 )
+        fixed_class_context = self._fixed_class_resource_choice(app_id, payload, latest)
+        if fixed_class_context is not None:
+            offered_context = {
+                key: value
+                for key, value in selected.items()
+                if key not in _DESIGN_DELIVERY_CONTEXT_FIELDS
+            }
+            return (
+                "message",
+                {
+                    **payload,
+                    "_resource_answer_context": offered_context,
+                    "context": {**selected, **fixed_class_context},
+                },
+                "design",
+            )
         explicit_instructions: dict[str, str] = {}
         element_ref = str(selected.get("element_ref") or "").strip()
         if element_ref and text:
@@ -911,12 +1031,27 @@ class WorkspaceService:
                     if isinstance(revision_instructions, dict)
                     else {}
                 )
+                pinned_context = payload.get("context")
+                pinned_context = (
+                    dict(pinned_context)
+                    if isinstance(pinned_context, dict)
+                    and isinstance(pinned_context.get("validated_target"), dict)
+                    else {}
+                )
+                offered_context = {
+                    key: value
+                    for key, value in pinned_context.items()
+                    if key not in _DESIGN_DELIVERY_CONTEXT_FIELDS
+                }
+                if offered_context:
+                    routed_payload["_resource_answer_context"] = offered_context
                 delivery = design_revision_payload(
                     plan,
                     intent.instruction,
                     instructions_by_ref=revision_instructions,
                 )
                 routed_payload["context"] = {
+                    **offered_context,
                     "validated_target_feedbacks": [
                         revision.model_dump(mode="json")
                         for revision in delivery.revisions
@@ -1060,6 +1195,11 @@ class WorkspaceService:
         prior = repository.get_command(action_id)
         if prior is None or prior["app_id"] != app_id:
             raise ValueError("The command to answer could not be found.")
+        offered_context = payload.get("_resource_answer_context")
+        if action == "message" and isinstance(offered_context, dict):
+            offered_payload = {**payload, "context": offered_context}
+            if action_is_offered(action, offered_payload, prior):
+                return
         # 저장된 배포 선택은 내부 재개 trigger다. 같은 질문에 답하지만 choice text 대신
         # 구조화된 값을 전달한다.
         if action == "apply_deployment_preferences":
