@@ -26,9 +26,11 @@ include = [
     # Class-diagram authoring contracts and its sequence projection adapter.
     # Keep this list explicit so enabling Ruff here does not format unrelated design code.
     "app/design/services/class_diagram/**/*.py",
+    "app/design/services/executable_behavior/**/*.py",
     "app/design/services/sequence_diagram/**/*.py",
     "app/design/schemas/class_model.py",
     "app/design/graphs/subgraphs.py",
+    "tests/design/executable_behavior/**/*.py",
 ]
 extend-exclude = [
     "app/cloudkb/.cache",
@@ -157,6 +159,7 @@ files = [
     # 체크포인터. 상위 인터페이스와 시그니처가 어긋나면 재개가 조용히 깨진다.
     "app/requirements/session_store.py",
     "app/design/services/class_diagram",
+    "app/design/services/executable_behavior",
     "app/design/services/sequence_diagram",
     "app/design/schemas/class_model.py",
     "app/design/graphs/subgraphs.py",
