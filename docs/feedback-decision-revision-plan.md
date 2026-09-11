@@ -15,9 +15,9 @@
   → 별도 진행 command에서 sequence를 결정론적으로 투영
 ```
 
-현재 `Question`·`Decision`·`ChangeSet`·저장 repository와 stage adapter는 격리된
-prototype이다. 계약과 상태 규칙은 테스트했지만 아직 Workspace 운영 경로에서 호출하지
-않는다. 운영 연결에서는 실제로 쓰는 계약만 채택하고 나머지는 삭제하거나 격리한다.
+현재 `Question`·`Decision`은 기존 `RevisionPlan`과 Workspace command 경로에 연결돼 있다.
+운영 경로에서 사용하지 않은 범용 `ChangeSet`·전용 repository·stage adapter prototype은
+삭제했다. 별도 상태기계를 추가하지 않고 기존 command payload와 단계 checkpoint만 사용한다.
 
 ## 2. 고정 원칙
 
@@ -97,9 +97,6 @@ target 존재 여부, owner, 현재 version과 허용 change type은 코드가 �
 - source question·decision·command ID
 - 다음 stage가 사용할 공개 action
 
-prototype `ChangeSet`을 사용해야 할 때에도 첫 경로에 필요한 `rebuild`와 등록된
-`reproject`만 허용한다. `reuse`, `revalidate`, 범용 `stale` 전파는 추가하지 않는다.
-
 ## 5. 중복 실행과 재개
 
 기존 Workspace single-flight와 단계 checkpoint를 사용해 다음 규칙만 지킨다.
@@ -153,17 +150,15 @@ Requirements가 완료되면 `start_design`을 노출한다. 새 Design command�
 
 ## 7. 현재까지 완료된 작업
 
-- [x] version-pinned Question·Decision envelope prototype
-- [x] deterministic ownership·RTM ChangeSet planner prototype
-- [x] 중복 제출·checkpoint 재사용 규칙을 검증하는 repository prototype
-- [x] Requirements와 Design 입력으로 바꾸는 작은 stage adapter
+- [x] version-pinned Question·Decision envelope의 Workspace 연결
+- [x] 기존 `RevisionPlan`을 사용한 owner·stale 검증
+- [x] 기존 command payload·checkpoint를 사용한 중복 제출·재개 처리
+- [x] 별도 Requirements command와 기존 Design command 연결
 - [x] UC 수정 → class cascade → sequence projection 계약 테스트
 - [x] sequence의 class 역수정 제거
 - [x] Design에서 upstream owner로 보내는 경계 정리
 - [x] Testing 수리와 Implementation을 별도 command로 분리
 - [x] Testing 재실행을 별도 `start_testing` command로 분리
-
-위 항목 중 `prototype`으로 표시한 코드는 운영 완료를 뜻하지 않는다.
 
 ## 8. 남은 구현 순서
 
@@ -210,6 +205,9 @@ class에서 sequence로의 순수 투영은 기존 cascade·graph 테스트가 �
 - 미래 `reuse`·`revalidate` 상태
 - 별도 sequence 실행 입력
 - 모든 stage를 포괄하는 repository 상태기계
+
+운영 import가 없던 범용 `ChangeSet`·전용 repository·stage adapter와 전용 테스트는 삭제한다.
+UC 수정 → class → sequence 내용 계약 테스트는 운영 envelope·delivery 입력으로 바꿔 유지한다.
 
 ### 하위 작업 E — 클래스 설계 prototype 축소와 통합
 

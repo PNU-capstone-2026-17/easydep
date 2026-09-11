@@ -2,19 +2,14 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from app.artifact_trace import ArtifactTrace, TraceNode, TraceRef
 from app.design import cascade
 from app.design.schemas.class_model import BCEModel
+from app.design.service import ReviseRequest
 from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.sequence_diagram.projection import project_sequence_model
 from app.requirements.orchestration import feedback as requirements_feedback
 from app.workspace.conversation.contracts import RevisionTarget
-from app.workspace.conversation.feedback_change_plan import (
-    ArtifactSnapshotEntry,
-    ProjectionContract,
-    RtmSnapshot,
-    plan_change_set,
-)
+from app.workspace.conversation.delivery import requirements_feedback_edit
 from app.workspace.conversation.feedback_envelope import (
     DecisionMeaning,
     DecisionPayload,
@@ -22,11 +17,6 @@ from app.workspace.conversation.feedback_envelope import (
     Question,
     QuestionOption,
     answer_option,
-)
-from app.workspace.conversation.feedback_stage_adapter import (
-    DesignStageInput,
-    RequirementsStageInput,
-    adapt_execution_unit,
 )
 from tests.design_validation_fixtures import CLEAN, CLEAN_STATE
 
@@ -44,19 +34,17 @@ def _target(ref: str, kind: str, owner: str, artifact_type: str) -> RevisionTarg
 
 
 def test_feedback_decision_to_requirements_class_and_sequence_cascade(monkeypatch) -> None:
-    uc = _target("use_case_spec:UC1", "use_case_spec", "requirements", "usecase")
-    cls = _target("class_diagram:OrderController", "class", "design", "class_diagram")
-    seq = _target("sequence_diagram:UC1", "sequence", "design", "sequence_diagram")
+    uc = _target("use_case_spec:UC1", "use_case_spec", "requirements", "USECASE_SPEC")
     question = Question(
         question_id="q",
         question_version=1,
         app_id="app",
         source_execution_id="run",
-        detected_at={"stage": "design", "artifact_ref": cls.ref},
-        base_revisions=[{"artifact_type": "usecase", "version_id": 3}],
-        trigger={"category": "gap"},
+        detected_at={"stage": "design", "artifact_ref": "class_diagram:OrderController"},
+        base_revisions=[{"artifact_type": "USECASE_SPEC", "version_id": 3}],
+        trigger={"category": "specification_gap"},
         authority_candidates=[uc],
-        prompt="p",
+        prompt="Should the order be approved before it is recorded?",
         decision_policy=DecisionPolicy(
             allowed_semantic_scopes=("contract",), allowed_change_types=("modify",)
         ),
@@ -74,45 +62,11 @@ def test_feedback_decision_to_requirements_class_and_sequence_cascade(monkeypatc
         ],
     )
     decision = answer_option(question, option_id="ok", decision_id="d", source_user_message_id="m")
-    trace = RtmSnapshot(
-        trace=ArtifactTrace(
-            (
-                TraceNode(TraceRef("use_case_spec", "UC1")),
-                TraceNode(
-                    TraceRef("class", "OrderController"),
-                    (TraceRef("use_case_spec", "UC1"),),
-                ),
-                TraceNode(
-                    TraceRef("sequence", "UC1"),
-                    (TraceRef("class", "OrderController"),),
-                ),
-            )
-        ),
-        projection_contracts=(
-            ProjectionContract(
-                consumer=TraceRef("sequence", "UC1"),
-                producer_refs=(TraceRef("class", "OrderController"),),
-                adapter="class_to_sequence",
-                version="v1",
-            ),
-        ),
+    assert decision.normalized_meaning is not None
+    edit = requirements_feedback_edit(
+        decision.authoritative_targets,
+        decision.normalized_meaning.requested_effect,
     )
-    change_set = plan_change_set(
-        change_set_id="cs",
-        question=question,
-        decision=decision,
-        artifact_snapshot=tuple(
-            ArtifactSnapshotEntry(target=x, digest=str(i) * 64)
-            for i, x in enumerate((uc, cls, seq), 1)
-        ),
-        pre_change_trace=trace,
-    )
-    requirements_unit = next(
-        x for x in change_set.execution_units if x.artifact.owner == "requirements"
-    )
-    requirements_input = adapt_execution_unit(change_set, requirements_unit.execution_unit_id)
-    assert isinstance(requirements_input, RequirementsStageInput)
-    edit = requirements_input.edit
     req_state = deepcopy(CLEAN_STATE["usecase_spec"])
 
     def generate_specs(state, *, feedback, target_ids):
@@ -139,9 +93,6 @@ def test_feedback_decision_to_requirements_class_and_sequence_cascade(monkeypatc
         == "System approves and records the order."
     )
 
-    class_unit = next(x for x in change_set.execution_units if x.artifact.kind == "class")
-    design_input = adapt_execution_unit(change_set, class_unit.execution_unit_id)
-    assert isinstance(design_input, DesignStageInput)
     monkeypatch.setattr(
         cascade,
         "build_design_rtm",
@@ -173,7 +124,12 @@ def test_feedback_decision_to_requirements_class_and_sequence_cascade(monkeypatc
         raise AssertionError("sequence must use deterministic projection")
 
     monkeypatch.setattr(cascade, "_apply", apply)
-    revision = design_input.revision
+    revision = ReviseRequest(
+        target="class_diagram:OrderController",
+        feedback=decision.normalized_meaning.requested_effect,
+        approved_authority_targets=["class_diagram:OrderController"],
+        approved_downstream_targets=None,
+    )
     current_sequence = project_sequence_model(
         build_scenario_index(revised_requirements),
         BCEModel.model_validate(CLEAN),

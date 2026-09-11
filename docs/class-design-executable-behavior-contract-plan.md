@@ -93,10 +93,11 @@ adapter와 semantic duplicate review가 필요하다.
 ### 1.3 운영 통합의 선행 경계
 
 이 프로토타입을 운영 생성 경로에 연결하기 전에
-[전역 사용자 피드백과 revision 개선안](feedback-decision-revision-plan.md)의 공통
-`Question`, `Decision`, `ChangeSet` 계약과 첫 `UC 명세 → class bundle → sequence` 수직 경로를
-확정한다. 클래스 단계에서 발견한 specification gap이 operation repair로 처리되지 않고 실제
-요구사항 owner의 새 revision으로 돌아가야 하기 때문이다.
+[전역 사용자 피드백과 revision 개선안](feedback-decision-revision-plan.md)의 운영
+`Question`·`Decision`·`RevisionPlan` 경계와 첫 `UC 명세 → class bundle → sequence` 수직 경로를
+확정한다. 사용되지 않은 범용 `ChangeSet` prototype은 제거했다. 클래스 단계에서 발견한
+specification gap이 operation repair로 처리되지 않고 실제 요구사항 owner의 새 revision으로
+돌아가야 하기 때문이다.
 
 이 결정은 격리 프로토타입의 구조·validator·materializer 작업을 폐기하거나 중단한다는 뜻이
 아니다. 이들은 첫 수직 경로의 class bundle producer와 reviser로 유지한다. 다만 다음 항목은
