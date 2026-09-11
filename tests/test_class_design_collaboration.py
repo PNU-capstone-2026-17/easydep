@@ -332,13 +332,15 @@ def test_optional_results_use_explicit_unwrap_sources():
             {"receiverOperationId": "StudentLookup::find()", "parentCallIndex": 3},
         ],
     })
-    with pytest.raises(ValueError, match="entity -> control"):
+    with pytest.raises(collaboration.CallPlanViolation, match="entity -> control") as caught:
         collaboration.materialize(
             build_scenario_index(single_use_case()),
             BCEModel.model_validate(model),
             build_scenario_index(single_use_case()).use_case("UC1"),
             entity_to_control,
         )
+    assert caught.value.repair_context["location"] == "calls[3].parentCallIndex"
+    assert caught.value.repair_context["allowedParentCallIndexes"] == [2, 1]
 
     same_boundary_response = CallPlanProposal.model_validate({
         "calls": [

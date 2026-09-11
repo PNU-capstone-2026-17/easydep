@@ -99,6 +99,34 @@ def _finding_text(findings: tuple[Finding, ...]) -> list[str]:
     ]
 
 
+class CallPlanViolation(ValueError):
+    """A rejected call edge with machine-readable repair alternatives."""
+
+    def __init__(self, source: str, target: str, repair_context: dict[str, Any]) -> None:
+        self.repair_context = repair_context
+        super().__init__(
+            f"BCE communication is invalid: {source} -> {target}; repairContext="
+            + json.dumps(repair_context, ensure_ascii=False, separators=(",", ":"))
+        )
+
+
+def _communication_allowed(
+    source: str,
+    target: str,
+    target_class: str,
+    root_boundary_class: str,
+) -> bool:
+    return not (
+        (source == "boundary" and target != "control")
+        or (source == "entity" and target != "entity")
+        or (
+            source == "control"
+            and target == "boundary"
+            and target_class == root_boundary_class
+        )
+    )
+
+
 def _groups(index: ScenarioIndex, use_case: UseCase) -> tuple[ExecutionGroup, ...]:
     return tuple(group for group in index.groups if group.use_case_id == use_case.id)
 
@@ -486,16 +514,43 @@ def materialize(
             parent_operation = operations[parent["receiverOperationId"]]
             source = text(parent_operation.get("stereotype"))
             target_class = text(operation.get("className"))
-            if (
-                (source == "boundary" and stereotype != "control")
-                or (source == "entity" and stereotype != "entity")
-                or (
-                    source == "control"
-                    and stereotype == "boundary"
-                    and target_class == root_boundary_classes[assignments[position]]
-                )
+            root_boundary_class = root_boundary_classes[assignments[position]]
+            if not _communication_allowed(
+                source, stereotype, target_class, root_boundary_class,
             ):
-                raise ValueError(f"BCE communication is invalid: {source} -> {stereotype}")
+                allowed_parents = [
+                    candidate_position
+                    for candidate_position in range(position - 1, 0, -1)
+                    if assignments.get(candidate_position) == assignments[position]
+                    and _communication_allowed(
+                        text(operations[
+                            calls[candidate_position - 1]["receiverOperationId"]
+                        ].get("stereotype")),
+                        stereotype,
+                        target_class,
+                        root_boundary_class,
+                    )
+                ]
+                raise CallPlanViolation(
+                    source,
+                    stereotype,
+                    {
+                        "code": "BCE_COMMUNICATION_INVALID",
+                        "location": f"calls[{position - 1}].parentCallIndex",
+                        "observed": {
+                            "parentCallIndex": plan.calls[position - 1].parent_call_index,
+                            "sourceOperationId": parent["receiverOperationId"],
+                            "sourceStereotype": source,
+                            "receiverOperationId": call["receiverOperationId"],
+                            "receiverStereotype": stereotype,
+                        },
+                        "allowedParentCallIndexes": allowed_parents,
+                        "instruction": (
+                            "Choose a listed parent index, or omit this call only if it "
+                            "represents a return through the existing call chain."
+                        ),
+                    },
+                )
         if stereotype == "control":
             control_roots.add(assignments[position])
     if control_roots != set(range(len(groups))):
@@ -650,6 +705,7 @@ def process_use_case(
 
 
 __all__ = [
+    "CallPlanViolation",
     "CombinedReplacementRequired",
     "materialize",
     "process_use_case",
