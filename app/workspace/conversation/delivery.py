@@ -117,7 +117,7 @@ def design_revision_payload(
         ReviseRequest(
             target=target.ref,
             feedback=str((instructions_by_ref or {}).get(target.ref) or instruction).strip(),
-            approved_authority_targets=list(authority_refs),
+            approved_authority_targets=[target.ref],
             # RTM-derived downstream refs describe expected impact, but the design
             # cascade may discover additional exact dependents while editing.
             approved_downstream_targets=None,

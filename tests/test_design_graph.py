@@ -379,7 +379,7 @@ def test_each_stage_is_persisted_when_it_completes(monkeypatch, graph):
     assert saved[-1] == ("sequence_diagram", ORIGIN_GENERATED)
 
 
-def test_sequence_feedback_revises_and_persists_class_contract(monkeypatch, graph, stub_llm):
+def test_sequence_feedback_rejects_reverse_class_contract_edit(monkeypatch, graph, stub_llm):
     saved: list[tuple[str, str]] = []
     monkeypatch.setattr(
         "app.repositories.artifact_repository.save_stages",
@@ -392,15 +392,11 @@ def test_sequence_feedback_revises_and_persists_class_contract(monkeypatch, grap
     saved.clear()
     stub_llm.clear()
 
-    result = graph.invoke(Command(resume="Change the interaction call order."), THREAD)
+    with pytest.raises(ValueError, match="exact linked class authority"):
+        graph.invoke(Command(resume="Change the interaction call order."), THREAD)
 
-    assert _stage_at_gate(result) == "sequence_diagram"
-    assert "fb:class_diagram" in stub_llm
-    assert "gen:sequence_diagram" in stub_llm
-    assert saved == [
-        ("class_diagram", ORIGIN_FEEDBACK_REVISED),
-        ("sequence_diagram", ORIGIN_FEEDBACK_REVISED),
-    ]
+    assert stub_llm == []
+    assert saved == []
 
 
 def test_every_stage_has_the_same_skeleton():

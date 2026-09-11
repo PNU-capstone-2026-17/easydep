@@ -98,6 +98,22 @@ def test_design_adapter_carries_explicit_frozen_scope() -> None:
     assert revision.approved_downstream_targets is None
 
 
+def test_design_adapter_scopes_each_batch_revision_to_its_own_authority() -> None:
+    first = _target("class_diagram:Order", "class", "design")
+    second = _target("class_diagram:Payment", "class", "design")
+
+    payload = design_revision_payload(
+        _plan("design", [first, second]),
+        "Apply the approved class changes.",
+    )
+
+    assert payload.approved_authority_targets == (first.ref, second.ref)
+    assert [revision.approved_authority_targets for revision in payload.revisions] == [
+        [first.ref],
+        [second.ref],
+    ]
+
+
 def test_design_adapter_accepts_a_cross_delivery_requested_projection() -> None:
     requested = _target("file:application/src/Order.java", "file", "implementation")
     authority = _target("class_diagram:Order", "class", "design")

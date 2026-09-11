@@ -107,7 +107,6 @@ class ArchitectureState(TypedDict, total=False):
     # 저장 node가 산출물 version의 origin을 올바르게 표시하게 한다.
     gate_route: str
     stage_origin: str
-    revised_upstream_stages: list[str]
 
     artifact_status: dict[str, str]
 
