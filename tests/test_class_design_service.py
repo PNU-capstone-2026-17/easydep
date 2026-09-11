@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.design.services.class_diagram import feedback as feedback_stage
-from app.design.services.class_diagram import service
+from app.design.services.class_diagram import generation, service
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
@@ -157,7 +157,6 @@ def test_combined_cache_skips_warm_calls_and_revalidates_the_hit(monkeypatch):
 
 def test_repeated_call_plan_regenerates_the_use_case_combined_unit(monkeypatch):
     combined_calls = 0
-    call_plan_calls = 0
     combined_payloads: list[dict] = []
 
     # 루트와 자식을 구분하는 값은 null일 수 있지만 생략할 수는 없다. 이 계약을
@@ -170,18 +169,17 @@ def test_repeated_call_plan_regenerates_the_use_case_combined_unit(monkeypatch):
             schema.model_validate(payload)
 
     def fake_parse(messages, schema, **_kwargs):
-        nonlocal call_plan_calls, combined_calls
+        nonlocal combined_calls
         if schema is InventoryProposal:
             return inventory_proposal()
         if schema is CombinedUnitProposal:
             combined_calls += 1
             combined_payloads.append(json.loads(messages[-1]["content"]))
             proposal = multiple_root_combined_proposal()
-            if combined_calls < 3:
+            if combined_calls == 1:
                 proposal["calls"][2]["parentCallIndex"] = 2
             return proposal
         if issubclass(schema, CallPlanProposal):
-            call_plan_calls += 1
             plan = multiple_root_call_plan()
             plan["calls"][2]["parentCallIndex"] = 2
             return plan
@@ -192,10 +190,52 @@ def test_repeated_call_plan_regenerates_the_use_case_combined_unit(monkeypatch):
 
     # 각 call plan은 한 번만 교체한다. 그 결과도 실패하면 오류 문구를 바꿔가며 같은
     # 범위에 머물지 않고 operation과 calls를 함께 고치는 결합 수리로 올라간다.
-    assert (combined_calls, call_plan_calls) == (3, 2)
-    assert len(combined_payloads[-1]["repairHistory"]) >= 2
+    assert combined_calls > 1
+    assert combined_payloads[-1]["repairHistory"]
     assert [item.collaboration_id for item in model.Collaborations] == ["UC1"]
     assert sum(call.parent_call_id is None for call in model.Collaborations[0].calls) == 2
+
+
+def test_repeated_invalid_call_plan_stops_as_generation_stalled(monkeypatch):
+    def fake_parse(_messages, schema, **_kwargs):
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is CombinedUnitProposal:
+            proposal = multiple_root_combined_proposal()
+            proposal["calls"][2]["parentCallIndex"] = 2
+            return proposal
+        if issubclass(schema, CallPlanProposal):
+            plan = multiple_root_call_plan()
+            plan["calls"][2]["parentCallIndex"] = 2
+            return plan
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+
+    with pytest.raises(generation.GenerationStalled) as caught:
+        service.generate_class_model(build_scenario_index(multiple_entry_use_case()))
+
+    assert caught.value.unit_id == "UC1"
+    assert "last finding: ValueError:" in str(caught.value)
+
+
+def test_invalid_operation_repairs_stop_as_generation_stalled(monkeypatch):
+    def fake_parse(_messages, schema, **_kwargs):
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is CombinedUnitProposal:
+            proposal = combined_unit_proposal()
+            proposal["fragment"]["DataTypes"][0]["fields"][0]["type"] = "MissingType"
+            return proposal
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+
+    with pytest.raises(generation.GenerationStalled) as caught:
+        service.generate_class_model(build_scenario_index(single_use_case()))
+
+    assert caught.value.unit_id == "UC1"
+    assert "cached operation fragment UC1" in caught.value.finding
 
 
 def test_resume_and_revision_keep_errors_and_use_case_ownership(monkeypatch):

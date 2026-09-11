@@ -91,8 +91,7 @@ class Settings(BaseSettings):
     easydep_llm_stall_probe_after_seconds: float | None = None
     easydep_llm_stall_probe_timeout_seconds: float = 60.0
 
-    # Implementation and design execution config. Semantic repair attempts are
-    # governed by progress/history, not numeric settings.
+    # Implementation and design execution config.
     design_sequence_parallelism: int = 2
     # E1에서 8개 동시 요청에도 429, 연결 오류, timeout이 없었다. 한 번의 전체 시간은
     # LLM 수리 편차가 크므로 이후 여러 실행의 중앙값과 완주율로 다시 조정한다.

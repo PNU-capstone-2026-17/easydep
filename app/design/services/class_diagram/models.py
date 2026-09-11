@@ -16,6 +16,32 @@ from dataclasses import dataclass
 from typing import Any
 
 
+class GenerationStalled(RuntimeError):
+    """A bounded repair loop could not produce an accepted design unit."""
+
+    def __init__(self, unit_id: str, finding: str) -> None:
+        self.unit_id = unit_id
+        self.finding = finding
+        super().__init__(
+            f"valid class-design candidate was not produced for {unit_id}; "
+            f"last finding: {finding}"
+        )
+
+
+@dataclass
+class RepairBudget:
+    """Shared finite allowance for semantic repairs of one design unit."""
+
+    unit_id: str
+    attempts: int = 0
+    limit: int = 4
+
+    def consume(self, finding: str) -> None:
+        if self.attempts >= self.limit:
+            raise GenerationStalled(self.unit_id, finding)
+        self.attempts += 1
+
+
 @dataclass(frozen=True)
 class Collision(Exception):
     """이미 수락된 연산과 다른 서명이 충돌했음을 나타낸다."""
