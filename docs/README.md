@@ -21,6 +21,16 @@
 - `frontend/README.md`: 워크벤치 상태 흐름과 자동 모드 원칙
 - `scripts/README.md`: 개발·운영 스크립트 용도와 안전 규칙
 - [클래스·시퀀스 설계 생성 로직](class-design-pipeline.md): 현재 생성 계약과 단계별 책임
+
+### 운영 미적용 목표 개선안
+
+- [전역 사용자 피드백과 revision 개선안](feedback-decision-revision-plan.md):
+  선택지·자유 답변의 결정 계약, RTM 기반 영향 계획, cross-stage revision과 원자적 공개 경계
+- [클래스 설계 실행 증거와 원자적 수락 개선안](class-design-executable-behavior-contract-plan.md):
+  operation·call·binding 생성 책임 분리, execution witness, revision 검증과 원자적 공개 경계
+
+### 실행 상세와 개별 후속 계획
+
 - [유지보수성 rollup 계약](maintainability-rollup.md): bounded context 소유권, 현재 checkpoint 정책과 최종 회귀 gate
 - `app/design/services/README.md`: 설계 서비스 디렉터리 지도와 경계 규칙
 - `app/design/services/class_diagram/README.md`: LLM 입출력, 검증, repair와 typed 클래스 계약
