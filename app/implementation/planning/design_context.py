@@ -507,17 +507,11 @@ def _build_backend_behavior_tasks(
                 str(endpoint.get("method") or ""),
                 str(endpoint.get("path") or ""),
             )
-            operation_id = str(
-                endpoint.get("operation_id") or endpoint.get("operationId") or ""
-            )
             for controller_path in controller_paths:
                 controller_source = (run_root / controller_path).read_text(
                     encoding="utf-8"
                 )
-                if (
-                    _controller_declares_operation(controller_source, operation_id)
-                    or marker in controller_source
-                ):
+                if marker in controller_source:
                     read_dependency_paths.update(
                         _controller_contract_paths(
                             run_root, package_path, controller_path, endpoint
@@ -627,7 +621,6 @@ def _build_backend_behavior_tasks(
                     bce_model,
                     typed_method_metadata,
                 ),
-                *(str(entry["path"]) for entry, _context in selected_methods),
             }
         )
         editable_paths = _without_immutable_paths(
@@ -891,20 +884,22 @@ def _backend_behavior_typed_dependency_paths(
     entity_fields = {
         str(item["className"]): item.get("fields", []) for item in classes
     }
-    selected_entities = selected_names & entity_names
+    direct_selected_entities = selected_names & entity_names
     selected_names.update(
         _typed_component_names(
-            [{"fields": entity_fields.get(name, [])} for name in selected_entities],
+            [
+                {"fields": entity_fields.get(name, [])}
+                for name in direct_selected_entities
+            ],
             declared_names,
         )
     )
-    selected_entities.update(selected_names & entity_names)
 
     java_root = f"application/src/main/java/{package_path}"
     candidates = [f"{java_root}/bce/{name}.java" for name in selected_names]
     candidates.extend(
         f"{java_root}/persistence/{kind}/{name}{suffix}.java"
-        for name in selected_entities
+        for name in direct_selected_entities
         for kind, suffix in (("entity", "Entity"), ("repository", "Repository"))
     )
     return sorted({path for path in candidates if (run_root / path).is_file()})
@@ -980,25 +975,6 @@ def _controller_contract_paths(
     return list(
         dict.fromkeys(
             path for path in candidates if (run_root / path).is_file()
-        )
-    )
-
-
-def _controller_declares_operation(source: str, operation_id: str) -> bool:
-    """Identify a generated controller operation without guessing from its route."""
-
-    return bool(
-        operation_id
-        and (
-            re.search(
-                r'\boperationId\s*=\s*"' + re.escape(operation_id) + r'"', source
-            )
-            or re.search(
-                r"(?m)^\s*public\s+ResponseEntity\b[^\r\n{;]*\b"
-                + re.escape(operation_id)
-                + r"\s*\(",
-                source,
-            )
         )
     )
 

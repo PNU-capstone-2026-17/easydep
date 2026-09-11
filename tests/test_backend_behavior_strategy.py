@@ -251,7 +251,12 @@ def _build_fixture(
                 if operation_id
                 else []
             ),
-            "slices": [{"outgoing": outgoing}],
+            "slices": [
+                {
+                    "use_case_ids": [use_case_id] if use_case_id else [],
+                    "outgoing": outgoing,
+                }
+            ],
         }
         context_path = method_root / f"{stable_id}.json"
         _write_json(context_path, context)
@@ -425,10 +430,6 @@ def test_exact_uc_api_components_form_deterministic_sequential_tasks(
     )
     context = _task_context(run, connected)
     expected_read_only_contracts = {
-        "application/src/main/java/com/example/app/adapter/in/web/OriginalApiController.java",
-        "application/src/main/java/com/example/app/api/OriginalApi.java",
-        "application/src/main/java/com/example/app/api/model/OriginalRequest.java",
-        "application/src/main/java/com/example/app/api/model/OriginalResult.java",
         "application/src/main/java/com/example/app/bce/OriginalResult.java",
         (
             "application/src/main/java/com/example/app/persistence/entity/"
@@ -441,6 +442,20 @@ def test_exact_uc_api_components_form_deterministic_sequential_tasks(
     }
     assert expected_read_only_contracts <= set(context["readSourcePaths"])
     assert expected_read_only_contracts.isdisjoint(connected.allowed_write_paths)
+    assert {
+        "application/src/main/java/com/example/app/adapter/in/web/OriginalApiController.java",
+        "application/src/main/java/com/example/app/api/OriginalApi.java",
+        "application/src/main/java/com/example/app/api/model/OriginalRequest.java",
+        "application/src/main/java/com/example/app/api/model/OriginalResult.java",
+        "reports/implementation-tasks/method-context/method-entry.json",
+        "reports/implementation-tasks/method-context/method-shared.json",
+    }.isdisjoint(context["readSourcePaths"])
+    direct_methods = context["behaviorCapsule"]["directMethods"]
+    assert {item["method"]["stable_id"] for item in direct_methods} == {
+        "method-entry",
+        "method-shared",
+    }
+    assert any(item["directCalls"] for item in direct_methods)
     prompt = (run / connected.prompt_file).read_text(encoding="utf-8")
     assert "Do not infer behavior from names" in prompt
     assert "gap only when the behavior capsule itself is insufficient" in prompt
