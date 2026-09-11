@@ -51,9 +51,23 @@ from app.design.services.common import fields
 from app.design.services.common.structured import parse_structured
 from app.llm_connection import build_llm_connection
 from app.llm_profiles import effective_temperature
-from app.validation import RepairAttempt, RepairLedger, run_checks, stable_digest
+from app.validation import Finding, RepairAttempt, RepairLedger, run_checks, stable_digest
 
 logger = logging.getLogger(__name__)
+
+
+class OperationValidationError(ValueError):
+    """Accepted-fragment validation failure retaining structured findings."""
+
+    def __init__(
+        self,
+        message: str,
+        findings: tuple[Finding, ...] = (),
+        errors: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.findings = findings
+        self.errors = errors
 
 
 _OPERATION_PROMPT = (
@@ -1000,9 +1014,11 @@ def _validate_accepted_fragment(
         ),
     )
     if report.errors or report.findings:
-        raise ValueError(
+        raise OperationValidationError(
             f"cached operation fragment {use_case.id} is invalid: "
-            + "; ".join([*report.errors, *finding_text(report.findings)])
+            + "; ".join([*report.errors, *finding_text(report.findings)]),
+            tuple(report.findings),
+            tuple(report.errors),
         )
     return normalized
 
