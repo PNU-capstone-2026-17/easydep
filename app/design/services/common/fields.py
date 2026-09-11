@@ -137,8 +137,8 @@ def normalize_java_field_candidate(raw: str) -> str:
     # so detect this shape before it can be mistaken for a named ``listStudent``
     # type. This is notation, not a storage or domain decision.
     loose_container = re.fullmatch(
-        r"(?i)(list|set|collection|iterable|optional)\s+"
-        r"([A-Za-z_][A-Za-z0-9_.]*)",
+        r"(?i)(list|set|collection|iterable|optional|array)\s+"
+        r"(byte\[\]|[A-Za-z_][A-Za-z0-9_.]*)",
         raw_type or "",
     )
     if loose_container:

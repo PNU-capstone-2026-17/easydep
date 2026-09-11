@@ -187,6 +187,62 @@ def test_final_compose_keeps_operationless_class_referenced_by_an_entity_field()
     }
 
 
+def test_compose_reuses_operation_when_supported_type_aliases_differ_only_in_case():
+    inventory = AcceptedInventory.from_payload({
+        "Classes": [
+            {
+                "className": "Registration",
+                "stereotype": "Entity",
+                "fields": ["id : UUID"],
+                "identifier": ["id"],
+                "useCaseIds": ["UC3", "UC4"],
+            }
+        ],
+        "DataTypes": [],
+        "Relationships": [],
+    })
+    raw_operation = {
+        "name": "create",
+        "parameters": [
+            {"name": "id", "type": "uuid"},
+            {"name": "createdAt", "type": "localdatetime"},
+        ],
+        "returnType": "string",
+        "stepRefs": ["UC3:main:1"],
+    }
+    canonical_operation = {
+        **raw_operation,
+        "parameters": [
+            {"name": "id", "type": "UUID"},
+            {"name": "createdAt", "type": "LocalDateTime"},
+        ],
+        "returnType": "String",
+        "stepRefs": ["UC4:main:1"],
+    }
+
+    model = operations.compose_operation_units(
+        inventory,
+        [
+            AcceptedFragment(
+                "UC3",
+                {"Classes": [{"className": "Registration", "operations": [raw_operation]}]},
+            ),
+            AcceptedFragment(
+                "UC4",
+                {
+                    "Classes": [
+                        {"className": "Registration", "operations": [canonical_operation]}
+                    ]
+                },
+            ),
+        ],
+    )
+
+    operation = model.Classes[0].operations[0]
+    assert operation.name == "create"
+    assert operation.step_refs == ["UC3:main:1", "UC4:main:1"]
+
+
 def test_operation_contract_rejects_duplicate_parameter_names():
     fragment = operation_fragment()
     parameters = fragment["Classes"][0]["operations"][0]["parameters"]

@@ -238,9 +238,19 @@ def _entity_inventory_proposal(field_type: str) -> dict:
     return proposal
 
 
-def test_unambiguous_loose_container_notation_is_canonicalized() -> None:
+@pytest.mark.parametrize(
+    ("raw_type", "expected"),
+    [
+        ("list Operation", "List<Operation>"),
+        ("optional byte[]", "Optional<byte[]>"),
+        ("array CourseOffering", "List<CourseOffering>"),
+    ],
+)
+def test_unambiguous_loose_container_notation_is_canonicalized(
+    raw_type: str, expected: str
+) -> None:
     proposal = InventoryProposal.model_validate(
-        _entity_inventory_proposal("list Operation")
+        _entity_inventory_proposal(raw_type)
     )
 
     candidate = inventory._normalize_inventory(proposal)
@@ -248,7 +258,7 @@ def test_unambiguous_loose_container_notation_is_canonicalized() -> None:
         item for item in candidate["Classes"] if item["className"] == "RequestRecord"
     )
 
-    assert entity["fields"] == ["id : UUID", "value : List<Operation>"]
+    assert entity["fields"] == ["id : UUID", f"value : {expected}"]
 
 
 def test_malformed_inventory_type_reaches_semantic_repair(monkeypatch):

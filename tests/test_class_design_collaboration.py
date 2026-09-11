@@ -548,3 +548,57 @@ def test_scalar_parameter_can_use_same_typed_request_fields_with_different_names
     )
 
     assert result.calls[1].argument_bindings[0].source_ref == expected_candidates[0]
+
+
+def test_binding_candidates_require_matching_names_for_ancestor_uuid_values():
+    index = build_scenario_index(single_use_case())
+    target = {"name": "studentId", "type": "UUID"}
+    calls = [
+        {
+            "callId": "UC1::call:1",
+            "parentCallId": None,
+            "receiverOperationId": "RegistrationControl::swap()",
+        },
+        {
+            "callId": "UC1::call:2",
+            "parentCallId": "UC1::call:1",
+            "receiverOperationId": "Registration::find(studentId:UUID)",
+        },
+    ]
+    operations = {
+        "RegistrationControl::swap()": {
+            "parameters": [
+                {"name": "offeringId", "type": "UUID"},
+                {"name": "studentId", "type": "UUID"},
+            ],
+            "returnType": "SwapResult",
+        },
+        "Registration::find(studentId:UUID)": {
+            "parameters": [target],
+            "returnType": "void",
+        },
+    }
+    candidates = collaboration._binding_candidates(
+        {
+            "Classes": [],
+            "DataTypes": [
+                {
+                    "name": "SwapResult",
+                    "kind": "valueObject",
+                    "fields": ["registrationId : UUID", "studentId : UUID"],
+                }
+            ],
+        },
+        index.use_case("UC1"),
+        actor_step=None,
+        is_root=False,
+        calls=calls,
+        call_index=1,
+        parameter=target,
+        operations=operations,
+    )
+
+    assert "UC1::call:1#offeringId" not in candidates
+    assert "UC1::call:1#result.registrationId" not in candidates
+    assert "UC1::call:1#studentId" in candidates
+    assert "UC1::call:1#result.studentId" in candidates

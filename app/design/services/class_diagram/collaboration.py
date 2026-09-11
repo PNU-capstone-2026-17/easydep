@@ -427,7 +427,6 @@ def _binding_candidates(
     if is_root:
         candidates.extend(f"{ref}#{name}" for ref in use_case.precondition_refs)
     ancestors = _ancestors(calls, call_index)
-    ancestor_ids = {text(item.get("callId")) for item in ancestors}
     for ancestor in ancestors:
         operation = operations[text(ancestor.get("receiverOperationId"))]
         for source in operation.get("parameters") or []:
@@ -437,7 +436,9 @@ def _binding_candidates(
             source_type = text(source.get("type"))
             source_ref = f"{ancestor['callId']}#{source_name}"
             add_named(source_name, source_type, source_ref)
-            if types_compatible(source_type, target_type):
+            if _field_matches_parameter(name, "", source_name) and types_compatible(
+                source_type, target_type
+            ):
                 candidates.append(source_ref)
             for field_path in fields_by_type.get(source_type, {}):
                 projected = projected_field_type(source_type, field_path, fields_by_type)
@@ -495,10 +496,7 @@ def _binding_candidates(
             )
             field_ref = f"{projection_ref}.{field_path}"
             add_named(field_path, projected, field_ref)
-            if (
-                text(earlier.get("callId")) in ancestor_ids
-                or _field_matches_parameter(name, projection_type, field_path)
-            ):
+            if _field_matches_parameter(name, projection_type, field_path):
                 if types_compatible(projected, target_type):
                     candidates.append(field_ref)
                 elif types_compatible(optional_inner_type(projected), target_type):
@@ -819,6 +817,7 @@ def _cache_key(
             "bindingMaxCompletionTokens": min(
                 settings.design_class_collaboration_max_completion_tokens, 2048,
             ),
+            "bindingCandidateVersion": 2,
         },
     )
 

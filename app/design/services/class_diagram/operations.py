@@ -15,6 +15,7 @@ from typing import Any
 
 from app.config import settings
 from app.design import progress as design_progress
+from app.design.contracts.type_system import DesignTypeError, canonical_design_type
 from app.design.schemas.class_model import BCEModel, canonical_operation_id
 from app.design.services.class_diagram.cache import (
     AcceptedUnitCache,
@@ -101,11 +102,19 @@ when the scenario explicitly requires an out-of-band push, callback, or later
 notification. Choose concrete operations supported by the supplied steps. Every
 parameter and return type must resolve to a fixed class/type, a primitive, or a
 local DataType.
+Before returning, audit every named parameter and return type: reuse an exact
+fixed or reserved type when it has the required shape, and otherwise declare a
+concrete local DataType in this fragment; never leave a referenced name undeclared.
 
 Keep signatures as a closed value flow. A delegated parameter must be available
 from an entry input, an earlier operation result, an explicit precondition, or a
 supported runtime value. Declare a result type when later work needs several
 values produced earlier. Do not invent caller input merely to satisfy a signature.
+An actorEntry names the caller role; it does not itself supply that actor's identifier.
+When the steps refer to the current actor without explicitly providing an identifier,
+model that actor-scoped responsibility without an identity parameter. Do not move an
+unsourced internal identity parameter to the root Boundary merely to create a source.
+Only a subject explicitly selected or provided by the scenario is caller input.
 
 When this use case reuses a reserved operation, include that operation in the
 fragment with its exact supplied name, parameters, and returnType, plus this use
@@ -1131,12 +1140,22 @@ def _checked_fragment(
 def _operation_signature(operation: dict[str, Any]) -> tuple[Any, ...]:
     return (
         tuple(
-            (text(parameter.get("name")), text(parameter.get("type")))
+            (text(parameter.get("name")), _canonical_signature_type(parameter.get("type")))
             for parameter in operation.get("parameters") or []
             if isinstance(parameter, dict)
         ),
-        text(operation.get("returnType")),
+        _canonical_signature_type(operation.get("returnType")),
     )
+
+
+def _canonical_signature_type(value: object) -> str:
+    """Use the shared type vocabulary when comparing reserved contracts."""
+
+    raw = text(value)
+    try:
+        return canonical_design_type(raw)
+    except DesignTypeError:
+        return raw
 
 
 def _data_type_signature(item: dict[str, Any]) -> tuple[Any, ...]:
