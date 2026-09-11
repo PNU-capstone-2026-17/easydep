@@ -26,9 +26,14 @@
 8. 기본 실행 모델은 일반적인 대화형 AI 서비스의 workspace single-flight다. 한 사용자
    메시지의 처리가 끝날 때까지 같은 workspace의 다음 메시지를 대기시키며, 실제 필요가
    확인되기 전에는 별도 행 잠금·분산 상태기계·감사 프로토콜을 추가하지 않는다.
+9. 현재 stage는 이전 stage가 소유한 산출물을 직접 수정하지 않는다. upstream 변경이
+   필요하면 해당 owning stage로 명령을 보낸다. 새 upstream 결과를 검증된 draft로 확정한
+   뒤 downstream을 다시 실행하고 전체 변경은 하나의 accepted head로 공개한다. RTM은
+   rewind 후보와 재실행 범위의 근거이며, 최종 owner는 typed `Decision`과 ownership rule로
+   확정한다.
 
-핵심 원칙은 **사용자 의미 결정과 생성 수리를 분리하고, 변경 전 영향 범위를 고정하며,
-변경 후 추적 관계를 다시 증명하는 것**이다.
+핵심 원칙은 **사용자 의미 결정과 생성 수리를 분리하고 변경 전 영향 범위를 고정하는 것**이다.
+변경 후 추적 관계 재검증은 실제 소비 경계가 생기는 수직 통합의 후속 목표다.
 
 ## 2. 해결하려는 문제
 
@@ -300,24 +305,16 @@ trace다. raw operation·call·binding은 이 adapter가 bundle 영향과 근거
 독립 실행 단위로 승격하지 않는다. `ProjectionContract`도 RTM 연결에서 추론하지 않고 등록된
 순수 adapter의 consumer, exact producer refs, adapter ID와 version으로 구성한다.
 
-### 6.1 변경 전후 추적
+### 6.1 변경 전 RTM 고정과 후속 diff 경계
 
-계획할 때 current accepted head의 RTM, artifact versions와 trace digest를 고정한다. 변경 뒤에는
-새 RTM을 만들고 다음을 비교한다.
+계획할 때 current accepted head의 RTM, artifact versions와 trace digest를 고정한다. 현재
+prototype은 이 pre-change RTM으로 영향 범위와 실행 순서만 결정한다. post-change RTM diff는
+수직 통합에서 실제 필요가 확인될 때 구현할 후속 경계이며, 현재 완료 조건이나 실행 권한이 아니다.
 
-- 삭제·rename으로 사라진 이전 edge
-- 새 산출물에서 생긴 dependency
-- plan에 없던 새 영향 대상
-- target remap 실패와 orphan·unknown ref
-- producer digest가 달라져 stale이 된 항목
-
-새 영향이 plan 범위를 넘으면 자동으로 mutation 범위를 넓히지 않는다. 안전한 revalidation만
-수행할 수 있으면 추가하고, 수정 권한이나 LLM 재생성이 필요하면 `STALE` 또는 `REPLAN_REQUIRED`
-상태로 전환한다.
-
-pre/post diff의 `unchanged`는 노드와 edge 구조가 같다는 뜻일 뿐, 산출물 내용의 유효성이나
-projection 입력 digest가 같다는 증명이 아니다. 내용 재사용은 별도의 artifact fingerprint와
-validator·projection version 증거를 만족할 때만 허용한다.
+pipeline stage는 upstream 산출물을 직접 수정하지 않는다. typed `Decision`과 ownership rule이
+확정한 owning-stage command로 되돌려 보내고, 검증된 upstream draft를 입력으로 downstream을
+재실행한다. RTM은 rewind 후보와 downstream 재실행 범위를 제시할 뿐 mutation 권한을 부여하지
+않는다.
 
 `REPLAN_REQUIRED`에서는 실행 중인 unit을 중단하고 새 pre-change snapshot과 plan version을
 만든다. 이전 계획의 승인과 미실행 unit의 실행 예약은 새 계획에 승계하지 않는다. 이미 만든
@@ -445,7 +442,6 @@ transaction·소비 경계로 연결한 뒤 전역 accepted head라고 부른다
   → 구조·operation·Collaborations rebuild
   → 같은 class revision에서 sequence를 LLM 없이 reproject
   → 나머지 영향 downstream은 재사용 근거를 검증하거나 stale 처리
-  → post-change RTM·참조·보존 검사
   → accepted head publish
 ```
 
@@ -501,7 +497,7 @@ reviser로 운영 통합 순서를 조정한다.
    `rebuild/reproject/stale`로 분류한다.
 6. scripted producer 또는 격리 adapter로 `UC 명세 → class bundle → sequence` 프로토콜과
    checkpoint 재개를 검증한다.
-7. post-change RTM 비교, target remap, orphan·unknown ref와 plan extension을 검사한다.
+7. 수직 통합에서 필요가 확인되면 post-change RTM 비교와 target remap 경계를 구현한다.
 8. compare-and-swap accepted publish와 stale downstream 소비 차단을 구현한다.
 9. crash, 중복 제출, stale answer, 부분 실패와 경쟁 revision 테스트를 통과시킨다.
 10. API adapter부터 나머지 단계로 확대한다.
@@ -519,7 +515,7 @@ reviser로 운영 통합 순서를 조정한다.
 | 역할 | 주 책임 | 직접 수정하지 않는 경계 |
 |---|---|---|
 | Luna | 질문·답변 envelope, 기존 stage 입력으로의 순수 adapter, UI read model, fixture와 단위 테스트 | ownership 계산, RTM 순회, DB migration, checkpoint 저장, CAS publish |
-| Terra | ChangeSet·ExecutionUnit·manifest 계약, ownership routing, RTM pre/post diff, durable repository, transaction과 수직 통합 테스트 | 클래스 생성 세부, stage별 LLM prompt·repair, UI 표시 로직 |
+| Terra | ChangeSet·ExecutionUnit·manifest 계약, ownership routing, pre-change RTM planning, durable repository, transaction과 수직 통합 테스트 | 클래스 생성 세부, stage별 LLM prompt·repair, UI 표시 로직 |
 | 주 에이전트 | 공통 필드와 파일 소유권 확정, handoff 승인, 변경 통합과 전체 회귀 검사 | 계약 미확정 상태에서 서로 의존하는 작업의 동시 위임 |
 | Astra | 계약 확정 전 반례 검토와 수직 경로 완료 후 불변식 감사 | 구현 파일의 상시 공동 소유 |
 
@@ -564,12 +560,10 @@ Terra에는 여러 stage에 걸친 정합성과 commit 경계를 맡긴다.
    - 기존 `OwnershipRegistry`를 fail-closed로 확장하고
      `specification gap → UC spec owner` 경로를 추가한다.
    - provenance, exact link, typed question authority를 서로 다른 권한 근거로 보존한다.
-2. **RTM snapshot과 pre/post diff**
+2. **RTM snapshot과 pre-change planning**
    - 현행 requirements/design RTM 생성은 유지하고, frozen RTM과 artifact revision을
      ChangeSet 입력으로 고정하는 adapter를 구현한다.
-   - removed/new link, orphan, unknown ref, producer digest 변경과 계획 밖 영향을
-     순수하게 계산한다.
-   - 계획 밖 LLM mutation을 자동 추가하지 않고 `REPLAN_REQUIRED` 또는 `stale`로 반환한다.
+   - post-change diff는 수직 통합에서 실제 소비 경계가 확인된 뒤 별도 구현한다.
 3. **영속 저장과 publish**
    - Decision·ChangeSet draft, unit checkpoint와 원격 attempt 상태를 저장한다.
    - 멱등성 키, 완료 unit 재사용, `ATTEMPT_OUTCOME_UNKNOWN`과 재개 정책을 구현한다.
@@ -650,7 +644,7 @@ handoff마다 다음을 기록한다.
 - 새 upstream과 낡은 downstream을 모두 최신인 하나의 manifest로 공개하지 않는다.
 - 갱신하지 않은 downstream은 같은 transaction에서 stale이 되며 화면·export·후속 단계가
   최신 산출물로 소비할 수 없다.
-- post-change RTM의 새 unknown ref와 orphan이 성공 결과에서 조용히 무시되지 않는다.
+- post-change RTM diff의 unknown ref·orphan 검사는 수직 통합에서 실제 필요가 확인된 뒤 추가한다.
 
 ## 14. 첫 완료 기준
 

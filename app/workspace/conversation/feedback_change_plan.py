@@ -178,52 +178,6 @@ class ArtifactSnapshotEntry(_PlanModel):
         )
 
 
-class RtmEdge(_PlanModel):
-    consumer: TraceRef
-    producer: TraceRef
-
-    def __str__(self) -> str:
-        return f"{self.consumer.format()}<-{self.producer.format()}"
-
-
-class RtmDiff(_PlanModel):
-    added: tuple[TraceRef, ...] = ()
-    removed: tuple[TraceRef, ...] = ()
-    unchanged: tuple[TraceRef, ...] = ()
-    invalidated: tuple[TraceRef, ...] = ()
-    added_edges: tuple[RtmEdge, ...] = ()
-    removed_edges: tuple[RtmEdge, ...] = ()
-    added_unknown_refs: tuple[TraceRef, ...] = ()
-    plan_outside_refs: tuple[TraceRef, ...] = ()
-
-    @model_validator(mode="after")
-    def normalize(self) -> RtmDiff:
-        for field in (
-            "added",
-            "removed",
-            "unchanged",
-            "invalidated",
-            "added_unknown_refs",
-            "plan_outside_refs",
-        ):
-            values = tuple(sorted(set(getattr(self, field))))
-            object.__setattr__(self, field, values)
-        for field in ("added_edges", "removed_edges"):
-            object.__setattr__(
-                self,
-                field,
-                tuple(
-                    sorted(
-                        set(getattr(self, field)),
-                        key=lambda item: (item.consumer, item.producer),
-                    )
-                ),
-            )
-        if set(self.added) & set(self.removed):
-            raise ValueError("a trace ref cannot be both added and removed")
-        return self
-
-
 class RtmEvidence(_PlanModel):
     pre_trace_digest: str = Field(min_length=64, max_length=64)
     impacted_refs: tuple[TraceRef, ...] = Field(min_length=1)
@@ -620,40 +574,6 @@ def _planned_actions(
     return actions
 
 
-def diff_rtm(
-    pre: RtmSnapshot, post: RtmSnapshot, *, frozen_impact: Iterable[TraceRef] = ()
-) -> RtmDiff:
-    """Compare exact typed trace nodes; no names or natural-language matching."""
-    before = {node.ref: node.direct_sources for node in pre.trace.nodes}
-    after = {node.ref: node.direct_sources for node in post.trace.nodes}
-    before_edges = {
-        RtmEdge(consumer=node.ref, producer=source)
-        for node in pre.trace.nodes
-        for source in node.direct_sources
-    }
-    after_edges = {
-        RtmEdge(consumer=node.ref, producer=source)
-        for node in post.trace.nodes
-        for source in node.direct_sources
-    }
-    shared = set(before) & set(after)
-    changed = {ref for ref in shared if before[ref] != after[ref]}
-    impact = set(frozen_impact)
-    changed_or_added_or_removed = changed | (set(after) - set(before)) | (set(before) - set(after))
-    return RtmDiff(
-        added=tuple(set(after) - set(before)),
-        removed=tuple(set(before) - set(after)),
-        unchanged=tuple(shared - changed),
-        invalidated=tuple(impact & (changed | (set(before) - set(after)))),
-        added_edges=tuple(after_edges - before_edges),
-        removed_edges=tuple(before_edges - after_edges),
-        added_unknown_refs=tuple(
-            set(post.trace.unknown_source_refs) - set(pre.trace.unknown_source_refs)
-        ),
-        plan_outside_refs=tuple(changed_or_added_or_removed - impact),
-    )
-
-
 def _require_acyclic_trace(trace: ArtifactTrace, refs: Iterable[TraceRef]) -> None:
     allowed = set(refs)
     visiting: set[TraceRef] = set()
@@ -850,10 +770,7 @@ __all__ = [
     "ExecutionUnit",
     "OwnershipRouter",
     "ProjectionContract",
-    "RtmDiff",
-    "RtmEdge",
     "RtmEvidence",
     "RtmSnapshot",
-    "diff_rtm",
     "plan_change_set",
 ]

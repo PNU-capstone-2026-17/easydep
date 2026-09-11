@@ -14,7 +14,6 @@ from app.workspace.conversation.feedback_change_plan import (
     RtmEvidence,
     RtmSnapshot,
     _change_set_digest,
-    diff_rtm,
     plan_change_set,
 )
 from app.workspace.conversation.feedback_envelope import (
@@ -249,25 +248,6 @@ def test_unsupported_and_ambiguous_ownership_fail_closed() -> None:
         )
 
 
-def test_rtm_diff_uses_typed_refs_and_marks_changed_frozen_impact_invalid() -> None:
-    root = TraceRef("use_case_spec", "UC1")
-    old = RtmSnapshot(
-        trace=ArtifactTrace((TraceNode(root), TraceNode(TraceRef("class", "A"), (root,))))
-    )
-    new = RtmSnapshot(
-        trace=ArtifactTrace(
-            (
-                TraceNode(root),
-                TraceNode(TraceRef("class", "A")),
-                TraceNode(TraceRef("sequence", "A"), (TraceRef("class", "A"),)),
-            )
-        )
-    )
-    diff = diff_rtm(old, new, frozen_impact=(TraceRef("class", "A"),))
-    assert tuple(item.format() for item in diff.added) == ("sequence:A",)
-    assert tuple(item.format() for item in diff.invalidated) == ("class:A",)
-
-
 def test_execution_unit_rejects_illegal_dependency_and_nested_models_are_frozen() -> None:
     target, *_ = _catalog()
     evidence = RtmEvidence(
@@ -441,19 +421,6 @@ def test_terminal_question_and_policy_bypass_are_rejected() -> None:
             artifact_snapshot=_snapshot((*_catalog(), second)),
             pre_change_trace=_trace(),
         )
-
-
-def test_rtm_diff_reports_edge_unknown_and_plan_outside_changes() -> None:
-    root = TraceRef("use_case_spec", "UC1")
-    class_ref = TraceRef("class", "A")
-    unknown = TraceRef("api", "missing")
-    pre = RtmSnapshot(trace=ArtifactTrace((TraceNode(root), TraceNode(class_ref, (root,)))))
-    post = RtmSnapshot(trace=ArtifactTrace((TraceNode(root), TraceNode(class_ref, (unknown,)))))
-    diff = diff_rtm(pre, post, frozen_impact=(root,))
-    assert tuple(str(edge) for edge in diff.added_edges) == ("class:A<-api:missing",)
-    assert tuple(str(edge) for edge in diff.removed_edges) == ("class:A<-use_case_spec:UC1",)
-    assert tuple(ref.format() for ref in diff.added_unknown_refs) == ("api:missing",)
-    assert tuple(ref.format() for ref in diff.plan_outside_refs) == ("class:A",)
 
 
 def test_stale_producer_propagates_through_downstream_actions_independent_of_ref_order() -> None:
