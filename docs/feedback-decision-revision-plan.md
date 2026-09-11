@@ -266,6 +266,15 @@ GLM 5.3 Flash는 같은 위반 없이 통과했지만 181.0초와 11,048 출력 
 120B는 40.8초·물리 요청 5회로 13개 endpoint를 생성했고 class·sequence·API readiness가 모두
 `READY`가 됐다. 이는 단일 응답 품질 차이이며 모델 전체의 우열로 일반화하지 않는다.
 
+후속 실험에서는 각 interaction에 path placeholder 후보를 명시했다. 최상위 Boundary 이름을
+그대로 노출한 첫 시도는 12.4초·요청 1회에 schema를 통과했지만 구조 타입 자체를
+`{request}`·`{criteria}`로 사용해 유효 후보 정의가 지나치게 넓음을 확인했다. 후보를 도메인
+이름이 아니라 타입으로 제한해, 한 path segment로 표현 가능한 최상위 scalar·enum만 허용한
+뒤 같은 CLASS v2 입력을 다시 실행했다. OSS 120B는 9.3초·요청 1회·schema repair 0회,
+입력 3,064·출력 2,893 token으로 13개 endpoint를 정규화했고 구조·중첩 placeholder는 없었다.
+단일 실행이므로 일반적인 성공률 결론이 아니라, 수강신청 실패를 만든 결함 종류가 사례별
+예외 없이 입력 후보 제한으로 제거됐다는 근거로만 사용한다.
+
 ## 9. Luna·Terra·Sol·Astra 활용
 
 서브에이전트는 서로 겹치지 않는 작은 파일 단위만 맡는다.

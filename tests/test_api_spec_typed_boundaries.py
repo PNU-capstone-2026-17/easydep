@@ -401,7 +401,7 @@ def test_path_placeholder_does_not_assume_a_nested_field_role_from_its_name() ->
 
     with pytest.raises(
         ValueError,
-        match="must exactly identify a Boundary parameter",
+        match="must identify an allowed scalar Boundary parameter",
     ):
         normalize_api_spec_model(
             ApiSpecProposal.model_validate(proposal),
@@ -420,8 +420,10 @@ def test_finite_proposal_schema_rejects_nested_field_placeholder() -> None:
 def test_generation_service_accepts_typed_inputs_and_returns_normalized_model() -> None:
     calls: list[type[ApiSpecProposal]] = []
 
-    def propose(_messages, schema):
+    def propose(messages, schema):
         calls.append(schema)
+        prompt_input = json.loads(messages[1]["content"])
+        assert prompt_input["interactionCandidates"][0]["allowedPathParameters"] == []
         return _proposal().model_dump()
 
     result = service.generate_api_spec_model(

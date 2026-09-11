@@ -13,6 +13,7 @@ from app.design.contracts.api_spec import (
 )
 from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec.normalization import (
+    allowed_path_parameter_names,
     api_spec_proposal_from_model,
     interaction_contracts,
     normalize_api_spec_model,
@@ -40,7 +41,7 @@ def _finite_proposal_schema(bce_model: BCEModel) -> type[ApiSpecProposal]:
     if not interaction_ids:
         return ApiSpecProposal
     allowed_placeholders = {
-        item.interaction_id: {name for name, _type in item.boundary_parameters}
+        item.interaction_id: set(allowed_path_parameter_names(item, bce_model))
         for item in contracts
     }
 
