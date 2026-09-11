@@ -48,9 +48,10 @@ POST /api/workspace/apps/{app_id}/commands
 `auto_selectable=true`인 첫 action을 payload 변경 없이 클릭하는 기능이다. 질문에 답을
 발명하거나 단계·상태에서 action을 추측하지 않는다.
 
-사용자가 한 번 `delegate_repair`를 선택하면 같은 수리 episode 안의 기계적인 finding은
-백엔드가 누적 repair history를 사용해 계속 처리한다. 첫 위임, 배포 대상 선택, 요구사항의 뜻,
-외부 환경 복구처럼 실제 결정이 필요한 경우에는 `AWAITING_INPUT`으로 남는다.
+`delegate_repair`도 일반 action과 같은 새 command다. 특히 Testing은 실패 근거를 남기고
+`AWAITING_INPUT`에서 멈추며, 수리 위임을 선택하면 별도 Implementation command가 해당
+checkpoint만 수정한다. 구현이 끝난 뒤 `start_testing`을 선택해야 별도 Testing command가
+검사를 이어 간다. 자동 모드는 이 action들을 차례로 클릭할 뿐 단계 경계를 합치지 않는다.
 
 ## 실패한 단계 다시 실행하기
 

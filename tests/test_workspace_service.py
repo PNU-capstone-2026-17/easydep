@@ -22,19 +22,19 @@ from app.workspace.service import WorkspaceService
 
 
 @pytest.mark.parametrize(
-    ("defect_class", "repairable", "expected_status"),
+    ("defect_class", "repairable"),
     [
-        ("SUT_DEFECT", True, "COMPLETED"),
-        ("ENVIRONMENT_DEFECT", False, "AWAITING_INPUT"),
+        ("SUT_DEFECT", True),
+        ("ENVIRONMENT_DEFECT", False),
     ],
 )
-def test_testing_failure_starts_only_repairable_work_automatically(
+def test_testing_failure_waits_without_starting_implementation(
     monkeypatch,
     defect_class: str,
     repairable: bool,
-    expected_status: str,
 ) -> None:
-    """Testing 결함은 자동 수리하고 실행 환경 오류는 사용자 복구를 기다린다."""
+    """Testing records the failure and waits before any Implementation command starts."""
+
     command = {
         "command_id": "testing-command",
         "app_id": "app-1",
@@ -49,27 +49,7 @@ def test_testing_failure_starts_only_repairable_work_automatically(
         "requires_revision": True,
         "can_delegate_repair": repairable,
         "job_id": "testing-command",
-        "job": {
-            "result": {
-                "gateStatus": "FAIL",
-                "gateCounts": {"passed": 0, "failed": 1, "inconclusive": 0},
-                "blocking_findings": [
-                    {
-                        "code": "testing.dynamic-functional",
-                        "message": "runtime check failed",
-                    }
-                ],
-                "verification": {
-                    "blockingReason": "runtime check failed",
-                    "reports": {
-                        "dynamicFunctional": {
-                            "failedWorkflowId": "workflow-1",
-                            "failedStepId": "step-1",
-                        }
-                    },
-                },
-            }
-        },
+        "job": {"implementation_job_id": "implementation-1"},
         "blocking_findings": [
             {
                 "message": "runtime check failed",
@@ -79,24 +59,18 @@ def test_testing_failure_starts_only_repairable_work_automatically(
         ],
     }
     updates: list[dict[str, Any]] = []
-    submissions: list[dict[str, Any]] = []
     monkeypatch.setattr(repository, "update_command", lambda _id, **kw: updates.append(kw))
     monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(repository, "now", lambda: datetime.now(UTC).replace(tzinfo=None))
 
     service = WorkspaceService()
-    dispatch_results = iter(
-        [dict(result), {"message": "Testing completed."}]
-        if repairable
-        else [dict(result)]
-    )
-    monkeypatch.setattr(service, "_dispatch", lambda _command: next(dispatch_results))
+    monkeypatch.setattr(service, "_dispatch", lambda _command: dict(result))
     monkeypatch.setattr(service, "_complete_referenced_action", lambda _command: None)
     monkeypatch.setattr(
         service,
         "submit",
-        lambda app_id, *, action, stage, payload: submissions.append(
-            {"app_id": app_id, "action": action, "stage": stage, "payload": payload}
+        lambda *_args, **_kwargs: pytest.fail(
+            "Testing must not start an Implementation command automatically."
         ),
     )
     try:
@@ -104,30 +78,13 @@ def test_testing_failure_starts_only_repairable_work_automatically(
     finally:
         service.shutdown()
 
-    assert updates[-1]["status"] == expected_status
-    assert submissions == []
-    if repairable:
-        assert any(update.get("action") == "delegate_repair" for update in updates)
-        repair_update = next(update for update in updates if update.get("action") == "delegate_repair")
-        assert repair_update["payload"]["initial_testing_failure"] == {
-            "gateStatus": "FAIL",
-            "gateCounts": {"passed": 0, "failed": 1, "inconclusive": 0},
-            "blockingReason": "runtime check failed",
-            "blocking_findings": [
-                {
-                    "code": "testing.dynamic-functional",
-                    "message": "runtime check failed",
-                }
-            ],
-            "failedWorkflowId": "workflow-1",
-            "failedStepId": "step-1",
-            "candidateDigest": None,
-        }
+    stored = updates[-1]
+    assert stored["status"] == "AWAITING_INPUT"
+    actions = [item["action"] for item in stored["result"]["actions"]]
+    assert ("delegate_repair" in actions) is repairable
 
 
-def test_testing_upstream_ambiguity_waits_for_user_without_rewinding_design(
-    monkeypatch,
-) -> None:
+def test_testing_upstream_ambiguity_waits_for_user_without_rewinding_design() -> None:
     job = {
         "job_id": "testing-command",
         "implementation_job_id": "implementation-1",
@@ -146,25 +103,13 @@ def test_testing_upstream_ambiguity_waits_for_user_without_rewinding_design(
     service = WorkspaceService()
     try:
         result = service._testing_result(job)
-        assert result["blocking_route"] == "design"
-        assert result["can_delegate_repair"] is False
-        assert "Review the affected design" in result["message"]
-
-        command = {
-            "command_id": "testing-command",
-            "app_id": "checkpoint-branch",
-            "action": "start_testing",
-            "stage": "testing",
-            "payload": {"implementation_job_id": "implementation-1"},
-        }
-        monkeypatch.setattr(service, "_dispatch", lambda _command: dict(result))
-        waiting = service._dispatch_automatic_testing_episode(command)
     finally:
         service.shutdown()
 
-    assert waiting["awaiting_input"] is True
-    assert waiting["can_delegate_repair"] is False
-    assert command["action"] == "start_testing"
+    assert result["awaiting_input"] is True
+    assert result["blocking_route"] == "design"
+    assert result["can_delegate_repair"] is False
+    assert "Review the affected design" in result["message"]
 
 
 def test_testing_plan_defect_does_not_start_an_unbounded_repair_episode() -> None:
@@ -192,125 +137,6 @@ def test_testing_plan_defect_does_not_start_an_unbounded_repair_episode() -> Non
     assert result["blocking_route"] == "platform"
     assert result["can_delegate_repair"] is False
     assert "EasyDep platform" in result["message"]
-
-
-def test_testing_repair_without_progress_waits_instead_of_submitting_again(
-    monkeypatch,
-) -> None:
-    """같은 구현과 같은 실패가 반복되면 새 수리 작업을 만들지 않는다."""
-    command = {
-        "command_id": "repair-command",
-        "app_id": "app-1",
-        "action": "delegate_repair",
-        "stage": "testing",
-        "payload": {"action_id": "testing-command"},
-    }
-    result = {
-        "awaiting_input": True,
-        "kind": "action_required",
-        "message": "The repaired candidate failed the same check.",
-        "requires_revision": True,
-        "can_delegate_repair": True,
-        "blocking_findings": [
-            {
-                "message": "AVD-AWS-0131 is still present",
-                        "repairable": True,
-                        "defect_class": "SUT_DEFECT",
-                        "implementation_owner": "backend",
-            }
-        ],
-        "repair_state": {
-            "status": "ACTIVE",
-            "recent_attempts": [
-                {
-                    "candidate_digest": "same-related-files",
-                    "finding_keys_before": ["AVD-AWS-0131"],
-                    "finding_keys_after": ["AVD-AWS-0131"],
-                    "outcome": "repeated_candidate",
-                }
-            ],
-        },
-    }
-    updates: list[dict[str, Any]] = []
-    submissions: list[dict[str, Any]] = []
-    monkeypatch.setattr(repository, "update_command", lambda _id, **kw: updates.append(kw))
-    monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: None)
-    monkeypatch.setattr(repository, "now", lambda: datetime.now(UTC).replace(tzinfo=None))
-
-    service = WorkspaceService()
-    monkeypatch.setattr(service, "_dispatch", lambda _command: dict(result))
-    monkeypatch.setattr(service, "_complete_referenced_action", lambda _command: None)
-    monkeypatch.setattr(
-        service,
-        "submit",
-        lambda app_id, *, action, stage, payload: submissions.append(
-            {"app_id": app_id, "action": action, "stage": stage, "payload": payload}
-        ),
-    )
-    try:
-        service._execute_command("repair-command", command)
-    finally:
-        service.shutdown()
-
-    stored = updates[-1]
-    assert stored["status"] == "FAILED"
-    assert stored["result"]["kind"] == "system_error"
-    assert stored["result"]["can_delegate_repair"] is False
-    assert stored["result"]["repair_state"]["status"] == "STALLED"
-    assert stored["result"]["repair_state"]["stall_reason"]
-    assert stored["error"] == stored["result"]["message"]
-    assert submissions == []
-
-
-def test_different_testing_candidate_with_same_finding_tries_another_repair(
-    monkeypatch,
-) -> None:
-    """오류가 그대로여도 파일이 다른 후보면 폐기한 뒤 다음 전략을 실행한다."""
-
-    command = {
-        "command_id": "repair-command",
-        "app_id": "app-1",
-        "action": "delegate_repair",
-        "stage": "testing",
-        "payload": {"action_id": "repair-command"},
-    }
-    no_improvement = {
-        "awaiting_input": True,
-        "kind": "action_required",
-        "message": "A different candidate still has the same finding.",
-        "requires_revision": True,
-        "can_delegate_repair": True,
-        "job": {"implementation_job_id": "candidate-1"},
-        "repair_state": {
-            "status": "ACTIVE",
-            "recent_attempts": [{"outcome": "no_improvement"}],
-        },
-    }
-    updates: list[dict[str, Any]] = []
-    discarded: list[str] = []
-    monkeypatch.setattr(repository, "update_command", lambda _id, **kw: updates.append(kw))
-    monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: None)
-    monkeypatch.setattr(repository, "now", lambda: datetime.now(UTC).replace(tzinfo=None))
-    monkeypatch.setattr(
-        workspace_module.implementation_worker,
-        "discard_feedback_candidate",
-        lambda job_id, **_kwargs: (
-            discarded.append(job_id)
-            or {"discarded_artifact_types": ["SOURCE_CODE"]}
-        ),
-    )
-
-    service = WorkspaceService()
-    dispatch_results = iter([no_improvement, {"message": "Testing completed."}])
-    monkeypatch.setattr(service, "_dispatch", lambda _command: next(dispatch_results))
-    monkeypatch.setattr(service, "_complete_referenced_action", lambda _command: None)
-    try:
-        service._execute_command("repair-command", command)
-    finally:
-        service.shutdown()
-
-    assert discarded == ["candidate-1"]
-    assert updates[-1]["status"] == "COMPLETED"
 
 
 def test_testing_static_repair_request_keeps_exact_gate_scope() -> None:
@@ -398,17 +224,24 @@ def test_workspace_event_summary_omits_large_llm_contents() -> None:
     assert len(row.event_data["llm_timing_events"]) == 2
 
 
+@pytest.mark.parametrize("action", ["start_implementation", "delegate_repair"])
 def test_reconcile_implementation_command_closes_stale_running_command(
     monkeypatch,
+    action: str,
 ) -> None:
     command = {
         "command_id": "command-1",
-        "action": "start_implementation",
+        "action": action,
         "stage": "implementation",
         "status": "RUNNING",
         "payload": {"job_id": "job-1"},
+        "started_at": "2026-09-11T10:00:00+09:00",
     }
-    completed_job = {"job_id": "job-1", "status": "COMPLETED"}
+    completed_job = {
+        "job_id": "job-1",
+        "status": "COMPLETED",
+        "owner_repair": {"requested_at": "2026-09-11T10:00:01+09:00"},
+    }
     updated = {**command, "status": "COMPLETED"}
     events: list[dict] = []
     monkeypatch.setattr(repository, "latest_command", lambda _app_id: command)
@@ -440,6 +273,90 @@ def test_reconcile_implementation_command_closes_stale_running_command(
     assert {event["metadata"]["progress_status"] for event in events[1:]} == {"completed"}
 
 
+@pytest.mark.parametrize(
+    "started_at",
+    ["2026-09-11T10:00:00+09:00", "2026-09-11T10:00:00"],
+)
+def test_reconcile_does_not_mistake_an_unrequested_repair_for_completion(
+    monkeypatch,
+    started_at: str,
+) -> None:
+    command = {
+        "command_id": "repair-command",
+        "app_id": "app-1",
+        "action": "delegate_repair",
+        "stage": "implementation",
+        "status": "INTERRUPTED",
+        "payload": {"action_id": "testing-command", "job_id": "job-1"},
+        "started_at": started_at,
+    }
+    completed_before_request = {
+        "job_id": "job-1",
+        "status": "COMPLETED",
+        "owner_repair": {"requested_at": "2026-09-11T09:59:00+09:00"},
+    }
+    monkeypatch.setattr(repository, "latest_command", lambda _app_id: command)
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "get",
+        lambda _job_id: completed_before_request,
+    )
+    monkeypatch.setattr(repository, "now", lambda: datetime.now(UTC).replace(tzinfo=None))
+    monkeypatch.setattr(
+        repository,
+        "update_command",
+        lambda _command_id, **changes: {**command, **changes},
+    )
+
+    service = WorkspaceService()
+    try:
+        result = service.reconcile_implementation_command("app-1")
+    finally:
+        service.shutdown()
+
+    assert result["status"] == "FAILED"
+    assert "job_id" not in result["payload"]
+    retry = next(action for action in result["result"]["actions"] if action["action"] == "delegate_repair")
+    assert retry["payload"] == {"action_id": "testing-command"}
+
+
+def test_reconcile_leaves_an_active_repair_alone_before_worker_scheduling(
+    monkeypatch,
+) -> None:
+    command = {
+        "command_id": "repair-command",
+        "app_id": "app-1",
+        "action": "delegate_repair",
+        "stage": "implementation",
+        "status": "RUNNING",
+        "payload": {"action_id": "testing-command", "job_id": "job-1"},
+        "started_at": "2026-09-11T10:00:00+09:00",
+    }
+    monkeypatch.setattr(repository, "latest_command", lambda _app_id: command)
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "get",
+        lambda _job_id: {
+            "job_id": "job-1",
+            "status": "COMPLETED",
+            "owner_repair": {"requested_at": "2026-09-11T09:59:00+09:00"},
+        },
+    )
+    monkeypatch.setattr(
+        repository,
+        "update_command",
+        lambda *_args, **_kwargs: pytest.fail("An active command must not be reconciled early."),
+    )
+
+    service = WorkspaceService()
+    try:
+        result = service.reconcile_implementation_command("app-1")
+    finally:
+        service.shutdown()
+
+    assert result == command
+
+
 def test_reconcile_implementation_command_restores_progress_after_restart(
     monkeypatch,
 ) -> None:
@@ -447,10 +364,11 @@ def test_reconcile_implementation_command_restores_progress_after_restart(
         "command_id": "command-1",
         "action": "start_implementation",
         "stage": "implementation",
-        "status": "RUNNING",
+        "status": "INTERRUPTED",
         "payload": {"job_id": "job-1"},
     }
     events: list[dict] = []
+    updates: list[dict] = []
     monkeypatch.setattr(repository, "latest_command", lambda _app_id: command)
     monkeypatch.setattr(
         workspace_module.implementation_worker,
@@ -459,6 +377,11 @@ def test_reconcile_implementation_command_restores_progress_after_restart(
     )
     monkeypatch.setattr(repository, "list_events", lambda _app_id: [])
     monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: events.append(kwargs))
+    monkeypatch.setattr(
+        repository,
+        "update_command",
+        lambda _command_id, **changes: updates.append(changes) or {**command, **changes},
+    )
     monkeypatch.setattr(
         WorkspaceService,
         "_implementation_progress_snapshot",
@@ -483,7 +406,8 @@ def test_reconcile_implementation_command_restores_progress_after_restart(
     finally:
         service.shutdown()
 
-    assert result == command
+    assert result["status"] == "RUNNING"
+    assert updates == [{"status": "RUNNING", "error": None, "completed_at": None}]
     assert events[0]["metadata"]["step"] == "phase-backend"
     assert events[0]["metadata"]["progress_status"] == "running"
 
@@ -949,42 +873,32 @@ def test_legacy_handoff_checkpoint_backfills_and_routes_a_capability_choice(
     assert captured["request"].answer is None
 
 
-def test_testing_repair_presentation_tracks_implementation_then_testing() -> None:
-    """한 자동 복구 command가 실제 실행 중인 단계로 화면에 표시된다."""
-
+def test_testing_repair_command_is_presented_as_implementation() -> None:
     command = {
         "command_id": "repair-1",
         "app_id": "app-1",
         "action": "delegate_repair",
-        "stage": "testing",
+        "stage": "implementation",
         "status": "FAILED",
-        "payload": {"job_id": "implementation-repair-1"},
-        "result": {"job_id": "testing-1"},
+        "payload": {
+            "action_id": "testing-1",
+            "job_id": "implementation-repair-1",
+        },
+        "result": {"job_id": "implementation-repair-1"},
     }
     service = WorkspaceService()
     try:
-        implementation = service.present_command("app-1", command)
-        testing = service.present_command(
-            "app-1",
-            {
-                **command,
-                "payload": {
-                    **command["payload"],
-                    "testing_checkpoint": {"current_node": "verification"},
-                },
-            },
-        )
+        presented = service.present_command("app-1", command)
     finally:
         service.shutdown()
 
-    assert implementation["stage"] == "implementation"
+    assert presented["stage"] == "implementation"
     retry = next(
         action
-        for action in implementation["result"]["actions"]
+        for action in presented["result"]["actions"]
         if action["action"] == "retry_implementation"
     )
     assert retry["payload"]["job_id"] == "implementation-repair-1"
-    assert testing["stage"] == "testing"
 
 
 def test_initial_workspace_request_accepts_provider_and_region_without_budget(
@@ -2192,9 +2106,10 @@ def test_start_testing_persists_checkpoint_in_the_command(monkeypatch) -> None:
         service.shutdown()
 
     assert updates[0]["payload"]["testing_checkpoint"]["current_node"] == "queued"
-    assert len(events) == 1
+    assert len(events) == 2
     assert events[0]["kind"] == "progress"
     assert events[0]["metadata"]["progress_event"] == "testingProgressUpdated"
+    assert events[1]["metadata"]["progress_event"] == "testingStepUpdated"
     assert result["job"]["job_id"] == "command-1"
 
 
@@ -2240,10 +2155,10 @@ def test_interrupted_testing_command_reuses_saved_checkpoint(monkeypatch) -> Non
     assert result["job"]["job_id"] == "command-1"
 
 
-def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
+def test_sut_failure_hands_repair_to_an_implementation_command(
     monkeypatch,
 ) -> None:
-    """제품 수리 뒤에 새 테스트를 만들지 않고 실패를 발견한 후보를 다시 쓴다."""
+    """Implementation owns the repair; Testing is not rerun in the same command."""
     prior = {
         "stage": "testing",
         "payload": {},
@@ -2358,6 +2273,7 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
     monkeypatch.setattr(workspace_module, "ProjectTools", FakeProjectTools)
 
     def request_owner_repair(job_id, *, owner, evidence):
+        observed["linked_before_request"] = (observed.get("payload") or {}).get("job_id")
         observed["owner"] = owner
         observed["feedback"] = evidence["stderr"]
         repair_context = json.loads(evidence["testResults"])
@@ -2423,31 +2339,27 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
         monitor_implementation,
     )
 
-    def run_testing_command(
-        _self,
-        command,
-        implementation_job_id,
-        *,
-        previous_job=None,
-        preserve_test=False,
-        repair_task_type=None,
-    ):
-        observed["implementation_job_id"] = implementation_job_id
-        observed["previous_job"] = previous_job
-        observed["preserve_test"] = preserve_test
-        observed["repair_task_type"] = repair_task_type
-        return {"job": {"job_id": command["command_id"]}}
-
-    monkeypatch.setattr(WorkspaceService, "_run_testing_command", run_testing_command)
+    monkeypatch.setattr(
+        WorkspaceService,
+        "_run_testing_command",
+        lambda *_args, **_kwargs: pytest.fail(
+            "Testing must start in a separate START_TESTING command."
+        ),
+    )
 
     service = WorkspaceService()
     try:
+        assert service.infer_stage(
+            "app-1",
+            "delegate_repair",
+            {"action_id": "failed-command"},
+        ) == "implementation"
         result = service._dispatch(
             {
                 "action": "delegate_repair",
                 "app_id": "app-1",
                 "command_id": "repair-command",
-                "stage": "testing",
+                "stage": "implementation",
                 "payload": {"action_id": "failed-command"},
             }
         )
@@ -2485,12 +2397,9 @@ def test_sut_failure_repairs_implementation_and_reuses_the_same_test(
         "task:implement-registration",
     ]
     assert observed["owner"] == "backend"
+    assert observed["linked_before_request"] == "implementation-1"
     assert observed["payload"]["job_id"] == "implementation-1"
-    assert observed["implementation_job_id"] == "implementation-1"
-    assert observed["previous_job"] == prior["result"]["job"]
-    assert observed["preserve_test"] is True
-    assert observed["repair_task_type"] == "testing-dynamic-functional"
-    assert result["job"]["job_id"] == "repair-command"
+    assert result["job_id"] == "implementation-1"
 
 
 def test_implementation_progress_snapshot_uses_owner_and_verifier_phases() -> None:
@@ -2906,9 +2815,7 @@ def test_retry_implementation_resumes_the_failed_job_checkpoint(monkeypatch) -> 
     assert events[0]["metadata"]["status"] == "CHECKPOINT_RETRY_STARTED"
 
 
-@pytest.mark.parametrize("repair_status", ["FAILED", "AWAITING_INPUT"])
-def test_retry_testing_repair_resumes_the_same_plan(monkeypatch, repair_status) -> None:
-    """Testing 중 끊긴 구현 수리는 같은 job과 기능 계획에서 이어 간다."""
+def test_start_testing_after_repair_retry_reuses_the_failed_plan(monkeypatch) -> None:
     previous_job = {
         "job_id": "testing-run",
         "app_id": "app-1",
@@ -2921,7 +2828,7 @@ def test_retry_testing_repair_resumes_the_same_plan(monkeypatch, repair_status) 
         "app_id": "app-1",
         "action": "start_testing",
         "stage": "testing",
-        "status": "AWAITING_INPUT",
+        "status": "COMPLETED",
         "payload": {},
         "result": {
             "job": previous_job,
@@ -2930,65 +2837,45 @@ def test_retry_testing_repair_resumes_the_same_plan(monkeypatch, repair_status) 
                     "candidate_plan": {
                         "arazzo": "1.1.0",
                         "info": {"title": "Workflow", "version": "1.0.0"},
-                        "sourceDescriptions": [
-                            {
-                                "name": "application",
-                                "url": "openapi.json",
-                                "type": "openapi",
-                            }
-                        ],
-                        "workflows": [
-                            {
-                                "workflowId": "workflow-UC1",
-                                "steps": [
-                                    {"stepId": "submit", "operationId": "submitRegistration"}
-                                ],
-                            }
-                        ],
                     }
                 }
             ],
         },
     }
-    failed_repair = {
-        "command_id": "failed-repair",
+    repair = {
+        "command_id": "repair-command",
         "app_id": "app-1",
         "action": "delegate_repair",
-        "stage": "testing",
-        "status": repair_status,
-        "payload": {
-            "action_id": "testing-command",
-            "job_id": "implementation-2",
-        },
-        "result": (
-            {
-                "blocking_findings": [
-                    {"defect_class": "ENVIRONMENT_DEFECT", "repairable": False}
-                ]
-            }
-            if repair_status == "AWAITING_INPUT"
-            else None
-        ),
+        "stage": "implementation",
+        "status": "FAILED",
+        "payload": {"action_id": "testing-command", "job_id": "implementation-2"},
+    }
+    retry = {
+        "command_id": "retry-command",
+        "app_id": "app-1",
+        "action": "retry_implementation",
+        "stage": "implementation",
+        "status": "COMPLETED",
+        "payload": {"action_id": "repair-command", "job_id": "implementation-2"},
+        "result": {"job_id": "implementation-2"},
     }
 
-    def get_command(command_id):
-        return {
-            "testing-command": original_testing,
-            "failed-repair": failed_repair,
-        }.get(command_id)
-
-    observed: dict[str, object] = {}
-    monkeypatch.setattr(repository, "get_command", get_command)
-    monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: None)
+    commands = {
+        "testing-command": original_testing,
+        "repair-command": repair,
+        "retry-command": retry,
+    }
+    monkeypatch.setattr(repository, "get_command", commands.get)
     monkeypatch.setattr(
         workspace_module.implementation_worker,
         "get",
-        lambda _job_id: {
+        lambda _job_id_id: {
             "job_id": "implementation-2",
             "app_id": "app-1",
-            "status": "COMPLETED",
+            "repair_task_type": "testing-dynamic-functional",
         },
     )
+    observed: dict[str, object] = {}
 
     def run_testing_command(
         _self,
@@ -2999,29 +2886,33 @@ def test_retry_testing_repair_resumes_the_same_plan(monkeypatch, repair_status) 
         preserve_test=False,
         repair_task_type=None,
     ):
-        observed["implementation_job_id"] = implementation_job_id
-        observed["previous_job"] = previous_job
-        observed["preserve_test"] = preserve_test
-        observed["repair_task_type"] = repair_task_type
+        observed.update(
+            implementation_job_id=implementation_job_id,
+            previous_job=previous_job,
+            preserve_test=preserve_test,
+            repair_task_type=repair_task_type,
+        )
         return {"job": {"job_id": "retested"}}
 
     monkeypatch.setattr(WorkspaceService, "_run_testing_command", run_testing_command)
 
     service = WorkspaceService()
     try:
-        payload = {
-            "action_id": "failed-repair",
-            "job_id": "implementation-2",
-        }
-        service._validate_action_reference("app-1", "retry_implementation", payload)
-        assert service.infer_stage("app-1", "retry_implementation", payload) == "testing"
+        assert service.infer_stage(
+            "app-1",
+            "retry_implementation",
+            {"action_id": "repair-command", "job_id": "implementation-2"},
+        ) == "implementation"
         result = service._dispatch(
             {
-                "action": "retry_implementation",
+                "action": "start_testing",
                 "app_id": "app-1",
-                "command_id": "retry-command",
+                "command_id": "new-testing-command",
                 "stage": "testing",
-                "payload": payload,
+                "payload": {
+                    "action_id": "retry-command",
+                    "implementation_job_id": "implementation-2",
+                },
             }
         )
     finally:
@@ -3031,6 +2922,6 @@ def test_retry_testing_repair_resumes_the_same_plan(monkeypatch, repair_status) 
         "implementation_job_id": "implementation-2",
         "previous_job": previous_job,
         "preserve_test": True,
-        "repair_task_type": None,
+        "repair_task_type": "testing-dynamic-functional",
     }
     assert result["job"]["job_id"] == "retested"

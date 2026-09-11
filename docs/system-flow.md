@@ -765,20 +765,23 @@ class TestingState(TypedDict):
 
 ### 6.3 테스트 수리
 
-자동 수리 command는 바로 전 Testing command의 결과를 넘기며 다음 조건을 확인한다.
+Testing은 실패 근거를 저장하고 `AWAITING_INPUT`에서 멈춘다. 사용자가 `delegate_repair`를
+선택하면 별도 Implementation command가 바로 전 Testing command의 결과를 넘겨받아 다음
+조건을 확인한다.
 
 - 이전 작업과 새 작업의 앱 ID와 구현 작업 ID가 같은가
 - 이전 작업이 완료되었고 실제로 실패했는가
 - 두 작업의 `TestingInput`, 즉 파일 버전 묶음이 같은가
 
-조건이 맞으면 이전 지적과 수리 이력을 다음 작업에 포함한다. 테스트 계획의 문제는 같은 구현에서
-해당 유스케이스 계획만 다시 만들고, 구현 문제는 실패를 발견한 계획을 보존한 채 구현을 자동
-수리한다. 구현 파일이 바뀌면 회귀를 확인하기 위해 같은 계획의 모든 case를 다시 실행한다.
-외부 도구나 네트워크 문제는 구현 코드를 고치지 않고 환경이 복구된 뒤 같은 작업을 재시도한다.
+조건이 맞으면 이전 지적과 수리 이력을 Implementation 작업에 포함한다. 구현이 완료되어도 그
+command 안에서 Testing을 실행하지 않는다. 기존 `start_testing` action으로 새 Testing
+command를 시작하며, 이때 실패를 발견한 고정 계획을 다시 사용한다. 외부 도구나 네트워크
+문제는 구현 코드를 고치지 않고 환경이 복구된 뒤 Testing을 다시 시작한다.
 
-`workspace_commands.payload.testing_checkpoint`가 `TestingInput`, 현재 검사, 부분 결과, 이전
-finding과 repair history를 저장한다. 서버가 재시작되면 고정 입력이 있는 `INTERRUPTED` 작업만
-같은 command에서 재개하며, 입력 저장 전에 끊긴 작업과 이미 실패·완료한 작업을 구분한다.
+각 Testing command의 `workspace_commands.payload.testing_checkpoint`가 `TestingInput`,
+현재 검사와 부분 결과를 저장한다. 서버가 재시작되면 고정 입력이 있는 `INTERRUPTED` Testing
+command만 같은 command에서 재개하며, Implementation 수리와 후속 Testing은 서로 다른
+command로 남는다.
 
 ## 7. 자동 수리의 실제 동작
 
@@ -847,7 +850,8 @@ class RepairStateSummary(BaseModel):
 - 구현: compile·test 실패의 파일과 task 소유자를 찾아 원인 task와 그 아래 검증 task를 다시
   계획하고 같은 실행에서 자동으로 이어 간다.
 - 테스트: 계획 문제면 해당 계획만 다시 만들고, 생성 앱 문제면 고정 계획과 정확한 HTTP·RTM
-  근거를 구현 agent에 전달한다. 환경 문제면 같은 Testing 작업을 재시도한다.
+  근거를 별도 Implementation command에 전달한다. 구현 완료 뒤 새 Testing command가 같은
+  계획을 실행하며, 환경 문제도 복구 후 새 Testing command로 재시도한다.
 
 ### 7.3 왜 화면에서 멈추는가
 

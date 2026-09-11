@@ -20,7 +20,6 @@ class StagePolicy(StrEnum):
     DESIGN = "design"
     IMPLEMENTATION = "implementation"
     TESTING = "testing"
-    RETRY_IMPLEMENTATION = "retry_implementation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,7 +83,7 @@ _SPECS = (
     ActionSpec(
         WorkspaceAction.RETRY_IMPLEMENTATION,
         "retry_implementation",
-        StagePolicy.RETRY_IMPLEMENTATION,
+        StagePolicy.IMPLEMENTATION,
         ("action_id", "job_id"),
     ),
     ActionSpec(
@@ -422,17 +421,6 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
     common = {"action_id": command_id}
     if status in {"FAILED", "INTERRUPTED"}:
         discuss = _offer(WorkspaceAction.MESSAGE, "Ask about this error", common)
-        if stage == "testing" and command.get("action") == "delegate_repair":
-            repair_job_id = str((command.get("payload") or {}).get("job_id") or "")
-            if repair_job_id:
-                return [
-                    discuss,
-                    _offer(
-                        WorkspaceAction.RETRY_IMPLEMENTATION,
-                        "Retry implementation repair checkpoint",
-                        {**common, "job_id": repair_job_id},
-                    )
-                ]
         if stage == "requirements":
             return [
                 discuss,
@@ -459,6 +447,16 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
                 or result.get("job_id")
                 or ""
             )
+            source_action_id = str((command.get("payload") or {}).get("action_id") or "")
+            if command.get("action") == "delegate_repair" and not job_id and source_action_id:
+                return [
+                    discuss,
+                    _offer(
+                        WorkspaceAction.DELEGATE_REPAIR,
+                        "Retry implementation repair request",
+                        {"action_id": source_action_id},
+                    ),
+                ]
             if job_id:
                 return [
                     discuss,

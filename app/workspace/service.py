@@ -8,6 +8,7 @@ import time
 import uuid
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any, cast
@@ -108,7 +109,6 @@ TERMINAL_JOB_STATUSES = {
 # 응답과 reasoning을 별도 ``responseContent``·``reasoningContent`` field로 기록하므로,
 # Workspace event에서도 같은 실행의 원문을 확인할 수 있다.
 _PRIVATE_DESIGN_TIMING_FIELDS = frozenset({"failureContentPrefix", "failureContentSuffix"})
-_REPEATED_REPAIR_OUTCOME = "repeated_candidate"
 _NUMBERED_REQUIREMENT_LINE = re.compile(
     r"^\s*[-*]\s*\[REQ[-_ ]?\d+\]\s*(?P<text>.+?)\s*$",
     re.IGNORECASE,
@@ -136,47 +136,6 @@ def _initial_requirement_lines(text: str) -> list[str]:
 def _public_design_timing_event(event: Mapping[str, Any]) -> dict[str, Any]:
     """설계 timing 한 건을 Workspace event로 옮기고 예전 중복 표본만 제거한다."""
     return {key: value for key, value in event.items() if key not in _PRIVATE_DESIGN_TIMING_FIELDS}
-
-
-def _latest_testing_repair_outcome(result: Mapping[str, Any]) -> str:
-    """Testing 공개 이력에서 방금 후보의 판정만 읽는다."""
-
-    repair_state = result.get("repair_state")
-    attempts = repair_state.get("recent_attempts") if isinstance(repair_state, dict) else None
-    latest = attempts[-1] if isinstance(attempts, list) and attempts else None
-    return str(latest.get("outcome") or "") if isinstance(latest, dict) else ""
-
-
-def _stop_repeated_testing_repair(result: dict[str, Any]) -> dict[str, Any]:
-    """파일까지 같은 수리 후보가 다시 나온 경우에만 시스템 오류로 끝낸다.
-
-    오류 목록이 그대로여도 파일 내용이 달라졌다면 다른 해결책일 수 있으므로 다음 수리를
-    허용한다. 반면 입력과 생성 파일까지 같은 후보가 재등장하면 같은 검사를 반복해도 새로
-    알 수 있는 것이 없다. 횟수 상한 없이 이 정확한 중복 조건만 사용한다.
-    """
-
-    repair_state = result.get("repair_state")
-    if not isinstance(repair_state, dict):
-        return result
-    if _latest_testing_repair_outcome(result) != _REPEATED_REPAIR_OUTCOME:
-        return result
-
-    reason = (
-        "Automatic repair did not reduce the same blocking findings. EasyDep stopped "
-        "starting new implementation jobs until the failing check or repair route is fixed."
-    )
-    return {
-        **result,
-        "kind": "system_error",
-        "message": reason,
-        "requires_revision": False,
-        "can_delegate_repair": False,
-        "repair_state": {
-            **repair_state,
-            "status": "STALLED",
-            "stall_reason": reason,
-        },
-    }
 
 
 def _implementation_agent_results(run_path: Path) -> list[dict[str, Any]]:
@@ -299,12 +258,12 @@ class WorkspaceService:
             "FAILED",
         }:
             return command
-        # 같은 ``retry_implementation`` 이름을 Testing의 자동 수리도 사용한다. 이 메서드는
-        # 구현 화면을 새로 열었을 때 끊긴 구현 명령만 맞추는 용도이므로, Testing 명령을
-        # 구현 작업 완료와 동시에 끝내면 안 된다. Testing은 이어서 동적 기능 검사를 해야 한다.
+        # Testing이 위임한 수리도 독립된 Implementation command다. 구현 화면을 다시 열 때
+        # 해당 owner checkpoint의 상태만 맞추고, 후속 Testing은 별도 START_TESTING으로 둔다.
         if command.get("stage") != "implementation":
             return command
         if command.get("action") not in {
+            "delegate_repair",
             "start_implementation",
             "retry_implementation",
             "rerun_implementation",
@@ -319,6 +278,45 @@ class WorkspaceService:
         except Exception:
             return command
         job_status = str(job.get("status") or "")
+        if command.get("action") == "delegate_repair" and job_status == "COMPLETED":
+            owner_repair = job.get("owner_repair")
+            requested_at = (
+                str(owner_repair.get("requested_at") or "")
+                if isinstance(owner_repair, dict)
+                else ""
+            )
+            started_at = str(command.get("started_at") or "")
+            try:
+                request_belongs_to_command = bool(
+                    requested_at
+                    and started_at
+                    and datetime.fromisoformat(requested_at)
+                    >= datetime.fromisoformat(started_at)
+                )
+            except (TypeError, ValueError):
+                request_belongs_to_command = False
+            if not request_belongs_to_command:
+                if command.get("status") == "RUNNING":
+                    return command
+                retry_payload = dict(payload)
+                retry_payload.pop("job_id", None)
+                failed = {**command, "status": "FAILED", "payload": retry_payload}
+                message = (
+                    "The Implementation repair was interrupted before its worker request "
+                    "could be confirmed. Retry the same repair request."
+                )
+                result = result_with_contract(
+                    failed,
+                    {"kind": "outcome_unknown", "message": message},
+                )
+                return repository.update_command(
+                    str(command["command_id"]),
+                    status="FAILED",
+                    payload=retry_payload,
+                    result=result,
+                    error=message,
+                    completed_at=repository.now(),
+                )
         # READY workflow의 완료 여부는 구현 작업 서비스가 판정하여 공개 상태를
         # COMPLETED로 바꾼다. Workspace가 그 내부 규칙을 다시 구현하지 않는다.
         if job_status != "COMPLETED":
@@ -338,6 +336,13 @@ class WorkspaceService:
                     status="FAILED",
                     result=result,
                     error=str(job.get("error") or "Implementation needs checkpoint repair."),
+                )
+            if job_status in {"QUEUED", "RUNNING"} and command.get("status") != "RUNNING":
+                return repository.update_command(
+                    str(command["command_id"]),
+                    status="RUNNING",
+                    error=None,
+                    completed_at=None,
                 )
             return command
         result = {
@@ -1021,17 +1026,6 @@ class WorkspaceService:
         if command is None:
             return None
         presented = dict(command)
-        payload = command.get("payload")
-        payload = payload if isinstance(payload, dict) else {}
-        # Testing이 만든 구현 feedback job이 실행되는 동안만 화면을 Implementation으로
-        # 표시한다. 구현이 끝나 Testing checkpoint가 생기면 같은 command가 다시 Testing을
-        # 나타낸다. 별도 상태나 DB migration 없이 이미 저장된 handoff 정보만 사용한다.
-        if (
-            command.get("action") == "delegate_repair"
-            and payload.get("job_id")
-            and not isinstance(payload.get("testing_checkpoint"), dict)
-        ):
-            presented["stage"] = "implementation"
         result = command.get("result")
         shaped_result = dict(result) if isinstance(result, dict) else {}
         shaped_result = _with_capability_handoff_questions(app_id, shaped_result)
@@ -1075,21 +1069,11 @@ class WorkspaceService:
             StagePolicy.TESTING,
         }:
             return policy.value
-        if policy == StagePolicy.RETRY_IMPLEMENTATION:
-            # Testing이 자동으로 만든 구현 수리도 같은 구현 checkpoint다. 이 경우 재개
-            # 명령을 Testing 단계에 두면 구현 수리가 끝난 뒤 보존한 기능 계획을 바로 다시
-            # 실행할 수 있고, 서버가 중간에 재시작돼도 아래 Testing checkpoint로 이어진다.
-            prior = repository.get_command(str(payload.get("action_id") or ""))
-            if (
-                prior is not None
-                and prior.get("action") == "delegate_repair"
-                and prior.get("stage") == "testing"
-            ):
-                return "testing"
-            return "implementation"
         if policy == StagePolicy.REFERENCE:
             prior = repository.get_command(str(payload.get("action_id") or ""))
             if prior is not None:
+                if action == "delegate_repair" and prior.get("stage") == "testing":
+                    return "implementation"
                 return str(
                     (prior.get("result") or {}).get("routing_stage")
                     or prior.get("stage")
@@ -1164,67 +1148,10 @@ class WorkspaceService:
             metadata={"status": "RUNNING", "action": command["action"]},
         )
         try:
-            result = self._dispatch_automatic_testing_episode(command)
+            result = self._dispatch(command)
             self._complete_referenced_action(command)
             awaiting_input = result.pop("awaiting_input", False) is True
             if awaiting_input:
-                # 최초 Testing 실패는 자동 수리를 시작한다. 이미 한 번 수리한 뒤에도 같은
-                # finding이 줄지 않았다면 새 작업을 계속 만들지 않고 시스템 경계를 고친다.
-                # 실제로 개선된 결과에는 적용하지 않으므로 숫자 기반 재시도 상한은 없다.
-                if result.get("kind") == "system_error":
-                    # 새 사용자 입력으로 풀 수 없는 EasyDep 내부 문제는 대화 대기 상태로
-                    # 남기지 않는다. 실패 이유와 수리 이력은 보존하되 명령을 끝내야 화면도
-                    # 의미 없는 수리 버튼을 내놓지 않고 서버 재시작 시 재개하지 않는다.
-                    testing_job = result.get("job")
-                    candidate_job_id = (
-                        str(testing_job.get("implementation_job_id") or "")
-                        if isinstance(testing_job, dict)
-                        else ""
-                    )
-                    if candidate_job_id:
-                        try:
-                            discarded = implementation_worker.discard_feedback_candidate(
-                                candidate_job_id,
-                                reason=str(
-                                    result.get("message")
-                                    or "The Testing candidate did not improve its blockers."
-                                ),
-                            )
-                        except (KeyError, RuntimeError) as error:
-                            # 최초 구현이나 이미 정리된 후보는 폐기 대상이 아니다. 수리
-                            # 종료 자체를 실패시키지 않고 진단만 서버 로그에 남긴다.
-                            _log.info(
-                                "Testing candidate %s was not discarded: %s",
-                                candidate_job_id,
-                                error,
-                            )
-                        else:
-                            result["discarded_candidate"] = {
-                                "job_id": candidate_job_id,
-                                "artifact_types": list(
-                                    discarded.get("discarded_artifact_types") or []
-                                ),
-                            }
-                    result = result_with_contract(
-                        {**command, "status": "FAILED"}, result
-                    )
-                    repository.update_command(
-                        command_id,
-                        status="FAILED",
-                        result=result,
-                        error=str(result.get("message") or "Testing repair stalled."),
-                        completed_at=repository.now(),
-                    )
-                    repository.append_event(
-                        app_id,
-                        command_id=command_id,
-                        stage=stage,
-                        kind="system_error",
-                        actor="assistant",
-                        text=str(result.get("message") or "Testing repair stalled."),
-                        metadata={"status": "FAILED", **result},
-                    )
-                    return
                 result = result_with_contract(
                     {**command, "status": "AWAITING_INPUT"}, result
                 )
@@ -1291,171 +1218,6 @@ class WorkspaceService:
             )
             raise
 
-    def _dispatch_automatic_testing_episode(
-        self,
-        command: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Testing 수리를 새 command 없이 같은 실행 안에서 이어 간다.
-
-        화면에는 하나의 작업만 남기되 매 반복의 정확한 실패와 재검사 결과는 event로
-        누적한다. 횟수 제한은 사용하지 않는다. 실제 파일과 finding이 같아진 경우에는
-        ``_stop_repeated_testing_repair``가 시스템 결함으로 끝내므로 같은 LLM 작업을
-        무한히 만들지 않는다.
-        """
-
-        result = self._dispatch(command)
-        while result.get("awaiting_input") is True:
-            if command.get("action") == "delegate_repair" and command.get("stage") == "testing":
-                result = _stop_repeated_testing_repair(result)
-                # 파일은 달라졌지만 blocking finding이 줄지 않은 후보는 다음 수리의
-                # 출발점으로 채택하지 않는다. Job 이력은 남겨 에이전트가 이미 바꾼
-                # 파일을 볼 수 있게 하고, 실제 snapshot만 직전 수용본으로 되돌린다.
-                if (
-                    result.get("kind") != "system_error"
-                    and _latest_testing_repair_outcome(result) == "no_improvement"
-                ):
-                    testing_job = result.get("job")
-                    candidate_job_id = (
-                        str(testing_job.get("implementation_job_id") or "")
-                        if isinstance(testing_job, dict)
-                        else ""
-                    )
-                    if candidate_job_id:
-                        try:
-                            discarded = implementation_worker.discard_feedback_candidate(
-                                candidate_job_id,
-                                reason=(
-                                    "The candidate changed files but did not reduce the "
-                                    "blocking Testing findings."
-                                ),
-                            )
-                        except (KeyError, RuntimeError) as error:
-                            _log.info(
-                                "Testing candidate %s was not discarded: %s",
-                                candidate_job_id,
-                                error,
-                            )
-                        else:
-                            result["discarded_candidate"] = {
-                                "job_id": candidate_job_id,
-                                "artifact_types": list(
-                                    discarded.get("discarded_artifact_types") or []
-                                ),
-                            }
-            should_repair = (
-                command.get("stage") == "testing"
-                and result.get("requires_revision") is True
-                and result.get("can_delegate_repair") is True
-                and result.get("kind") != "system_error"
-                and not result.get("resource_question")
-                and not result.get("resource_questions")
-            )
-            if not should_repair:
-                return result
-
-            app_id = str(command["app_id"])
-            command_id = str(command["command_id"])
-            stage = str(command["stage"])
-            # 처음 Testing을 시작하게 한 이전 단계 command는 여기서 완료한다. 이후
-            # 반복은 현재 command 자신을 수리 근거로 참조하므로 새 DB 행이 필요 없다.
-            self._complete_referenced_action(command)
-            visible_result = result_with_contract(
-                {**command, "status": "RUNNING"},
-                {key: value for key, value in result.items() if key != "awaiting_input"},
-            )
-            repository.append_event(
-                app_id,
-                command_id=command_id,
-                stage=stage,
-                kind=str(result.get("kind") or "action_required"),
-                actor="assistant",
-                text=str(result.get("message") or "Testing found a repairable failure."),
-                metadata={
-                    "status": "REPAIR_ITERATION_FAILED",
-                    "progress_event": "testingProgressUpdated",
-                    "phase": "repair",
-                    "scope": "phase",
-                    "progress_status": "fail",
-                    "progress_card_label": "Testing progress",
-                    "progress_step_label": "Repair iteration needs another candidate",
-                    **visible_result,
-                },
-            )
-
-            # 이전 Testing checkpoint를 남겨 두면 dispatch가 구현 수리 대신 같은 검사를
-            # 즉시 재개한다. 실패 결과 자체는 command.result에 보존하고, 다음 구현 후보가
-            # 만든 checkpoint는 _run_testing_command가 다시 저장하게 한다.
-            payload = {
-                key: value
-                for key, value in dict(command.get("payload") or {}).items()
-                if key not in {"testing_checkpoint", "job_id"}
-            }
-            if "initial_testing_failure" not in payload:
-                initial_report = (
-                    (visible_result.get("job") or {}).get("result")
-                    if isinstance(visible_result.get("job"), dict)
-                    else {}
-                )
-                initial_report = initial_report if isinstance(initial_report, dict) else {}
-                dynamic_report = (
-                    (((initial_report.get("verification") or {}).get("reports") or {}).get(
-                        "dynamicFunctional"
-                    ))
-                    if isinstance(initial_report.get("verification"), dict)
-                    else {}
-                )
-                dynamic_report = dynamic_report if isinstance(dynamic_report, dict) else {}
-                payload["initial_testing_failure"] = {
-                    "gateStatus": initial_report.get("gateStatus"),
-                    "gateCounts": initial_report.get("gateCounts"),
-                    "blockingReason": (
-                        (initial_report.get("verification") or {}).get("blockingReason")
-                        if isinstance(initial_report.get("verification"), dict)
-                        else None
-                    ),
-                    "blocking_findings": list(
-                        initial_report.get("blocking_findings") or []
-                    ),
-                    "failedWorkflowId": dynamic_report.get("failedWorkflowId"),
-                    "failedStepId": dynamic_report.get("failedStepId"),
-                    "candidateDigest": dynamic_report.get("candidateDigest"),
-                }
-            payload.setdefault("repair_episode_started_by", command.get("action"))
-            payload["action_id"] = command_id
-            command["action"] = "delegate_repair"
-            command["payload"] = payload
-            repository.update_command(
-                command_id,
-                action="delegate_repair",
-                stage=stage,
-                status="RUNNING",
-                result=visible_result,
-                payload=payload,
-            )
-            repository.append_event(
-                app_id,
-                command_id=command_id,
-                stage=stage,
-                kind="status",
-                actor="system",
-                text="Continuing automatic repair with the accumulated history.",
-                metadata={
-                    "status": "AUTO_REPAIR_RUNNING",
-                    "progress_event": "testingProgressUpdated",
-                    "phase": "repair",
-                    "scope": "phase",
-                    "progress_status": "running",
-                    "progress_card_label": "Testing progress",
-                    "progress_step_label": "Repairing the failed implementation",
-                    "progress_detail": (
-                        "The next implementation candidate will be checked against "
-                        "the preserved test evidence."
-                    ),
-                },
-            )
-            result = self._dispatch(command)
-        return result
-
     def _complete_referenced_action(self, command: dict[str, Any]) -> None:
         if command["payload"].get("_conversation_outcome"):
             return
@@ -1465,6 +1227,30 @@ class WorkspaceService:
         prior = repository.get_command(action_id)
         if prior is not None and prior["status"] == "AWAITING_INPUT":
             repository.update_command(action_id, status="COMPLETED", completed_at=repository.now())
+
+    @staticmethod
+    def _source_testing_command(command: dict[str, Any]) -> dict[str, Any] | None:
+        """Follow an Implementation repair/retry chain back to its failed Testing command."""
+
+        app_id = str(command["app_id"])
+        command_id = str((command.get("payload") or {}).get("action_id") or "")
+        visited: set[str] = set()
+        while command_id and command_id not in visited:
+            visited.add(command_id)
+            referenced = repository.get_command(command_id)
+            if referenced is None:
+                return None
+            if str(referenced.get("app_id") or "") != app_id:
+                raise ValueError("The Testing repair chain belongs to another app.")
+            if referenced.get("stage") == "testing":
+                return referenced
+            if (
+                referenced.get("stage") != "implementation"
+                or referenced.get("action") not in {"delegate_repair", "retry_implementation"}
+            ):
+                return None
+            command_id = str((referenced.get("payload") or {}).get("action_id") or "")
+        return None
 
     def _dispatch(self, command: dict[str, Any]) -> dict[str, Any]:
         action = str(command["action"])
@@ -1568,14 +1354,8 @@ class WorkspaceService:
                     or prior.get("payload", {}).get("implementation_job_id")
                     or ""
                 )
-                previous_run_id = str(result.get("job_id") or previous_job.get("job_id") or "")
-                if not implementation_job_id or not previous_run_id:
-                    raise ValueError("The failing testing run cannot be resumed.")
-                defect_classes = {
-                    str(blocker.get("defect_class") or "SUT_DEFECT")
-                    for blocker in blockers
-                    if isinstance(blocker, dict)
-                }
+                if not implementation_job_id:
+                    raise ValueError("The failing Testing run has no implementation job ID.")
                 implementation_blockers = [
                     blocker
                     for blocker in blockers
@@ -1586,142 +1366,69 @@ class WorkspaceService:
                         or blocker.get("defect_class") == "SUT_DEFECT"
                     )
                 ]
-                # 실행 환경 오류와 제품 오류가 함께 발견될 수 있다. 이때 환경 오류가
-                # 고칠 수 있는 Trivy/코드 오류까지 가리지 않게 하고, 환경 오류만 남은
-                # 경우에만 외부 복구를 기다린다.
-                if not implementation_blockers and defect_classes <= {
-                    "ENVIRONMENT_DEFECT"
-                }:
-                    return {
-                        "awaiting_input": True,
-                        "kind": "external_action",
-                        "message": (
-                            "Testing could not reach a conclusion because its runtime or "
-                            "required tool is unavailable. Restore that environment and run "
-                            "the same Testing job again; EasyDep will not change product code "
-                            "to hide an environment failure."
-                        ),
-                        "requires_revision": False,
-                        "can_delegate_repair": False,
-                        "blocking_findings": blockers,
-                        "repair_state": {
-                            **dict(result.get("repair_state") or {}),
-                            "status": "WAITING_EXTERNAL",
-                        },
-                        "job_id": previous_run_id,
-                        "job": previous_job,
-                    }
-                if not implementation_blockers and "UPSTREAM_AMBIGUITY" in defect_classes:
-                    # Testing can identify missing upstream evidence, but it must not edit or
-                    # rewind an earlier stage.  Keep the exact failed run available and let the
-                    # normal conversational revision flow ask the user before changing design.
-                    return {
-                        **result,
-                        "awaiting_input": True,
-                        "kind": "action_required",
-                        "message": (
-                            "Testing found an ambiguity in the frozen requirements or design. "
-                            "Review the affected design before starting a revision."
-                        ),
-                        "requires_revision": True,
-                        "can_delegate_repair": False,
-                        "blocking_route": "design",
-                        "job_id": previous_run_id,
-                        "job": previous_job,
-                    }
-                if implementation_blockers:
-                    (
-                        selected_blockers,
-                        repair_owner,
-                        repair_task_type,
-                        repair_file_hints,
-                        verification_profile,
-                    ) = self._testing_repair_request(
-                        str(command["app_id"]),
-                        result,
-                        implementation_blockers,
-                    )
-                    # 동적 테스트까지 실행된 실패라면 그 계획을 그대로 보존한다. 반대로
-                    # 앱 실행처럼 계획이 생기기 전에 실패한 경우에는 보존할
-                    # 대상이 없으므로, 고친 구현을 새 Testing 작업으로 검사해야 한다.
-                    has_preserved_candidate = any(
-                        isinstance(blocker.get("candidate_plan"), dict)
-                        and bool(blocker.get("candidate_plan"))
-                        for blocker in selected_blockers
-                    )
-                    original_implementation = implementation_worker.get(implementation_job_id)
-                    # Testing 이력에는 HTTP 실패가 남고 최신 source에는 이전 수정 결과가
-                    # 반영돼 있다. 다음 수리에는 자유형 agent 답변을 반복하지 않고, 이전
-                    # 작업의 변경 파일만 알려 현재 source와 정확한 실패 증거를 읽게 한다.
-                    previous_repair_results, older_repair_summaries = (
-                        self._implementation_repair_outcomes(original_implementation)
-                    )
-                    feedback = self._testing_implementation_feedback(
-                        result,
-                        selected_blockers,
-                        previous_repair_results=previous_repair_results,
-                        older_repair_summaries=older_repair_summaries,
-                    )
-                    (
-                        confirmed_target_refs,
-                        repair_file_hints,
-                    ) = self._testing_implementation_repair_targets(
-                        str(command["app_id"]),
-                        selected_blockers,
-                        repair_file_hints,
-                    )
-                    repair_job = implementation_worker.request_owner_repair(
-                        implementation_job_id,
-                        owner=repair_owner,
-                        evidence={
-                            "command": ["testing", repair_task_type],
-                            "stderr": feedback,
-                            "testResults": json.dumps(
-                                {
-                                    "confirmedTargetRefs": confirmed_target_refs,
-                                    "fileHints": repair_file_hints,
-                                    "verificationProfile": verification_profile,
-                                },
-                                ensure_ascii=False,
-                                sort_keys=True,
-                            ),
-                        },
-                    )
-                    repair_job_id = str(repair_job.get("job_id") or "")
-                    if not repair_job_id:
-                        raise RuntimeError("Automatic owner repair returned no job ID.")
-                    # 서버가 재시작돼도 같은 owner checkpoint를 다시 찾을 수 있도록 LLM
-                    # 실행 전에 원래 implementation job ID를 command에 저장한다.
-                    repair_payload = {
-                        **dict(command.get("payload") or {}),
-                        "job_id": repair_job_id,
-                    }
-                    command["payload"] = repair_payload
-                    repository.update_command(
-                        str(command["command_id"]),
-                        payload=repair_payload,
-                    )
-                    repaired = self._monitor_implementation(
-                        repair_job,
-                        command_id=str(command["command_id"]),
-                    )
-                    repaired_job = repaired.get("job") or {}
-                    repaired_job_id = str(
-                        repaired.get("job_id") or repaired_job.get("job_id") or ""
-                    )
-                    if not repaired_job_id:
-                        raise RuntimeError("Automatic owner repair returned no job ID.")
-                    return self._run_testing_command(
-                        command,
-                        repaired_job_id,
-                        previous_job=previous_job,
-                        preserve_test=has_preserved_candidate,
-                        repair_task_type=repair_task_type,
-                    )
-                return self._run_testing_command(
-                    command,
+                if not implementation_blockers:
+                    raise ValueError("The selected Testing finding does not belong to Implementation.")
+                (
+                    selected_blockers,
+                    repair_owner,
+                    repair_task_type,
+                    repair_file_hints,
+                    verification_profile,
+                ) = self._testing_repair_request(
+                    str(command["app_id"]),
+                    result,
+                    implementation_blockers,
+                )
+                original_implementation = implementation_worker.get(implementation_job_id)
+                previous_repair_results, older_repair_summaries = (
+                    self._implementation_repair_outcomes(original_implementation)
+                )
+                feedback = self._testing_implementation_feedback(
+                    result,
+                    selected_blockers,
+                    previous_repair_results=previous_repair_results,
+                    older_repair_summaries=older_repair_summaries,
+                )
+                (
+                    confirmed_target_refs,
+                    repair_file_hints,
+                ) = self._testing_implementation_repair_targets(
+                    str(command["app_id"]),
+                    selected_blockers,
+                    repair_file_hints,
+                )
+                repair_payload = {
+                    **dict(command.get("payload") or {}),
+                    "job_id": implementation_job_id,
+                }
+                command["payload"] = repair_payload
+                repository.update_command(
+                    str(command["command_id"]),
+                    payload=repair_payload,
+                )
+                repair_job = implementation_worker.request_owner_repair(
                     implementation_job_id,
-                    previous_job=previous_job,
+                    owner=repair_owner,
+                    evidence={
+                        "command": ["testing", repair_task_type],
+                        "stderr": feedback,
+                        "testResults": json.dumps(
+                            {
+                                "confirmedTargetRefs": confirmed_target_refs,
+                                "fileHints": repair_file_hints,
+                                "verificationProfile": verification_profile,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    },
+                )
+                repair_job_id = str(repair_job.get("job_id") or "")
+                if repair_job_id != implementation_job_id:
+                    raise RuntimeError("Implementation repair returned an unexpected job ID.")
+                return self._monitor_implementation(
+                    repair_job,
+                    command_id=str(command["command_id"]),
                 )
             history = dict(result.get("repair_state") or {})
             repair_stage = str(
@@ -1806,14 +1513,6 @@ class WorkspaceService:
             current_job = implementation_worker.get(str(payload["job_id"]))
             if str(current_job.get("app_id") or "") != str(command["app_id"]):
                 raise ValueError("The implementation checkpoint does not belong to this app.")
-            # 일반 구현 재시도는 이미 job ID만으로 충분하다. Testing이 만든 구현 수리만
-            # 이전 Testing 결과와 고정 기능 계획을 찾아야 하므로 그때만 명령을 조회한다.
-            testing_repair = command.get("stage") == "testing"
-            prior = (
-                repository.get_command(str(payload.get("action_id") or "")) or {}
-                if testing_repair
-                else {}
-            )
             repository.append_event(
                 str(command["app_id"]),
                 command_id=str(command["command_id"]),
@@ -1826,49 +1525,39 @@ class WorkspaceService:
                     "job_id": str(payload["job_id"]),
                 },
             )
-            if current_job.get("status") == "COMPLETED" and testing_repair:
-                # 구현 저장까지 끝난 직후 Workspace 명령만 끊긴 경우에는 이미 통과한 구현
-                # 테스트를 다시 돌리지 않고 아래 기능 회귀 검사부터 이어 간다.
-                repaired = {"job_id": str(payload["job_id"]), "job": current_job}
-            else:
-                job = implementation_worker.retry_failed(str(payload["job_id"]))
-                repaired = self._monitor_implementation(
-                    job,
-                    command_id=str(command["command_id"]),
-                )
-            if not testing_repair:
-                return repaired
-
-            original = repository.get_command(
-                str((prior.get("payload") or {}).get("action_id") or "")
-            ) or {}
-            original_result = original.get("result") or {}
-            previous_job = original_result.get("job") or {}
-            blockers = original_result.get("blocking_findings") or []
-            preserve_test = any(
-                isinstance(blocker, dict)
-                and isinstance(blocker.get("candidate_plan"), dict)
-                and bool(blocker.get("candidate_plan"))
-                for blocker in blockers
-            )
-            repaired_job = repaired.get("job") or {}
-            repaired_job_id = str(
-                repaired.get("job_id") or repaired_job.get("job_id") or payload["job_id"]
-            )
-            resumed_repair_task_type: str | None = (
-                str(current_job.get("repair_task_type") or "") or None
-            )
-            return self._run_testing_command(
-                command,
-                repaired_job_id,
-                previous_job=previous_job,
-                preserve_test=preserve_test,
-                repair_task_type=resumed_repair_task_type,
+            job = implementation_worker.retry_failed(str(payload["job_id"]))
+            return self._monitor_implementation(
+                job,
+                command_id=str(command["command_id"]),
             )
         if handler == "start_testing":
+            implementation_job_id = str(command["payload"]["implementation_job_id"])
+            source_testing = self._source_testing_command(command)
+            if source_testing is not None:
+                source_result = source_testing.get("result") or {}
+                previous_job = source_result.get("job")
+                blockers = source_result.get("blocking_findings") or []
+                preserve_test = any(
+                    isinstance(blocker, dict)
+                    and isinstance(blocker.get("candidate_plan"), dict)
+                    and bool(blocker.get("candidate_plan"))
+                    for blocker in blockers
+                )
+                implementation_job = implementation_worker.get(implementation_job_id)
+                return self._run_testing_command(
+                    command,
+                    implementation_job_id,
+                    previous_job=(
+                        previous_job if isinstance(previous_job, dict) else None
+                    ),
+                    preserve_test=preserve_test,
+                    repair_task_type=(
+                        str(implementation_job.get("repair_task_type") or "") or None
+                    ),
+                )
             return self._run_testing_command(
                 command,
-                str(command["payload"]["implementation_job_id"]),
+                implementation_job_id,
             )
         if handler == "branch_checkpoint":
             branch = create_checkpoint_branch(
