@@ -286,9 +286,11 @@ def _materialize_use_case(
 ) -> Collaboration:
     """임시 calls를 쓰고, 실패하면 operation을 보존한 call-plan 수리를 시작한다."""
 
+    previous: CallPlanProposal | None = None
     try:
+        previous = _resolved_plan(raw, skeleton)
         return collaboration.materialize(
-            index, skeleton, use_case, _resolved_plan(raw, skeleton),
+            index, skeleton, use_case, previous,
         )
     except ValueError as error:
         finding = f"{type(error).__name__}: {error}"
@@ -301,6 +303,7 @@ def _materialize_use_case(
                 "Preserve every operation and replace only the call plan. "
                 f"Resolve this exact issue: {finding}"
             ),
+            previous=previous,
         )
 
 

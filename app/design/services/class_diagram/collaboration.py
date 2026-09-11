@@ -624,6 +624,7 @@ def _accepted_payload(
     model: BCEModel,
     use_case: UseCase,
     directive: str,
+    previous: CallPlanProposal | None = None,
 ) -> dict[str, Any]:
     """call plan을 한 번 교체하고, 실패하면 operation까지 고치도록 알린다.
 
@@ -633,7 +634,13 @@ def _accepted_payload(
     """
 
     # Provider/schema 예외는 semantic finding으로 바꾸지 않는다.
-    candidate = propose_call_plan(index, model, use_case, finding=directive)
+    candidate = propose_call_plan(
+        index,
+        model,
+        use_case,
+        previous=previous,
+        finding=directive,
+    )
     try:
         return materialize(index, model, use_case, candidate).model_dump(by_alias=True)
     except ValueError as error:
@@ -646,11 +653,18 @@ def _accepted_payload(
 
 
 def _cache_key(
-    index: ScenarioIndex, model: BCEModel, use_case: UseCase, directive: str,
+    index: ScenarioIndex,
+    model: BCEModel,
+    use_case: UseCase,
+    directive: str,
+    previous: CallPlanProposal | None = None,
 ) -> str:
+    unit_slice = _use_case_payload(index, model.model_dump(by_alias=True), use_case)
+    if previous is not None:
+        unit_slice["previousPlan"] = previous.model_dump(by_alias=True)
     return accepted_unit_key(
         "use-case-collaboration",
-        unit_slice=_use_case_payload(index, model.model_dump(by_alias=True), use_case),
+        unit_slice=unit_slice,
         inventory=model.model_dump(by_alias=True),
         feedback=" ".join(directive.split()),
         prompt=CALL_PLAN_PROMPT,
@@ -677,6 +691,7 @@ def process_use_case(
     use_case: UseCase,
     directive: str = "",
     *,
+    previous: CallPlanProposal | None = None,
     cache: AcceptedUnitCache | None = None,
 ) -> Collaboration:
     """call plan을 국소 교체하고 필요하면 상위 결합 수리로 범위를 넓힌다."""
@@ -685,11 +700,11 @@ def process_use_case(
         raise ValueError("use case has no actor entry")
     if cache is None:
         record_cache_outcome(None, operation="InteractionCallPlan", unit=use_case.id)
-        payload = _accepted_payload(index, model, use_case, directive)
+        payload = _accepted_payload(index, model, use_case, directive, previous)
     else:
         result = cache.get_or_compute(
-            _cache_key(index, model, use_case, directive),
-            lambda: _accepted_payload(index, model, use_case, directive),
+            _cache_key(index, model, use_case, directive, previous),
+            lambda: _accepted_payload(index, model, use_case, directive, previous),
         )
         record_cache_outcome(result, operation="InteractionCallPlan", unit=use_case.id)
         payload = result.value

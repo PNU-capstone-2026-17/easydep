@@ -158,6 +158,7 @@ def test_combined_cache_skips_warm_calls_and_revalidates_the_hit(monkeypatch):
 def test_repeated_call_plan_regenerates_the_use_case_combined_unit(monkeypatch):
     combined_calls = 0
     combined_payloads: list[dict] = []
+    call_plan_payloads: list[dict] = []
 
     # 루트와 자식을 구분하는 값은 null일 수 있지만 생략할 수는 없다. 이 계약을
     # 구조화 출력 단계에서 강제해야 모든 호출이 루트로 해석되는 일을 막을 수 있다.
@@ -180,6 +181,7 @@ def test_repeated_call_plan_regenerates_the_use_case_combined_unit(monkeypatch):
                 proposal["calls"][2]["parentCallIndex"] = 2
             return proposal
         if issubclass(schema, CallPlanProposal):
+            call_plan_payloads.append(json.loads(messages[-1]["content"]))
             plan = multiple_root_call_plan()
             plan["calls"][2]["parentCallIndex"] = 2
             return plan
@@ -192,6 +194,7 @@ def test_repeated_call_plan_regenerates_the_use_case_combined_unit(monkeypatch):
     # 범위에 머물지 않고 operation과 calls를 함께 고치는 결합 수리로 올라간다.
     assert combined_calls > 1
     assert combined_payloads[-1]["repairHistory"]
+    assert call_plan_payloads[0]["previousPlan"]["calls"][2]["parentCallIndex"] == 2
     assert [item.collaboration_id for item in model.Collaborations] == ["UC1"]
     assert sum(call.parent_call_id is None for call in model.Collaborations[0].calls) == 2
 
