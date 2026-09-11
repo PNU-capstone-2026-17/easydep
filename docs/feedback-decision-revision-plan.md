@@ -107,6 +107,10 @@ Question
   baseRevisions[]
   trigger: {category, findingRefs[], evidenceRefs[]}
   authorityCandidates[]
+  decisionPolicy:
+    allowedSemanticScopes[]
+    allowedChangeTypes[]
+    requiredPreservedConstraints[]
   prompt
   options[]
   allowFreeText
@@ -132,6 +136,11 @@ QuestionOption
 `decisionPayload`는 허용된 의미 schema와 target 종류를 만족하는 서버 소유 값이다. 사용자가
 선택한 label을 다시 자연어 해석하지 않는다. `questionVersion`, `baseRevisions`와 적용 owner가
 일치할 때만 결정론적으로 적용한다.
+
+`decisionPolicy`는 자유문장의 의미 전체를 판정하지 않는다. 질문에서 허용한 semantic scope와
+change type, 반드시 보존해야 할 구조화 constraint만 고정한다. 선택지 payload는 질문을 열기
+전에 이 정책을 만족해야 하며, 자유 답변의 정규화 후보가 정책을 벗어나면 실행 가능한 결정으로
+만들지 않고 명확화로 돌린다.
 
 ### 5.2 Decision
 
@@ -161,13 +170,15 @@ Decision
 Decision 상태는 `RECEIVED`, `NORMALIZED`, `NEEDS_CLARIFICATION`, `SUPERSEDED`, `CANCELLED`로
 관리한다.
 
-`rawAnswer`는 변경하지 않는 사용자 원문이다. `normalizedMeaning`은 실행 가능한 제한된 의미
-계약이다. 자유 답변은 LLM이 정규화 후보를 만들 수 있지만 다음 항목은 코드가 검증한다.
+`rawAnswer`는 앞뒤 공백과 줄바꿈을 포함해 변경하지 않는 사용자 원문이다.
+`normalizedMeaning`은 제한된 typed 의미 계약이다. `NORMALIZED`는 질문 정책 안에서 구조화가
+끝났다는 뜻이며 실행 승인, catalog 소속 또는 ownership 검증 완료를 뜻하지 않는다. 자유
+답변은 LLM이 정규화 후보를 만들 수 있지만 다음 항목은 코드가 검증한다.
 
 - 질문과 답변의 revision 대응
 - target kind와 stable ID의 존재
 - ownership registry가 허용하는 authoritative target
-- 질문이 허용한 의미 schema와 범위
+- 질문이 허용한 semantic scope, change type과 필수 보존 제약
 - 코드로 표현된 보존 제약
 
 자유 답변의 의미가 하나로 좁혀지지 않거나 질문 범위를 넘어가면 `Decision`을 실행하지 않고
