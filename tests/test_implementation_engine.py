@@ -93,12 +93,17 @@ def test_final_workspace_verification_publishes_success_report(
     verification = {"exitCode": 0, "testResults": ""}
     with (
         patch(
+            "app.implementation.agents.verification.build.prepare_agent_workspace",
+            wraps=prepare_agent_workspace,
+        ) as prepare,
+        patch(
             "app.implementation.agents.verification.build.verify_agent_workspace",
             return_value=verification,
         ),
     ):
         result = verify_run_workspace(run)
 
+    assert prepare.call_args.kwargs["requires_owner_terminal"] is False
     report = json.loads((run / "reports/final-verification.json").read_text(encoding="utf-8"))
     assert result["status"] == "SUCCEEDED"
     assert report["verification"] == verification
@@ -901,7 +906,7 @@ def test_failed_verification_is_not_promoted_and_keeps_the_sandbox(
     }
 
 
-def test_bounded_owner_upstream_gap_preserves_candidate_without_verification(
+def test_bounded_owner_upstream_gap_after_recovery_preserves_candidate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -925,18 +930,31 @@ def test_bounded_owner_upstream_gap_preserves_candidate_without_verification(
         False,
     )
 
+    gap_session = SimpleNamespace(result=None)
+
     class FakeConversation:
         def __init__(self, sandbox: Path) -> None:
             self.sandbox = sandbox
             self.state = SimpleNamespace(execution_status=None)
+            self.run_count = 0
 
         def send_message(self, _message: str) -> None:
             pass
 
         def run(self) -> None:
+            from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+            self.run_count += 1
             (self.sandbox / source_path).write_text(
                 "class OrderService { int unpromotedCandidate; }", encoding="utf-8"
             )
+            if self.run_count == 1:
+                self.state.execution_status = ConversationExecutionStatus.STUCK
+                return
+            gap_session.result = UpstreamGap(
+                summary="The response rule is not specified.", source_ref="UC-12"
+            )
+            self.state.execution_status = ConversationExecutionStatus.FINISHED
 
         def close(self) -> None:
             pass
@@ -946,13 +964,7 @@ def test_bounded_owner_upstream_gap_preserves_candidate_without_verification(
     def create_conversation(sandbox: Path, *_args, **kwargs):
         nonlocal received_source_refs
         received_source_refs = kwargs["upstream_gap_source_refs"]
-        executor = SimpleNamespace(
-            session=SimpleNamespace(
-                result=UpstreamGap(
-                    summary="The response rule is not specified.", source_ref="UC-12"
-                )
-            )
-        )
+        executor = SimpleNamespace(session=gap_session)
         return FakeConversation(sandbox), SimpleNamespace(
             _tools={UPSTREAM_GAP_TOOL_NAME: SimpleNamespace(executor=executor)}
         )
@@ -1579,7 +1591,7 @@ def test_terminal_openhands_failure_is_persisted_without_a_fresh_conversation(
     ]
 
 
-def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
+def test_stuck_after_successful_check_uses_finish_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1618,10 +1630,6 @@ def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
             if self.run_count == 1:
                 self.state.execution_status = ConversationExecutionStatus.STUCK
                 return
-            (self.sandbox / source_path).write_text(
-                "class OrderService { int completedAfterStuck; }",
-                encoding="utf-8",
-            )
             self.state.execution_status = ConversationExecutionStatus.FINISHED
 
         def close(self) -> None:
@@ -1659,6 +1667,10 @@ def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
             side_effect=create_conversation,
         ),
         patch(
+            "app.implementation.agents.runtime.has_successful_task_check",
+            return_value=True,
+        ),
+        patch(
             "app.implementation.agents.runtime.verify_agent_workspace",
             return_value={"command": ["gradle", "test"], "exitCode": 0},
         ),
@@ -1668,10 +1680,11 @@ def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
     assert conversation is not None
     assert conversation.run_count == 2
     assert len(conversation.messages) == 2
-    assert "repeated-action loop" in conversation.messages[-1]
-    assert result["stuckRecoveryUsed"] is True
+    assert "FinishTool now" in conversation.messages[-1]
+    assert result["stuckRecoveryUsed"] is False
+    assert result["finishRecoveryUsed"] is True
     assert result["executionStatus"] == "finished"
-    assert "completedAfterStuck" in source.read_text(encoding="utf-8")
+    assert source.read_text(encoding="utf-8") == "class OrderService {}"
     # A bounded backend owner may inspect the whole isolated workspace, while
     # its editor remains limited to the task's owned source directory.
     assert conversation_options["readable_files"] is None
@@ -2029,6 +2042,7 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
         "backend-implementation",
         tmp_path,
         ["application/src/main/java/com/example"],
+        owner_files=["application/src/main/java/com/example/OrderService.java"],
     )
 
     assert f"`{tmp_path.resolve()}`" in guidance
@@ -2037,6 +2051,24 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
     assert "SPRING_PROFILES_ACTIVE=test" in guidance
     assert "run the canonical verification once" in guidance
     assert "Do not disable tests or alter test reporting" in guidance
+    assert "never change or delete an existing public signature" in guidance
+    assert "Choose one legal conventional implementation" in guidance
+    assert "Agent: Implementation" in guidance
+    assert "Current state: EXECUTE" in guidance
+    assert "Writable task files (authoritative exact-file scope)" in guidance
+    assert str(
+        tmp_path.resolve()
+        / "application/src/main/java/com/example/OrderService.java"
+    ) in guidance
+    assert str(
+        tmp_path.resolve() / "application/src/main/java/com/example"
+    ) in guidance
+    assert "Completion markers identify required bodies" in guidance
+    assert "Every path not listed above" in guidance
+    assert 'command="str_replace" with old_str and new_str' in guidance
+    assert 'command="create" with file_text' in guidance
+    assert 'command="edit" and old_string/new_string are invalid' in guidance
+    assert "report_upstream_gap" not in guidance
     assert "permission denied" not in guidance.casefold()
     assert OWNER_TURN_ITERATIONS < 500
 
@@ -2044,10 +2076,14 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
         "backend-implementation",
         tmp_path,
         [],
+        owner_files=["application/src/main/java/com/example/Order.java"],
         bounded_evidence=True,
     )
     assert "Read the task context before source code" in bounded
     assert "call report_upstream_gap when no legal implementation is declared" in bounded
+    assert "generation: hint is advisory" in bounded
+    assert "read-only dependency declarations as ready integration contracts" in bounded
+    assert "Do not reread unchanged files" in bounded
     assert "implementation marker not assigned to this task" in bounded
     assert "readSourcePaths" not in bounded
     assert "direct-call argument" not in bounded
@@ -2057,9 +2093,8 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
     assert "open raw design inputs" not in bounded
 
 
-def test_repeated_typed_no_action_responses_stop_at_openhands_threshold() -> None:
+def test_typed_no_action_response_starts_bounded_recovery() -> None:
     from openhands.sdk.conversation.state import ConversationExecutionStatus
-    from openhands.sdk.conversation.types import StuckDetectionThresholds
     from openhands.sdk.event import MessageEvent
     from openhands.sdk.llm import Message, TextContent
 
@@ -2080,12 +2115,11 @@ def test_repeated_typed_no_action_responses_stop_at_openhands_threshold() -> Non
         ),
     )
 
-    for _ in range(StuckDetectionThresholds().monologue):
-        guard(empty)
-        guard(corrective_user_message)
+    guard(empty)
+    guard(corrective_user_message)
 
     assert guard.triggered is True
-    assert guard.max_consecutive_count == StuckDetectionThresholds().monologue
+    assert guard.max_consecutive_count == 1
     assert conversation.state.execution_status is ConversationExecutionStatus.STUCK
     assert _conversation_terminal_failure(conversation) is True
 

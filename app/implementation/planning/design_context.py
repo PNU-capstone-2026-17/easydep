@@ -646,17 +646,18 @@ def _build_backend_behavior_tasks(
             endpoints=selected_endpoints,
             method_metadata=typed_method_metadata,
         )
+        typed_dependency_paths = _backend_behavior_typed_dependency_paths(
+            run_root,
+            package_path,
+            entity_names,
+            bce_model,
+            typed_method_metadata,
+        )
         read_paths = sorted(
             {
                 *source_paths,
                 *read_dependency_paths,
-                *_backend_behavior_typed_dependency_paths(
-                    run_root,
-                    package_path,
-                    entity_names,
-                    bce_model,
-                    typed_method_metadata,
-                ),
+                *typed_dependency_paths,
             }
         )
         editable_paths = _without_immutable_paths(
@@ -667,6 +668,11 @@ def _build_backend_behavior_tasks(
                         path
                         for path in source_paths
                         if path in owner_task.allowed_write_paths
+                    ),
+                    *(
+                        path
+                        for path in typed_dependency_paths
+                        if "/bce/" in path and Path(path).stem in entity_names
                     ),
                     *(
                         str(item["path"])
@@ -703,10 +709,16 @@ def _build_backend_behavior_tasks(
 
 Implement this one API-to-result behavior using { _relative(run_root, context_path) }.
 
-- Preserve generated public BCE/API and persistence declarations.
+- Preserve generated public BCE/API and persistence declarations: never change or delete an existing public signature. The runtime lists the authoritative writable files separately from `completionMarkers`; within those files, adding only the smallest constructor, accessor, or helper declaration needed is permitted. If a legal implementation requires changing an existing public signature or editing outside that runtime list, call `report_upstream_gap`.
 - Implement only the listed scenarios, endpoint bindings, direct calls, and markers.
+- A direct call with `generation: "hint"` is advisory, not a mandatory architecture. Satisfy the observable capsule/API through the simplest conventional path; do not add a static/global/service-locator solely to realize a hint.
+- Choose one legal conventional implementation and edit it; do not enumerate alternatives or delay the edit for theoretical choices.
 - Read this context first. Its behavior capsule and linked design evidence already passed this
   Implementation subtask's semantic preflight; do not re-decide product meaning.
+- Treat read-only dependencies as ready integration contracts and compose their existing APIs.
+  Do not spend turns designing nicer repository, API, or framework abstractions. After reading
+  the writable files and directly referenced dependencies once, make the first edit and use
+  verification failures to discover any missing mechanics instead of rereading or browsing.
 - If reading the generated source reveals a concrete contradiction with the frozen capsule that
   makes the listed behavior impossible without changing an immutable declaration, call
   `report_upstream_gap` with one supplied `source_ref`. Otherwise choose ordinary private wiring
@@ -714,7 +726,8 @@ Implement this one API-to-result behavior using { _relative(run_root, context_pa
 - Otherwise start from the writable implementation files. Use `readSourcePaths` as starting
   points, then inspect application source only as needed for existing types, wiring, or test
   conventions. Read access does not expand the behavior or write scope.
-- Group `completionMarkers` by unique path and read each path once before editing. Resolve
+- Group `completionMarkers` by unique path and read each path once before editing. These markers
+  identify required bodies, not the complete writable-file list. Resolve
   each assigned marker only from the behavior capsule:
   - `EASYDEP_CONTROLLER_BODY_REQUIRED:<METHOD>:<PATH>` maps to the endpoint with the same
     HTTP method and path; implement that endpoint's `control_binding`.
@@ -956,9 +969,10 @@ def _backend_behavior_typed_dependency_paths(
 
     java_root = f"application/src/main/java/{package_path}"
     candidates = [f"{java_root}/bce/{name}.java" for name in selected_names]
+    selected_entities = selected_names & entity_names
     candidates.extend(
         f"{java_root}/persistence/{kind}/{name}{suffix}.java"
-        for name in direct_selected_entities
+        for name in selected_entities
         for kind, suffix in (("entity", "Entity"), ("repository", "Repository"))
     )
     return sorted({path for path in candidates if (run_root / path).is_file()})
@@ -1002,9 +1016,7 @@ def _backend_behavior_design_evidence(
         if isinstance(name, str) and name
     )
     selected_names.update(
-        str(item["class_name"])
-        for item in method_metadata
-        if isinstance(item.get("class_name"), str) and item["class_name"]
+        _typed_component_names(method_metadata, set(classes_by_name))
     )
     selected_names.intersection_update(classes_by_name)
 

@@ -13,7 +13,7 @@ from typing import Any, Literal
 from app.llm_connection import LlmConnection
 
 HARNESS_POLICY_VERSION = "easydep-openhands-harness/v4"
-OWNER_PROMPT_VERSION = "easydep-owner-prompt/v5"
+OWNER_PROMPT_VERSION = "easydep-owner-prompt/v8"
 WORKSPACE_PATH_VERSION = "easydep-owner-workspace/v3"
 OWNER_TOOL_MODES = frozenset({"restricted", "terminal"})
 PROTOCOL_TOKENS = ("<|channel|>", "<|recipient|>", "<|start|>", "<|end|>")

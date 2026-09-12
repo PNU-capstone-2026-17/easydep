@@ -151,10 +151,10 @@ def _build_fixture(
                 "className": name,
                 "stereotype": stereotype,
                 "use_case_ids": use_cases,
-                "fields": [],
+                "fields": [f"detail: {detail_type}"] if name == result_type else [],
             }
             for name, stereotype, use_cases in (
-                (result_type, "Entity", ["UC-A", "UC-B"]),
+                (result_type, "Entity", []),
                 (f"{vocabulary}Entry", "Control", []),
                 (f"{vocabulary}Nested", "Control", []),
                 (detail_type, "Entity", []),
@@ -202,6 +202,15 @@ def _build_fixture(
         f"application/src/main/java/{package_path}/bce/{result_type}.java": (
             f"public class {result_type} {{}}\n"
         ),
+        f"application/src/main/java/{package_path}/bce/{detail_type}.java": (
+            f"public class {detail_type} {{}}\n"
+        ),
+        f"application/src/main/java/{package_path}/bce/{vocabulary}Entry.java": (
+            f"public class {vocabulary}Entry {{}}\n"
+        ),
+        f"application/src/main/java/{package_path}/bce/{unrelated_type}.java": (
+            f"public class {unrelated_type} {{}}\n"
+        ),
         (
             f"application/src/main/java/{package_path}/persistence/entity/"
             f"{result_type}Entity.java"
@@ -210,6 +219,14 @@ def _build_fixture(
             f"application/src/main/java/{package_path}/persistence/repository/"
             f"{result_type}Repository.java"
         ): f"public interface {result_type}Repository {{}}\n",
+        (
+            f"application/src/main/java/{package_path}/persistence/entity/"
+            f"{detail_type}Entity.java"
+        ): f"public class {detail_type}Entity {{}}\n",
+        (
+            f"application/src/main/java/{package_path}/persistence/repository/"
+            f"{detail_type}Repository.java"
+        ): f"public interface {detail_type}Repository {{}}\n",
     }
     for relative, source in generated_contracts.items():
         target = run / relative
@@ -394,7 +411,11 @@ def _build_fixture(
     )
     bundle = _UseCaseBundle(
         ("UC-A", "UC-B", "UC-C", "UC-Z"),
-        (ComponentIR(result_type, "Entity", ()),),
+        (
+            ComponentIR(result_type, "Entity", ()),
+            ComponentIR(detail_type, "Entity", ()),
+            ComponentIR(unrelated_type, "Entity", ()),
+        ),
         (),
         tuple(endpoints),
     )
@@ -434,7 +455,8 @@ def test_exact_uc_api_components_form_deterministic_independent_tasks(
     assert all(task.allowed_write_roots == [] for task in first)
     assert all(len(task.required_test_paths) == 1 for task in first)
     assert all(
-        task.verification_profile["focusedTestPaths"] == task.required_test_paths
+        set(task.required_test_paths)
+        <= set(task.verification_profile["focusedTestPaths"])
         for task in first
     )
     assert len({task.required_test_paths[0] for task in first}) == len(first)
@@ -474,8 +496,11 @@ def test_exact_uc_api_components_form_deterministic_independent_tasks(
         task for task in first if set(task.use_case_ids) == {"UC-A", "UC-B"}
     )
     context = _task_context(run, connected)
-    expected_read_only_contracts = {
+    editable_entity_contracts = {
         "application/src/main/java/com/example/app/bce/OriginalResult.java",
+        "application/src/main/java/com/example/app/bce/OriginalDetail.java",
+    }
+    expected_read_only_contracts = {
         (
             "application/src/main/java/com/example/app/persistence/entity/"
             "OriginalResultEntity.java"
@@ -484,9 +509,24 @@ def test_exact_uc_api_components_form_deterministic_independent_tasks(
             "application/src/main/java/com/example/app/persistence/repository/"
             "OriginalResultRepository.java"
         ),
+        (
+            "application/src/main/java/com/example/app/persistence/entity/"
+            "OriginalDetailEntity.java"
+        ),
+        (
+            "application/src/main/java/com/example/app/persistence/repository/"
+            "OriginalDetailRepository.java"
+        ),
     }
+    assert editable_entity_contracts <= set(context["readSourcePaths"])
+    assert editable_entity_contracts <= set(connected.allowed_write_paths)
     assert expected_read_only_contracts <= set(context["readSourcePaths"])
     assert expected_read_only_contracts.isdisjoint(connected.allowed_write_paths)
+    assert {
+        "application/src/main/java/com/example/app/bce/OriginalEntry.java",
+        "application/src/main/java/com/example/app/bce/OriginalOther.java",
+        "application/src/main/java/com/example/app/api/OriginalApi.java",
+    }.isdisjoint(connected.allowed_write_paths)
     assert {
         "application/src/main/java/com/example/app/adapter/in/web/OriginalApiController.java",
         "application/src/main/java/com/example/app/api/OriginalApi.java",
@@ -509,6 +549,11 @@ def test_exact_uc_api_components_form_deterministic_independent_tasks(
             "the endpoint with the same\n    HTTP method and path",
             "`method.stable_id` is the same",
             "focused test at `requiredTestPath`",
+            "never change or delete an existing public signature",
+            '`generation: "hint"` is advisory',
+            "Choose one legal conventional implementation",
+            "authoritative writable files separately from `completionMarkers`",
+            "read-only dependencies as ready integration contracts",
         )
     )
     assert "already passed this\n  Implementation subtask's semantic preflight" in prompt

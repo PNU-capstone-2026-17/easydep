@@ -78,6 +78,9 @@ def verify_run_workspace(
             "allowed_write_paths": [],
             "required_output_paths": [],
         },
+        # This disposable workspace is owned by the coordinator running build
+        # commands, not by an OpenHands terminal owner inside the fixed runner.
+        requires_owner_terminal=False,
     )
     try:
         # The implementation handoff always needs one complete backend test

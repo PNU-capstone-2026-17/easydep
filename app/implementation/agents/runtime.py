@@ -99,9 +99,21 @@ OWNER_CONTINUATION_MESSAGE = (
     "fix them, rerun verification, and call finish when it passes."
 )
 OWNER_STUCK_RECOVERY_MESSAGE = (
-    "OpenHands detected a repeated-action loop. Continue in this same conversation with a "
-    "different action. Use an absolute path rooted at the assigned /work task directory, run the "
-    "canonical verification command, and fix only its concrete failures."
+    "Your last response made no observable progress. Do not reread an inspected file, run a "
+    "broad grep, restart analysis, or enumerate alternatives. If a listed writable file has not "
+    "been inspected, read only that file once; otherwise apply the simplest legal edit from the "
+    "analysis within the listed writable files now. For an existing file call file_editor with "
+    'command="str_replace", old_str, and new_str; never use command="edit" or old_string/'
+    "new_string. Then run canonical verification."
+)
+OWNER_GAP_RECOVERY_MESSAGE = (
+    "Your last response made no observable progress. Do not reread an inspected file, run a "
+    "broad grep, restart analysis, or enumerate alternatives. If the legal implementation "
+    "requires changing an existing public signature or editing outside the listed writable "
+    "files, call report_upstream_gap now with one supplied source_ref. If a listed writable file "
+    "has not been inspected, read only that file once; otherwise apply the simplest legal edit "
+    'from the analysis now using command="str_replace", old_str, and new_str for an existing '
+    'file; never use command="edit" or old_string/new_string. Then run canonical verification.'
 )
 OWNER_FINISH_RECOVERY_MESSAGE = (
     "The verification command has already been run, but this conversation was not completed. "
@@ -266,17 +278,17 @@ class EventJournal:
 
 
 class NoActionResponseGuard:
-    """Close the SDK gap where corrective nudges hide repeated empty responses.
+    """Turn a reasoning-only completion into one explicit action-recovery turn.
 
-    OpenHands already classifies model responses and supplies the canonical stuck
-    threshold.  EasyDep observes those typed events only; it does not inspect model
-    text or provider error strings.
+    EasyDep observes OpenHands' typed response classification only; it does not inspect
+    model text or provider error strings. A response with neither visible content nor a
+    tool call has made no task progress, so waiting for an arbitrary repeat count only
+    multiplies the same expensive defect. The runtime still grants one bounded recovery
+    turn with a concrete edit-or-gap instruction.
     """
 
     def __init__(self) -> None:
-        from openhands.sdk.conversation.types import StuckDetectionThresholds
-
-        self.threshold = StuckDetectionThresholds().monologue
+        self.threshold = 1
         self.consecutive_count = 0
         self.max_consecutive_count = 0
         self.triggered = False
@@ -326,6 +338,7 @@ def _owner_workspace_guidance(
     owner_roots: list[str],
     owner_tool_mode: str = "terminal",
     *,
+    owner_files: list[str] | None = None,
     bounded_evidence: bool = False,
 ) -> str:
     """Return stable runner facts, not implementation instructions."""
@@ -334,8 +347,12 @@ def _owner_workspace_guidance(
     common = [
         "## EasyDep implementation workspace",
         "",
+        "- Agent: Implementation. Upstream Requirements and Design are admitted and frozen for this task; broad validation belongs to the Testing agent.",
+        "- Current state: EXECUTE. Implement the admitted behavior in the declared write scope; do not reopen product or architecture decisions.",
         f"- Complete workspace: `{logical_workspace}`. For file_editor, use absolute paths rooted at this directory.",
-        "- Preserve generated public declarations. Only task-authorized implementation bodies may change; immutable API and persistence contracts remain protected.",
+        '- For an existing file, file_editor uses command="str_replace" with old_str and new_str. For a new file, it uses command="create" with file_text. command="edit" and old_string/new_string are invalid.',
+        "- Preserve generated public declarations: never change or delete an existing public signature. Within the assigned write scope (files or roots), adding only the smallest constructor, accessor, or helper declaration needed is permitted.",
+        "- Choose one legal conventional implementation and edit it; do not enumerate alternatives or delay the edit for theoretical choices.",
         "- Batch related source reads into as few tool calls as practical, and use build/test results rather than file counts as completion evidence.",
         "- After an edit batch, run the canonical verification once. If it fails, inspect that output and its existing diagnostic files before rerunning; do not rerun only to obtain more detail.",
         "- When canonical verification passes, call the FinishTool immediately. A plain-text summary does not complete the task. Do not disable tests or alter test reporting to hide a failure.",
@@ -347,6 +364,9 @@ def _owner_workspace_guidance(
             [
                 "- Read the task context before source code and treat its declared behavior as authoritative.",
                 "- Do not invent missing behavior or search for a workaround to an unresolved contract; call report_upstream_gap when no legal implementation is declared.",
+                "- A direct call with generation: hint is advisory, not a mandatory architecture. Satisfy observable behavior and API through the simplest conventional path; do not add a static/global/service-locator solely to realize a hint.",
+                "- Treat read-only dependency declarations as ready integration contracts. Compose their existing APIs from writable code; do not spend turns designing better dependency APIs or seek ownership merely to refactor them.",
+                "- Once the task context, writable files, and directly referenced dependency declarations have been read, edit before any broader search. Do not reread unchanged files; let canonical verification identify any remaining mechanics.",
                 "- Preserve shared work and every generated body or implementation marker not assigned to this task.",
             ]
         )
@@ -401,10 +421,29 @@ def _owner_workspace_guidance(
                 f"- npm uses the shared cache at `{OWNER_NPM_CACHE}`.",
             ]
         )
-    common.extend(["", "Owner source roots:"])
-    common.extend(f"- `{root}`" for root in owner_roots)
+    def logical_owner_path(value: str) -> str:
+        path = Path(value)
+        return str(path if path.is_absolute() else logical_workspace / path)
+
+    logical_owner_files = [logical_owner_path(value) for value in owner_files or []]
+    logical_owner_roots = [logical_owner_path(value) for value in owner_roots]
+    common.extend(
+        [
+            "",
+            "Writable task files (authoritative exact-file scope):",
+            "- Completion markers identify required bodies; they are not the write-scope definition.",
+        ]
+    )
+    common.extend(f"- `{path}`" for path in logical_owner_files)
+    if not owner_files:
+        common.append("- none")
+    common.extend(["", "Additional writable roots:"])
+    common.extend(f"- `{root}`" for root in logical_owner_roots)
     if not owner_roots:
         common.append("- none")
+    common.append(
+        "- Every path not listed above and not contained by an additional writable root is read-only."
+    )
     return "\n".join(common)
 
 
@@ -860,6 +899,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             logical_workspace,
             editable_roots,
             owner_tool_mode,
+            owner_files=editable_paths,
             bounded_evidence=bounded_evidence,
         )
     else:
@@ -1038,6 +1078,25 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         ):
             conversation.send_message(OWNER_CONTINUATION_MESSAGE)
         run_openhands_conversation(conversation)
+        if owner_task and _conversation_is_stuck(conversation):
+            if no_action_guard is not None:
+                no_action_guard.reset()
+            if harness_task and has_successful_task_check(
+                sandbox,
+                task_type,
+                editable_paths,
+                verification_profile,
+            ):
+                finish_recovery_used = True
+                conversation.send_message(OWNER_FINISH_RECOVERY_MESSAGE)
+            else:
+                stuck_recovery_used = True
+                conversation.send_message(
+                    OWNER_GAP_RECOVERY_MESSAGE
+                    if upstream_gap_source_refs is not None
+                    else OWNER_STUCK_RECOVERY_MESSAGE
+                )
+            run_openhands_conversation(conversation)
         upstream_gap = reported_upstream_gap(agent)
         if upstream_gap is not None:
             candidate_changes = _candidate_application_changes(sandbox, run_root)
@@ -1072,14 +1131,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             write_execution_result(execution_dir, task_id, attempt, result)
             shutil.copyfile(journal.path, execution_dir / f"{task_id}.events.jsonl")
             return result
-        if owner_task and _conversation_is_stuck(conversation):
-            stuck_recovery_used = True
-            if no_action_guard is not None:
-                no_action_guard.reset()
-            conversation.send_message(OWNER_STUCK_RECOVERY_MESSAGE)
-            run_openhands_conversation(conversation)
         if (
             harness_task
+            and not finish_recovery_used
             and _conversation_needs_finish_recovery(conversation)
             and has_successful_task_check(
                 sandbox,
@@ -1759,8 +1813,11 @@ def create_openhands_conversation(
                             "Read or edit plain-text files inside the assigned workspace. "
                             "The canonical FileEditor requires an absolute path rooted at that "
                             "workspace, for example /work/application/src/main/java/example/App.java. "
-                            "Paths resolving outside the workspace are rejected. Use view before "
-                            "an edit and preserve generated public declarations."
+                            'For an existing file use command="str_replace" with old_str and '
+                            'new_str; for a new file use command="create" with file_text. '
+                            'command="edit" and old_string/new_string are invalid. Paths resolving '
+                            "outside the workspace are rejected. Use view before an edit and "
+                            "preserve generated public declarations."
                         ),
                         "executor": SandboxFileEditorExecutor(
                             conv_state.workspace.working_dir,
