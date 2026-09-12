@@ -471,7 +471,15 @@ def test_exact_uc_api_components_form_deterministic_independent_tasks(
     }
     assert any(item["directCalls"] for item in direct_methods)
     prompt = (run / connected.prompt_file).read_text(encoding="utf-8")
-    assert "Do not infer behavior from names" in prompt
+    assert all(
+        text in prompt
+        for text in (
+            "Group `completionMarkers` by unique path",
+            "the endpoint with the same\n    HTTP method and path",
+            "`method.stable_id` is the same",
+            "focused test at `requiredTestPath`",
+        )
+    )
     assert "business meaning remains underspecified" in prompt
     assert "inspect application source only as needed" in prompt
     assert "do not invent a mapping or convention" in prompt

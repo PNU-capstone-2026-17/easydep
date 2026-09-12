@@ -690,16 +690,18 @@ Implement this one API-to-result behavior using { _relative(run_root, context_pa
   targeted lookup, call `report_upstream_gap` immediately. Available data, repositories, or types
   do not establish business meaning; do not invent a mapping or convention and do not keep
   searching for a workaround.
-- Complete only the generated operation bodies listed in `behaviorCapsule.directMethods`.
-  You may add private wiring or helpers needed to use existing application contracts, but
-  do not replace or remove other generated operation bodies or `EASYDEP-IMPLEMENT` markers,
-  even in a shared writable file.
-- Replace the assigned main-source markers in one edit batch before creating the focused test.
-  Then write the test against the resulting source and run `run_task_check` once.
+- Group `completionMarkers` by unique path and read each path once before editing. Resolve
+  each assigned marker only from the behavior capsule:
+  - `EASYDEP_CONTROLLER_BODY_REQUIRED:<METHOD>:<PATH>` maps to the endpoint with the same
+    HTTP method and path; implement that endpoint's `control_binding`.
+  - `EASYDEP-IMPLEMENT...<stable_id>` maps to the direct method whose
+    `method.stable_id` is the same; implement only that generated operation body.
+- Replace only those assigned main-source markers in one edit batch. You may add private
+  wiring or helpers needed to use existing application contracts, but preserve completed
+  behavior and every unassigned generated body or marker, including in shared files.
+- Then create the focused test at `requiredTestPath` for the resulting source and run
+  `run_task_check` once. Finish when it passes.
 - Do not infer behavior from names or unrelated features.
-- Preserve completed behavior in shared files.
-- Add focused JUnit coverage at {test_path}.
-- Run run_task_check once after the edit batch, then finish when it passes.
 - Use English for source comments, tests, validation messages, and user-visible text.
 
 API operations: {", ".join(api_operation_ids)}

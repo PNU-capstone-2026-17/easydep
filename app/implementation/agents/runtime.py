@@ -345,13 +345,9 @@ def _owner_workspace_guidance(
     if bounded_evidence:
         common.extend(
             [
-                "- Read the task context first. Treat the behavior capsule as the authoritative behavior boundary and readSourcePaths as useful starting points, not a checklist.",
-                "- If a direct-call argument is explicitly unresolved, or API and BCE signatures conflict without a legal implementation, call report_upstream_gap immediately. Do not search source files for a workaround to an unresolved contract.",
-                "- Inspect application source on demand to understand existing types, wiring, and test conventions. Source code may clarify how to implement the capsule, but must not add behavior absent from it.",
-                "- Before broad source exploration, check whether the capsule clearly declares the required branch inputs or observables, effect owners, and public outcomes. Use targeted source lookup to locate existing mechanics for those declared needs; require a reachable existing dependency only for effects on external state.",
-                "- If business meaning remains underspecified or no legal implementation remains after that targeted lookup, call report_upstream_gap immediately. Available data, repositories, or types do not establish business meaning; do not invent a mapping or convention and do not keep searching for a workaround.",
-                "- Complete only the generated operation bodies listed in behaviorCapsule.directMethods. You may add private wiring or helpers needed to use existing application contracts, but do not replace or remove other generated operation bodies or EASYDEP-IMPLEMENT markers, even in a shared writable file.",
-                "- Replace the assigned main-source markers in one edit batch before creating the focused test. Then write the test against the resulting source and run run_task_check once.",
+                "- Read the task context before source code and treat its declared behavior as authoritative.",
+                "- Do not invent missing behavior or search for a workaround to an unresolved contract; call report_upstream_gap when no legal implementation is declared.",
+                "- Preserve shared work and every generated body or implementation marker not assigned to this task.",
             ]
         )
     else:
