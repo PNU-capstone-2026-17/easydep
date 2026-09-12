@@ -472,9 +472,9 @@ def test_exact_uc_api_components_form_deterministic_independent_tasks(
     assert any(item["directCalls"] for item in direct_methods)
     prompt = (run / connected.prompt_file).read_text(encoding="utf-8")
     assert "Do not infer behavior from names" in prompt
-    assert "capsule and existing application contracts cannot express" in prompt
+    assert "business meaning remains underspecified" in prompt
     assert "inspect application source only as needed" in prompt
-    assert "Do not invent default rules, in-memory substitutes" in prompt
+    assert "do not invent a mapping or convention" in prompt
 
 
 def test_shared_source_stays_bounded_and_rechecks_the_earlier_slice(

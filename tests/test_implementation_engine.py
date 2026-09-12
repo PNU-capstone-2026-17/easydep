@@ -1058,6 +1058,48 @@ def test_explicit_unresolved_projection_is_rejected_before_openhands(
     assert result["candidateEvidence"] == {"changedFiles": []}
 
 
+def test_semantic_admission_is_rejected_before_openhands(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task_id, _source_path, _source = _write_minimal_agent_task(tmp_path)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task.update(
+        {
+            "task_type": "backend-implementation",
+            "owner": "backend",
+            "source_refs": ["use_case_spec:UC-12"],
+        }
+    )
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    (run / task["context_file"]).write_text(
+        json.dumps({"behaviorCapsule": {"useCases": [{"use_case_id": "UC-12"}]}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+
+    with (
+        patch(
+            "app.implementation.agents.runtime.admit_behavior_capsule",
+            return_value=UpstreamGap(
+                summary="A branch has no declared observable.",
+                source_ref="use_case_spec:UC-12",
+            ),
+        ),
+        patch(
+            "app.implementation.agents.runtime.openhands_connection",
+            side_effect=AssertionError("semantic admission must run before OpenHands"),
+        ),
+    ):
+        result = execute_openhands_task(run, task_id)
+
+    assert result["status"] == "NEEDS_INPUT"
+    assert result["upstreamGap"] == {
+        "summary": "A branch has no declared observable.",
+        "sourceRef": "use_case_spec:UC-12",
+    }
+
+
 def test_owner_candidate_contract_change_is_rejected_before_verification(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2816,6 +2858,9 @@ class Order <<Entity>> { - id: UUID }
     assert method_context["refs"]
     assert method_context["designInputs"] == source_index["designInputs"]
     assert {"api:placeOrder", "api:cancelOrder"} <= {
+        source_ref for task in backends for source_ref in task["source_refs"]
+    }
+    assert {"use_case_spec:UC1", "use_case_spec:UC2"} <= {
         source_ref for task in backends for source_ref in task["source_refs"]
     }
     prompts = [

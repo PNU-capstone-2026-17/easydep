@@ -696,6 +696,7 @@ Implement this one API-to-result behavior using { _relative(run_root, context_pa
   even in a shared writable file.
 - Replace the assigned main-source markers in one edit batch before creating the focused test.
   Then write the test against the resulting source and run `run_task_check` once.
+- Do not infer behavior from names or unrelated features.
 - Preserve completed behavior in shared files.
 - Add focused JUnit coverage at {test_path}.
 - Run run_task_check once after the edit batch, then finish when it passes.
@@ -719,6 +720,7 @@ Application: {spec.name}
         source_refs = sorted(
             {
                 *(f"use_case:{value}" for value in use_case_ids),
+                *(f"use_case_spec:{value}" for value in use_case_ids),
                 *(f"api:{value}" for value in api_operation_ids),
                 *_operation_source_refs(spec, set(use_case_ids)),
             }

@@ -26,6 +26,7 @@ from ..runtime.linux_runner_transport import (
     OWNER_TERMINAL_SHELL_ENV,
 )
 from ..workflows.repair import active_repair_for_task
+from .admission import admit_behavior_capsule
 from .canary import (
     TRANSIENT_CANARY_FAILURES,
     classify_canary_exception,
@@ -764,6 +765,25 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 execution_attempt(run_root, task_id),
                 time.monotonic(),
             )
+        if any(value.startswith("use_case_spec:") for value in source_refs):
+            persistence_dir, conversation_id = _owner_conversation_identity(
+                run_root, task_id
+            )
+            resumed = (
+                persistence_dir / conversation_id.hex / "base_state.json"
+            ).is_file()
+            if not resumed:
+                admission_started = time.monotonic()
+                admission_gap = admit_behavior_capsule(context, source_refs)
+                if admission_gap is not None:
+                    return _persist_admission_gap(
+                        run_root,
+                        task,
+                        task_id,
+                        admission_gap,
+                        execution_attempt(run_root, task_id),
+                        admission_started,
+                    )
     if bounded_evidence:
         owner_tool_mode = "restricted"
     connection = openhands_connection()
