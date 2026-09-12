@@ -462,7 +462,7 @@ def test_exact_uc_api_components_form_deterministic_independent_tasks(
     assert "report missing implementation context; do not read it" in prompt
 
 
-def test_components_with_a_shared_exact_production_source_form_one_slice(
+def test_shared_source_stays_bounded_and_rechecks_the_earlier_slice(
     tmp_path: Path,
 ) -> None:
     spec, run, output, package_path, bundle, owner = _build_fixture(tmp_path)
@@ -489,23 +489,21 @@ def test_components_with_a_shared_exact_production_source_form_one_slice(
         )
 
     assert {frozenset(task.use_case_ids) for task in tasks} == {
-        frozenset({"UC-A", "UC-B", "UC-C"}),
+        frozenset({"UC-A", "UC-B"}),
+        frozenset({"UC-C"}),
         frozenset({"UC-Z"}),
     }
-    cohesive = next(
-        task for task in tasks if set(task.use_case_ids) == {"UC-A", "UC-B", "UC-C"}
+    earlier = next(
+        task for task in tasks if set(task.use_case_ids) == {"UC-A", "UC-B"}
     )
-    assert shared_source in cohesive.allowed_write_paths
+    later = next(task for task in tasks if task.use_case_ids == ["UC-C"])
+    assert shared_source in earlier.allowed_write_paths
+    assert shared_source in later.allowed_write_paths
     assert all(task.depends_on == [] for task in tasks)
-    production_paths = [
-        {
-            path
-            for path in task.allowed_write_paths
-            if path.startswith("application/src/main/java/")
-        }
-        for task in tasks
-    ]
-    assert production_paths[0].isdisjoint(production_paths[1])
+    assert set(later.verification_profile["focusedTestPaths"]) == {
+        earlier.required_test_paths[0],
+        later.required_test_paths[0],
+    }
 
 
 def test_mechanical_vocabulary_rename_preserves_id_topology(

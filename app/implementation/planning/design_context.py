@@ -81,7 +81,7 @@ class _UseCaseBundle:
 
 
 def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
-    """Materialize backend evidence, then plan cohesive observable behaviors."""
+    """Materialize backend evidence, then plan bounded observable behaviors."""
     package_path = spec.base_package.replace(".", "/")
     java_root = run_root / "application" / "src" / "main" / "java" / package_path
     ir = build_implementation_ir(spec, run_root)
@@ -407,7 +407,7 @@ def _build_backend_behavior_tasks(
     bundle: _UseCaseBundle,
     owner_task: TaskSpec,
 ) -> list[TaskSpec]:
-    """Build cohesive work units from exact UC/API and writable-source evidence."""
+    """Build bounded work units from exact UC/API connectivity."""
 
     source_index = _read_json(
         output / "implement-backend-application.source-index.json"
@@ -443,13 +443,9 @@ def _build_backend_behavior_tasks(
         if item.stereotype.casefold() == "entity"
     }
     bce_model = _read_json(spec.inputs.get("bceModel"))
-    components = _cohesive_backend_behavior_components(
-        _backend_behavior_components(bundle.use_case_ids, list(bundle.endpoints)),
-        method_entries=method_entries,
-        endpoints=list(bundle.endpoints),
-        run_root=run_root,
-        controller_paths=controller_paths,
-        writable_paths=set(owner_task.allowed_write_paths),
+    components = _backend_behavior_components(
+        bundle.use_case_ids,
+        list(bundle.endpoints),
     )
     tasks: list[TaskSpec] = []
 
@@ -713,6 +709,21 @@ Application: {spec.name}
                 *_operation_source_refs(spec, set(use_case_ids)),
             }
         )
+        current_main_sources = {
+            path
+            for path in editable_paths
+            if path.startswith("application/src/main/java/")
+        }
+        focused_test_paths = {test_path}
+        for previous_task in tasks:
+            previous_main_sources = {
+                path
+                for path in previous_task.allowed_write_paths
+                if path.startswith("application/src/main/java/")
+            }
+            if current_main_sources.intersection(previous_main_sources):
+                focused_test_paths.update(previous_task.required_test_paths)
+
         task = TaskSpec(
             task_id=task_id,
             control="observable behavior " + ", ".join(use_case_ids),
@@ -734,7 +745,9 @@ Application: {spec.name}
             allowed_write_roots=[],
             verification_profile={
                 "requiredAbsentMarkers": completion_markers,
-                "focusedTestPaths": [test_path],
+                # Shared source is edited sequentially. A later slice must also
+                # preserve every earlier slice that touched the same source.
+                "focusedTestPaths": sorted(focused_test_paths),
             },
         )
         (output / f"{task_id}.task.json").write_text(
@@ -789,104 +802,6 @@ def _backend_behavior_components(
     return result
 
 
-def _cohesive_backend_behavior_components(
-    components: list[tuple[list[str], list[str]]],
-    *,
-    method_entries: list[tuple[dict[str, object], dict[str, object]]],
-    endpoints: list[dict[str, object]],
-    run_root: Path,
-    controller_paths: list[str],
-    writable_paths: set[str],
-) -> list[tuple[list[str], list[str]]]:
-    """Merge behavior components only when their exact writable source overlaps."""
-
-    groups: list[tuple[set[str], set[str], set[str]]] = []
-    for use_case_ids, api_operation_ids in components:
-        production_paths = _behavior_component_production_paths(
-            use_case_ids,
-            api_operation_ids,
-            method_entries=method_entries,
-            endpoints=endpoints,
-            run_root=run_root,
-            controller_paths=controller_paths,
-            writable_paths=writable_paths,
-        )
-        matching = [
-            index
-            for index, (_use_cases, _operations, paths) in enumerate(groups)
-            if paths.intersection(production_paths)
-        ]
-        if not matching:
-            groups.append((set(use_case_ids), set(api_operation_ids), production_paths))
-            continue
-        first = matching[0]
-        merged_use_cases, merged_operations, merged_paths = groups[first]
-        merged_use_cases.update(use_case_ids)
-        merged_operations.update(api_operation_ids)
-        merged_paths.update(production_paths)
-        for index in reversed(matching[1:]):
-            other_use_cases, other_operations, other_paths = groups.pop(index)
-            merged_use_cases.update(other_use_cases)
-            merged_operations.update(other_operations)
-            merged_paths.update(other_paths)
-
-    return [
-        (
-            sorted(use_case_ids, key=_use_case_sort_key),
-            sorted(api_operation_ids),
-        )
-        for use_case_ids, api_operation_ids, _paths in groups
-    ]
-
-
-def _behavior_component_production_paths(
-    use_case_ids: list[str],
-    api_operation_ids: list[str],
-    *,
-    method_entries: list[tuple[dict[str, object], dict[str, object]]],
-    endpoints: list[dict[str, object]],
-    run_root: Path,
-    controller_paths: list[str],
-    writable_paths: set[str],
-) -> set[str]:
-    """Return exact writable main-source paths selected by one behavior component."""
-
-    refs = {
-        *(f"use_case:{value}" for value in use_case_ids),
-        *(f"api:{value}" for value in api_operation_ids),
-    }
-    paths = {
-        str(path)
-        for entry, context in method_entries
-        if {
-            str(value)
-            for value in entry.get("refs", [])
-            if isinstance(value, str)
-        }.intersection(refs)
-        for path in context.get("sourcePaths", entry.get("sourcePaths", []))
-        if isinstance(path, str)
-        and path in writable_paths
-        and path.startswith("application/src/main/java/")
-    }
-    selected_operation_ids = set(api_operation_ids)
-    for endpoint in endpoints:
-        operation_id = str(endpoint.get("operation_id") or endpoint.get("operationId") or "")
-        if operation_id not in selected_operation_ids:
-            continue
-        marker = controller_body_marker(
-            str(endpoint.get("method") or ""),
-            str(endpoint.get("path") or ""),
-        )
-        for controller_path in controller_paths:
-            if (
-                controller_path in writable_paths
-                and controller_path.startswith("application/src/main/java/")
-                and marker in (run_root / controller_path).read_text(encoding="utf-8")
-            ):
-                paths.add(controller_path)
-    return paths
-
-
 def _validate_backend_behavior_plan(
     run_root: Path,
     output: Path,
@@ -918,18 +833,6 @@ def _validate_backend_behavior_plan(
                 ]
             )
         )
-
-    production_owners: dict[str, str] = {}
-    for task in tasks:
-        for path in task.allowed_write_paths:
-            if not path.startswith("application/src/main/java/"):
-                continue
-            previous_owner = production_owners.setdefault(path, task.task_id)
-            if previous_owner != task.task_id:
-                raise ValueError(
-                    "Backend cohesive slices overlap on production write source: "
-                    f"{path} ({previous_owner}, {task.task_id})"
-                )
 
     source_index = _read_json(
         output / "implement-backend-application.source-index.json"

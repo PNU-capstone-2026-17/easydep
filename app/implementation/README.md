@@ -1,17 +1,17 @@
 # 구현 단계
 
 `app.implementation`은 고정된 설계 산출물에서 실행 가능한 애플리케이션을 만들고 Testing에
-전달한다. 백엔드는 유스케이스 개수가 아니라 실제 production source 소유권을 기준으로 응집된
-슬라이스를 만든다. 같은 Service·Entity·Controller를 수정하는 유스케이스는 한 GLM/OpenHands
-대화가 함께 구현하고, 서로 다른 파일을 소유하는 슬라이스만 분리한다. 프론트엔드는 생성 API
-client를 사용하는 하나의 owner 작업으로 유지한다. 별도 감독 LLM은 두지 않는다.
+전달한다. 백엔드는 설계가 명시한 UC↔API 연결요소를 작은 행동 슬라이스로 사용한다. 공유 source를
+이유로 서로 다른 흐름을 전이적으로 합치지 않으며, 각 슬라이스는 별도의 GLM/OpenHands 대화가
+구현한다. 프론트엔드는 생성 API client를 사용하는 하나의 owner 작업으로 유지한다. 별도 감독
+LLM은 두지 않는다.
 
 ## 실행 흐름
 
 ```text
 설계 snapshot과 공개 계약 고정
   → 결정론적 backend/frontend scaffold 생성
-  → production write 소유권 기준 backend slice 계획
+  → UC↔API 연결요소 기준 backend slice 계획
   → backend slice를 하나씩 GLM/OpenHands로 구현
   → slice별 관련 JUnit 검증과 승격
   → Frontend owner 대화
@@ -21,12 +21,11 @@ client를 사용하는 하나의 owner 작업으로 유지한다. 별도 감독 
   → Testing의 정적·동적 검사
 ```
 
-각 Backend slice는 자신이 소유한 Java production source와 하나의 관련 JUnit 시나리오 파일을
-함께 책임진다. 계획기는 exact writable production path가 겹치는 조각을 전이적으로 병합하고,
-최종 slice 사이에 write path 중복이 남으면 실행 전에 거부한다. 현재 promotion은 canonical
-application을 즉시 갱신하므로 slice는 병렬화하지 않고 한 runner 안에서 순차 실행한다. 각 slice는
-관련 테스트만 통과시키고, 모든 owner 작업 뒤 전체 backend test를 한 번 실행해 slice 간 회귀를
-잡는다.
+각 Backend slice는 자신의 Java production source와 하나의 관련 JUnit 시나리오 파일을 함께
+책임진다. Service·Controller·Entity 파일을 여러 흐름이 공유해도 슬라이스를 합치지 않는다. 현재
+promotion은 canonical application을 즉시 갱신하므로 slice는 한 runner 안에서 순차 실행한다. 후속
+slice가 앞선 slice와 같은 production source를 수정하면 자신의 테스트와 앞선 관련 테스트를 함께
+통과해야 한다. 모든 owner 작업 뒤에는 전체 backend test도 한 번 실행해 나머지 회귀를 잡는다.
 
 Frontend owner는 React source, 생성 API client 사용, 테스트, lockfile과 build를 함께 책임진다.
 프론트엔드는 특정 backend task 하나가 아니라 backend phase 전체 완료에 의존한다. Integration
