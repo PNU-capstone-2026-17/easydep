@@ -47,6 +47,24 @@ For IMPLEMENT, source_ref must be empty.
 """
 
 
+def _semantic_source_refs(source_refs: list[str]) -> list[str]:
+    """Prefer a use-case specification when both forms identify the same case."""
+
+    specified_use_cases = {
+        ref.removeprefix("use_case_spec:")
+        for ref in source_refs
+        if ref.startswith("use_case_spec:")
+    }
+    return [
+        ref
+        for ref in source_refs
+        if not (
+            ref.startswith("use_case:")
+            and ref.removeprefix("use_case:") in specified_use_cases
+        )
+    ]
+
+
 def admit_behavior_capsule(
     context: dict[str, object],
     source_refs: list[str],
@@ -55,9 +73,10 @@ def admit_behavior_capsule(
 ) -> UpstreamGap | None:
     """Admit a behavior capsule or return its single bounded upstream gap."""
 
+    semantic_source_refs = _semantic_source_refs(source_refs)
     payload = {
         "behaviorCapsule": context.get("behaviorCapsule"),
-        "sourceRefs": source_refs,
+        "sourceRefs": semantic_source_refs,
     }
     parsed = proposal_call(
         [
@@ -78,7 +97,7 @@ def admit_behavior_capsule(
             raise ValueError("IMPLEMENT admission must have an empty source_ref")
         return None
 
-    if admission.source_ref not in source_refs:
+    if admission.source_ref not in semantic_source_refs:
         raise ValueError("NEEDS_INPUT source_ref must match exactly one allowed source reference")
     summary = shorten(admission.summary.strip(), width=500, placeholder="…")
     if not summary:

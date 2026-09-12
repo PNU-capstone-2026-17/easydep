@@ -24,13 +24,24 @@ def test_implement_admission_returns_no_gap_and_uses_low_budget() -> None:
 
 
 def test_needs_input_admission_returns_one_upstream_gap() -> None:
+    calls = []
+
     def propose(_messages, _schema, **_kwargs):
+        calls.append(_messages)
         return {
             "decision": "NEEDS_INPUT",
             "summary": "  The retry policy is not specified.  ",
-            "source_ref": "UC-1",
+            "source_ref": "use_case_spec:UC-1",
         }
 
-    assert admit_behavior_capsule({}, ["UC-1"], proposal_call=propose) == UpstreamGap(
-        summary="The retry policy is not specified.", source_ref="UC-1"
+    assert admit_behavior_capsule(
+        {},
+        ["use_case:UC-1", "api:retry", "use_case_spec:UC-1"],
+        proposal_call=propose,
+    ) == UpstreamGap(
+        summary="The retry policy is not specified.", source_ref="use_case_spec:UC-1"
     )
+    assert json.loads(calls[0][1]["content"])["sourceRefs"] == [
+        "api:retry",
+        "use_case_spec:UC-1",
+    ]
