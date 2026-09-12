@@ -36,7 +36,6 @@ from app.design.services.class_diagram.proposals import OperationFragment
 from app.design.services.class_diagram.scenario import ScenarioIndex, UseCase, id_key, text
 from app.design.services.class_diagram.type_system import (
     field_type,
-    reachable_data_type_names,
     referenced_type_names,
     structure_type_contract,
     structured_field_types,
@@ -1271,22 +1270,41 @@ def _compose(
         # 타입 계약의 일부다. 이를 지우면 `RegistrationPeriod.term : AcademicTerm`처럼
         # 검증을 통과했던 선언이 최종 조립 과정에서 갑자기 미해소 타입이 된다.
         class_index = {class_name(item): item for item in result_classes}
-        pending = list(retained)
+        data_type_definitions = {
+            text(item.get("name")): item
+            for item in data_types
+            if isinstance(item, dict)
+        }
+        reachable_data_types: set[str] = set()
+        pending = [("class", name) for name in retained]
         while pending:
-            item = class_index[pending.pop()]
+            kind, current_name = pending.pop()
+            item = (
+                class_index[current_name]
+                if kind == "class"
+                else data_type_definitions[current_name]
+            )
             referenced: set[str] = set()
             for raw_field in item.get("fields") or []:
                 referenced.update(referenced_type_names(field_type(raw_field)))
-            for operation in item.get("operations") or []:
-                if not isinstance(operation, dict):
-                    continue
-                referenced.update(referenced_type_names(text(operation.get("returnType"))))
-                for parameter in operation.get("parameters") or []:
-                    if isinstance(parameter, dict):
-                        referenced.update(referenced_type_names(text(parameter.get("type"))))
+            if kind == "class":
+                for operation in item.get("operations") or []:
+                    if not isinstance(operation, dict):
+                        continue
+                    referenced.update(
+                        referenced_type_names(text(operation.get("returnType")))
+                    )
+                    for parameter in operation.get("parameters") or []:
+                        if isinstance(parameter, dict):
+                            referenced.update(
+                                referenced_type_names(text(parameter.get("type")))
+                            )
             for name in referenced & class_index.keys() - retained:
                 retained.add(name)
-                pending.append(name)
+                pending.append(("class", name))
+            for name in referenced & data_type_definitions.keys() - reachable_data_types:
+                reachable_data_types.add(name)
+                pending.append(("dataType", name))
         result_classes = [item for item in result_classes if class_name(item) in retained]
         relationships = [
             item
@@ -1295,11 +1313,11 @@ def _compose(
             and text(item.get("source")) in retained
             and text(item.get("target")) in retained
         ]
-        reachable = reachable_data_type_names(result_classes, data_types)
         data_types = [
             item
             for item in data_types
-            if isinstance(item, dict) and text(item.get("name")) in reachable
+            if isinstance(item, dict)
+            and text(item.get("name")) in reachable_data_types
         ]
     return BCEModel.model_validate(
         {

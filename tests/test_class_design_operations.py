@@ -187,6 +187,50 @@ def test_final_compose_keeps_operationless_class_referenced_by_an_entity_field()
     }
 
 
+def test_final_compose_keeps_class_referenced_through_a_data_type():
+    inventory = AcceptedInventory.from_payload({
+        "Classes": [
+            {
+                "className": "CourseOffering",
+                "stereotype": "Entity",
+                "fields": ["id : UUID"],
+                "identifier": ["id"],
+                "useCaseIds": ["UC9"],
+            },
+            {
+                "className": "Student",
+                "stereotype": "Entity",
+                "fields": ["id : UUID"],
+                "identifier": ["id"],
+                "useCaseIds": ["UC9"],
+            },
+        ],
+        "DataTypes": [],
+        "Relationships": [],
+    })
+    fragment = AcceptedFragment("UC9", {
+        "Classes": [{
+            "className": "CourseOffering",
+            "operations": [{
+                "name": "getRoster",
+                "parameters": [],
+                "returnType": "CourseOfferingRosterDTO",
+                "stepRefs": ["UC9:main:2"],
+            }],
+        }],
+        "DataTypes": [{
+            "name": "CourseOfferingRosterDTO",
+            "kind": "valueObject",
+            "fields": ["students : list<Student>"],
+        }],
+    })
+
+    model = operations.compose_operation_units(inventory, [fragment], final=True)
+
+    assert {item.class_name for item in model.Classes} == {"CourseOffering", "Student"}
+    assert [item.name for item in model.DataTypes] == ["CourseOfferingRosterDTO"]
+
+
 def test_compose_reuses_operation_when_supported_type_aliases_differ_only_in_case():
     inventory = AcceptedInventory.from_payload({
         "Classes": [
