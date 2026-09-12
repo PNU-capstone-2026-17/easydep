@@ -7,8 +7,10 @@ from app.implementation.agents.admission import admit_behavior_capsule
 from app.implementation.agents.upstream_gap_tool import UpstreamGap
 
 
-def test_implement_admission_returns_no_gap_and_uses_low_budget() -> None:
+def test_implement_admission_uses_admission_connection_and_low_budget(monkeypatch) -> None:
     calls = []
+    connection = SimpleNamespace(model="@cf/zai-org/glm-5.3-flash")
+    monkeypatch.setattr(admission, "build_admission_llm_connection", lambda: connection)
 
     def propose(messages, schema, **kwargs):
         calls.append((messages, schema, kwargs))
@@ -21,6 +23,7 @@ def test_implement_admission_returns_no_gap_and_uses_low_budget() -> None:
         "reasoning_effort": "low",
         "max_completion_tokens": 2048,
         "operation": "implementation-admission",
+        "connection": connection,
     }
     payload = json.loads(calls[0][0][1]["content"])
     assert payload == {"behaviorCapsule": {"directMethods": []}, "sourceRefs": ["UC-1"]}
@@ -55,7 +58,9 @@ def test_preflight_reuses_exact_checkpoint_and_invalidates_changed_input(
 ) -> None:
     calls = []
     monkeypatch.setattr(
-        admission, "build_llm_connection", lambda: SimpleNamespace(model="glm")
+        admission,
+        "build_admission_llm_connection",
+        lambda: SimpleNamespace(model="glm"),
     )
 
     expected_gap = UpstreamGap(

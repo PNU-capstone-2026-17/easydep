@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # OpenHands can use a coding-oriented model without changing the model that
     # produces the typed Requirements/Design artifacts. Blank keeps MODEL.
     openhands_model: str | None = None
+    # Semantic admission is a small structured judgment. It may use a separate
+    # model without changing either Design MODEL or the OpenHands model.
+    admission_model: str | None = None
     # Cloudflare AI Gateway를 쓰는 경우 URL 안에 계정 ID가 들어가고, 인증 토큰도
     # 기존 provider 키와 다르다. 세 값을 루트 .env에 따로 두면 아래 연결 함수가
     # OpenAI 호환 클라이언트에 필요한 URL과 헤더를 한 번만 조립한다.
@@ -42,9 +45,9 @@ class Settings(BaseSettings):
             raise ValueError("LLM configuration values must not be blank")
         return configured
 
-    @field_validator("openhands_model", mode="before")
+    @field_validator("openhands_model", "admission_model", mode="before")
     @classmethod
-    def normalize_openhands_model(cls, value: str | None) -> str | None:
+    def normalize_optional_model(cls, value: str | None) -> str | None:
         configured = str(value or "").strip()
         return configured or None
 

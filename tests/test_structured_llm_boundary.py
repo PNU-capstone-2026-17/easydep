@@ -147,7 +147,10 @@ def test_schema_repair_keeps_or_explicitly_overrides_call_reasoning_effort(monke
 
     efforts: list[str] = []
 
-    def stream(_client, _messages, schema, _observation, *, reasoning_effort):
+    def stream(
+        _client, _messages, schema, _observation, *, reasoning_effort, connection
+    ):
+        assert connection is not None
         efforts.append(reasoning_effort)
         if len(efforts) == 1:
             return schema.model_validate({})

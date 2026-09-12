@@ -12,7 +12,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.design.services.common.structured import parse_structured
-from app.llm_connection import build_llm_connection
+from app.llm_connection import build_admission_llm_connection
 
 from .upstream_gap_tool import UpstreamGap
 
@@ -46,6 +46,11 @@ check, or verify a named rule only names the required rule; it does not declare 
 data or operation decides it. Likewise, an outcome label is not a public mapping
 without a return value or exception selector. Two reasonable implementations that
 would produce different user-visible behavior are evidence of such a missing link.
+A status or outcome list declares possible outputs, not the operands or decision source
+that selects one. Do not assume an undeclared framework, default, convention, or
+"standard" context. For each check or validation that can change a user-visible outcome
+or effect, identify in the capsule both a declared operand-producing carrier and a
+decision-bearing policy or usable operation; otherwise choose NEEDS_INPUT.
 A prose precondition is not by itself a trusted-context carrier. Count it only when
 the capsule explicitly binds it to an API, Control, or sequence argument (for example
 a `$context.*` source), or supplies a usable context operation.
@@ -105,7 +110,7 @@ def _admission_input_sha256(
     return _sha256_json(
         {
             "taskId": task_id,
-            "admissionModel": build_llm_connection().model,
+            "admissionModel": build_admission_llm_connection().model,
             "admissionPrompt": _SYSTEM_PROMPT,
             "validatorSchemaVersion": ADMISSION_VALIDATOR_VERSION,
             "behaviorCapsule": context.get("behaviorCapsule"),
@@ -205,6 +210,7 @@ def admit_behavior_capsule(
     """Admit a behavior capsule or return its single bounded upstream gap."""
 
     semantic_source_refs = _semantic_source_refs(source_refs)
+    connection = build_admission_llm_connection()
     payload = {
         "behaviorCapsule": context.get("behaviorCapsule"),
         "sourceRefs": semantic_source_refs,
@@ -221,6 +227,7 @@ def admit_behavior_capsule(
         reasoning_effort="low",
         max_completion_tokens=2048,
         operation="implementation-admission",
+        connection=connection,
     )
     admission = BehaviorAdmission.model_validate(parsed)
     if admission.decision == "IMPLEMENT":
