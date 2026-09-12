@@ -38,7 +38,36 @@
 8. 환경이나 한 단계만 실패하면 전체 파이프라인을 다시 시작하지 않고 해당 owning stage의
    저장된 checkpoint에서 재개한다.
 
-### 2.1 RTM 기반 생성 경계
+### 2.1 네 에이전트와 공통 하위 작업
+
+EasyDep의 런타임 에이전트는 Requirements·Design·Implementation·Testing 네 종류로
+고정한다. admission, planning, review와 validation은 별도 에이전트가 아니라 이 네 에이전트가
+자기 하위 작업 안에서 수행하는 활동이다.
+
+각 하위 작업은 기존 상태와 envelope를 사용해 다음 세 결과 중 하나만 만든다. 이를 위해 새
+DB 상태나 범용 workflow schema를 추가하지 않는다.
+
+- **계속:** 현재 문맥으로 자기 단계 산출물을 만들거나 수정한다. Implementation의 기존
+  `IMPLEMENT` 결정이 여기에 해당한다.
+- **사용자 피드백 필요:** 제품 의미를 사용자가 결정해야 한다. 기존 `Question`과
+  `NEEDS_INPUT`/`need_feedback` 경로를 사용하며 선택지와 자유 답변을 함께 제공한다.
+- **기술 실패:** provider·도구·schema·build 오류처럼 사용자가 제품 의미를 답해도 해결되지
+  않는 실패다. 기존 실패·재개 경로를 사용하고 질문으로 바꾸지 않는다.
+
+하위 작업이 상류 산출물의 변경 필요성을 발견해도 직접 수정하지 않는다. 질문에 발견 단계,
+근거 artifact/element ref와 authority 후보를 담고, 사용자 답변 뒤 해당 산출물을 소유한 네
+에이전트 중 하나가 별도 command에서 수정한다.
+
+각 에이전트 프롬프트에는 장식적인 persona나 전체 대화 이력을 저장하지 않는다. 기존
+TaskSpec과 checkpoint에서 현재 agent/stage, 하위 작업 목표, 현재 상태, 수정 가능 범위,
+관련 RTM ref와 종료 조건만 짧은 자연어 작업 브리프로 만든다.
+
+도메인 의미는 공통 ontology로 옮기지 않는다. 예를 들어 어떤 행위자와 엔티티 사이의 업무
+관계가 빠졌다는 판단과 대안은 LLM이 UC·설계 산출물을 자연어로 비교해 질문으로 표현한다.
+사용자가 선택한 뒤 owning agent가 그 의미를 기존 요구사항·UML·ERD·API·source 형식으로
+구체화한다. 공통 계층은 Question·Decision·RTM ref와 stage ownership만 검증한다.
+
+### 2.2 RTM 기반 생성 경계
 
 `RevisionPlan`의 authority와 downstream을 모든 단계가 공유하는 고정 실행 경계로 사용한다.
 별도 실행 계약이나 DB 필드는 추가하지 않는다.
@@ -357,7 +386,10 @@ Design에서 Requirements owner로 돌아가는 수정도 `ready_local`로 판�
 이 제한은 일관성을 포기하는 것이 아니다. downstream을 묵시적으로 전체 재생성하는 대신,
 현재 RTM으로 다시 계획하고 사용자에게 다음 변경 범위를 확인받는 일반 대화형 흐름이다.
 
-## 9. Luna·Terra·Sol·Astra 활용
+## 9. 개발 중 Codex 서브에이전트 활용
+
+이 절의 Luna·Terra·Sol·Astra는 EasyDep 제품의 런타임 에이전트가 아니다. 네 런타임
+에이전트를 구현하고 검토할 때만 사용하는 개발 보조자다.
 
 서브에이전트는 서로 겹치지 않는 작은 파일 단위만 맡는다.
 
@@ -369,8 +401,8 @@ Design에서 Requirements owner로 돌아가는 수정도 `ready_local`로 판�
 | Sol | 각 하위 작업 뒤 치명적 권한·stage 경계·재호출 결함 검토 | 새 기능 제안과 범위 확대 |
 | Astra | 방법론이나 시스템 경계가 바뀌는 예외적 고위험 검토 | 일상적인 코드 재검토 |
 
-각 하위 작업은 주 에이전트와 Sol의 검토를 받은 뒤 사용자 승인을 요청한다. 승인 전에는
-커밋하거나 다음 하위 작업으로 넘어가지 않는다.
+개발 보조자는 파일 소유 범위가 겹치지 않는 작은 구현·검토에만 사용한다. 그 결과를 제품의
+새 agent role이나 workflow 단계로 추가하지 않는다.
 
 ## 10. 비범위
 
@@ -382,6 +414,8 @@ Design에서 Requirements owner로 돌아가는 수정도 `ready_local`로 판�
 - post-change RTM 전체 diff와 unknown 관계 추측
 - 첫 수직 경로에서 API·ERD·배포·구현을 모두 재생성하는 기능
 - effect·obligation ontology 확장
+- 임의의 도메인 관계를 분류하는 공통 ontology 또는 완결성 증명기
+- admission·planner·reviewer를 별도 런타임 에이전트로 추가하는 것
 - 모델별 latency 최적화
 
 ## 11. 첫 완료 기준
@@ -395,3 +429,10 @@ Design에서 Requirements owner로 돌아가는 수정도 `ready_local`로 판�
 > 재개가 불필요한 LLM 재호출을 만들지 않는다.
 
 이 경계가 검증된 뒤 Implementation과 Testing의 같은 경계를 차례로 점검한다.
+
+Implementation의 첫 추가 완료 기준은 다음과 같다.
+
+> Implementation 하위 작업이 RTM으로 연결된 UC·API·class 문맥을 보고 현재 설계를
+> 그대로 구현할 수 있으면 OpenHands를 실행한다. 제품 의미를 선택해야 하면 OpenHands를
+> 시작하지 않고 기존 Question UI에 선택지와 자유 답변을 노출한다. 답변이 Design 산출물을
+> 바꾸면 별도 Design command로 이동한 뒤 영향받은 Implementation 하위 작업만 재개한다.
