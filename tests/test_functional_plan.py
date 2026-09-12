@@ -284,6 +284,37 @@ def test_empty_object_parameter_value_is_treated_as_unspecified() -> None:
     dynamic._validate_authored_workflow(normalized)
 
 
+def test_request_body_content_type_is_projected_from_the_json_contract() -> None:
+    workflow = {
+        "workflowId": "workflow-UC-2",
+        "steps": [
+            {
+                "stepId": "register",
+                "operationId": "registerForCourseOffering",
+                "requestBody": {
+                    "contentType": "application/",
+                    "payload": {"courseOfferingId": "OFF-1"},
+                },
+            }
+        ],
+    }
+    candidate = {
+        "operations": [
+            {
+                "operationId": "registerForCourseOffering",
+                "requestBody": {"contentType": "application/json"},
+                "parameters": [],
+            }
+        ]
+    }
+
+    normalized = dynamic._normalize_authored_workflow(workflow, candidate)
+
+    assert normalized["steps"][0]["requestBody"]["contentType"] == "application/json"
+    assert workflow["steps"][0]["requestBody"]["contentType"] == "application/"
+    dynamic._validate_authored_workflow(normalized)
+
+
 def test_common_step_id_and_missing_parameter_value_are_normalized() -> None:
     workflow = {
         "workflowId": "workflow-UC-4",
@@ -466,6 +497,96 @@ def test_javascript_style_step_output_selector_is_normalized_to_json_pointer() -
     dynamic._validate_authored_workflow(normalized)
 
 
+def test_strict_equality_criteria_are_normalized_for_the_executor() -> None:
+    workflow = {
+        "workflowId": "workflow-UC-2",
+        "steps": [
+            {
+                "stepId": "register",
+                "operationId": "registerForCourseOffering",
+                "successCriteria": [{"condition": "$statusCode === 201"}],
+            }
+        ],
+    }
+    candidate = {
+        "operations": [
+            {"operationId": "registerForCourseOffering", "requestBody": None, "parameters": []}
+        ]
+    }
+
+    normalized = dynamic._normalize_authored_workflow(workflow, candidate)
+
+    assert normalized["steps"][0]["successCriteria"] == [{"condition": "$statusCode == 201"}]
+    dynamic._validate_authored_workflow(normalized)
+
+
+def test_invalid_response_output_pointer_is_rejected_before_execution() -> None:
+    candidate = {
+        "workflowId": "workflow-UC-3",
+        "requirements": [],
+        "useCase": {},
+        "operations": [
+            {
+                "operationId": "requestSwap",
+                "responses": [
+                    {
+                        "status": "200",
+                        "schema": {
+                            "type": "object",
+                            "properties": {"isValid": {"type": "boolean"}},
+                        },
+                    }
+                ],
+            }
+        ],
+        "trace": {"useCaseIds": ["UC3"]},
+    }
+    document = build_arazzo_document(
+        [
+            attach_workflow_trace(
+                {
+                    "workflowId": "workflow-UC-3",
+                    "steps": [
+                        {
+                            "stepId": "swap",
+                            "operationId": "requestSwap",
+                            "outputs": {"result": "$response.body#/result"},
+                        }
+                    ],
+                },
+                candidate,
+            )
+        ]
+    )
+    openapi = {
+        "openapi": "3.0.3",
+        "info": {"title": "API", "version": "1.0.0"},
+        "paths": {
+            "/swap": {
+                "post": {
+                    "operationId": "requestSwap",
+                    "responses": {
+                        "200": {
+                            "description": "ok",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {"isValid": {"type": "boolean"}},
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+        },
+    }
+
+    with pytest.raises(dynamic.ArazzoValidationError, match="absent from the frozen OpenAPI"):
+        dynamic._validate_document(document, [candidate], openapi)
+
+
 def test_ambiguous_output_list_remains_invalid() -> None:
     workflow = {
         "workflowId": "workflow-UC-1",
@@ -612,7 +733,7 @@ def test_invented_workflow_output_pointer_remains_test_defect() -> None:
     assert result["finding"]["code"] == "RUNTIME_EXPRESSION_UNRESOLVED"
 
 
-def test_empty_prior_step_output_is_classified_as_missing_test_data() -> None:
+def test_empty_schema_valid_prior_step_output_is_classified_as_sut_defect() -> None:
     workflow = {
         "workflowId": "workflow-UC1",
         "steps": [
@@ -650,12 +771,39 @@ def test_empty_prior_step_output_is_classified_as_missing_test_data() -> None:
         ],
     }
 
-    dynamic._classify_missing_workflow_data(result, workflow, {"operations": []}, {})
+    candidate = {
+        "operations": [
+            {
+                "operationId": "searchOfferings",
+                "responses": [
+                    {
+                        "status": "200",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {"id": {"type": "string"}},
+                            },
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+    dynamic._classify_missing_workflow_data(
+        result,
+        workflow,
+        candidate,
+        {
+            "openapi": "3.0.3",
+            "info": {"title": "API", "version": "1.0.0"},
+            "paths": {},
+        },
+    )
 
-    assert result["defectClass"] == "UPSTREAM_AMBIGUITY"
-    assert result["finding"]["code"] == "TEST_DATA_PRECONDITION_UNSATISFIED"
-    assert result["finding"]["sourceStepId"] == "search"
-    assert "deterministic setup data" in result["reason"]
+    assert result["defectClass"] == "SUT_DEFECT"
+    assert result["finding"]["code"] == "REQUIRED_WORKFLOW_DATA_MISSING"
+    assert result["finding"]["operationId"] == "searchOfferings"
 
 
 def test_plan_progress_identifies_completed_retrying_and_failed_use_cases(monkeypatch):

@@ -339,6 +339,25 @@ def _normalize_authored_workflow(
         )
 
     normalized = normalize_runtime_selector(deepcopy(value))
+    # The local Arazzo executor uses the standard equality tokens.  Several
+    # OpenAI-compatible models emit JavaScript strict equality in criteria;
+    # this representation change is unambiguous and preserves the assertion.
+    for step in normalized.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        for criterion in step.get("successCriteria") or []:
+            if isinstance(criterion, dict) and isinstance(criterion.get("condition"), str):
+                criterion["condition"] = (
+                    criterion["condition"].replace("!==", "!=").replace("===", "==")
+                )
+        for action in step.get("onFailure") or []:
+            if not isinstance(action, dict):
+                continue
+            for criterion in action.get("criteria") or []:
+                if isinstance(criterion, dict) and isinstance(criterion.get("condition"), str):
+                    criterion["condition"] = (
+                        criterion["condition"].replace("!==", "!=").replace("===", "==")
+                    )
     operations = {
         str(operation.get("operationId")): operation
         for operation in candidate.get("operations") or []
@@ -379,6 +398,12 @@ def _normalize_authored_workflow(
                 step["outputs"] = converted_outputs
         if operation.get("requestBody") is None:
             step.pop("requestBody", None)
+        elif isinstance(step.get("requestBody"), dict):
+            # Candidate operations expose only an application/json contract.
+            # The MIME value is therefore derived data, not an LLM decision;
+            # canonicalize partial/provider-truncated values such as
+            # "application/" before schema validation.
+            step["requestBody"]["contentType"] = "application/json"
         raw_parameters = step.get("parameters")
         if isinstance(raw_parameters, dict):
             # A name/value map omits `in`. Recover it only when every name has
@@ -545,6 +570,58 @@ def _classify_missing_workflow_data(
             else None
         )
         if source_value in ([], {}):
+            source_step = next(
+                (
+                    item
+                    for item in workflow.get("steps") or []
+                    if isinstance(item, dict) and str(item.get("stepId") or "") == source_step_id
+                ),
+                {},
+            )
+            source_operation_id = str(source_step.get("operationId") or "")
+            source_operation = next(
+                (
+                    item
+                    for item in candidate.get("operations") or []
+                    if isinstance(item, dict)
+                    and str(item.get("operationId") or "") == source_operation_id
+                ),
+                {},
+            )
+            source_expression = (
+                (source_step.get("outputs") or {}).get(output_name)
+                if isinstance(source_step, dict) and isinstance(source_step.get("outputs"), dict)
+                else ""
+            )
+            source_pointer = (
+                str(source_expression).removeprefix("$response.body")
+                if isinstance(source_expression, str)
+                else ""
+            )
+            source_schemas = [
+                response.get("schema")
+                for response in source_operation.get("responses") or []
+                if isinstance(response, dict)
+                and str(response.get("status") or "").startswith("2")
+                and isinstance(response.get("schema"), dict)
+            ]
+            if source_schemas and any(
+                _schema_supports_pointer(schema, pointer, openapi) for schema in source_schemas
+            ):
+                reason = (
+                    f"The application response for {source_operation_id} did not contain the "
+                    f"data required by the next use-case step ({pointer})."
+                )
+                result["defectClass"] = "SUT_DEFECT"
+                result["reason"] = reason
+                finding.update(
+                    {
+                        "code": "REQUIRED_WORKFLOW_DATA_MISSING",
+                        "message": reason,
+                        "operationId": source_operation_id,
+                    }
+                )
+                return
             reason = (
                 f"Workflow data prerequisite is unresolved: step {source_step_id} returned an "
                 f"empty {output_name}, but step {failed_step_id} requires {pointer}. "
@@ -763,6 +840,34 @@ def _validate_document(
         ]
         if workflow.get("x-easydep-trace") != expected_trace:
             raise ArazzoValidationError("Generated workflow trace does not match frozen evidence.")
+        operations = {
+            str(operation.get("operationId")): operation
+            for operation in candidate.get("operations") or []
+            if isinstance(operation, dict) and operation.get("operationId")
+        }
+        for step in workflow.get("steps") or []:
+            if not isinstance(step, dict):
+                continue
+            operation = operations.get(str(step.get("operationId") or ""))
+            outputs = step.get("outputs")
+            if operation is None or not isinstance(outputs, dict):
+                continue
+            success_schemas = [
+                response.get("schema")
+                for response in operation.get("responses") or []
+                if isinstance(response, dict)
+                and str(response.get("status") or "").startswith("2")
+                and isinstance(response.get("schema"), dict)
+            ]
+            for output_name, expression in outputs.items():
+                if not isinstance(expression, str) or not expression.startswith("$response.body#"):
+                    continue
+                pointer = expression.removeprefix("$response.body")
+                if not any(_schema_supports_pointer(schema, pointer, openapi) for schema in success_schemas):
+                    raise ArazzoValidationError(
+                        f"Output {output_name!r} references a JSON Pointer absent from the "
+                        f"frozen OpenAPI response schema: {expression}"
+                    )
     return frozen
 
 
