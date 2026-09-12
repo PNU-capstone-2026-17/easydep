@@ -9,10 +9,21 @@ from typing import Any
 
 _METHODS = ("delete", "get", "head", "options", "patch", "post", "put", "trace")
 _IDENTIFIER = re.compile(r"[^A-Za-z0-9_-]+")
+_NATURAL_PARTS = re.compile(r"(\d+)")
 
 
 class ArazzoPlanningError(ValueError):
     """Frozen planning inputs do not form a deterministic Arazzo context."""
+
+
+def _natural_identifier_key(value: str) -> tuple[tuple[int, object], ...]:
+    """Sort identifiers such as UC1, UC2, UC10 in numeric order."""
+
+    return tuple(
+        (0, int(part)) if part.isdigit() else (1, part.lower())
+        for part in _NATURAL_PARTS.split(value)
+        if part
+    )
 
 
 def _records(value: Any, *keys: str) -> list[dict[str, Any]]:
@@ -364,7 +375,7 @@ def build_workflow_candidates(
             raise ArazzoPlanningError(
                 f"Scoped functional requirement is uncovered: {requirement_id}"
             )
-    return sorted(result, key=lambda item: item["workflowId"])
+    return sorted(result, key=lambda item: _natural_identifier_key(item["workflowId"]))
 
 
 def attach_workflow_trace(
