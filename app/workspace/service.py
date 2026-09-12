@@ -94,10 +94,8 @@ from .conversation.delivery import (
 from .conversation.feedback_envelope import (
     BaseRevision,
     Decision,
-    DecisionPayload,
     DecisionPolicy,
     Question,
-    QuestionOption,
     answer_option,
     free_text_decision,
 )
@@ -4289,22 +4287,10 @@ class WorkspaceService:
                     f"Implementation is blocked by an upstream contract gap: {summary} "
                     "Revise the upstream contract before retrying implementation."
                 ),
-                options=[
-                    QuestionOption(
-                        option_id="revise_upstream_contract",
-                        label="Revise upstream contract",
-                        description=summary,
-                        recommended=True,
-                        decision_payload=DecisionPayload(
-                            normalized_meaning={
-                                "semantic_scope": semantic_scope,
-                                "requested_effect": summary,
-                                "change_type": "modify",
-                            },
-                            authoritative_target_refs=(authority.ref,),
-                        ),
-                    )
-                ],
+                # A diagnostic explains what is missing; it does not choose the
+                # missing business rule.  Keep this question free-text until
+                # concrete alternatives are available.
+                options=[],
                 allow_free_text=True,
                 decision_policy=DecisionPolicy(
                     allowed_semantic_scopes=(semantic_scope,),
