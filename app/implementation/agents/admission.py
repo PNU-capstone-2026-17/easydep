@@ -46,6 +46,9 @@ check, or verify a named rule only names the required rule; it does not declare 
 data or operation decides it. Likewise, an outcome label is not a public mapping
 without a return value or exception selector. Two reasonable implementations that
 would produce different user-visible behavior are evidence of such a missing link.
+A prose precondition is not by itself a trusted-context carrier. Count it only when
+the capsule explicitly binds it to an API, Control, or sequence argument (for example
+a `$context.*` source), or supplies a usable context operation.
 
 Otherwise choose IMPLEMENT. Uncertainty about source files, constructor wiring, or
 repository implementation is not evidence of a behavior gap. Do not infer a business
