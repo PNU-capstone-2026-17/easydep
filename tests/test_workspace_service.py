@@ -1014,7 +1014,17 @@ def test_presented_legacy_clarification_restores_testing_retry(monkeypatch) -> N
         "action": "message",
         "stage": "testing",
         "status": "AWAITING_INPUT",
-        "payload": {"action_id": "testing-failure", "text": "test"},
+        "payload": {
+            "action_id": "testing-failure",
+            "text": "test",
+            "_conversation_actions": [
+                {
+                    "action": "message",
+                    "label": "Send design revision feedback",
+                    "payload": {"action_id": "testing-failure"},
+                }
+            ],
+        },
         "result": {
             "kind": "question",
             "conversation": {"clarification": {"question": "What should be retried?"}},

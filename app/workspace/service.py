@@ -1076,11 +1076,11 @@ class WorkspaceService:
         if (
             isinstance(conversation, dict)
             and conversation.get("clarification")
-            and not isinstance(payload.get("_conversation_actions"), list)
         ):
-            # Older clarification rows may predate action preservation. Rebuild
-            # their display contract from the referenced workflow command so a
-            # refresh immediately restores Testing retry/repair buttons.
+            # Rebuild from the referenced workflow command even when an older
+            # clarification saved a partial action list. A prior server version
+            # stored only the message action and otherwise made Testing retry
+            # impossible after a refresh.
             anchor = command
             visited: set[str] = set()
             while len(visited) < 12:
