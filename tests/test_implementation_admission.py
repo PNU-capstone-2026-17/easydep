@@ -102,6 +102,12 @@ def test_needs_input_admission_returns_one_upstream_gap() -> None:
         "api:retry",
         "use_case_spec:UC-1",
     ]
+    assert admission.admit_integration_evidence(
+        {}, ["use_case_spec:UC-1"], proposal_call=propose
+    ) == UpstreamGap(
+        summary="The retry policy is not specified.",
+        source_ref="use_case_spec:UC-1",
+    )
 
 
 def test_preflight_reuses_exact_checkpoint_and_invalidates_changed_input(
@@ -168,3 +174,66 @@ def test_preflight_reuses_exact_checkpoint_and_invalidates_changed_input(
         )
     )
     assert checkpoint["decision"] == "IMPLEMENT"
+
+
+def test_integration_preflight_hashes_exact_file_evidence_without_persisting_it(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(
+        admission,
+        "build_admission_llm_connection",
+        lambda: SimpleNamespace(model="glm"),
+    )
+    first = tmp_path / "application/frontend/src/api.ts"
+    second = tmp_path / "application/src/main/resources/application.yml"
+    first.parent.mkdir(parents=True)
+    second.parent.mkdir(parents=True)
+    first.write_bytes(b"const token = 'raw-secret';\r\n")
+    second.write_bytes(b"role: USER\n")
+    context = {
+        "readSourcePaths": [
+            "application/frontend/src/api.ts",
+            "application/src/main/resources/application.yml",
+        ],
+        "traceEvidence": {"ownerTaskIds": ["backend", "frontend"]},
+        "deployment": {"provider": "local"},
+    }
+    refs = ["use_case_spec:UC-1", "operation:Course::enroll()"]
+    payloads: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        admission,
+        "admit_integration_evidence",
+        lambda payload, _refs: payloads.append(payload) or None,
+    )
+    task = {"task_id": "implement-vertical-integration"}
+
+    assert admission.preflight_semantic_integration(tmp_path, task, context, refs) is None
+    assert admission.preflight_semantic_integration(tmp_path, task, context, refs) is None
+    assert len(payloads) == 1
+    assert payloads[0] == {
+        "traceEvidence": context["traceEvidence"],
+        "deployment": context["deployment"],
+        "evidenceFiles": [
+            {
+                "path": "application/frontend/src/api.ts",
+                "content": "const token = 'raw-secret';\r\n",
+            },
+            {
+                "path": "application/src/main/resources/application.yml",
+                "content": "role: USER\n",
+            },
+        ],
+        "sourceRefs": refs,
+    }
+    checkpoint_path = (
+        tmp_path
+        / "reports/agent-executions/implement-vertical-integration.admission.json"
+    )
+    first_checkpoint = checkpoint_path.read_text(encoding="utf-8")
+    assert "raw-secret" not in first_checkpoint
+    assert "role: USER" not in first_checkpoint
+
+    second.write_bytes(b"role: PROFESSOR\n")
+    assert admission.preflight_semantic_integration(tmp_path, task, context, refs) is None
+    assert len(payloads) == 2
+    assert checkpoint_path.read_text(encoding="utf-8") != first_checkpoint

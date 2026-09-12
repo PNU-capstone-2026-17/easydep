@@ -163,6 +163,15 @@ def verify_agent_workspace(
         if evidence.get("gateStatus") != "PASS":
             raise WorkspaceVerificationError(evidence)
         return evidence
+    if task_type == "integration-implementation":
+        backend = verify_agent_workspace(sandbox)
+        frontend = verify_frontend_workspace(sandbox)
+        return {
+            "command": ["thin-integration", "backend-test", "frontend-build"],
+            "exitCode": 0,
+            "backendVerification": backend,
+            "frontendVerification": frontend,
+        }
     if task_type in {"frontend", "frontend-implementation"}:
         return verify_frontend_workspace(sandbox)
     marker_evidence = _verify_absent_markers(sandbox, verification_profile)

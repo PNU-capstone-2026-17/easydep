@@ -406,6 +406,9 @@ def test_bounded_restricted_owner_exposes_and_records_upstream_gap_only(tmp_path
         conversation.send_message("Initialize tools without calling the model.")
         assert UPSTREAM_GAP_TOOL_NAME in agent._tools
         assert "UC-12" in agent._tools[UPSTREAM_GAP_TOOL_NAME].description
+        assert "omits or ambiguously defines required" in agent._tools[
+            UPSTREAM_GAP_TOOL_NAME
+        ].description
         executor = agent._tools[UPSTREAM_GAP_TOOL_NAME].executor
         invalid = executor(
             UpstreamGapAction(summary="Missing behavior", source_ref="UC-unknown"),

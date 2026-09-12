@@ -12,6 +12,7 @@ import pytest
 import app.implementation.agents.workspace as workspace_module
 from app.design.services.erd.mapping import build_logical_model
 from app.implementation.agents import execute_openhands_task
+from app.implementation.agents.admission import integration_evidence_paths
 from app.implementation.agents.runtime import (
     OWNER_TURN_ITERATIONS,
     NoActionResponseGuard,
@@ -131,6 +132,40 @@ def test_feedback_regression_succeeds_when_http_scenarios_are_deferred(
 
     assert result["status"] == "SUCCEEDED"
     assert result["scenarioVerification"]["status"] == "NOT_CHECKED"
+
+
+def test_thin_integration_check_runs_backend_then_frontend(tmp_path: Path) -> None:
+    application = tmp_path / "application"
+    application.mkdir()
+    calls: list[str] = []
+
+    def passed_backend(*_args: object, **_kwargs: object):
+        calls.append("backend")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def passed_frontend(_sandbox: Path) -> dict[str, object]:
+        calls.append("frontend")
+        return {"command": ["npm", "run", "build"], "exitCode": 0}
+
+    with (
+        patch(
+            "app.implementation.agents.verification.build.subprocess.run",
+            side_effect=passed_backend,
+        ),
+        patch(
+            "app.implementation.agents.verification.build.verify_frontend_workspace",
+            side_effect=passed_frontend,
+        ),
+    ):
+        result = verify_agent_workspace(
+            tmp_path,
+            task_type="integration-implementation",
+        )
+
+    assert calls == ["backend", "frontend"]
+    assert result["exitCode"] == 0
+    assert result["backendVerification"]["exitCode"] == 0
+    assert result["frontendVerification"]["exitCode"] == 0
 
 
 def test_one_scenario_method_can_cover_multiple_use_cases(tmp_path: Path) -> None:
@@ -1084,41 +1119,63 @@ def test_explicit_unresolved_projection_is_admitted_before_openhands(
     assert result["candidateEvidence"] == {"changedFiles": []}
 
 
+@pytest.mark.parametrize(
+    ("task_type", "owner", "preflight_name"),
+    [
+        (
+            "backend-implementation",
+            "backend",
+            "app.implementation.agents.runtime.preflight_behavior_task",
+        ),
+        (
+            "integration-implementation",
+            "implementation",
+            "app.implementation.agents.runtime.preflight_semantic_integration",
+        ),
+    ],
+)
 def test_semantic_admission_is_rejected_before_openhands(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    task_type: str,
+    owner: str,
+    preflight_name: str,
 ) -> None:
     run, task_id, _source_path, _source = _write_minimal_agent_task(tmp_path)
     task_path = run / "reports/implementation-tasks/order.task.json"
     task = json.loads(task_path.read_text(encoding="utf-8"))
     task.update(
         {
-            "task_type": "backend-implementation",
-            "owner": "backend",
+            "task_type": task_type,
+            "owner": owner,
             "source_refs": ["use_case_spec:UC-12"],
         }
     )
     task_path.write_text(json.dumps(task), encoding="utf-8")
-    (run / task["context_file"]).write_text(
-        json.dumps({"behaviorCapsule": {"useCases": [{"use_case_id": "UC-12"}]}}),
-        encoding="utf-8",
+    (run / "reports/run-manifest.json").write_text(
+        json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
     )
+    context = {"behaviorCapsule": {"useCases": [{"use_case_id": "UC-12"}]}}
+    if task_type == "integration-implementation":
+        context["readSourcePaths"] = []
+    (run / task["context_file"]).write_text(json.dumps(context), encoding="utf-8")
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
 
     with (
         patch(
-            "app.implementation.agents.runtime.preflight_behavior_task",
+            preflight_name,
             return_value=UpstreamGap(
                 summary="A branch has no declared observable.",
                 source_ref="use_case_spec:UC-12",
             ),
         ),
         patch(
-            "app.implementation.agents.runtime.openhands_connection",
-            side_effect=AssertionError("semantic admission must run before OpenHands"),
-        ),
+            "app.implementation.agents.runtime.create_openhands_conversation"
+        ) as create_conversation,
     ):
         result = execute_openhands_task(run, task_id)
 
+    create_conversation.assert_not_called()
     assert result["status"] == "NEEDS_INPUT"
     assert result["upstreamGap"] == {
         "summary": "A branch has no declared observable.",
@@ -2092,7 +2149,6 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
     assert "investigation hints" not in bounded
     assert "open raw design inputs" not in bounded
 
-
 def test_typed_no_action_response_starts_bounded_recovery() -> None:
     from openhands.sdk.conversation.state import ConversationExecutionStatus
     from openhands.sdk.event import MessageEvent
@@ -2815,7 +2871,11 @@ class Order <<Entity>> { - id: UUID }
     manifest = json.loads((run / "reports/run-manifest.json").read_text(encoding="utf-8"))
     tasks = manifest["implementation_tasks"]
     task_types = {task["task_type"] for task in tasks}
-    assert task_types == {"backend-implementation", "frontend-implementation"}
+    assert task_types == {
+        "backend-implementation",
+        "frontend-implementation",
+        "integration-implementation",
+    }
     assert (
         run / "application/src/main/java/com/example/orders/persistence/entity/OrderEntity.java"
     ).is_file()
@@ -2832,7 +2892,10 @@ class Order <<Entity>> { - id: UUID }
 
     backends = [task for task in tasks if task["owner"] == "backend"]
     frontend = next(task for task in tasks if task["owner"] == "frontend")
-    assert len(tasks) == 3
+    integration = next(
+        task for task in tasks if task["task_type"] == "integration-implementation"
+    )
+    assert len(tasks) == 4
     assert len(backends) == 2
     assert not any(task["task_id"] == "implement-use-cases-stale-common" for task in tasks)
     assert all(
@@ -2847,6 +2910,138 @@ class Order <<Entity>> { - id: UUID }
         for use_case_id in task["use_case_ids"]
     } == {"UC1", "UC2"}
     assert frontend["depends_on"] == []
+    assert integration["owner"] == "implementation"
+    assert integration["depends_on"] == [
+        *(task["task_id"] for task in backends),
+        frontend["task_id"],
+    ]
+    assert next(
+        phase for phase in state["phases"] if phase["phaseId"] == "integration"
+    )["taskIds"] == [integration["task_id"]]
+    assert integration["required_output_paths"] == []
+    assert integration["allowed_write_roots"] == []
+    assert set(integration["allowed_write_paths"]) <= {
+        "application/frontend/src/api.ts",
+        "application/frontend/src/config.ts",
+    }
+    assert "application/src/main/resources/application.yml" not in integration[
+        "allowed_write_paths"
+    ]
+    assert all("/src/test/" not in path for path in integration["allowed_write_paths"])
+    assert not any(
+        path.startswith("application/frontend/src/generated")
+        for path in integration["allowed_write_paths"]
+    )
+    integration_context = json.loads(
+        (run / integration["context_file"]).read_text(encoding="utf-8")
+    )
+    assert integration_context["batchUseCaseIds"] == ["UC1", "UC2"]
+    assert integration_context["traceEvidence"]["ownerTaskIds"] == integration[
+        "depends_on"
+    ]
+    assert "ownerContextPaths" not in integration_context
+    assert "priorVerificationPaths" not in integration_context
+    assert not {task["context_file"] for task in [*backends, frontend]}.intersection(
+        integration_context["readSourcePaths"]
+    )
+    assert all(
+        set(task["required_output_paths"]) <= set(integration_context["readSourcePaths"])
+        for task in [*backends, frontend]
+    )
+    integration_prompt = (run / integration["prompt_file"]).read_text(
+        encoding="utf-8"
+    )
+    assert "one representative happy path" in integration_prompt
+    assert "Semantic integration admission has already accepted" in integration_prompt
+    assert "resolve only concrete connector mechanics" in integration_prompt
+    assert "defect in any read-only owner" in integration_prompt
+    assert "Requirements, Design, OpenAPI, generated clients" in integration_prompt
+    assert "application/deployment/runtime/compose.yaml" not in integration[
+        "allowed_write_paths"
+    ]
+    if (run / "application/deployment/runtime/compose.yaml").exists():
+        assert "application/deployment/runtime/compose.yaml" in integration_context[
+            "runtimeConfigPaths"
+        ]
+    if (run / "application/src/main/resources/application.yml").exists():
+        assert "application/src/main/resources/application.yml" in integration_context[
+            "readSourcePaths"
+        ]
+    integration_state = next(
+        task for task in state["tasks"] if task["task_id"] == integration["task_id"]
+    )
+    assert integration_state["promptSha256"] != integration["prompt_sha256"]
+    executions = run / "reports/agent-executions"
+    executions.mkdir(exist_ok=True)
+    for owner_task in [*backends, frontend]:
+        (executions / f"{owner_task['task_id']}.result.json").write_text(
+            json.dumps(
+                {
+                    "status": "SUCCEEDED",
+                    "promptSha256": owner_task["prompt_sha256"],
+                }
+            ),
+            encoding="utf-8",
+        )
+    new_component = run / "application/frontend/src/components/OrderResult.tsx"
+    new_component.parent.mkdir(parents=True, exist_ok=True)
+    new_component.write_text("export const OrderResult = () => null;", encoding="utf-8")
+    frontend_result_path = executions / f"{frontend['task_id']}.result.json"
+    frontend_result = json.loads(frontend_result_path.read_text(encoding="utf-8"))
+    frontend_result["changedFiles"] = [
+        "application/frontend/src/components/OrderResult.tsx",
+        "application/../outside.txt",
+        "application/frontend/src/generated/apis/OrdersApi.ts",
+    ]
+    frontend_result_path.write_text(json.dumps(frontend_result), encoding="utf-8")
+    evidence_paths = integration_evidence_paths(run, integration, integration_context)
+    assert "application/frontend/src/components/OrderResult.tsx" in evidence_paths
+    assert not {
+        "application/../outside.txt",
+        "application/frontend/src/generated/apis/OrdersApi.ts",
+    }.intersection(evidence_paths)
+    owners_completed = reconcile_workflow_state(run)
+    current_integration = next(
+        task
+        for task in owners_completed["tasks"]
+        if task["task_id"] == integration["task_id"]
+    )
+    (executions / f"{integration['task_id']}.result.json").write_text(
+        json.dumps(
+            {
+                "status": "SUCCEEDED",
+                "promptSha256": current_integration["promptSha256"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    workflow_state_path = run / "reports/workflow-state.json"
+    executed_state = json.loads(workflow_state_path.read_text(encoding="utf-8"))
+    next(
+        task
+        for task in executed_state["tasks"]
+        if task["task_id"] == integration["task_id"]
+    )["status"] = "SUCCEEDED"
+    workflow_state_path.write_text(json.dumps(executed_state), encoding="utf-8")
+    reused = reconcile_workflow_state(run)
+    assert next(
+        task
+        for task in reused["tasks"]
+        if task["task_id"] == integration["task_id"]
+    )["status"] == "SUCCEEDED"
+    new_component.write_text(
+        "export const OrderResult = () => <div>updated</div>;", encoding="utf-8"
+    )
+    invalidated = reconcile_workflow_state(run)
+    assert next(
+        task
+        for task in invalidated["tasks"]
+        if task["task_id"] == integration["task_id"]
+    )["status"] == "PENDING"
+    new_component.unlink()
+    assert "application/frontend/src/components/OrderResult.tsx" in integration_evidence_paths(
+        run, integration, integration_context
+    )
     contexts = [
         json.loads((run / task["context_file"]).read_text(encoding="utf-8"))
         for task in backends

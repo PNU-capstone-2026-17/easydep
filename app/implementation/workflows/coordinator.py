@@ -16,6 +16,7 @@ from app.metrics import langsmith as langsmith_metrics
 from ..agents.runtime import (
     OwnerConversationIncomplete,
     _persist_admission_gap,
+    effective_task_prompt_sha256,
     execute_openhands_task,
     execution_attempt,
     preflight_behavior_task,
@@ -61,8 +62,7 @@ PHASES = (
         },
     ),
     ("frontend", ("backend",), {"frontend-implementation"}),
-    # Integration is an EasyDep verifier phase. It deliberately owns no LLM task.
-    ("integration", ("frontend",), set()),
+    ("integration", ("frontend",), {"integration-implementation"}),
 )
 
 PHASE_LABELS = {
@@ -160,9 +160,14 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
     }
     repaired_tasks = repair_task_ids(run_root)
     tasks: list[dict[str, object]] = []
-    for task in manifest.get("implementation_tasks", []):
+    manifest_tasks = [
+        task
+        for task in manifest.get("implementation_tasks", [])
+        if isinstance(task, dict)
+    ]
+    for task in manifest_tasks:
         task_id = str(task["task_id"])
-        prompt_sha = str(task.get("prompt_sha256", ""))
+        prompt_sha = effective_task_prompt_sha256(task, manifest_tasks, run_root)
         phase = phase_for_task(str(task.get("task_type", "control")))
         old = previous_tasks.get(task_id, {})
         result_path = run_root / "reports" / "agent-executions" / f"{task_id}.result.json"
@@ -201,7 +206,13 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             # implementation when the current behavior contract now has a gap.
             status = "NEEDS_INPUT"
         elif (
-            old.get("status") == "SUCCEEDED" and complete_outputs and not repair_replay_required
+            old.get("status") == "SUCCEEDED"
+            and complete_outputs
+            and not repair_replay_required
+            and (
+                task.get("task_type") != "integration-implementation"
+                or result.get("promptSha256") == prompt_sha
+            )
         ) or (result_matches and not old):
             status = "SUCCEEDED"
         elif (
@@ -564,7 +575,19 @@ def _finalize_workflow(
         _record_workflow_failure(run_root, state, error)
         raise
 
-    if not str(getattr(spec, "repair_task_type", "")).startswith("testing-"):
+    integration_owner = next(
+        (
+            task
+            for task in state.get("tasks", [])
+            if isinstance(task, dict)
+            and task.get("taskType") == "integration-implementation"
+            and task.get("status") == "SUCCEEDED"
+        ),
+        None,
+    )
+    if integration_owner is not None:
+        state["backendRegression"] = str(integration_owner.get("resultFile") or "")
+    elif not str(getattr(spec, "repair_task_type", "")).startswith("testing-"):
         feedback_revision = spec.job_type == "FEEDBACK_REVISION"
         regression_report = (
             "feedback-regression.json"

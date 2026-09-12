@@ -115,10 +115,11 @@ class UpstreamGapTool(ToolDefinition[UpstreamGapAction, UpstreamGapObservation])
         return [
             cls(
                 description=(
-                    "Stop this preflighted task only when reading generated source reveals a "
-                    "concrete contradiction with the frozen capsule that makes the behavior impossible "
-                    "without an upstream change. Do not use this for ordinary wiring or "
-                    "framework choices, and do not keep searching without a concrete blocker. "
+                    "Stop this preflighted task when admitted evidence either concretely "
+                    "contradicts the frozen contract or omits or ambiguously defines required "
+                    "upstream product or runtime meaning, so implementation or validation would "
+                    "require guessing. Do not use this for ordinary wiring or framework choices, "
+                    "and do not keep searching without a concrete blocker. "
                     "Give a concise summary and exactly one "
                     "source_ref from this exact allowlist:\n"
                     f"{allowed_refs}"

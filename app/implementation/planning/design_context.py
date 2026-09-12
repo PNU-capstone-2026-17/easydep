@@ -1418,6 +1418,208 @@ Complete the React application using the exact generated-client calls already wi
     return [task]
 
 
+def generate_vertical_integration_task(
+    spec: JobSpec,
+    run_root: Path,
+    prior_tasks: list[dict[str, object]],
+) -> TaskSpec:
+    """Plan one bounded Implementation pass across the completed owner slices."""
+
+    backend_tasks = [
+        task
+        for task in prior_tasks
+        if task.get("task_type") in {"backend-implementation", "backend-operation"}
+    ]
+    frontend_tasks = [
+        task for task in prior_tasks if task.get("task_type") == "frontend-implementation"
+    ]
+    if not backend_tasks or len(frontend_tasks) != 1:
+        raise ValueError("Vertical integration requires backend tasks and one frontend task")
+
+    def task_use_cases(task: dict[str, object]) -> list[str]:
+        values = task.get("use_case_ids", task.get("useCaseIds", []))
+        return [str(value) for value in values if str(value)] if isinstance(values, list) else []
+
+    frontend_task = frontend_tasks[0]
+    owner_tasks = [*backend_tasks, frontend_task]
+    owner_context_paths = [str(task["context_file"]) for task in owner_tasks]
+    owner_contexts = [_read_json(run_root / path) for path in owner_context_paths]
+    batch_use_cases = sorted(
+        {
+            use_case_id
+            for task in backend_tasks
+            for use_case_id in task_use_cases(task)
+        },
+        key=_use_case_sort_key,
+    )
+    source_refs = sorted(
+        {
+            str(value)
+            for task in owner_tasks
+            for value in task.get("source_refs", [])
+            if isinstance(value, str) and value
+        }
+    )
+    dependencies = [
+        str(task["task_id"]) for task in owner_tasks if task.get("task_id")
+    ]
+    writable_config_candidates = [
+        "application/frontend/src/api.ts",
+        "application/frontend/src/config.ts",
+    ]
+    runtime_evidence_candidates = [
+        "application/src/main/resources/application.yml",
+        "application/frontend/.env.example",
+        "application/deployment/runtime/compose.yaml",
+        "application/deployment/runtime/.env.example",
+        "application/deployment/tofu/cloud-init.yaml.tftpl",
+    ]
+    writable_config = [
+        path for path in writable_config_candidates if (run_root / path).is_file()
+    ]
+    runtime_evidence = [
+        path for path in runtime_evidence_candidates if (run_root / path).is_file()
+    ]
+    immutable = sorted(
+        {
+            str(path)
+            for task in owner_tasks
+            for path in task.get("immutable_paths", [])
+            if isinstance(path, str)
+        }
+        | {"application/frontend/src/generated"}
+    )
+    writable = _without_immutable_paths(writable_config, immutable)
+    frontend_context = owner_contexts[-1]
+    frontend_contract_paths = [
+        str(frontend_context[key])
+        for key in ("clientIndexPath", "callSkeletonPath")
+        if isinstance(frontend_context.get(key), str)
+    ]
+    operation_context_paths = [
+        str(path)
+        for path in frontend_context.get("operationContextPaths", [])
+        if isinstance(path, str)
+    ]
+    generated_method_paths: list[str] = []
+    for operation_context_path in operation_context_paths:
+        operation_context = _read_json(run_root / operation_context_path)
+        generated_client = operation_context.get("generatedClient")
+        generated_method_path = (
+            generated_client.get("generatedMethodPath")
+            if isinstance(generated_client, dict)
+            else None
+        )
+        if isinstance(generated_method_path, str):
+            generated_method_paths.append(generated_method_path)
+    owner_outputs = {
+        str(path)
+        for task in owner_tasks
+        for path in task.get("required_output_paths", [])
+        if isinstance(path, str)
+    }
+    read_paths = sorted(
+        {
+            *frontend_contract_paths,
+            *operation_context_paths,
+            *generated_method_paths,
+            *owner_outputs,
+            *runtime_evidence,
+            *writable_config,
+        }
+    )
+    task_id = "implement-vertical-integration"
+    context = {
+        "schemaVersion": "vertical-integration-context/v1alpha1",
+        "taskId": task_id,
+        "taskType": "integration-implementation",
+        "owner": "implementation",
+        "dependsOn": dependencies,
+        "batchUseCaseIds": batch_use_cases,
+        "traceEvidence": {
+            "sourceRefs": source_refs,
+            "ownerTaskIds": dependencies,
+        },
+        "runtimeConfigPaths": sorted({*runtime_evidence, *writable_config}),
+        "readSourcePaths": read_paths,
+    }
+    deployment_context = next(
+        (
+            owner_context["deployment"]
+            for owner_context in reversed(owner_contexts)
+            if isinstance(owner_context.get("deployment"), dict)
+        ),
+        None,
+    )
+    if isinstance(deployment_context, dict):
+        context["deployment"] = deployment_context
+    output = run_root / "reports" / "implementation-tasks"
+    context_path = output / f"{task_id}.context.json"
+    context_path.write_text(
+        json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    prompt = f"""# Thin vertical integration: {spec.name}
+
+Semantic integration admission has already accepted the complete evidence boundary in
+`{_relative(run_root, context_path)}`. Review and, only when needed, minimally repair connector
+mechanics for one representative happy path after the backend and frontend owners have succeeded.
+
+- Trace one call through the existing frontend `apiCalls` binding, immutable generated API client,
+  HTTP endpoint, backend response, and rendered UI success state. Do not reopen or invent admitted
+  product and runtime meaning; resolve only concrete connector mechanics in the listed write scope.
+- Treat prior owner verification results as accepted evidence. Feature services, entities, and UI
+  bodies are read-only here. If the trace finds a defect in any read-only owner, generated-client,
+  or deployment file, call `report_upstream_gap` with one supplied source reference so the workflow
+  stops with `NEEDS_INPUT` for review or replanning. This is not a repository review.
+- Keep Requirements, Design, OpenAPI, generated clients, public BCE/API declarations, and database
+  schema unchanged. Edit only the listed durable API/runtime configuration connectors, and make the
+  smallest coherent change. Deployment output such as compose, cloud-init, and tofu is read-only.
+- Run the supplied integration check once after an edit, or immediately when no edit is needed. It
+  runs the backend test suite and frontend production build; call finish when it passes.
+"""
+    prompt_path = output / f"{task_id}.prompt.md"
+    prompt_path.write_text(prompt, encoding="utf-8")
+    source_artifacts = {
+        str(name): str(path)
+        for task in owner_tasks
+        for name, path in (
+            task.get("source_artifacts", {}).items()
+            if isinstance(task.get("source_artifacts"), dict)
+            else []
+        )
+    }
+    task = TaskSpec(
+        task_id=task_id,
+        control=f"{spec.name} thin vertical integration",
+        prompt_file=_relative(run_root, prompt_path),
+        context_file=_relative(run_root, context_path),
+        allowed_write_paths=writable,
+        required_output_paths=[],
+        immutable_paths=immutable,
+        source_artifacts=source_artifacts,
+        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        llm=llm_config(spec),
+        owner="implementation",
+        task_type="integration-implementation",
+        depends_on=dependencies,
+        requirement_ids=sorted(
+            {
+                str(value)
+                for task in backend_tasks
+                for value in task.get("requirement_ids", [])
+                if isinstance(value, str)
+            }
+        ),
+        use_case_ids=batch_use_cases,
+        source_refs=source_refs,
+        allowed_write_roots=[],
+    )
+    (output / f"{task_id}.task.json").write_text(
+        json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return task
+
+
 def render_source_contracts(run_root: Path, paths: list[Path]) -> str:
     sections: list[str] = []
     for path in paths:

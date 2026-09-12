@@ -32,6 +32,7 @@ from ..planning.design_context import (
     TaskSpec,
     generate_backend_owner_tasks,
     generate_frontend_tasks,
+    generate_vertical_integration_task,
     llm_config,
 )
 from ..planning.method_projection import project_method_calls
@@ -1173,7 +1174,7 @@ def plan_backend_owner_task(spec: JobSpec, run_root: Path) -> None:
 
 
 def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> None:
-    """Add the design-driven React implementation task to the run manifest."""
+    """Add the frontend owner and its bounded final integration pass."""
     run_root = run_root.resolve()
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -1185,10 +1186,16 @@ def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> None:
     ]
     if not backend_tasks:
         raise ValueError("Frontend planning requires a persisted backend task plan.")
+    frontend_tasks = generate_frontend_tasks(spec, run_root)
+    integration_task = generate_vertical_integration_task(
+        spec,
+        run_root,
+        [*backend_tasks, *(task.to_dict() for task in frontend_tasks)],
+    )
     _merge_implementation_tasks(
         run_root,
-        generate_frontend_tasks(spec, run_root),
-        replace_types={"frontend-implementation"},
+        [*frontend_tasks, integration_task],
+        replace_types={"frontend-implementation", "integration-implementation"},
     )
 
 

@@ -18,6 +18,7 @@ from .upstream_gap_tool import UpstreamGap, UpstreamGapOption
 
 ADMISSION_CHECKPOINT_SCHEMA = "implementation-admission/v1alpha1"
 ADMISSION_VALIDATOR_VERSION = "behavior-admission/v3"
+INTEGRATION_ADMISSION_VALIDATOR_VERSION = "integration-admission/v1"
 
 
 class AdmissionOption(BaseModel):
@@ -117,6 +118,29 @@ The source reference identifies the first contract that must change:
 For IMPLEMENT, source_ref must be empty.
 """
 
+_INTEGRATION_SYSTEM_PROMPT = """You are the semantic preflight for one bounded integration implementation task.
+The supplied evidence boundary is complete. Trace required runtime meanings to backend
+preconditions across that evidence. Choose NEEDS_INPUT when evidence contradicts the frozen
+contract or omits or ambiguously defines required upstream product or runtime meaning, so
+implementation or validation would require guessing. Never assume unseen configuration,
+framework defaults, or naming conventions. Choose IMPLEMENT only when the path is semantically
+coherent and any remaining work is connector mechanics. Before IMPLEMENT, for each backend
+precondition on the representative traced path whose operand comes from runtime context or
+configuration, identify an explicit compatible supplier in the supplied evidence: either an
+effective compatible value/default or a runtime/deployment binding that supplies or forwards it.
+Merely declaring a configurable property is insufficient when its effective value is absent or
+incompatible and the supplied deployment neither supplies nor exposes a compatible value. If no
+compatible supplier exists and satisfying the precondition would require guessing or an upstream
+change, choose NEEDS_INPUT. A build or test pass is not semantic evidence. Return only the
+requested structured decision. For NEEDS_INPUT, give one concise root gap using exactly one
+allowed source reference and return an empty options list; downstream RTM authority is not part of
+this evidence. For IMPLEMENT, source_ref must be empty.
+The source_ref is an RTM routing key, not the path where evidence was observed. Copy exactly one
+complete string verbatim from payload.sourceRefs; never return an evidenceFiles[].path. For a
+runtime or deployment mapping ambiguity or contradiction, prefer an available workload:* source
+reference.
+"""
+
 
 def _semantic_source_refs(source_refs: list[str]) -> list[str]:
     """Prefer a use-case specification when both forms identify the same case."""
@@ -145,10 +169,11 @@ def _sha256_json(value: object) -> str:
 
 
 def _admission_input_sha256(
-    context: dict[str, object],
-    source_refs: list[str],
+    payload: dict[str, object],
     *,
     task_id: str,
+    system_prompt: str,
+    validator_version: str,
 ) -> str:
     """Fingerprint exactly the values that can change the admission decision."""
 
@@ -156,10 +181,9 @@ def _admission_input_sha256(
         {
             "taskId": task_id,
             "admissionModel": build_admission_llm_connection().model,
-            "admissionPrompt": _SYSTEM_PROMPT,
-            "validatorSchemaVersion": ADMISSION_VALIDATOR_VERSION,
-            "behaviorCapsule": context.get("behaviorCapsule"),
-            "sourceRefs": _semantic_source_refs(source_refs),
+            "admissionPrompt": system_prompt,
+            "validatorSchemaVersion": validator_version,
+            "payload": payload,
         }
     )
 
@@ -230,23 +254,28 @@ def _clear_stale_need_input(run_root: Path, task_id: str) -> None:
         path.unlink()
 
 
-def preflight_semantic_behavior(
+def _preflight_admission(
     run_root: Path,
     task: dict[str, object],
-    context: dict[str, object],
     source_refs: list[str],
+    *,
+    payload: dict[str, object],
+    system_prompt: str,
+    validator_version: str,
+    admission_call: Callable[[], UpstreamGap | None],
 ) -> UpstreamGap | None:
-    """Return a cached or new semantic gap before starting OpenHands."""
+    """Reuse the existing checkpoint contract for one exact admission input."""
 
-    if not any(ref.startswith("use_case_spec:") for ref in source_refs):
-        return None
     task_id = str(task.get("task_id") or "")
     if not task_id:
         return None
     execution_dir = run_root / "reports" / "agent-executions"
     target = execution_dir / f"{task_id}.admission.json"
     input_sha256 = _admission_input_sha256(
-        context, source_refs, task_id=task_id
+        payload,
+        task_id=task_id,
+        system_prompt=system_prompt,
+        validator_version=validator_version,
     )
     try:
         checkpoint = json.loads(target.read_text(encoding="utf-8"))
@@ -262,7 +291,7 @@ def preflight_semantic_behavior(
         if reused:
             return gap
 
-    gap = admit_behavior_capsule(context, source_refs)
+    gap = admission_call()
     _clear_stale_need_input(run_root, task_id)
     execution_dir.mkdir(parents=True, exist_ok=True)
     checkpoint = {
@@ -280,23 +309,19 @@ def preflight_semantic_behavior(
     return gap
 
 
-def admit_behavior_capsule(
-    context: dict[str, object],
+def _admit_payload(
+    payload: dict[str, object],
     source_refs: list[str],
     *,
+    system_prompt: str,
+    operation: str,
     proposal_call: Callable[..., dict[str, Any]] = parse_structured,
 ) -> UpstreamGap | None:
-    """Admit a behavior capsule or return its single bounded upstream gap."""
-
     semantic_source_refs = _semantic_source_refs(source_refs)
     connection = build_admission_llm_connection()
-    payload = {
-        "behaviorCapsule": context.get("behaviorCapsule"),
-        "sourceRefs": semantic_source_refs,
-    }
     parsed = proposal_call(
         [
-            {"role": "system", "content": _SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {
                 "role": "user",
                 "content": json.dumps(payload, ensure_ascii=False, sort_keys=True),
@@ -305,7 +330,7 @@ def admit_behavior_capsule(
         BehaviorAdmission,
         reasoning_effort="low",
         max_completion_tokens=2048,
-        operation="implementation-admission",
+        operation=operation,
         connection=connection,
     )
     admission = BehaviorAdmission.model_validate(parsed)
@@ -315,7 +340,10 @@ def admit_behavior_capsule(
         return None
 
     if admission.source_ref not in semantic_source_refs:
-        raise ValueError("NEEDS_INPUT source_ref must match exactly one allowed source reference")
+        raise ValueError(
+            "NEEDS_INPUT source_ref must match exactly one allowed source reference: "
+            f"received {admission.source_ref!r}; allowed {semantic_source_refs!r}"
+        )
     summary = shorten(admission.summary.strip(), width=500, placeholder="…")
     if not summary:
         raise ValueError("NEEDS_INPUT summary must not be blank")
@@ -334,4 +362,168 @@ def admit_behavior_capsule(
         summary=summary,
         source_ref=admission.source_ref,
         options=tuple(options),
+    )
+
+
+def admit_behavior_capsule(
+    context: dict[str, object],
+    source_refs: list[str],
+    *,
+    proposal_call: Callable[..., dict[str, Any]] = parse_structured,
+) -> UpstreamGap | None:
+    """Admit a behavior capsule or return its single bounded upstream gap."""
+
+    payload = {
+        "behaviorCapsule": context.get("behaviorCapsule"),
+        "sourceRefs": _semantic_source_refs(source_refs),
+    }
+    return _admit_payload(
+        payload,
+        source_refs,
+        system_prompt=_SYSTEM_PROMPT,
+        operation="implementation-admission",
+        proposal_call=proposal_call,
+    )
+
+
+def preflight_semantic_behavior(
+    run_root: Path,
+    task: dict[str, object],
+    context: dict[str, object],
+    source_refs: list[str],
+) -> UpstreamGap | None:
+    """Return a cached or new behavior gap before starting OpenHands."""
+
+    if not any(ref.startswith("use_case_spec:") for ref in source_refs):
+        return None
+    payload = {
+        "behaviorCapsule": context.get("behaviorCapsule"),
+        "sourceRefs": _semantic_source_refs(source_refs),
+    }
+    return _preflight_admission(
+        run_root,
+        task,
+        source_refs,
+        payload=payload,
+        system_prompt=_SYSTEM_PROMPT,
+        validator_version=ADMISSION_VALIDATOR_VERSION,
+        admission_call=lambda: admit_behavior_capsule(context, source_refs),
+    )
+
+
+def integration_evidence_paths(
+    run_root: Path,
+    task: dict[str, object],
+    context: dict[str, object],
+) -> list[str]:
+    """Return the safe evidence boundary, including not-yet-created planned files."""
+
+    raw_paths = context.get("readSourcePaths")
+    if not isinstance(raw_paths, list):
+        raise TypeError("Integration admission requires readSourcePaths")
+    root = run_root.resolve()
+    evidence_paths: set[str] = set()
+    for value in raw_paths:
+        if not isinstance(value, str) or not value:
+            raise ValueError("Integration admission paths must be non-empty strings")
+        relative = Path(value.replace("\\", "/"))
+        target = (root / relative).resolve()
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or not target.is_relative_to(root)
+        ):
+            raise ValueError(f"Unsafe integration evidence path: {value}")
+        evidence_paths.add(target.relative_to(root).as_posix())
+
+    execution_dir = (root / "reports" / "agent-executions").resolve()
+    application_root = (root / "application").resolve()
+    for task_id in task.get("depends_on", []):
+        result_path = (execution_dir / f"{task_id}.result.json").resolve()
+        if not result_path.is_relative_to(execution_dir) or not result_path.is_file():
+            continue
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        for value in result.get("changedFiles", []):
+            if not isinstance(value, str):
+                continue
+            relative = Path(value.replace("\\", "/"))
+            target = (root / relative).resolve()
+            if (
+                relative.is_absolute()
+                or ".." in relative.parts
+                or not relative.parts
+                or relative.parts[0] != "application"
+                or "generated" in relative.parts
+                or not target.is_relative_to(application_root)
+            ):
+                continue
+            evidence_paths.add(target.relative_to(root).as_posix())
+
+    return sorted(evidence_paths)
+
+
+def _integration_admission_payload(
+    run_root: Path,
+    task: dict[str, object],
+    context: dict[str, object],
+    source_refs: list[str],
+) -> dict[str, object]:
+    """Read every file in the admitted evidence boundary for the live decision."""
+
+    root = run_root.resolve()
+    paths = integration_evidence_paths(run_root, task, context)
+    for path in paths:
+        if not (root / path).is_file():
+            raise ValueError(f"Missing integration admission evidence: {path}")
+    return {
+        "traceEvidence": context.get("traceEvidence"),
+        "deployment": context.get("deployment"),
+        "evidenceFiles": [
+            {
+                "path": path,
+                "content": (root / path).read_bytes().decode("utf-8"),
+            }
+            for path in paths
+        ],
+        "sourceRefs": _semantic_source_refs(source_refs),
+    }
+
+
+def admit_integration_evidence(
+    payload: dict[str, object],
+    source_refs: list[str],
+    *,
+    proposal_call: Callable[..., dict[str, Any]] = parse_structured,
+) -> UpstreamGap | None:
+    """Admit the complete vertical-integration evidence boundary."""
+
+    gap = _admit_payload(
+        payload,
+        source_refs,
+        system_prompt=_INTEGRATION_SYSTEM_PROMPT,
+        operation="implementation-integration-admission",
+        proposal_call=proposal_call,
+    )
+    if gap is None:
+        return None
+    return UpstreamGap(summary=gap.summary, source_ref=gap.source_ref)
+
+
+def preflight_semantic_integration(
+    run_root: Path,
+    task: dict[str, object],
+    context: dict[str, object],
+    source_refs: list[str],
+) -> UpstreamGap | None:
+    """Return a cached or new integration gap before starting OpenHands."""
+
+    payload = _integration_admission_payload(run_root, task, context, source_refs)
+    return _preflight_admission(
+        run_root,
+        task,
+        source_refs,
+        payload=payload,
+        system_prompt=_INTEGRATION_SYSTEM_PROMPT,
+        validator_version=INTEGRATION_ADMISSION_VALIDATOR_VERSION,
+        admission_call=lambda: admit_integration_evidence(payload, source_refs),
     )

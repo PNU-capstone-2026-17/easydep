@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import hashlib
 import json
 import os
 import re
@@ -26,7 +27,11 @@ from ..runtime.linux_runner_transport import (
     OWNER_TERMINAL_SHELL_ENV,
 )
 from ..workflows.repair import active_repair_for_task
-from .admission import preflight_semantic_behavior
+from .admission import (
+    integration_evidence_paths,
+    preflight_semantic_behavior,
+    preflight_semantic_integration,
+)
 from .canary import (
     TRANSIENT_CANARY_FAILURES,
     classify_canary_exception,
@@ -87,7 +92,78 @@ MAX_AGENT_TURN_ITERATIONS = 32
 # build-and-repair pass without inheriting OpenHands' 500 iteration default.  A
 # retry resumes the same persisted conversation.
 OWNER_TURN_ITERATIONS = 96
-OWNER_TASK_TYPES = frozenset({"backend-implementation", "frontend-implementation"})
+OWNER_TASK_TYPES = frozenset(
+    {"backend-implementation", "frontend-implementation", "integration-implementation"}
+)
+
+
+def effective_task_prompt_sha256(
+    task: dict[str, object],
+    tasks: list[dict[str, object]],
+    run_root: Path | None = None,
+) -> str:
+    """Bind the integration checkpoint to the admitted owner executions."""
+
+    base = str(task.get("prompt_sha256", ""))
+    if task.get("task_type") != "integration-implementation":
+        return base
+    by_id = {str(item.get("task_id")): item for item in tasks}
+    dependencies = [
+        {
+            "taskId": str(task_id),
+            "promptSha256": str(by_id.get(str(task_id), {}).get("prompt_sha256", "")),
+            "resultSha256": (
+                hashlib.sha256(result_path.read_bytes()).hexdigest()
+                if run_root is not None
+                and (
+                    result_path := run_root
+                    / "reports"
+                    / "agent-executions"
+                    / f"{task_id}.result.json"
+                ).is_file()
+                else None
+            ),
+        }
+        for task_id in task.get("depends_on", [])
+    ]
+    evidence_sha256 = None
+    if run_root is not None:
+        context = json.loads(
+            (run_root / str(task["context_file"])).read_text(encoding="utf-8")
+        )
+        evidence_identity = []
+        for path in integration_evidence_paths(run_root, task, context):
+            source = run_root / path
+            evidence_identity.append(
+                {
+                    "path": path,
+                    "contentSha256": (
+                        hashlib.sha256(source.read_bytes()).hexdigest()
+                        if source.is_file()
+                        else None
+                    ),
+                    "missing": not source.is_file(),
+                }
+            )
+        evidence_sha256 = hashlib.sha256(
+            json.dumps(
+                evidence_identity,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    identity = json.dumps(
+        {
+            "promptSha256": base,
+            "dependencies": dependencies,
+            "integrationEvidenceSha256": evidence_sha256,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
 # Operation-marker conversations use the same verified tool harness but do not
 # persist the old conversation. A retry starts a fresh, short conversation over
 # the preserved candidate source instead of nudging a read-only loop forever.
@@ -787,6 +863,21 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     """Run one OpenHands conversation and keep EasyDep at the safety boundary."""
 
     task = load_task(run_root, task_id)
+    if task.get("task_type") == "integration-implementation":
+        manifest = json.loads(
+            (run_root / "reports" / "run-manifest.json").read_text(encoding="utf-8")
+        )
+        manifest_tasks = [
+            item
+            for item in manifest.get("implementation_tasks", [])
+            if isinstance(item, dict)
+        ]
+        task = {
+            **task,
+            "prompt_sha256": effective_task_prompt_sha256(
+                task, manifest_tasks, run_root
+            ),
+        }
     task_type = str(task.get("task_type", ""))
     owner_task = _is_owner_task(task_type)
     harness_task = _is_harness_task(task_type)
@@ -809,7 +900,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         else "restricted"
     )
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
-    bounded_evidence = isinstance(context.get("behaviorCapsule"), dict)
+    bounded_evidence = task_type == "integration-implementation" or isinstance(
+        context.get("behaviorCapsule"), dict
+    )
     if owner_task and bounded_evidence:
         source_refs = [
             value
@@ -817,7 +910,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             if isinstance(value, str) and value
         ]
         admission_started = time.monotonic()
-        admission_gap = preflight_behavior_task(run_root, task, context, source_refs)
+        admission_gap = (
+            preflight_semantic_integration(run_root, task, context, source_refs)
+            if task_type == "integration-implementation"
+            else preflight_behavior_task(run_root, task, context, source_refs)
+        )
         if admission_gap is not None:
             return _persist_admission_gap(
                 run_root,
@@ -876,10 +973,15 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             editable_paths,
             verification_profile,
         )
+    evidence_paths = (
+        integration_evidence_paths(run_root, task, context)
+        if task_type == "integration-implementation"
+        else context.get("readSourcePaths", [])
+    )
     sandbox_root = sandbox.resolve()
     read_hints = [
         str((sandbox / value).resolve())
-        for value in context.get("readSourcePaths", [])
+        for value in evidence_paths
         if isinstance(value, str)
         and (sandbox / value).resolve().is_relative_to(sandbox_root)
         and (sandbox / value).exists()
@@ -891,7 +993,17 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     # scope.  Let it inspect that workspace like a normal coding agent: the RTM-
     # derived paths are starting hints, while existing source and wiring provide
     # implementation mechanics that cannot be usefully duplicated in the capsule.
-    readable_files = None
+    readable_files = (
+        sorted(
+            {
+                str((sandbox / str(task["context_file"])).resolve()),
+                *read_hints,
+                *writable_files,
+            }
+        )
+        if task_type == "integration-implementation"
+        else None
+    )
     owner_system_context = ""
     if harness_task:
         owner_system_context = _owner_workspace_guidance(
@@ -1081,11 +1193,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         if owner_task and _conversation_is_stuck(conversation):
             if no_action_guard is not None:
                 no_action_guard.reset()
-            if harness_task and has_successful_task_check(
-                sandbox,
-                task_type,
-                editable_paths,
-                verification_profile,
+            if (
+                harness_task
+                and has_successful_task_check(
+                    sandbox,
+                    task_type,
+                    editable_paths,
+                    verification_profile,
+                )
             ):
                 finish_recovery_used = True
                 conversation.send_message(OWNER_FINISH_RECOVERY_MESSAGE)
