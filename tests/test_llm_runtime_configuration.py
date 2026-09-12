@@ -173,6 +173,8 @@ def test_subprocess_restores_the_same_provider_endpoint_and_model(
     assert environment["BASE_URL"] == base_url
     assert environment["MODEL"] == model
     assert environment["API_KEY"] == expected_api_key
+    assert environment["LLM_TIMEOUT_SECONDS"] == "300.0"
+    assert environment["LLM_WALL_TIMEOUT_SECONDS"] == "330.0"
     assert environment["IMPLEMENTATION_OPENHANDS_REQUEST_ATTEMPTS"] == "3"
     assert environment["IMPLEMENTATION_OPENHANDS_RETRY_MIN_WAIT_SECONDS"] == "1"
     assert environment["IMPLEMENTATION_OPENHANDS_RETRY_MAX_WAIT_SECONDS"] == "8"

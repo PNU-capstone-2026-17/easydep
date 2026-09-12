@@ -110,6 +110,7 @@ _log = logging.getLogger(__name__)
 TERMINAL_JOB_STATUSES = {
     "COMPLETED",
     "FAILED",
+    "INTERRUPTED",
     "CANCELLED",
     "REJECTED",
     "NEEDS_INPUT",
@@ -358,12 +359,15 @@ class WorkspaceService:
                     "job": job,
                     "checkpoint_retryable": bool(job.get("checkpoint_retryable")),
                 }
+                command_status = (
+                    "INTERRUPTED" if job_status == "INTERRUPTED" else "FAILED"
+                )
                 result = result_with_contract(
-                    {**command, "status": "FAILED"}, result
+                    {**command, "status": command_status}, result
                 )
                 return repository.update_command(
                     command["command_id"],
-                    status="FAILED",
+                    status=command_status,
                     result=result,
                     error=str(job.get("error") or "Implementation needs checkpoint repair."),
                 )
@@ -3494,7 +3498,14 @@ class WorkspaceService:
             status = str(value or "").upper()
             if status in {"SUCCEEDED", "COMPLETED", "COMPLETE"}:
                 return "completed"
-            if status in {"FAILED", "TIMEOUT", "CANCELLED", "REJECTED", "NEEDS_REVIEW"}:
+            if status in {
+                "FAILED",
+                "INTERRUPTED",
+                "TIMEOUT",
+                "CANCELLED",
+                "REJECTED",
+                "NEEDS_REVIEW",
+            }:
                 return "failed"
             if status in {"RUNNING", "FINALIZING", "VERIFYING"}:
                 return "running"

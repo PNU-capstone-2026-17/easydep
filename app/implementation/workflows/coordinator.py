@@ -152,6 +152,11 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         ):
             status = "FAILED"
         elif (
+            result.get("status") == "INTERRUPTED"
+            and result.get("promptSha256", prompt_sha) == prompt_sha
+        ):
+            status = "INTERRUPTED"
+        elif (
             result.get("status") == "NEEDS_INPUT"
             and result.get("promptSha256", prompt_sha) == prompt_sha
         ):
@@ -177,7 +182,11 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
                 "resultFile": (
                     result_path.relative_to(run_root).as_posix() if result_path.is_file() else None
                 ),
-                "lastError": result.get("error") if result.get("status") == "FAILED" else None,
+                "lastError": (
+                    result.get("error")
+                    if result.get("status") in {"FAILED", "INTERRUPTED"}
+                    else None
+                ),
                 "upstreamGap": (
                     result.get("upstreamGap")
                     if result.get("status") == "NEEDS_INPUT"
@@ -199,7 +208,8 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         (
             phase["phaseId"]
             for phase in phases
-            if phase["status"] in {"PENDING", "RUNNING", "FAILED", "NEEDS_INPUT"}
+            if phase["status"]
+            in {"PENDING", "RUNNING", "INTERRUPTED", "FAILED", "NEEDS_INPUT"}
         ),
         next(
             (phase["phaseId"] for phase in phases if phase["status"] == "UNPLANNED"),
@@ -217,6 +227,8 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         if any(task["status"] == "NEEDS_INPUT" for task in pending)
         else "FAILED"
         if any(task["status"] == "FAILED" for task in pending)
+        else "INTERRUPTED"
+        if any(task["status"] == "INTERRUPTED" for task in pending)
         else ("READY" if pending else "READY_TO_FINALIZE")
     )
     state: dict[str, object] = {
@@ -251,6 +263,14 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             for task in pending
             if task["status"] == "NEEDS_INPUT"
         ]
+    elif state["status"] == "INTERRUPTED":
+        interrupted_task = next(
+            task for task in pending if task["status"] == "INTERRUPTED"
+        )
+        state["blockingReason"] = str(
+            interrupted_task.get("lastError")
+            or f"Implementation task interrupted: {interrupted_task['task_id']}"
+        )
     elif not state["nextRunnableTasks"] and pending:
         task_status = {str(task["task_id"]): str(task.get("status")) for task in tasks}
         state["status"] = "NEEDS_PLANNER"
@@ -568,7 +588,11 @@ def _execute_task_batch(
                     f"Task returned non-success status: {task['task_id']}"
                 )
         except Exception as error:
-            task["status"] = "FAILED"
+            task["status"] = (
+                "INTERRUPTED"
+                if isinstance(error, OwnerConversationIncomplete)
+                else "FAILED"
+            )
             task["lastError"] = str(error)
             failures.append((task, error))
             state["updatedAt"] = _now()
@@ -592,9 +616,17 @@ def _execute_task_batch(
 
     blocking_failures = failures
     if blocking_failures:
-        failed_task, _ = blocking_failures[0]
-        state["status"] = "FAILED"
-        state["blockingReason"] = f"Task failed: {failed_task['task_id']}"
+        failed_task, error = blocking_failures[0]
+        state["status"] = (
+            "INTERRUPTED"
+            if isinstance(error, OwnerConversationIncomplete)
+            else "FAILED"
+        )
+        state["blockingReason"] = (
+            f"Task interrupted: {failed_task['task_id']}"
+            if isinstance(error, OwnerConversationIncomplete)
+            else f"Task failed: {failed_task['task_id']}"
+        )
         state["updatedAt"] = _now()
         _write_json_atomic(state_path, state)
     return blocking_failures
@@ -1002,6 +1034,8 @@ def _phase_states(
             status = "NEEDS_INPUT"
         elif any(task["status"] == "FAILED" for task in phase_tasks):
             status = "FAILED"
+        elif any(task["status"] == "INTERRUPTED" for task in phase_tasks):
+            status = "INTERRUPTED"
         else:
             status = "PENDING"
         phases.append(

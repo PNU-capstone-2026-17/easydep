@@ -530,6 +530,7 @@ def test_reconcile_does_not_finish_testing_command_with_completed_repair_job(
     ("command_status", "job_status", "expected_status"),
     [
         ("FAILED", "FAILED", "FAILED"),
+        ("RUNNING", "INTERRUPTED", "INTERRUPTED"),
         ("INTERRUPTED", "NEEDS_PLANNER", "FAILED"),
         ("RUNNING", "NEEDS_INPUT", "AWAITING_INPUT"),
     ],
@@ -581,7 +582,7 @@ def test_reconcile_stopped_implementation_exposes_checkpoint_retry(
     assert reconciled is not None
     assert reconciled["status"] == expected_status
     assert reconciled["result"]["job_id"] == "job-1"
-    if expected_status == "FAILED":
+    if expected_status in {"FAILED", "INTERRUPTED"}:
         assert reconciled["result"]["checkpoint_retryable"] is True
     else:
         assert reconciled["result"]["kind"] == "question"
@@ -2775,6 +2776,7 @@ def test_implementation_progress_snapshot_shows_owner_repair_in_existing_phase()
     ("job_status", "expected_status", "expected_detail"),
     [
         ("FAILED", "failed", "npm ci timed out"),
+        ("INTERRUPTED", "failed", "npm ci timed out"),
         ("NEEDS_INPUT", "running", "Integration verification is in progress."),
         ("NEEDS_PLANNER", "failed", "npm ci timed out"),
     ],

@@ -162,6 +162,8 @@ def llm_subprocess_environment(config: Settings = settings) -> dict[str, str]:
         "API_KEY": connection.api_key,
         "BASE_URL": connection.base_url,
         "MODEL": connection.model,
+        "LLM_TIMEOUT_SECONDS": str(config.llm_timeout_seconds),
+        "LLM_WALL_TIMEOUT_SECONDS": str(config.llm_wall_timeout_seconds),
         "IMPLEMENTATION_OWNER_TOOL_MODE": config.implementation_owner_tool_mode,
         "IMPLEMENTATION_OPENHANDS_CANARY": str(
             config.implementation_openhands_canary

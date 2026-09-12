@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -341,10 +342,42 @@ def test_restricted_owner_uses_the_minimal_tools_and_custom_prompt(tmp_path: Pat
         prompt = conversation.state.events[0].system_prompt.text
         assert "a short path below `/work`" in prompt
         assert "PULL_REQUESTS" not in prompt
+        assert agent.llm.timeout == 300
         assert agent.llm.num_retries == 3
         assert agent.llm.retry_min_wait == 1
         assert agent.llm.retry_max_wait == 8
         assert agent.llm.retry_multiplier == 1.0
+    finally:
+        conversation.close()
+
+
+def test_openhands_completion_has_one_wall_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openhands.sdk import LLM
+
+    async def never_finishes(*_args, **_kwargs):
+        await asyncio.sleep(1)
+
+    monkeypatch.setattr(LLM, "acompletion", never_finishes)
+    monkeypatch.setattr(
+        "app.implementation.agents.runtime.settings.llm_wall_timeout_seconds",
+        0.01,
+    )
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        LlmConnection(
+            provider="openrouter",
+            api_key="validation-only-key",
+            base_url="https://example.invalid/v1",
+            model="openai/gpt-oss-20b",
+            litellm_provider="openrouter",
+        ),
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+    )
+    try:
+        with pytest.raises(TimeoutError, match="PROVIDER_TIMEOUT"):
+            asyncio.run(agent.llm.acompletion([]))
     finally:
         conversation.close()
 

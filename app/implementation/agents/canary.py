@@ -149,7 +149,7 @@ def _canary_attempt(
     llm_config: dict[str, object],
     reasoning_effort: str,
 ) -> dict[str, object]:
-    from .runtime import create_openhands_conversation
+    from .runtime import create_openhands_conversation, run_openhands_conversation
 
     recorder = CanaryRecorder()
     endpoint_retries = EndpointRetryRecorder()
@@ -171,7 +171,7 @@ def _canary_attempt(
         try:
             conversation.send_message(CANARY_USER_MESSAGE)
             try:
-                conversation.run()
+                run_openhands_conversation(conversation)
             except Exception as error:
                 try:
                     setattr(error, "endpoint_retry_snapshot", endpoint_retries.snapshot())

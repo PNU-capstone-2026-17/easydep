@@ -671,9 +671,9 @@ class ImplementationWorker:
     def retry_failed(self, job_id: str) -> dict[str, Any]:
         """저장된 checkpoint에서 실패했거나 감사에 멈춘 단계만 다시 시작한다."""
         record = self._read(job_id)
-        if record.get("status") not in {"FAILED", "NEEDS_PLANNER"}:
+        if record.get("status") not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER"}:
             raise InvalidJobState(
-                "Only a failed or audit-blocked implementation job can be retried: "
+                "Only a failed, interrupted, or audit-blocked implementation job can be retried: "
                 f"{record.get('status')}"
             )
         if not self._checkpoint_retryable(record):
@@ -806,7 +806,7 @@ class ImplementationWorker:
     @staticmethod
     def _checkpoint_retryable(record: dict[str, Any]) -> bool:
         """실행 checkpoint를 같은 Job에서 안전하게 재사용할 수 있는지 확인한다."""
-        if record.get("status") not in {"FAILED", "NEEDS_PLANNER"}:
+        if record.get("status") not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER"}:
             return False
         return ImplementationWorker._execution_checkpoint_exists(record)
 
@@ -913,7 +913,7 @@ class ImplementationWorker:
     def cancel(self, job_id: str) -> dict[str, Any]:
         """종료되지 않은 작업을 취소하고 실행 중인 하위 프로세스도 중지한다."""
         record = self._read(job_id)
-        if record["status"] in {"COMPLETED", "FAILED", "CANCELLED"}:
+        if record["status"] in {"COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"}:
             raise InvalidJobState(f"Job is already in a terminal state: {record['status']}")
         record["status"] = "CANCELLED"
         record["error"] = "Job execution was cancelled by user request."
@@ -1028,7 +1028,7 @@ class ImplementationWorker:
             record["status"] = "COMPLETED"
         elif status in {"READY", "READY_TO_FINALIZE"}:
             record["status"] = "QUEUED"
-        elif status in {"NEEDS_INPUT", "NEEDS_PLANNER", "FAILED"}:
+        elif status in {"NEEDS_INPUT", "NEEDS_PLANNER", "INTERRUPTED", "FAILED"}:
             record["status"] = status
             record["error"] = str(
                 workflow.get("blockingReason")

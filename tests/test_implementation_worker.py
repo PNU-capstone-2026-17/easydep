@@ -825,7 +825,9 @@ def test_live_generation_progress_is_exposed_without_host_path(tmp_path: Path) -
     assert "job_path" not in public
 
 
-@pytest.mark.parametrize("terminal_status", ["FAILED", "NEEDS_PLANNER"])
+@pytest.mark.parametrize(
+    "terminal_status", ["FAILED", "INTERRUPTED", "NEEDS_PLANNER"]
+)
 def test_stopped_job_retries_the_same_checkpoint(
     tmp_path: Path,
     terminal_status: str,

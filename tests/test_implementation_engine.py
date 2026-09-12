@@ -2783,9 +2783,9 @@ def test_owner_execution_boundary_preserves_checkpoint_without_source_repair(
         "nextRunnableTasks": [task["task_id"]],
     }
     paused_state = {
-        "status": "FAILED",
-        "tasks": [{**task, "status": "FAILED", "attempts": 1}],
-        "phases": [{"phaseId": "backend", "status": "FAILED"}],
+        "status": "INTERRUPTED",
+        "tasks": [{**task, "status": "INTERRUPTED", "attempts": 1}],
+        "phases": [{"phaseId": "backend", "status": "INTERRUPTED"}],
         "nextRunnableTasks": [task["task_id"]],
     }
     plan_calls = 0
@@ -2816,7 +2816,7 @@ def test_owner_execution_boundary_preserves_checkpoint_without_source_repair(
         executor=stop_at_execution_boundary,
     )
 
-    assert result["status"] == "FAILED"
+    assert result["status"] == "INTERRUPTED"
     assert "execution boundary" in result["blockingReason"]
     assert repair_calls == []
     assert not (run / "reports/repair-plan.json").exists()

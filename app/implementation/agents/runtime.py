@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import ast
 import json
 import os
@@ -111,6 +112,16 @@ _SANDBOX_TOOLS_REGISTRATION_LOCK = threading.Lock()
 
 class OwnerConversationIncomplete(WorkspaceVerificationError):
     """An owner stopped at an SDK execution boundary, not a source-code gate."""
+
+
+def run_openhands_conversation(conversation: object) -> None:
+    """Use the cancellable SDK loop while retaining older test/SDK compatibility."""
+
+    async_run = getattr(conversation, "arun", None)
+    if callable(async_run):
+        asyncio.run(async_run())
+        return
+    conversation.run()  # type: ignore[attr-defined]
 
 
 def _is_owner_task(task_type: str) -> bool:
@@ -844,7 +855,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             prompt=prompt,
         ):
             conversation.send_message(OWNER_CONTINUATION_MESSAGE)
-        conversation.run()
+        run_openhands_conversation(conversation)
         upstream_gap = reported_upstream_gap(agent)
         if upstream_gap is not None:
             candidate_changes = _candidate_application_changes(sandbox, run_root)
@@ -884,7 +895,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             if no_action_guard is not None:
                 no_action_guard.reset()
             conversation.send_message(OWNER_STUCK_RECOVERY_MESSAGE)
-            conversation.run()
+            run_openhands_conversation(conversation)
         if (
             harness_task
             and _conversation_needs_finish_recovery(conversation)
@@ -901,7 +912,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             if no_action_guard is not None:
                 no_action_guard.reset()
             conversation.send_message(OWNER_FINISH_RECOVERY_MESSAGE)
-            conversation.run()
+            run_openhands_conversation(conversation)
         if _conversation_terminal_failure(conversation):
             raise OwnerConversationIncomplete(
                 {
@@ -1014,12 +1025,20 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             and provider_failure_reason in TRANSIENT_CANARY_FAILURES
         ):
             deterministic_termination = provider_failure_reason
+        interrupted = owner_task and (
+            isinstance(error, OwnerConversationIncomplete)
+            or (
+                not isinstance(error, WorkspaceVerificationError)
+                and deterministic_termination
+                in {*TRANSIENT_CANARY_FAILURES, "ENDPOINT_DEGRADED"}
+            )
+        )
         failure = {
             "taskId": task_id,
             "taskType": task_type,
             "owner": str(task.get("owner") or ""),
             "promptSha256": task.get("prompt_sha256"),
-            "status": "FAILED",
+            "status": "INTERRUPTED" if interrupted else "FAILED",
             "effectiveModel": connection.litellm_model(),
             "errorType": error.__class__.__name__,
             "error": str(error),
@@ -1074,6 +1093,17 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         failure["conversationStats"] = _conversation_stats_snapshot(conversation)
         write_execution_result(execution_dir, task_id, attempt, failure)
         shutil.copyfile(journal.path, execution_dir / f"{task_id}.events.jsonl")
+        if interrupted and not isinstance(error, OwnerConversationIncomplete):
+            raise OwnerConversationIncomplete(
+                {
+                    "command": ["openhands", "conversation"],
+                    "exitCode": 1,
+                    "stdout": "",
+                    "stderr": str(error),
+                    "testResults": "",
+                    "terminationReason": deterministic_termination,
+                }
+            ) from error
         raise
     conversation.close()
     changed = candidate_changes
@@ -1376,6 +1406,30 @@ def create_openhands_conversation(
     class ProviderToolValidationLLM(LLM):
         """Route narrow provider 400s into the matching safe SDK recovery."""
 
+        async def acompletion(self, *args, **kwargs):
+            try:
+                return await asyncio.wait_for(
+                    super().acompletion(*args, **kwargs),
+                    timeout=float(settings.llm_wall_timeout_seconds),
+                )
+            except TimeoutError as error:
+                raise TimeoutError(
+                    "PROVIDER_TIMEOUT: OpenHands LLM completion exceeded the "
+                    f"{settings.llm_wall_timeout_seconds:g}s wall timeout"
+                ) from error
+
+        async def aresponses(self, *args, **kwargs):
+            try:
+                return await asyncio.wait_for(
+                    super().aresponses(*args, **kwargs),
+                    timeout=float(settings.llm_wall_timeout_seconds),
+                )
+            except TimeoutError as error:
+                raise TimeoutError(
+                    "PROVIDER_TIMEOUT: OpenHands LLM response exceeded the "
+                    f"{settings.llm_wall_timeout_seconds:g}s wall timeout"
+                ) from error
+
         def _transport_call(self, **kwargs):
             try:
                 return super()._transport_call(**kwargs)
@@ -1676,6 +1730,7 @@ def create_openhands_conversation(
         "max_output_tokens": profile.completion_limit(
             requested_max_output
         ),
+        "timeout": max(1, int(settings.llm_timeout_seconds)),
         "num_retries": settings.implementation_openhands_request_attempts,
         "retry_min_wait": settings.implementation_openhands_retry_min_wait_seconds,
         "retry_max_wait": settings.implementation_openhands_retry_max_wait_seconds,

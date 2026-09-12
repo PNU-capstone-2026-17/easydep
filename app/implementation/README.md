@@ -35,10 +35,11 @@ handoff다. 실제 container·Arazzo 검사는 Testing 단계가 담당하므로
 
 ## OpenHands 실행 경계
 
-구현 owner는 OpenHands의 표준 `file_editor`, `terminal`, `finish` 도구를 사용한다. 검색은 terminal의
-`rg`를 사용하며, owner 경로에는 `run_task_check` 같은 별도 검증 도구를 노출하지 않는다.
-OpenHands가 source 조사, 편집 순서, build와 test 명령을 선택하고, 대화 종료 뒤 EasyDep이 같은
-workspace를 독립적으로 다시 검증한 후 허용된 owner source만 정식 run에 승격한다.
+구현 owner의 기본 도구는 범위가 제한된 `file_editor`, `grep`, `run_task_check`, `finish`다.
+OpenHands는 task context에 명시된 파일만 읽고 owner source만 수정하며, 정해진 관련 테스트를
+`run_task_check`로 통과시켜야 한다. 대화 종료 뒤 EasyDep이 같은 workspace를 독립적으로 다시
+검증한 후 허용된 owner source만 정식 run에 승격한다. 표준 terminal은 통제된 비교 실행에서만
+명시적으로 선택한다.
 
 표준 terminal은 고정 Linux toolchain runner에서만 활성화한다. 컨테이너에는 다음 경계만 보인다.
 
@@ -59,8 +60,13 @@ job 상태·대화 checkpoint·설계 원본은 후보 밖의 root 전용 영역
 
 slice마다 안정적인 conversation ID와 persistence directory를 사용한다. 최초 task message는 한
 번만 보내며, 같은 prompt digest의 provider 오류나 iteration 중단은 마지막 OpenHands event에서
-그대로 재개한다. 새 검증 증거가 생겨 prompt digest가 바뀔 때만 짧은 repair message를 같은 대화에
-추가한다. 실제 실패 기준선에서 유효한 구현은 초기 약 28개 tool action에 만들어졌지만 플랫폼 탐색이
+그대로 재개한다. HTTP 제한과 별도로 streaming·내부 재시도 전체를 하나의 LLM turn 제한으로
+감싸므로 응답 조각만 계속 오는 경우에도 작업이 무기한 멈추지 않는다. 이 경우 source 결함으로
+분류하거나 자동 수리하지 않고 `INTERRUPTED`로 멈춘다. 사용자가 재개하면 같은 checkpoint에서
+이어간다. 설계 의미가 부족할 때만 `NEEDS_INPUT`, 실제 source·검증 결함일 때만 `FAILED`다.
+
+새 검증 증거가 생겨 prompt digest가 바뀔 때만 짧은 repair message를 같은 대화에 추가한다.
+실제 실패 기준선에서 유효한 구현은 초기 약 28개 tool action에 만들어졌지만 플랫폼 탐색이
 238개 action까지 이어졌고 새 backend 구현은 61번째 action 부근에서 완성되었으므로, 한 owner 실행은
 96 iteration으로 제한한다. 한도 도달 뒤에는 같은
 checkpoint에서 재개할 수 있으며 OpenHands의 500 iteration 기본값을 그대로 사용하지 않는다. SDK가
