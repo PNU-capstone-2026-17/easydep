@@ -1992,9 +1992,10 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
     )
     assert "readSourcePaths as useful starting points, not a checklist" in bounded
     assert "Inspect application source on demand" in bounded
+    assert "Before broad source exploration, check whether the capsule" in bounded
+    assert "do not establish business meaning" in bounded
     assert "direct-call argument is explicitly unresolved" in bounded
-    assert "Do not invent default rules, in-memory substitutes, or new collaborators" in bounded
-    assert "call report_upstream_gap with a concise gap" in bounded
+    assert "no legal implementation remains after that targeted lookup" in bounded
     assert "investigation hints" not in bounded
     assert "open raw design inputs" not in bounded
 

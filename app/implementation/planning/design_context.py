@@ -682,17 +682,20 @@ Implement this one API-to-result behavior using { _relative(run_root, context_pa
 - Otherwise start from the writable implementation files. Use `readSourcePaths` as starting
   points, then inspect application source only as needed for existing types, wiring, or test
   conventions. Read access does not expand the behavior or write scope.
-- Every required branch decision and state change must have a concrete input, call result, or
-  existing application contract. Do not invent default rules, in-memory substitutes, or new
-  collaborators.
+- Before broad source exploration, check whether the capsule clearly declares the required
+  branch inputs or observables, effect owners, and public outcomes. Use targeted source lookup
+  to locate existing mechanics for those declared needs; require a reachable existing dependency
+  only for effects on external state.
+- If business meaning remains underspecified or no legal implementation remains after that
+  targeted lookup, call `report_upstream_gap` immediately. Available data, repositories, or types
+  do not establish business meaning; do not invent a mapping or convention and do not keep
+  searching for a workaround.
 - Complete only the generated operation bodies listed in `behaviorCapsule.directMethods`.
   You may add private wiring or helpers needed to use existing application contracts, but
   do not replace or remove other generated operation bodies or `EASYDEP-IMPLEMENT` markers,
   even in a shared writable file.
 - Replace the assigned main-source markers in one edit batch before creating the focused test.
   Then write the test against the resulting source and run `run_task_check` once.
-- Do not infer behavior from names or unrelated features. Report a design contract gap when
-  the capsule and existing application contracts cannot express the required behavior.
 - Preserve completed behavior in shared files.
 - Add focused JUnit coverage at {test_path}.
 - Run run_task_check once after the edit batch, then finish when it passes.
