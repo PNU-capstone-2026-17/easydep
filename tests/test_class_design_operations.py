@@ -21,6 +21,70 @@ from tests.class_design_fixtures import (
 )
 
 
+def _normalization_inventory() -> AcceptedInventory:
+    return AcceptedInventory.from_payload(
+        {
+            "Classes": [
+                {
+                    "className": name,
+                    "stereotype": stereotype,
+                    "useCaseIds": ["UC1"],
+                }
+                for name, stereotype in (
+                    ("RequestBoundary", "Boundary"),
+                    ("RequestControl", "Control"),
+                )
+            ],
+            "DataTypes": [],
+            "Relationships": [],
+        }
+    )
+
+
+def test_known_concatenated_collection_types_are_canonicalized(monkeypatch):
+    index = build_scenario_index(single_use_case())
+    proposal = operation_fragment()
+    operation = proposal["Classes"][0]["operations"][0]
+    operation["parameters"][0]["type"] = "listRequestData"
+    operation["returnType"] = "arrayRequestResult"
+    monkeypatch.setattr(
+        operations,
+        "parse_structured",
+        lambda *_args, **_kwargs: proposal,
+    )
+
+    candidate = operations._propose_fragment(
+        index,
+        _normalization_inventory().as_payload(),
+        index.use_case("UC1"),
+    )
+    normalized = candidate["Classes"][0]["operations"][0]
+
+    assert normalized["parameters"][0]["type"] == "List<RequestData>"
+    assert normalized["returnType"] == "List<RequestResult>"
+
+
+def test_unknown_concatenated_collection_type_stays_rejectable():
+    index = build_scenario_index(single_use_case())
+    proposal = operation_fragment()
+    proposal["Classes"][0]["operations"][0]["returnType"] = "listMissingResult"
+    inventory = _normalization_inventory()
+
+    accepted = operations.normalize_operation_fragment(
+        proposal,
+        index,
+        inventory,
+        index.use_case("UC1"),
+    ).as_payload()
+    report = validate_operations(
+        accepted,
+        OperationContext(index, inventory.as_payload(), index.use_case("UC1")),
+    )
+
+    assert accepted["Classes"][0]["operations"][0]["returnType"] == "listMissingResult"
+    assert any(finding.rule_id == "class.operation.references" for finding in report.findings)
+
+
 def test_operation_generation_keeps_signature_data_types_in_the_persisted_model(monkeypatch):
     patch_class_design_parser(monkeypatch, valid_parse_response)
     model = service.generate_class_model(build_scenario_index(single_use_case()))
@@ -117,7 +181,7 @@ def test_operation_validation_rejects_step_ref_outside_use_case_scope():
     )
 
 
-def test_state_backed_use_case_requires_an_entity_operation_only_when_scoped():
+def test_entity_inventory_does_not_force_an_operation():
     index = build_scenario_index(single_use_case())
     inventory = {
         "Classes": [
@@ -135,15 +199,16 @@ def test_state_backed_use_case_requires_an_entity_operation_only_when_scoped():
         "Relationships": [],
     }
 
+    accepted_inventory = AcceptedInventory.from_payload(inventory)
+    fragment = operations.normalize_operation_fragment(
+        operation_fragment(), index, accepted_inventory, index.use_case("UC1")
+    ).as_payload()
     report = validate_operations(
-        operation_fragment(),
-        OperationContext(index, inventory, index.use_case("UC1")),
+        fragment,
+        OperationContext(index, accepted_inventory.as_payload(), index.use_case("UC1")),
     )
 
-    assert [
-        finding.rule_id for finding in report.findings
-        if finding.rule_id == "class.operation.state-ownership"
-    ] == ["class.operation.state-ownership"]
+    assert not report.findings
 
 
 def test_final_compose_keeps_operationless_class_referenced_by_an_entity_field():

@@ -85,22 +85,26 @@ has the required behavior; otherwise add a distinct operation for this use case.
 Never edit an existing reserved signature.
 
 Follow the standard BCE roles: Boundary receives actor-facing input, Control
-coordinates the use-case flow, and Entity owns persistent state behavior. Close
+coordinates the use-case flow, and Entity may own explicitly selected persistent
+state behavior. An Entity listed for this use case is a candidate, not proof that
+the scenario needs an Entity operation. Close
 an ordinary request-response flow through return values: the root Boundary
 operation may cover both the actor input and the resulting actor-visible output.
-When a fixed Entity candidate owns durable domain information that this use case
-reads or changes, put at least one such operation on an Entity and let Control
-coordinate it. Read-only retrieval of stored domain information counts. Do not
-replace that Entity responsibility with a Control helper named save, record,
-find, get, or update. A use case that only calculates, formats, or calls an
-external system does not need an Entity operation. Do not invent dummy or no-op
-operations merely to keep a structural class in the diagram.
+Add an Entity operation only when the supplied scenario explicitly requires a
+durable read or state change and that behavior targets or sources state declared
+by a supplied Entity. A Boundary-to-Control flow is valid when it completely
+expresses the supplied behavior. Do not infer an Entity call from use-case
+membership alone, and do not invent dummy or no-op operations merely to keep a
+structural class in the diagram.
 Do not add present/show/confirm/notify Boundary operations merely to deliver the
 result of the current request. Add a separate outbound Boundary operation only
 when the scenario explicitly requires an out-of-band push, callback, or later
 notification. Choose concrete operations supported by the supplied steps. Every
 parameter and return type must resolve to a fixed class/type, a primitive, or a
 local DataType.
+Write collection types with explicit generic syntax, such as
+List<CourseOffering>; never join a container and item name into an undeclared
+token such as listCourseOffering.
 Before returning, audit every named parameter and return type: reuse an exact
 fixed or reserved type when it has the required shape, and otherwise declare a
 concrete local DataType in this fragment; never leave a referenced name undeclared.
@@ -630,6 +634,50 @@ def operation_payload(
     return _operation_payload(index, inventory.as_payload(), use_case, **kwargs)
 
 
+def _canonicalize_loose_collection_types(
+    candidate: dict[str, Any],
+    inventory: dict[str, Any],
+    reserved: list[dict[str, Any]] | None,
+    reserved_types: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Repair a concatenated container only when its item is an exact known type."""
+
+    known_names = {
+        class_name(item)
+        for source in (inventory.get("Classes") or [], candidate.get("Classes") or [], reserved or [])
+        for item in source
+        if isinstance(item, dict) and class_name(item)
+    } | {
+        text(item.get("name"))
+        for source in (
+            inventory.get("DataTypes") or [],
+            candidate.get("DataTypes") or [],
+            reserved_types or [],
+        )
+        for item in source
+        if isinstance(item, dict) and text(item.get("name"))
+    }
+
+    def canonical(raw: object) -> str:
+        value = text(raw)
+        for prefix in ("list", "array", "set", "collection", "iterable", "optional"):
+            if value.startswith(prefix) and value[len(prefix) :] in known_names:
+                return canonical_design_type(f"{prefix}<{value[len(prefix):]}>")
+        return value
+
+    for owner in candidate.get("Classes") or []:
+        if not isinstance(owner, dict):
+            continue
+        for operation in owner.get("operations") or []:
+            if not isinstance(operation, dict):
+                continue
+            operation["returnType"] = canonical(operation.get("returnType"))
+            for parameter in operation.get("parameters") or []:
+                if isinstance(parameter, dict):
+                    parameter["type"] = canonical(parameter.get("type"))
+    return candidate
+
+
 def normalize_operation_fragment(
     proposal: OperationFragment | Mapping[str, Any],
     index: ScenarioIndex,
@@ -645,6 +693,9 @@ def normalize_operation_fragment(
 
     inventory_payload = inventory.as_payload()
     candidate = OperationFragment.model_validate(proposal).model_dump(by_alias=True)
+    candidate = _canonicalize_loose_collection_types(
+        candidate, inventory_payload, reserved, reserved_types
+    )
     fixed_names = (
         {
             class_name(item)
@@ -751,6 +802,9 @@ def _propose_fragment(
     )
     # 2. 설명문이나 임의 필드를 거부하고 일시적 proposal schema만 수락한다.
     candidate = OperationFragment.model_validate(parsed).model_dump(by_alias=True)
+    candidate = _canonicalize_loose_collection_types(
+        candidate, inventory, reserved, reserved_types
+    )
     fixed_names = (
         {class_name(item) for item in inventory.get("Classes") or [] if isinstance(item, dict)}
         | {

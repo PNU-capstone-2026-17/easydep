@@ -3,10 +3,7 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from copy import deepcopy
-from typing import Any, Literal
-
-from pydantic import ConfigDict, create_model
+from typing import Any
 
 from app.config import settings
 from app.design.schemas.class_model import BCEModel, Collaboration
@@ -29,7 +26,6 @@ from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
     CombinedUnitProposal,
     OperationFragment,
-    OperationProposal,
 )
 from app.design.services.class_diagram.scenario import (
     ExecutionGroup,
@@ -72,13 +68,6 @@ empty, return no calls; its operations can be used by an including use case.
 """
 
 
-_STATE_OWNERSHIP_PROMPT = """Repair only the missing Entity state ownership.
-Choose exactly one supplied Entity, one operation using only declared step refs and
-types, and one supplied Control call position as its parent. The operation must own
-the durable read or state change required by the use-case steps, not a placeholder
-validation. Do not alter, remove, or rename any existing call or operation."""
-
-
 def _same_boundary_response_operations(raw: dict[str, Any]) -> set[str]:
     """결합 call forest가 최초 Boundary로 되돌아간 operation을 찾는다.
 
@@ -99,97 +88,6 @@ def _same_boundary_response_operations(raw: dict[str, Any]) -> set[str]:
         elif root_owner and owner == root_owner:
             result.add(operation_ref)
     return result
-
-
-def _state_ownership_patch(
-    raw: dict[str, Any],
-    inventory: AcceptedInventory,
-    use_case: UseCase,
-    budget: RepairBudget,
-    finding: str,
-) -> dict[str, Any] | None:
-    """Ask for the only allowed local repair; return an append-only candidate."""
-
-    inventory_payload = inventory.as_payload()
-    entities = [
-        item
-        for item in inventory_payload["Classes"]
-        if item.get("stereotype") == "Entity"
-        and use_case.id in (item.get("useCaseIds") or [])
-    ]
-    control_names = {
-        item.get("className")
-        for item in inventory_payload["Classes"]
-        if item.get("stereotype") == "Control"
-    }
-    parents = [
-        {"parentCallIndex": position, "operationRef": call["operationRef"]}
-        for position, call in enumerate(raw.get("calls") or [], 1)
-        if str(call.get("operationRef") or "").partition(".")[0] in control_names
-    ]
-    if not entities or not parents:
-        return None
-    schema = create_model(
-        "StateOwnershipRepair",
-        __config__=ConfigDict(extra="forbid"),
-        className=(
-            Literal.__getitem__(tuple(item["className"] for item in entities)),
-            ...,
-        ),
-        operation=(OperationProposal, ...),
-        parentCallIndex=(
-            Literal.__getitem__(tuple(item["parentCallIndex"] for item in parents)),
-            ...,
-        ),
-    )
-    budget.consume(finding)
-    payload = {
-        "useCase": {
-            "id": use_case.id,
-            "name": use_case.name,
-            "primaryActor": use_case.primary_actor,
-        },
-        "steps": [
-            {"stepRef": step.id, "sentence": step.sentence}
-            for step in use_case.steps
-        ],
-        "previousCombined": raw,
-        "finding": finding,
-        "entityChoices": entities,
-        "parentChoices": parents,
-        "fixedDataTypes": inventory_payload["DataTypes"],
-    }
-    parsed = parse_structured(
-        [
-            {"role": "system", "content": _STATE_OWNERSHIP_PROMPT},
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ],
-        schema,
-        reasoning_effort=operations.operation_reasoning_effort(),
-        max_completion_tokens=min(operations.operation_max_completion_tokens(), 4096),
-        operation="InteractionStateOwnershipRepair",
-        metadata={
-            "useCaseId": use_case.id,
-            "executionSlice": use_case.id,
-            "candidateCount": len(entities) + len(parents),
-        },
-    )
-    repair = schema.model_validate(parsed).model_dump(by_alias=True)
-    patched = deepcopy(raw)
-    classes = patched["fragment"]["Classes"]
-    owner = next(
-        (item for item in classes if item.get("className") == repair["className"]),
-        None,
-    )
-    if owner is None:
-        owner = {"className": repair["className"], "operations": []}
-        classes.append(owner)
-    owner.setdefault("operations", []).append(repair["operation"])
-    patched.setdefault("calls", []).append({
-        "operationRef": f"{repair['className']}.{repair['operation']['name']}",
-        "parentCallIndex": repair["parentCallIndex"],
-    })
-    return patched
 
 
 def _groups(index: ScenarioIndex, use_case: UseCase) -> tuple[ExecutionGroup, ...]:
@@ -306,31 +204,6 @@ def _propose_unit(
             return fragment, raw
         except (ValueError, TypeError) as error:
             issue = f"{type(error).__name__}: {error}"
-            if (
-                isinstance(error, operations.OperationValidationError)
-                and not error.errors
-                and {
-                    finding.rule_id for finding in error.findings
-                } == {"class.operation.state-ownership"}
-            ):
-                patched = _state_ownership_patch(
-                    raw, inventory, use_case, budget, issue,
-                )
-                if patched is not None:
-                    try:
-                        fragment = operations.normalize_operation_fragment(
-                            patched["fragment"], index, inventory, use_case,
-                            reserved=reserved, reserved_types=reserved_types,
-                            allowed_step_ids=tuple(step.id for step in use_case.steps),
-                            same_boundary_response_operations=_same_boundary_response_operations(patched),
-                        )
-                        return operations.validate_operation_fragment(
-                            fragment, index, inventory, use_case,
-                            reserved_types=reserved_types,
-                            allowed_step_ids=tuple(step.id for step in use_case.steps),
-                        ), patched
-                    except (ValueError, TypeError):
-                        pass
             candidate_digest = stable_digest(raw)
             state_digest = stable_digest({
                 "candidate": candidate_digest, "finding": issue,
@@ -753,7 +626,6 @@ def _model_cache_key(index: ScenarioIndex, inventory: AcceptedInventory) -> str:
             "callPlanPrompt": collaboration.CALL_PLAN_PROMPT,
             "callPlanCap": collaboration.call_plan_max_completion_tokens(),
             "parentSelectionPrompt": collaboration.PARENT_SELECTION_PROMPT,
-            "stateOwnershipPrompt": _STATE_OWNERSHIP_PROMPT,
             "bindingPrompt": collaboration.BINDING_PROMPT,
             "version": 5,
         },
