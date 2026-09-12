@@ -405,6 +405,7 @@ def run_checks(
     *,
     parallel: bool = False,
     max_workers: int | None = None,
+    deduplicate: bool = True,
 ) -> ValidationReport:
     """Run checks and merge their findings in registration order.
 
@@ -436,7 +437,7 @@ def run_checks(
             continue
         for finding in emitted:
             key = _finding_key(finding)
-            if key not in seen:
+            if not deduplicate or key not in seen:
                 seen.add(key)
                 findings.append(finding)
 

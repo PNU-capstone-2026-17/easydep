@@ -833,6 +833,18 @@ def _accepted_payload(
     try:
         return materialize(index, model, use_case, candidate).model_dump(by_alias=True)
     except ValueError as error:
+        if isinstance(error, CallPlanViolation):
+            repaired = repair_communication_parent(
+                index, model, use_case, candidate, error,
+            )
+            if repaired is not None:
+                candidate = repaired
+                try:
+                    return materialize(
+                        index, model, use_case, candidate,
+                    ).model_dump(by_alias=True)
+                except ValueError as repaired_error:
+                    error = repaired_error
         error_text = f"{type(error).__name__}: {error}"
         raise CombinedReplacementRequired(
             use_case.id,

@@ -536,6 +536,26 @@ def test_empty_feedback_preserves_model_without_an_llm_call() -> None:
     assert revised is current
 
 
+def test_schema_target_is_reprojected_from_bce_without_an_llm_call() -> None:
+    bce_model = _bce_model()
+    current = normalize_api_spec_model(_proposal(), bce_model)
+    payload = bce_model.model_dump(by_alias=True)
+    course = next(item for item in payload["Classes"] if item["className"] == "Course")
+    course["fields"].append("credits : Integer")
+
+    revised = service.revise_api_spec_model(
+        current,
+        "Reflect the accepted class field.",
+        "UC1: A student browses the catalog.",
+        BCEModel.model_validate(payload),
+        {"Course"},
+        proposal_call=lambda *_args, **_kwargs: pytest.fail("schema projection is local"),
+    )
+
+    schema = next(item for item in revised.Schemas if item.name == "Course")
+    assert [field.name for field in schema.fields] == ["courseId", "title", "credits"]
+
+
 def test_revision_service_uses_one_structured_call_and_returns_typed_model() -> None:
     current = normalize_api_spec_model(_proposal(), _bce_model())
     calls: list[type[ApiSpecProposal]] = []

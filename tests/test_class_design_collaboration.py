@@ -403,6 +403,29 @@ def test_optional_results_use_explicit_unwrap_sources(monkeypatch):
         repaired,
     )
 
+    unique_parent_plan = CallPlanProposal.model_validate({
+        "calls": [
+            {"receiverOperationId": "RequestBoundary::start()", "parentCallIndex": None},
+            {"receiverOperationId": "StudentLookup::find()", "parentCallIndex": 1},
+            {
+                "receiverOperationId": "RegistrationPolicy::validate()",
+                "parentCallIndex": 1,
+            },
+        ],
+    })
+    monkeypatch.setattr(
+        collaboration, "propose_call_plan", lambda *_args, **_kwargs: unique_parent_plan
+    )
+    monkeypatch.setattr(
+        collaboration, "parse_structured", lambda *_args, **_kwargs: {"selection": "parent:2"}
+    )
+    automatically_repaired = collaboration.process_use_case(
+        build_scenario_index(single_use_case()),
+        BCEModel.model_validate(model),
+        build_scenario_index(single_use_case()).use_case("UC1"),
+    )
+    assert automatically_repaired.calls[2].parent_call_id == "UC1::call:2"
+
     same_boundary_response = CallPlanProposal.model_validate({
         "calls": [
             {"receiverOperationId": "RequestBoundary::start()", "parentCallIndex": None},

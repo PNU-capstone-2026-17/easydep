@@ -69,6 +69,126 @@ def test_exact_operation_and_call_targets_resolve_without_scope_llm(monkeypatch)
     assert legacy_call_scope == call_scope
 
 
+def test_targeted_inventory_revision_allows_baseline_but_rejects_regression(monkeypatch):
+    proposal = inventory_proposal()
+    for name, scope in (("LegacyRecord", []), ("OtherRecord", ["UC1"])):
+        proposal["items"].append({
+            "name": name, "kind": "Entity", "description": "Legacy state",
+            "fields": [{"name": "recordId", "type": "String"}],
+            "identifier": ["recordId"], "values": [], "useCaseIds": scope,
+        })
+    relationship = {
+        "source": "LegacyRecord", "target": "OtherRecord", "type": "Association",
+        "sourceMultiplicity": "1", "targetMultiplicity": "*", "description": "legacy",
+    }
+    proposal["Relationships"] = [relationship, deepcopy(relationship)]
+    current = feedback_stage.inventory._normalize_inventory(
+        InventoryProposal.model_validate(proposal)
+    )
+    proposal = deepcopy(proposal)
+    next(
+        item for item in proposal["items"] if item["name"] == "RequestControl"
+    )["description"] = "New coordination"
+    monkeypatch.setattr(feedback_stage, "parse_structured", lambda *_args, **_kwargs: proposal)
+
+    accepted = feedback_stage.AcceptedInventory.from_payload(current)
+    revised = feedback_stage.propose_inventory_revision(
+        build_scenario_index(single_use_case()),
+        accepted,
+        "Update only the control description.",
+        {"RequestControl"},
+    ).as_payload()
+
+    control = next(item for item in revised["Classes"] if item["className"] == "RequestControl")
+    assert control["description"] == "New coordination"
+    legacy = next(item for item in revised["Classes"] if item["className"] == "LegacyRecord")
+    assert legacy["useCaseIds"] == []
+
+    proposal["Relationships"].append(deepcopy(relationship))
+    with pytest.raises(ValueError, match="both directions"):
+        feedback_stage.propose_inventory_revision(
+            build_scenario_index(single_use_case()),
+            accepted,
+            "Change relation.",
+            {"LegacyRecord"},
+        )
+
+
+def test_inventory_revision_preserves_valid_operations_and_calls(monkeypatch):
+    combined_calls = 0
+
+    def fake_parse(messages, schema, **_kwargs):
+        nonlocal combined_calls
+        if schema is InventoryProposal:
+            proposal = inventory_proposal()
+            if "currentInventory" in json.loads(messages[-1]["content"]):
+                proposal["items"][1]["description"] = "Revised coordination"
+            return proposal
+        if schema is CombinedUnitProposal:
+            combined_calls += 1
+            return combined_unit_proposal()
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    index = build_scenario_index(single_use_case())
+    current = service.generate_class_model(index)
+    operations_before = [
+        operation.model_dump(by_alias=True)
+        for item in current.Classes for operation in item.operations
+    ]
+    calls_before = current.Collaborations[0].model_dump(by_alias=True)
+
+    revised = service.revise_class_model(
+        current, index, "Update the control description.", {"RequestControl"}
+    )
+
+    assert combined_calls == 1
+    assert [
+        operation.model_dump(by_alias=True)
+        for item in revised.Classes for operation in item.operations
+    ] == operations_before
+    assert revised.Collaborations[0].model_dump(by_alias=True) == calls_before
+
+    expanded_payload = feedback_stage.inventory_from_model(current).as_payload()
+    expanded_payload["Classes"].append({
+        "className": "AuditRecord", "stereotype": "Entity",
+        "description": "Durable audit state", "fields": ["recordId : String"],
+        "identifier": ["recordId"], "values": [], "useCaseIds": ["UC1"],
+    })
+    expanded = feedback_stage.AcceptedInventory.from_payload(expanded_payload)
+    monkeypatch.setattr(
+        feedback_stage, "propose_inventory_revision", lambda *_args, **_kwargs: expanded
+    )
+    monkeypatch.setattr(
+        feedback_stage,
+        "feedback_scope",
+        lambda *_args, **_kwargs: FeedbackScope(kind="inventory", ids=[]),
+    )
+    rebuilds = []
+    def rebuild(*_args, **_kwargs):
+        rebuilds.append(True)
+        return current
+    monkeypatch.setattr(service.generation, "build_model", rebuild)
+
+    service.revise_class_model(current, index, "Add durable audit state.", set())
+
+    assert rebuilds == [True]
+
+    type_payload = feedback_stage.inventory_from_model(current).as_payload()
+    type_payload["DataTypes"].append({
+        "name": "AuditId", "kind": "valueObject", "fields": ["value : String"],
+        "values": [], "identifier": [], "useCaseIds": ["UC1"],
+    })
+    type_expanded = feedback_stage.AcceptedInventory.from_payload(type_payload)
+    monkeypatch.setattr(
+        feedback_stage, "propose_inventory_revision", lambda *_args, **_kwargs: type_expanded
+    )
+
+    service.revise_class_model(current, index, "Add a structural identifier type.", set())
+
+    assert rebuilds == [True, True]
+
+
 def test_generate_uses_one_combined_call_and_keeps_the_public_model(monkeypatch):
     schemas: list[type] = []
 

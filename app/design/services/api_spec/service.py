@@ -174,13 +174,25 @@ def revise_api_spec_model(
 
     if not feedback:
         return current_model
+    target_ids = set(targets or ())
+    endpoint_ids = {endpoint.operation_id for endpoint in current_model.Endpoints}
+    schema_ids = {schema.name for schema in current_model.Schemas}
+    endpoint_targets = target_ids & endpoint_ids
+    schema_targets = target_ids & schema_ids
+    if target_ids and not endpoint_targets:
+        if schema_targets and target_ids <= schema_ids:
+            # API schemas are derived from the accepted BCE model.  A class-only
+            # change needs no new HTTP decision or LLM revision.
+            return normalize_api_spec_model(
+                api_spec_proposal_from_model(current_model, bce_model),
+                bce_model,
+            )
+        raise ValueError("API revision targets do not name a current endpoint or schema")
     selected_endpoints = [
         endpoint
         for endpoint in current_model.Endpoints
-        if not targets or endpoint.operation_id in targets
+        if not targets or endpoint.operation_id in endpoint_targets
     ]
-    if targets and not selected_endpoints:
-        raise ValueError("API revision targets do not name a current endpoint")
     selected_model = current_model.model_copy(
         update={"Endpoints": selected_endpoints, "Schemas": []}
     )
@@ -216,7 +228,7 @@ def revise_api_spec_model(
                     "Current HTTP Proposal",
                     current_proposal.model_dump(),
                     feedback,
-                    targets,
+                    endpoint_targets if targets else None,
                 ),
                 proposal_schema,
             )

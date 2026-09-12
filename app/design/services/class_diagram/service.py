@@ -367,10 +367,56 @@ def revise_class_model(
         revised_inventory = feedback_stage.propose_inventory_revision(
             index, accepted_inventory, feedback, set(scope.ids), cache=cache,
         )
+        def behavior_shape(
+            value: feedback_stage.AcceptedInventory,
+        ) -> tuple[dict[str, tuple[str, tuple[str, ...]]], tuple[str, ...]]:
+            payload = value.as_payload()
+            classes = {
+                str(item.get("className") or ""): (
+                    str(item.get("stereotype") or ""),
+                    tuple(sorted(
+                        str(use_case_id)
+                        for use_case_id in item.get("useCaseIds") or []
+                    )),
+                )
+                for item in payload.get("Classes") or []
+            }
+            data_types = tuple(sorted(
+                str(item.get("name") or "") for item in payload.get("DataTypes") or []
+            ))
+            return classes, data_types
+
+        if behavior_shape(accepted_inventory) != behavior_shape(revised_inventory):
+            return _validated(
+                _accepted_model(
+                    current,
+                    generation.build_model(index, revised_inventory, cache=cache),
+                    targeted_refs=targets,
+                ),
+                index,
+                "revised",
+            )
+        # Structural edits do not imply new behavior.  Reuse the accepted
+        # operation fragments and call topology first; only collaborations
+        # made invalid by the new inventory enter the existing repair path.
+        fragments = feedback_stage.fragments_from_model(index, current)
+        skeleton = operations.compose_fragments(revised_inventory, fragments)
+        existing = {item.collaboration_id: item for item in current.Collaborations}
+        existing, unresolved = _rematerialize_preserved_collaborations(
+            index, current, skeleton, existing, _standalone(index),
+        )
+        revised = _complete_collaborations(
+            index,
+            skeleton,
+            existing,
+            unresolved,
+            feedback=feedback,
+            cache=cache,
+        )
         return _validated(
             _accepted_model(
                 current,
-                generation.build_model(index, revised_inventory, cache=cache),
+                revised,
                 targeted_refs=targets,
             ),
             index,

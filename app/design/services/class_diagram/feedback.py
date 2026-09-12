@@ -12,6 +12,7 @@ ID다. 출력은 inventory·operation·collaboration 중 하나로 좁혀진 ``F
 from __future__ import annotations
 
 import json
+from collections import Counter
 from collections.abc import Set as AbstractSet
 from copy import deepcopy
 from typing import Any
@@ -41,7 +42,7 @@ from app.design.services.class_diagram.validation.model import class_name
 from app.design.services.common.structured import parse_structured
 from app.llm_connection import build_llm_connection
 from app.llm_profiles import effective_temperature
-from app.validation import run_checks
+from app.validation import Finding, run_checks
 
 
 def _inventory_from_model(model: dict[str, Any]) -> dict[str, Any]:
@@ -433,12 +434,42 @@ def _propose_inventory_revision(
     # LLM 제안을 저장 모양으로 정규화한 뒤 같은 INVENTORY_CHECKS를 재사용한다. 검증
     # finding을 다시 LLM에 보내는 추가 loop는 만들지 않고 서비스 경계에 실패를 알린다.
     candidate = inventory._normalize_inventory(proposal)
-    report = run_checks(INVENTORY_CHECKS, candidate, index)
-    if report.errors or report.findings:
+    errors, findings = _inventory_validation_regressions(
+        index,
+        candidate,
+        baseline=(
+            inventory._normalize_inventory(InventoryProposal.model_validate(current))
+            if target_ids
+            else None
+        ),
+    )
+    if errors or findings:
         raise ValueError("inventory feedback is invalid: " + "; ".join([
-            *report.errors, *inventory.finding_text(report.findings),
+            *errors, *inventory.finding_text(findings),
         ]))
     return candidate
+
+
+def _inventory_validation_regressions(
+    index: ScenarioIndex,
+    candidate: dict[str, Any],
+    *,
+    baseline: dict[str, Any] | None,
+) -> tuple[tuple[str, ...], tuple[Finding, ...]]:
+    """Return all findings for a replacement, or only new ones for a local edit."""
+
+    report = run_checks(
+        INVENTORY_CHECKS, candidate, index, deduplicate=baseline is None
+    )
+    if baseline is None:
+        return report.errors, report.findings
+    baseline_report = run_checks(
+        INVENTORY_CHECKS, baseline, index, deduplicate=False
+    )
+    return (
+        tuple((Counter(report.errors) - Counter(baseline_report.errors)).elements()),
+        tuple((Counter(report.findings) - Counter(baseline_report.findings)).elements()),
+    )
 
 
 def inventory_from_model(model: BCEModel) -> AcceptedInventory:
@@ -579,10 +610,14 @@ def propose_inventory_revision(
     accepted = AcceptedInventory.from_payload(candidate)
     # cache hit도 저장 BCE schema와 inventory 규칙을 같은 순서로 재실행한다.
     inventory.inventory_model(accepted)
-    report = run_checks(INVENTORY_CHECKS, accepted.as_payload(), index)
-    if report.errors or report.findings:
+    errors, findings = _inventory_validation_regressions(
+        index,
+        accepted.as_payload(),
+        baseline=payload if targets else None,
+    )
+    if errors or findings:
         raise ValueError("cached inventory feedback is invalid: " + "; ".join([
-            *report.errors, *inventory.finding_text(report.findings),
+            *errors, *inventory.finding_text(findings),
         ]))
     return accepted
 
