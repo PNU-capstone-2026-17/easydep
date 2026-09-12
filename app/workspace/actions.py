@@ -484,9 +484,19 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
         return AwaitingOutcome(wait_reason=WaitReason.REPAIR, actions=actions)
 
     if result.get("kind") == "question" or result.get("questions"):
+        actions = _answer_offers(command_id, result)
+        preserved = (command.get("payload") or {}).get("_conversation_actions")
+        if isinstance(preserved, list):
+            for raw in preserved:
+                offer = ActionOffer.model_validate(raw)
+                if offer.action == WorkspaceAction.MESSAGE:
+                    continue
+                if any(existing.action == offer.action for existing in actions):
+                    continue
+                actions.append(offer)
         return AwaitingOutcome(
             wait_reason=WaitReason.QUESTION,
-            actions=_answer_offers(command_id, result),
+            actions=actions,
         )
 
     if stage == "design" and result.get("resume_implementation") is True:

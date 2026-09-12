@@ -516,6 +516,64 @@ def test_non_json_openapi_request_body_is_rejected_before_execution() -> None:
         validate_arazzo_document(document, openapi=openapi)
 
 
+def test_literal_request_body_is_validated_against_openapi_before_execution() -> None:
+    document = _document()
+    document["workflows"][0]["steps"][0] = {
+        "stepId": "create",
+        "operationId": "createItem",
+        "requestBody": {
+            "contentType": "application/json",
+            "payload": {"termId": "2025-FALL"},
+        },
+    }
+    openapi = _openapi()
+    openapi["paths"]["/items"]["post"]["requestBody"] = {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "required": ["id"],
+                    "properties": {"id": {"type": "string"}},
+                    "additionalProperties": False,
+                }
+            }
+        },
+    }
+
+    with pytest.raises(ArazzoValidationError, match=r"requestBody\.payload.*'id' is a required"):
+        validate_arazzo_document(document, openapi=openapi)
+
+
+def test_request_body_with_replacements_is_validated_after_resolution() -> None:
+    document = _document()
+    document["workflows"][0]["steps"][0] = {
+        "stepId": "create",
+        "operationId": "createItem",
+        "requestBody": {
+            "contentType": "application/json",
+            "payload": {},
+            "replacements": [
+                {"target": "/id", "value": "$steps.seed.outputs.id"}
+            ],
+        },
+    }
+    openapi = _openapi()
+    openapi["paths"]["/items"]["post"]["requestBody"] = {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {"type": "object", "required": ["id"]}
+            }
+        },
+    }
+
+    # The ordinary runtime-expression validation remains responsible for the
+    # reference; the preflight schema check must not reject the empty template.
+    with pytest.raises(ArazzoValidationError, match="unknown local step"):
+        validate_arazzo_document(document, openapi=openapi)
+
+
 @pytest.mark.parametrize(
     "retry",
     [

@@ -3,6 +3,23 @@ from __future__ import annotations
 from app.testing import progress
 
 
+def test_planning_progress_does_not_count_as_test_pass():
+    snapshot = None
+    for state in ("PENDING", "RUNNING", "PASS"):
+        snapshot = progress.reduce_testing_progress(snapshot, progress.testing_progress_event(
+            phase="planning", scope="workflow", status=state, label="UC7 · Join waitlist",
+            workflow_id="workflow-UC7", use_case_id="UC7", use_case_name="Join waitlist",
+        ))
+    snapshot = progress.reduce_testing_progress(snapshot, progress.testing_progress_event(
+        phase="dynamic", scope="workflow", status="RUNNING", label="Executing UC7",
+        workflow_id="workflow-UC7",
+    ))
+    assert snapshot["plans"]["workflow-UC7"]["status"] == "PASS"
+    assert snapshot["plans"]["workflow-UC7"]["use_case_name"] == "Join waitlist"
+    assert snapshot["plan_counts"]["passed"] == 1
+    assert snapshot["workflow_counts"]["passed"] == 0
+
+
 def test_progress_reducer_tracks_workflows_steps_and_gates() -> None:
     snapshot = progress.reduce_testing_progress(
         None,

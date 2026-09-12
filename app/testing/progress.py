@@ -17,7 +17,7 @@ _observer: ContextVar[TestingProgressObserver | None] = ContextVar(
     default=None,
 )
 
-_PHASES = frozenset({"prepare", "dynamic", "static", "summary", "repair", "rerun"})
+_PHASES = frozenset({"prepare", "planning", "dynamic", "static", "summary", "repair", "rerun"})
 _SCOPES = frozenset({"phase", "workflow", "step", "gate"})
 _STATUSES = frozenset(
     {
@@ -42,6 +42,8 @@ def testing_progress_event(
     label: str,
     detail: str = "",
     workflow_id: str = "",
+    use_case_id: str = "",
+    use_case_name: str = "",
     step_id: str = "",
     gate: str = "",
     operation_id: str = "",
@@ -89,6 +91,8 @@ def testing_progress_event(
     optional: dict[str, Any] = {
         "progress_detail": detail.strip(),
         "workflow_id": workflow_id,
+        "use_case_id": use_case_id,
+        "use_case_name": use_case_name,
         "step_id": step_id,
         "gate": gate,
         "operation_id": operation_id,
@@ -163,6 +167,8 @@ def _record_values(event: Mapping[str, Any]) -> dict[str, Any]:
             "semantic_status",
             "control",
             "attempt",
+            "use_case_id",
+            "use_case_name",
         )
         if key in event
     }
@@ -223,6 +229,15 @@ def reduce_testing_progress(
         phases = result["phases"] = {}
     if scope == "phase":
         phases[phase] = _record_values(event)
+
+    # Plan validation is not an application-test PASS. Keep these rows separate
+    # from execution workflows so the test result counters remain truthful.
+    if phase == "planning" and scope == "workflow":
+        workflow_id = str(event.get("workflow_id") or "")
+        plans = result.setdefault("plans", {})
+        plans[workflow_id] = {"workflow_id": workflow_id, **_record_values(event)}
+        result["plan_counts"] = _workflow_counts(plans)
+        return result
 
     workflows = result.setdefault("workflows", {})
     if not isinstance(workflows, dict):

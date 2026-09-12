@@ -66,6 +66,37 @@ def test_toolchain_command_runs_directly_inside_fixed_runner(monkeypatch, tmp_pa
     assert result.environment_error is False
 
 
+def test_host_toolchain_repairs_legacy_tofu_cache_ownership(monkeypatch, tmp_path):
+    observed: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        observed.append(list(command))
+        return _completed(command)
+
+    monkeypatch.delenv("EASYDEP_FIXED_LINUX_RUNNER", raising=False)
+    monkeypatch.setenv("EASYDEP_TOOLCHAIN_IMAGE", "easydep-toolchain:cache-test")
+    monkeypatch.setattr(container_runner, "run_process_tree", fake_run)
+    container_runner._prepared_tofu_cache_images.clear()
+
+    container_runner.run_toolchain_command(
+        ["tofu", "init", "-backend=false"], cwd=tmp_path, timeout=30
+    )
+    container_runner.run_toolchain_command(
+        ["tofu", "validate", "-no-color"], cwd=tmp_path, timeout=30
+    )
+
+    assert len(observed) == 3
+    repair = observed[0]
+    assert repair[repair.index("--user") + 1] == "root"
+    assert f"{container_runner.TOFU_CACHE_VOLUME}:{container_runner.TOFU_CACHE_PATH}" in repair
+    assert repair[repair.index("--entrypoint") + 1] == "chown"
+    assert repair[-3:] == [
+        "-R",
+        container_runner._TOOLCHAIN_USER_ID,
+        container_runner.TOFU_CACHE_PATH,
+    ]
+
+
 def test_toolchain_heartbeat_runs_until_the_command_finishes(monkeypatch, tmp_path):
     def fake_run(command, **_kwargs):
         time.sleep(0.1)

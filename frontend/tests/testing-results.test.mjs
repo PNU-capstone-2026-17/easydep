@@ -2,6 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { projectTestingRun } from '../src/lib/testing-results.ts';
 
+test('restores plan rows from checkpoint and updates them from current-command SSE only', () => {
+  const saved = { workflow_id: 'workflow-UC7', use_case_id: 'UC7', use_case_name: 'Join waitlist', status: 'RUNNING', updated_at: '2026-09-12T01:00:00Z' };
+  const current = command({ status: 'RUNNING', payload: { testing_checkpoint: { testing_progress: {
+    plans: { 'workflow-UC7': saved }, workflow_counts: { total: 0, passed: 0 }
+  } } } });
+  const restored = projectTestingRun({ command: current });
+  assert.equal(restored.plans[0].name, 'Join waitlist');
+  assert.equal(restored.plans[0].status, 'RUNNING');
+  const view = projectTestingRun({ command: current, events: [
+    { command_id: 'testing-command', metadata: { ...saved, progress_event: 'testingProgressUpdated', phase: 'planning', scope: 'workflow', status: 'PASS', updated_at: '2026-09-12T01:01:00Z' } },
+    { command_id: 'old-command', metadata: { ...saved, progress_event: 'testingProgressUpdated', phase: 'planning', scope: 'workflow', status: 'FAIL', updated_at: '2026-09-12T01:02:00Z' } }
+  ] });
+  assert.equal(view.plans[0].status, 'PASS');
+  assert.equal(view.workflowCounts.passed, 0);
+});
+
 function command(overrides = {}) {
   return {
     command_id: 'testing-command',

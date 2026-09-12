@@ -241,8 +241,11 @@ def running_application(
     host_port = free_port()
     runner_image = configured_runner_image()
 
-    # 같은 실행 ID의 이전 비정상 종료가 남겼을 수 있는 container만 정리한다.
+    # 같은 실행 ID의 이전 비정상 종료가 남겼을 수 있는 container와 network를 모두
+    # 정리한다. container만 제거하면 재개 시 동일한 deterministic network 이름이
+    # 충돌하여 애플리케이션을 시작하기도 전에 Testing이 중단된다.
     _docker(["rm", "-f", name], timeout=60)
+    _docker(["network", "rm", network], timeout=60)
     created_network = _docker(["network", "create", network], timeout=60)
     if created_network.returncode != 0:
         output = created_network.stderr or created_network.stdout or ""

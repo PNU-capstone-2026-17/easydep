@@ -1053,6 +1053,70 @@ def test_testing_repair_command_is_presented_as_implementation() -> None:
     assert retry["payload"]["job_id"] == "implementation-repair-1"
 
 
+def test_presented_legacy_clarification_restores_testing_retry(monkeypatch) -> None:
+    failure = {
+        "command_id": "testing-failure",
+        "app_id": "app-1",
+        "action": "start_testing",
+        "stage": "testing",
+        "status": "AWAITING_INPUT",
+        "payload": {},
+        "result": {
+            "requires_revision": True,
+            "can_delegate_repair": False,
+            "job": {"implementation_job_id": "implementation-1"},
+            "blocking_findings": [
+                {
+                    "repairable": True,
+                    "defect_class": "TEST_DEFECT",
+                    "repair_owner": "testing",
+                }
+            ],
+        },
+    }
+    clarification = {
+        "command_id": "clarification",
+        "app_id": "app-1",
+        "action": "message",
+        "stage": "testing",
+        "status": "AWAITING_INPUT",
+        "payload": {
+            "action_id": "testing-failure",
+            "text": "test",
+            "_conversation_actions": [
+                {
+                    "action": "message",
+                    "label": "Send design revision feedback",
+                    "payload": {"action_id": "testing-failure"},
+                }
+            ],
+        },
+        "result": {
+            "kind": "question",
+            "conversation": {"clarification": {"question": "What should be retried?"}},
+        },
+    }
+    monkeypatch.setattr(
+        repository,
+        "get_command",
+        lambda command_id: failure if command_id == "testing-failure" else None,
+    )
+    service = WorkspaceService()
+    try:
+        presented = service.present_command("app-1", clarification)
+    finally:
+        service.shutdown()
+
+    assert [item["action"] for item in presented["result"]["actions"]] == [
+        "message",
+        "start_testing",
+    ]
+    assert presented["result"]["actions"][1]["payload"] == {
+        "action_id": "testing-failure",
+        "implementation_job_id": "implementation-1",
+    }
+
+
 def test_initial_workspace_request_accepts_provider_and_region_without_budget(
     monkeypatch,
 ) -> None:
@@ -2297,9 +2361,11 @@ def test_start_testing_persists_checkpoint_in_the_command(monkeypatch) -> None:
 
     assert updates[0]["payload"]["testing_checkpoint"]["current_node"] == "queued"
     assert len(events) == 2
-    assert events[0]["kind"] == "progress"
-    assert events[0]["metadata"]["progress_event"] == "testingProgressUpdated"
-    assert events[1]["metadata"]["progress_event"] == "testingStepUpdated"
+    assert all(event["kind"] == "progress" for event in events)
+    assert [event["metadata"]["progress_event"] for event in events] == [
+        "testingProgressUpdated",
+        "testingStepUpdated",
+    ]
     assert result["job"]["job_id"] == "command-1"
 
 

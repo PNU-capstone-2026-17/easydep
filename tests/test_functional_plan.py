@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any
@@ -285,6 +286,141 @@ def test_empty_object_parameter_value_is_treated_as_unspecified() -> None:
     dynamic._validate_authored_workflow(normalized)
 
 
+def test_request_body_content_type_is_projected_from_the_json_contract() -> None:
+    workflow = {
+        "workflowId": "workflow-UC-2",
+        "steps": [
+            {
+                "stepId": "register",
+                "operationId": "registerForCourseOffering",
+                "requestBody": {
+                    "contentType": "application/",
+                    "payload": {"courseOfferingId": "OFF-1"},
+                },
+            }
+        ],
+    }
+    candidate = {
+        "operations": [
+            {
+                "operationId": "registerForCourseOffering",
+                "requestBody": {"contentType": "application/json"},
+                "parameters": [],
+            }
+        ]
+    }
+
+    normalized = dynamic._normalize_authored_workflow(workflow, candidate)
+
+    assert normalized["steps"][0]["requestBody"]["contentType"] == "application/json"
+    assert workflow["steps"][0]["requestBody"]["contentType"] == "application/"
+    dynamic._validate_authored_workflow(normalized)
+
+
+def test_common_step_id_and_missing_parameter_value_are_normalized() -> None:
+    workflow = {
+        "workflowId": "workflow-UC-4",
+        "steps": [
+            {
+                "id": "view-schedule",
+                "operationId": "viewCurrentRegistrations",
+                "parameters": [
+                    {"name": "studentId", "in": "path"},
+                    {"name": "locale", "in": "query", "value": "ko-KR"},
+                ],
+            }
+        ],
+    }
+    candidate = {
+        "operations": [
+            {
+                "operationId": "viewCurrentRegistrations",
+                "requestBody": None,
+                "parameters": [
+                    {"name": "studentId", "in": "path"},
+                    {"name": "locale", "in": "query"},
+                ],
+            }
+        ]
+    }
+
+    normalized = dynamic._normalize_authored_workflow(workflow, candidate)
+
+    assert normalized["steps"][0]["stepId"] == "view-schedule"
+    assert "id" not in normalized["steps"][0]
+    assert normalized["steps"][0]["parameters"] == [
+        {"name": "locale", "in": "query", "value": "ko-KR"}
+    ]
+    assert workflow["steps"][0]["id"] == "view-schedule"
+    dynamic._validate_authored_workflow(normalized)
+
+
+def test_conflicting_step_identifiers_remain_invalid() -> None:
+    workflow = {
+        "workflowId": "workflow-UC-4",
+        "steps": [
+            {
+                "id": "generic-id",
+                "stepId": "arazzo-id",
+                "operationId": "viewCurrentRegistrations",
+            }
+        ],
+    }
+    candidate = {
+        "operations": [
+            {
+                "operationId": "viewCurrentRegistrations",
+                "requestBody": None,
+                "parameters": [],
+            }
+        ]
+    }
+
+    normalized = dynamic._normalize_authored_workflow(workflow, candidate)
+
+    with pytest.raises(dynamic.ArazzoValidationError, match="Additional properties"):
+        dynamic._validate_authored_workflow(normalized)
+
+
+def test_uc1_parameter_map_is_projected_using_frozen_openapi(monkeypatch):
+    openapi = _openapi()
+    openapi["paths"]["/offerings/{offeringId}"] = {"get": {
+        "operationId": "viewCourseOfferingDetails", "x-easydep-use-case-ids": ["UC-1"],
+        "parameters": [{"name": "offeringId", "in": "path", "required": True, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Offering details"}},
+    }}
+    candidates = build_workflow_candidates(_requirements(), _use_cases(), openapi)
+    workflow = {"workflowId": "workflow-UC-1", "steps": [
+        {"stepId": "search", "operationId": "health", "outputs": {"offeringsList": "$response.body"}},
+        {"stepId": "details", "operationId": "viewCourseOfferingDetails",
+         "parameters": {"offeringId": "$steps.search.outputs.offeringsList#/0/id"}},
+    ]}
+    normalized = dynamic._normalize_authored_workflow(workflow, candidates[0])
+    assert normalized["steps"][1]["parameters"] == [
+        {"name": "offeringId", "in": "path", "value": "$steps.search.outputs.offeringsList#/0/id"}
+    ]
+    assert isinstance(workflow["steps"][1]["parameters"], dict)
+    dynamic._validate_authored_workflow(normalized)
+    document = build_arazzo_document([attach_workflow_trace(normalized, candidates[0])])
+    dynamic._validate_document(document, candidates, openapi)
+
+
+@pytest.mark.parametrize("declarations", [
+    [],
+    [{"name": "offeringId", "in": "path"}, {"name": "offeringId", "in": "query"}],
+    [{"name": "offeringId", "in": "cookie"}],
+])
+def test_ambiguous_or_unknown_parameter_maps_remain_invalid(declarations):
+    workflow = {"workflowId": "workflow-UC-1", "steps": [
+        {"stepId": "details", "operationId": "details", "parameters": {"offeringId": "example"}},
+    ]}
+    candidate = {"operations": [{"operationId": "details", "parameters": declarations}]}
+    normalized = dynamic._normalize_authored_workflow(workflow, candidate)
+    assert normalized == workflow
+    with pytest.raises(dynamic.ArazzoValidationError, match="not of type 'array'"):
+        dynamic._validate_authored_workflow(normalized)
+
+
 def test_name_value_output_list_is_normalized_to_arazzo_output_map() -> None:
     workflow = {
         "workflowId": "workflow-UC-1",
@@ -317,6 +453,148 @@ def test_name_value_output_list_is_normalized_to_arazzo_output_map() -> None:
     dynamic._validate_authored_workflow(normalized)
 
 
+def test_javascript_style_step_output_selector_is_normalized_to_json_pointer() -> None:
+    workflow = {
+        "workflowId": "workflow-UC-1",
+        "steps": [
+            {
+                "stepId": "search",
+                "operationId": "searchOfferings",
+                "outputs": {"offeringsList": "$response.body"},
+            },
+            {
+                "stepId": "details",
+                "operationId": "getOffering",
+                "parameters": [
+                    {
+                        "name": "offeringId",
+                        "in": "path",
+                        "value": "$steps.search.outputs.offeringsList[0].id",
+                    }
+                ],
+            },
+        ],
+    }
+    candidate = {
+        "operations": [
+            {
+                "operationId": "searchOfferings",
+                "requestBody": None,
+                "parameters": [],
+            },
+            {
+                "operationId": "getOffering",
+                "requestBody": None,
+                "parameters": [{"name": "offeringId", "in": "path"}],
+            },
+        ]
+    }
+
+    normalized = dynamic._normalize_authored_workflow(workflow, candidate)
+
+    assert normalized["steps"][1]["parameters"][0]["value"] == (
+        "$steps.search.outputs.offeringsList#/0/id"
+    )
+    assert workflow["steps"][1]["parameters"][0]["value"].endswith("[0].id")
+    dynamic._validate_authored_workflow(normalized)
+
+
+def test_strict_equality_criteria_are_normalized_for_the_executor() -> None:
+    workflow = {
+        "workflowId": "workflow-UC-2",
+        "steps": [
+            {
+                "stepId": "register",
+                "operationId": "registerForCourseOffering",
+                "successCriteria": [
+                    {"condition": "$statusCode === 201"},
+                    {"condition": "'literal===value' !== 'other!==value'"},
+                ],
+            }
+        ],
+    }
+    candidate = {
+        "operations": [
+            {"operationId": "registerForCourseOffering", "requestBody": None, "parameters": []}
+        ]
+    }
+
+    normalized = dynamic._normalize_authored_workflow(workflow, candidate)
+
+    assert normalized["steps"][0]["successCriteria"] == [
+        {"condition": "$statusCode == 201"},
+        {"condition": "'literal===value' != 'other!==value'"},
+    ]
+    dynamic._validate_authored_workflow(normalized)
+
+
+def test_invalid_response_output_pointer_is_rejected_before_execution() -> None:
+    candidate = {
+        "workflowId": "workflow-UC-3",
+        "requirements": [],
+        "useCase": {},
+        "operations": [
+            {
+                "operationId": "requestSwap",
+                "responses": [
+                    {
+                        "status": "200",
+                        "schema": {
+                            "type": "object",
+                            "properties": {"isValid": {"type": "boolean"}},
+                        },
+                    }
+                ],
+            }
+        ],
+        "trace": {"useCaseIds": ["UC3"]},
+    }
+    document = build_arazzo_document(
+        [
+            attach_workflow_trace(
+                {
+                    "workflowId": "workflow-UC-3",
+                    "steps": [
+                        {
+                            "stepId": "swap",
+                            "operationId": "requestSwap",
+                            "outputs": {"result": "$response.body#/result"},
+                        }
+                    ],
+                },
+                candidate,
+            )
+        ]
+    )
+    openapi = {
+        "openapi": "3.0.3",
+        "info": {"title": "API", "version": "1.0.0"},
+        "paths": {
+            "/swap": {
+                "post": {
+                    "operationId": "requestSwap",
+                    "responses": {
+                        "200": {
+                            "description": "ok",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {"isValid": {"type": "boolean"}},
+                                    }
+                                }
+                            },
+                        }
+                    },
+                }
+            }
+        },
+    }
+
+    with pytest.raises(dynamic.ArazzoValidationError, match="absent from the frozen OpenAPI"):
+        dynamic._validate_document(document, [candidate], openapi)
+
+
 def test_ambiguous_output_list_remains_invalid() -> None:
     workflow = {
         "workflowId": "workflow-UC-1",
@@ -347,7 +625,7 @@ def test_ambiguous_output_list_remains_invalid() -> None:
         dynamic._validate_authored_workflow(normalized)
 
 
-def test_missing_schema_valid_workflow_output_is_classified_as_sut_defect() -> None:
+def test_optional_workflow_output_pointer_is_not_classified_as_sut_defect() -> None:
     openapi = {
         "openapi": "3.1.0",
         "info": {"title": "API", "version": "1.0.0"},
@@ -382,6 +660,14 @@ def test_missing_schema_valid_workflow_output_is_classified_as_sut_defect() -> N
                         "status": "200",
                         "schema": {
                             "type": "array",
+                            "minItems": 1,
+                            "items": {"$ref": "#/components/schemas/Offering"},
+                        },
+                    },
+                    {
+                        "status": "206",
+                        "schema": {
+                            "type": "array",
                             "items": {"$ref": "#/components/schemas/Offering"},
                         },
                     }
@@ -401,6 +687,7 @@ def test_missing_schema_valid_workflow_output_is_classified_as_sut_defect() -> N
         "steps": [
             {
                 "stepId": "search",
+                "statusCode": 206,
                 "finding": {"code": "RUNTIME_EXPRESSION_UNRESOLVED"},
             }
         ],
@@ -408,9 +695,8 @@ def test_missing_schema_valid_workflow_output_is_classified_as_sut_defect() -> N
 
     dynamic._classify_missing_workflow_data(result, workflow, candidate, openapi)
 
-    assert result["defectClass"] == "SUT_DEFECT"
-    assert result["finding"]["code"] == "REQUIRED_WORKFLOW_DATA_MISSING"
-    assert result["finding"]["operationId"] == "searchOfferings"
+    assert result["defectClass"] == "TEST_DEFECT"
+    assert result["finding"]["code"] == "RUNTIME_EXPRESSION_UNRESOLVED"
 
 
 def test_invented_workflow_output_pointer_remains_test_defect() -> None:
@@ -461,6 +747,133 @@ def test_invented_workflow_output_pointer_remains_test_defect() -> None:
 
     assert result["defectClass"] == "TEST_DEFECT"
     assert result["finding"]["code"] == "RUNTIME_EXPRESSION_UNRESOLVED"
+
+
+@pytest.mark.parametrize("source_value", [None, []])
+def test_empty_required_nested_output_is_classified_as_sut_defect(source_value) -> None:
+    workflow = {
+        "workflowId": "workflow-UC1",
+        "steps": [
+            {
+                "stepId": "search",
+                "operationId": "searchOfferings",
+                "outputs": {"offeringsList": "$response.body#/items"},
+            },
+            {
+                "stepId": "details",
+                "operationId": "getOffering",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "offeringId",
+                        "value": "$steps.search.outputs.offeringsList#/0/id",
+                    }
+                ],
+            },
+        ],
+    }
+    result = {
+        "gateStatus": "FAIL",
+        "defectClass": "TEST_DEFECT",
+        "failedStepId": "details",
+        "reason": "JSON Pointer does not resolve: #/0/id",
+        "finding": {
+            "code": "RUNTIME_EXPRESSION_UNRESOLVED",
+            "message": "JSON Pointer does not resolve: #/0/id",
+            "stepId": "details",
+        },
+        "steps": [
+            {
+                "stepId": "search",
+                "statusCode": 200,
+                "outputs": {"offeringsList": source_value},
+            },
+            {"stepId": "details", "status": "failed"},
+        ],
+    }
+
+    candidate = {
+        "operations": [
+            {
+                "operationId": "searchOfferings",
+                "responses": [
+                    {
+                        "status": "200",
+                        "schema": {
+                            "type": "object",
+                            "required": ["items"],
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                        "type": "object",
+                                        "required": ["id"],
+                                        "properties": {"id": {"type": "string"}},
+                                    },
+                                }
+                            },
+                        },
+                    }
+                ],
+            }
+        ]
+    }
+    dynamic._classify_missing_workflow_data(
+        result,
+        workflow,
+        candidate,
+        {
+            "openapi": "3.0.3",
+            "info": {"title": "API", "version": "1.0.0"},
+            "paths": {},
+        },
+    )
+
+    assert result["defectClass"] == "SUT_DEFECT"
+    assert result["finding"]["code"] == "REQUIRED_WORKFLOW_DATA_MISSING"
+    assert result["finding"]["operationId"] == "searchOfferings"
+
+
+def test_optional_empty_collection_does_not_imply_a_sut_defect() -> None:
+    schema = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
+        },
+    }
+
+    assert not dynamic._schema_guarantees_pointer(
+        schema,
+        "#/0/id",
+        {"openapi": "3.0.3", "info": {"title": "API", "version": "1.0.0"}, "paths": {}},
+    )
+
+
+def test_plan_progress_identifies_completed_retrying_and_failed_use_cases(monkeypatch):
+    from app.testing.progress import testing_progress_scope
+
+    candidates = build_workflow_candidates(_requirements(2), _use_cases(2), _openapi())
+    events = []
+
+    def generate(_client, candidate, error=""):
+        if candidate["workflowId"] == "workflow-UC-2":
+            raise dynamic.ArazzoValidationError("Invalid reference")
+        return _document()["workflows"][0]
+
+    monkeypatch.setattr(dynamic, "_generate", generate)
+    with testing_progress_scope(events.append), pytest.raises(ValueError, match="Invalid reference"):
+        dynamic._generate_document(object(), candidates, _openapi())
+    assert [(e["workflow_id"], e["status"]) for e in events] == [
+        ("workflow-UC-1", "PENDING"), ("workflow-UC-2", "PENDING"),
+        ("workflow-UC-1", "RUNNING"), ("workflow-UC-1", "PASS"),
+        ("workflow-UC-2", "RUNNING"), ("workflow-UC-2", "RUNNING"),
+        ("workflow-UC-2", "FAIL"),
+    ]
+    assert events[-2]["attempt"] == 2
+    assert events[-1]["use_case_id"] == "UC-2"
+    assert events[-1]["use_case_name"] == "Check service 2"
 
 
 def test_generated_document_gets_one_bounded_regeneration(
@@ -530,6 +943,179 @@ def test_openrouter_structured_output_requires_parameter_support() -> None:
     assert dynamic._structured_output_extra_body(connection, profile) == {
         "provider": {"require_parameters": True}
     }
+
+
+def test_workflow_generation_uses_medium_reasoning_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request: dict[str, Any] = {}
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(
+                    content='{"workflowId":"workflow-UC-1","steps":[{"stepId":"health","operationId":"health"}]}'
+                ),
+            )
+        ]
+    )
+
+    class Completions:
+        def create(self, **kwargs: Any) -> Any:
+            request.update(kwargs)
+            return response
+
+    profile = SimpleNamespace(
+        temperature=0.2,
+        supported_reasoning=("low", "medium", "high"),
+        top_p=None,
+        completion_limit=lambda _requested: 16384,
+        resolve_reasoning=lambda requested=None: requested,
+        extra_body=lambda _provider: None,
+    )
+    connection = SimpleNamespace(
+        provider="openrouter", model="openai/gpt-oss-120b"
+    )
+    monkeypatch.setattr(dynamic, "build_llm_connection", lambda: connection)
+    monkeypatch.setattr(dynamic, "profile_for", lambda *_args, **_kwargs: profile)
+
+    candidate = build_workflow_candidates(_requirements(), _use_cases(), _openapi())[0]
+    dynamic._generate(SimpleNamespace(chat=SimpleNamespace(completions=Completions())), candidate)
+
+    assert request["reasoning_effort"] == "medium"
+
+
+@pytest.mark.parametrize("failure", ["reference", "schema", "length"])
+def test_generation_repairs_rejected_candidate_without_executing_it(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    openapi = _openapi()
+    openapi["paths"]["/health"]["get"]["parameters"] = [
+        {"name": "studentId", "in": "query", "schema": {"type": "string"}}
+    ]
+    candidates = build_workflow_candidates(_requirements(), _use_cases(), openapi)
+    valid = {
+        "workflowId": candidates[0]["workflowId"],
+        "steps": [{"stepId": "health", "operationId": "health"}],
+    }
+    rejected = deepcopy(valid)
+    if failure == "schema":
+        rejected["steps"][0]["assertions"] = ["invented"]
+    else:
+        rejected["steps"][0]["parameters"] = [
+            {"name": "studentId", "in": "query", "value": "$steps.previousStep.outputs.studentId"}
+        ]
+    requests = []
+
+    def complete(**request):
+        requests.append(request)
+        first = len(requests) == 1
+        return SimpleNamespace(choices=[SimpleNamespace(
+            finish_reason="length" if first and failure == "length" else "stop",
+            message=SimpleNamespace(content=json.dumps(rejected if first else valid)),
+        )])
+
+    monkeypatch.setattr(dynamic, "build_llm_connection", lambda: SimpleNamespace(
+        provider="openrouter", model="openai/gpt-oss-120b"
+    ))
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=complete)))
+    document = dynamic._generate_document(client, candidates, openapi)
+
+    assert len(requests) == 2
+    assert requests[0]["reasoning_effort"] == "medium"
+    assert requests[1]["reasoning_effort"] == ("low" if failure == "length" else "medium")
+    assert requests[1]["messages"][0] == {
+        "role": "system",
+        "content": dynamic.PLAN_ROLE_PROMPT,
+    }
+    correction = requests[1]["messages"][-1]["content"]
+    if failure != "length":
+        assert json.dumps(rejected, separators=(",", ":")) in correction
+        assert "The first step has no previous step" in correction
+    if failure == "reference":
+        assert "unknown local step" in correction
+    assert document["workflows"][0]["steps"] == valid["steps"]
+
+
+def test_unrepaired_unknown_step_remains_a_test_defect(monkeypatch: pytest.MonkeyPatch) -> None:
+    def generate(*_args, **_kwargs):
+        raise dynamic.ArazzoValidationError(
+            "value references an unknown local step: $steps.previousStep.outputs.studentId"
+        )
+
+    def unexpected_execution(*_args, **_kwargs):
+        pytest.fail("Invalid plan must not execute against the generated application")
+
+    monkeypatch.setattr(dynamic, "_client", object)
+    monkeypatch.setattr(dynamic, "_generate", generate)
+    monkeypatch.setattr(dynamic, "execute_arazzo_workflow", unexpected_execution)
+    report = dynamic.dynamic_functional_node(_state(fixed_arazzo_document=None))["dynamic_functional_report"]
+    assert report["defectClass"] == "TEST_DEFECT"
+    assert report["defect"]["repairOwner"] == "testing"
+
+
+@pytest.mark.parametrize("weaken_oracle", [False, True])
+def test_execution_error_log_is_used_for_local_plan_repair(monkeypatch, weaken_oracle):
+    executions = []
+    prompts = []
+
+    def execute(document, workflow_id, **kwargs):
+        executions.append(deepcopy(document))
+        if len(executions) == 1:
+            return {
+                "gateStatus": "FAIL", "defectClass": "TEST_DEFECT",
+                "reason": "JSON Pointer does not resolve: #/invented",
+                "finding": {"code": "RUNTIME_EXPRESSION_UNRESOLVED", "stepId": "health"},
+                "steps": [{"stepId": "health", "operationId": "health", "statusCode": 200}],
+                "workflowInputs": {"kept": "original"},
+            }
+        assert kwargs["workflow_inputs"] == {"kept": "original"}
+        return _pass(workflow_id)
+
+    def generate(_client, candidate, error=""):
+        prompts.append(error)
+        revised = deepcopy(_document()["workflows"][0])
+        revised["steps"][0]["outputs"] = {"payload": "$response.body"}
+        if weaken_oracle:
+            revised["steps"][0].pop("successCriteria")
+        return revised
+
+    monkeypatch.setattr(dynamic, "_client", object)
+    monkeypatch.setattr(dynamic, "_generate", generate)
+    monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
+    report = dynamic.dynamic_functional_node(_state())["dynamic_functional_report"]
+    assert "RUNTIME_EXPRESSION_UNRESOLVED" in prompts[0]
+    assert "#/invented" in prompts[0]
+    assert "Rejected workflow JSON" in prompts[0]
+    assert len(executions) == (1 if weaken_oracle else 2)
+    assert report["gateStatus"] == ("FAIL" if weaken_oracle else "PASS")
+    assert report["planRepairs"][0]["status"] == ("FAILED" if weaken_oracle else "PASS")
+
+
+@pytest.mark.parametrize("defect,method", [("SUT_DEFECT", "get"), ("ENVIRONMENT_DEFECT", "get"), ("TEST_DEFECT", "post")])
+def test_execution_repair_respects_ownership_and_replay_boundary(monkeypatch, defect, method):
+    state = _state()
+    path = state["testing_input"]["contract_artifacts"]["openapi"]["content"]["paths"]["/health"]
+    operation = path.pop("get")
+    path[method] = operation
+    calls = []
+
+    def execute(*args, **kwargs):
+        calls.append(True)
+        return {"gateStatus": "FAIL", "defectClass": defect, "reason": "failure"}
+
+    def unexpected_generation(*args, **kwargs):
+        pytest.fail("This failure must not trigger local plan repair/replay")
+
+    monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
+    monkeypatch.setattr(dynamic, "_client", unexpected_generation)
+    report = dynamic.dynamic_functional_node(state)["dynamic_functional_report"]
+    assert len(calls) == 1
+    assert report["defectClass"] == defect
+    if defect == "TEST_DEFECT":
+        assert report["planRepairs"][0]["status"] == "DEFERRED"
+    else:
+        assert report["planRepairs"] == []
 
 
 def test_incomplete_structured_output_is_rejected_before_json_parsing() -> None:

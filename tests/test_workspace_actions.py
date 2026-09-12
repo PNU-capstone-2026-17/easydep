@@ -320,6 +320,7 @@ def test_upstream_testing_ambiguity_offers_review_without_automatic_repair() -> 
         {
             "requires_revision": True,
             "can_delegate_repair": False,
+            "job": {"implementation_job_id": "implementation-1"},
             "blocking_findings": [
                 {
                     "repairable": True,
@@ -364,6 +365,40 @@ def test_exhausted_testing_plan_defect_is_an_easydep_platform_issue() -> None:
         },
         "auto_selectable": False,
     }
+
+
+def test_clarification_keeps_a_preserved_testing_retry_available() -> None:
+    shaped = result_with_contract(
+        command(
+            status="AWAITING_INPUT",
+            stage="testing",
+            payload={
+                "_conversation_actions": [
+                    {
+                        "action": "message",
+                        "label": "Ask about this EasyDep platform issue",
+                        "payload": {"action_id": "testing-failure"},
+                    },
+                    {
+                        "action": "start_testing",
+                        "label": "Retry testing after EasyDep update",
+                        "payload": {
+                            "action_id": "testing-failure",
+                            "implementation_job_id": "implementation-1",
+                        },
+                    },
+                ]
+            },
+        ),
+        {
+            "kind": "question",
+            "message": "What should be retried?",
+            "conversation": {"clarification": {"question": "What should be retried?"}},
+        },
+    )
+
+    assert [item["action"] for item in shaped["actions"]] == ["message", "start_testing"]
+    assert shaped["actions"][1]["payload"]["action_id"] == "testing-failure"
 
 
 def test_status_not_a_stale_result_flag_controls_terminal_actions() -> None:

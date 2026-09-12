@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { TestingRunView } from '$lib/testing-results';
+  import TestingPlanProgress from './TestingPlanProgress.svelte';
 
   let { run, onOpen }: { run: TestingRunView; onOpen?: () => void } = $props();
 
@@ -30,6 +31,7 @@
     <p class="mt-3 flex items-center gap-2 border-t border-[#ece8dc] pt-3 text-xs text-[#555950]"><span class="size-1.5 animate-pulse rounded-full bg-[#2d7354]"></span>{run.currentLabel}</p>
   {/if}
   {#if run.repair}<p class="mt-2 text-[11px] text-[#777970]">Repair {run.repair.status ?? 'active'} · {run.repair.attemptCount ?? 0} attempts · {run.repair.acceptedCount ?? 0} accepted</p>{/if}
+  <TestingPlanProgress plans={run.plans} />
   {#if onOpen}
     <button class="focus-ring mt-3 rounded-lg border border-[#cddbd1] px-2.5 py-1.5 text-[11px] font-semibold text-[#2d674b] hover:bg-[#f1f7f3]" onclick={onOpen}>Open Testing Results</button>
   {/if}

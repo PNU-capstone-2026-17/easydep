@@ -149,6 +149,49 @@ def _candidates() -> list[dict[str, Any]]:
     return build_workflow_candidates(_requirements(), _use_cases(), _openapi())
 
 
+def test_candidates_use_natural_use_case_order() -> None:
+    requirements = [
+        {"id": f"REQ-{index}", "type": "FR", "text": f"Requirement {index}"}
+        for index in range(1, 13)
+    ]
+    use_cases = {
+        "use_case_specs": [
+            {
+                "use_case_id": f"UC{index}",
+                "name": f"Use case {index}",
+                "requirement_ids": [f"REQ-{index}"],
+                "main_scenario": [f"Run use case {index}"],
+            }
+            for index in range(12, 0, -1)
+        ],
+        "traceability": {
+            "requirements": {
+                f"REQ-{index}": {"use_cases": [f"UC{index}"]}
+                for index in range(1, 13)
+            }
+        },
+    }
+    openapi = {
+        "openapi": "3.0.3",
+        "info": {"title": "API", "version": "1.0.0"},
+        "paths": {
+            "/health": {
+                "get": {
+                    "operationId": "health",
+                    "x-easydep-use-case-ids": [f"UC{index}" for index in range(1, 13)],
+                    "responses": {"200": {"description": "ok"}},
+                }
+            }
+        },
+    }
+
+    candidates = build_workflow_candidates(requirements, use_cases, openapi)
+
+    assert [item["workflowId"] for item in candidates] == [
+        f"workflow-UC{index}" for index in range(1, 13)
+    ]
+
+
 def _candidate_for(candidates: list[dict[str, Any]], use_case_id: str) -> dict[str, Any]:
     for candidate in candidates:
         if candidate["useCase"]["use_case_id"] == use_case_id:

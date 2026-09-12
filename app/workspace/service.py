@@ -839,7 +839,7 @@ class WorkspaceService:
                 stage or str(latest.get("stage") or "requirements"),
             )
         if isinstance(outcome, Clarification):
-            return self._clarification_message(payload, outcome, stage, latest)
+            return self._clarification_message(payload, outcome, stage, actionable)
         return self._route_conversation_intent(app_id, payload, outcome, actionable)
 
     @staticmethod
@@ -858,10 +858,15 @@ class WorkspaceService:
             ),
             "",
         )
+        preserved_actions = [
+            item.model_dump(mode="json", exclude_none=True)
+            for item in offered_actions(latest)
+        ]
         return (
             "message",
             {
                 **payload,
+                "_conversation_actions": preserved_actions,
                 "action_id": (
                     offered_message_id
                     or payload.get("action_id")
@@ -1206,8 +1211,46 @@ class WorkspaceService:
         if command is None:
             return None
         presented = dict(command)
+        payload = command.get("payload")
+        payload = payload if isinstance(payload, dict) else {}
         result = command.get("result")
         shaped_result = dict(result) if isinstance(result, dict) else {}
+        conversation = shaped_result.get("conversation")
+        if (
+            isinstance(conversation, dict)
+            and conversation.get("clarification")
+        ):
+            # Rebuild from the referenced workflow command even when an older
+            # clarification saved a partial action list. A prior server version
+            # stored only the message action and otherwise made Testing retry
+            # impossible after a refresh.
+            anchor = command
+            visited: set[str] = set()
+            while len(visited) < 12:
+                anchor_id = str(anchor.get("command_id") or "")
+                if not anchor_id or anchor_id in visited:
+                    break
+                visited.add(anchor_id)
+                referenced_id = str((anchor.get("payload") or {}).get("action_id") or "")
+                referenced = repository.get_command(referenced_id) if referenced_id else None
+                if referenced is None or referenced.get("app_id") != app_id:
+                    break
+                anchor = referenced
+                anchor_conversation = (anchor.get("result") or {}).get("conversation")
+                if not (
+                    isinstance(anchor_conversation, dict)
+                    and anchor_conversation.get("clarification")
+                ):
+                    break
+            restored_actions = [
+                item.model_dump(mode="json", exclude_none=True)
+                for item in offered_actions(anchor)
+            ]
+            if restored_actions:
+                presented["payload"] = {
+                    **payload,
+                    "_conversation_actions": restored_actions,
+                }
         shaped_result = _with_capability_handoff_questions(app_id, shaped_result)
         presented["result"] = result_with_contract(presented, shaped_result)
         return presented
