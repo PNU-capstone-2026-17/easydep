@@ -507,6 +507,110 @@ def test_requirement_revision_restores_checkpoint_when_artifact_save_fails(
     }
 
 
+def test_requirement_revision_uses_saved_artifacts_when_checkpoint_is_missing(monkeypatch):
+    from app.requirements.orchestration import service
+    from app.requirements.schemas import FeedbackEdit
+
+    existing = {
+        "use_case_id": "UC1",
+        "name": "Enroll",
+        "requirement_ids": ["R1"],
+        "nfr_ids": [],
+        "trigger": "old trigger",
+        "preconditions": [],
+        "main_scenario": [],
+        "extensions": [],
+        "success_guarantee": [],
+        "minimal_guarantee": [],
+        "issues": [],
+        "repair_iters": 0,
+    }
+    saved = []
+    monkeypatch.setattr(
+        service,
+        "capture_analysis_checkpoint",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("No saved checkpoint was found for requirements run 'thread-1'.")
+        ),
+    )
+    monkeypatch.setattr(
+        service.artifact_repository,
+        "load_state",
+        lambda _app_id: {
+            "refined_requirements": [{"id": "R1", "text": "Enroll in a course."}],
+            "usecase_spec": {
+                "actors": [{"id": "ACT1", "name": "Student"}],
+                "use_cases": [
+                    {
+                        "id": "UC1",
+                        "name": "Enroll",
+                        "requirement_ids": ["R1"],
+                        "nfr_ids": [],
+                    }
+                ],
+                "use_case_specs": [existing],
+            },
+        },
+    )
+
+    def generate(uc, by_id, actors, feedback):
+        assert uc["_existing_spec"] == existing
+        assert list(by_id) == ["R1"]
+        assert actors[0]["name"] == "Student"
+        assert feedback == "Use the enrollment trigger."
+        return {**existing, "trigger": "student selects a course"}
+
+    monkeypatch.setattr(service, "generate_specification", generate)
+    monkeypatch.setattr(
+        service.artifact_repository,
+        "save_stages",
+        lambda app_id, stages, state: saved.append((app_id, stages, state))
+        or {"usecase_spec": 4},
+    )
+
+    result = service.revise_requirements_analysis(
+        FeedbackEdit(
+            stage="specs",
+            scope="local",
+            target_ids=["UC1"],
+            instruction="Use the enrollment trigger.",
+        ),
+        "thread-1",
+        app_id="app-1",
+    )
+
+    assert result["status"] == "need_feedback"
+    assert result["phase"] == "specs"
+    assert result["saved_stages"] == ["usecase_spec"]
+    assert result["use_case_specs"][0]["trigger"] == "student selects a course"
+    assert saved[0][0:2] == ("app-1", ["usecase_spec"])
+
+
+def test_requirement_revision_does_not_use_artifact_fallback_for_other_edits(monkeypatch):
+    from app.requirements.orchestration import service
+    from app.requirements.schemas import FeedbackEdit
+
+    monkeypatch.setattr(
+        service,
+        "capture_analysis_checkpoint",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ValueError("No saved checkpoint was found for requirements run 'thread-2'.")
+        ),
+    )
+    monkeypatch.setattr(
+        service.artifact_repository,
+        "load_state",
+        lambda _app_id: pytest.fail("unrelated edits must not use artifact fallback"),
+    )
+
+    with pytest.raises(ValueError, match="No saved checkpoint was found"):
+        service.revise_requirements_analysis(
+            FeedbackEdit(stage="relationships", instruction="Add the association."),
+            "thread-2",
+            app_id="app-1",
+        )
+
+
 def test_feedback_payload_carries_the_resource_questions():
     """되묻기가 응답까지 못 오면 화면이 `resource_answers`를 만들 수 없다."""
     questions = [{"field": "region", "kind": "missing", "why": "w", "question": "q"}]

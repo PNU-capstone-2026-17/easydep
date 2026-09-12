@@ -767,6 +767,14 @@ class WorkspaceService:
             if len(explicit_instructions) == 1:
                 target = next(iter(explicit_instructions))
                 explicit_payload["revision_instructions"] = {target: outcome.instruction}
+                pinned_revision = (
+                    outcome.revision.model_copy(update={"targets": [target]})
+                    if outcome.revision is not None
+                    else None
+                )
+                outcome = outcome.model_copy(
+                    update={"targets": [target], "revision": pinned_revision}
+                )
             return self._route_conversation_intent(
                 app_id, explicit_payload, outcome, latest
             )
@@ -2366,6 +2374,17 @@ class WorkspaceService:
 
                 def operation():
                     return resume_design_session(app_id, text)
+            elif command.get("action") == "advance":
+                # A targeted revision can validate and persist design artifacts
+                # without opening a full design-generation checkpoint.  The
+                # action reference was already checked against a server offer,
+                # so advancing from that review finishes Design; it must not
+                # restart the whole pipeline merely because no session exists.
+                operation_stage = "design_complete"
+                verb = "Completing"
+
+                def operation():
+                    return {"status": "completed", "app_id": app_id}
             else:
                 operation_stage = DESIGN_STAGES[0]
                 verb = "Generating"

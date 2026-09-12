@@ -20,6 +20,10 @@ from app.requirements.contracts.request import (
     FeedbackEdit,
     ResourceAnswer,
 )
+from app.requirements.modeling.specifications import (
+    check_specs,
+    generate_specification,
+)
 from app.requirements.orchestration.graph import (
     capture_analysis_checkpoint,
     restore_analysis_checkpoint,
@@ -198,6 +202,104 @@ def retry_requirements_analysis(
     return payload
 
 
+def _revise_local_spec_from_artifacts(
+    edit: FeedbackEdit,
+    thread_id: str,
+    *,
+    app_id: str,
+) -> dict[str, object]:
+    """Revise one saved specification when the requirements checkpoint is absent."""
+
+    state = cast(dict[str, object], artifact_repository.load_state(app_id))
+    requirements = state.get("refined_requirements")
+    artifact = state.get("usecase_spec")
+    if not isinstance(requirements, list) or not isinstance(artifact, dict):
+        raise ValueError(  # noqa: TRY004
+            "A local specification revision requires current refined_requirements and usecase_spec artifacts."
+        )
+
+    by_id: dict[str, dict[str, object]] = {}
+    for requirement in requirements:
+        if not isinstance(requirement, dict) or not requirement.get("id"):
+            raise ValueError("The saved refined_requirements artifact is stale or invalid.")
+        requirement_id = str(requirement["id"])
+        if requirement_id in by_id:
+            raise ValueError(f"The saved refined_requirements artifact has an ambiguous id {requirement_id!r}.")
+        by_id[requirement_id] = requirement
+
+    use_cases = artifact.get("use_cases")
+    specs = artifact.get("use_case_specs")
+    actors = artifact.get("actors") or []
+    if not isinstance(use_cases, list) or not isinstance(specs, list) or not isinstance(actors, list):
+        raise ValueError("The saved usecase_spec artifact is stale or invalid.")  # noqa: TRY004
+
+    target_id = edit.target_ids[0]
+    target_use_cases = [
+        item for item in use_cases if isinstance(item, dict) and str(item.get("id")) == target_id
+    ]
+    target_specs = [
+        item
+        for item in specs
+        if isinstance(item, dict) and str(item.get("use_case_id")) == target_id
+    ]
+    if len(target_use_cases) != 1 or len(target_specs) != 1:
+        raise ValueError(f"The local specification target {target_id!r} is stale or ambiguous.")
+
+    target_use_case = dict(target_use_cases[0])
+    referenced_ids = [
+        str(value)
+        for key in ("requirement_ids", "nfr_ids")
+        for value in target_use_case.get(key, []) or []
+    ]
+    missing_ids = sorted(set(referenced_ids) - set(by_id))
+    if missing_ids:
+        raise ValueError(
+            f"The local specification target {target_id!r} references stale requirements: "
+            + ", ".join(missing_ids)
+        )
+
+    target_use_case["_existing_spec"] = target_specs[0]
+    revised_spec = generate_specification(
+        target_use_case,
+        by_id,
+        actors,
+        edit.instruction,
+    )
+    revised_specs = list(specs)
+    target_index = next(
+        index
+        for index, item in enumerate(revised_specs)
+        if isinstance(item, dict) and str(item.get("use_case_id")) == target_id
+    )
+    revised_specs[target_index] = revised_spec
+    revised_artifact = {**artifact, "use_case_specs": revised_specs}
+    save_state = {**state, "usecase_spec": revised_artifact}
+    saved = artifact_repository.save_stages(app_id, ["usecase_spec"], save_state)
+
+    payload: dict[str, object] = {
+        "thread_id": thread_id,
+        "phase": "specs",
+        "status": "need_feedback",
+        "feedback_prompt": "Enter feedback for [specs]. Leave it blank to continue.",
+        "feedback_summary": [str(item.get("use_case_id")) for item in revised_specs],
+        "edit_stage": "specs",
+        "edit_targets": [str(item.get("use_case_id")) for item in revised_specs],
+        "resource_questions": None,
+        "blocking_findings": None,
+        "requires_revision": None,
+        "repair_state": None,
+        "requirements": requirements,
+        "actors": artifact.get("actors", []),
+        "use_cases": use_cases,
+        "use_case_specs": revised_specs,
+        "spec_report": check_specs({"use_case_specs": revised_specs})["spec_report"],
+        "saved_stages": list(saved),
+    }
+    if "traceability" in artifact:
+        payload["traceability"] = artifact["traceability"]
+    return payload
+
+
 def revise_requirements_analysis(
     edit: FeedbackEdit,
     thread_id: str,
@@ -206,10 +308,28 @@ def revise_requirements_analysis(
 ) -> dict[str, object]:
     """Apply a validated edit by re-entering its persisted feedback gate."""
 
-    checkpoint = capture_analysis_checkpoint(
-        thread_id,
-        persist=settings.enable_session_persistence,
-    )
+    try:
+        checkpoint = capture_analysis_checkpoint(
+            thread_id,
+            persist=settings.enable_session_persistence,
+        )
+    except ValueError as error:
+        expected = f"No saved checkpoint was found for requirements run {thread_id!r}."
+        if (
+            str(error) == expected
+            and edit.stage == "specs"
+            and edit.scope == "local"
+            and len(edit.target_ids) == 1
+        ):
+            try:
+                return _revise_local_spec_from_artifacts(
+                    edit,
+                    thread_id,
+                    app_id=app_id,
+                )
+            except artifact_repository.AppNotFound as app_error:
+                raise ValueError(f"App {app_id} was not found.") from app_error
+        raise
     payload = revise_analysis(
         edit,
         thread_id,

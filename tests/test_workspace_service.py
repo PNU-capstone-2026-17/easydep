@@ -1432,6 +1432,44 @@ def test_design_operation_emits_a_named_progress_card(monkeypatch) -> None:
     assert calls == ["start"]
 
 
+def test_inactive_targeted_design_review_advances_without_restarting(monkeypatch) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        workspace_module,
+        "session_status",
+        lambda _app_id: {
+            "exists": False,
+            "active": False,
+            "retryable": False,
+            "stage": "class_diagram",
+        },
+    )
+    monkeypatch.setattr(
+        workspace_module,
+        "start_design_session",
+        lambda _app_id: calls.append("start") or {"status": "need_feedback"},
+    )
+    service = WorkspaceService()
+    monkeypatch.setattr(service, "_run_design_operation", lambda _command, **kwargs: kwargs["operation"]())
+    try:
+        result = service._stage_message(
+            {
+                "command_id": "targeted-review-command",
+                "app_id": "app-1",
+                "action": "advance",
+                "stage": "design",
+                "payload": {"text": ""},
+            },
+            advance=True,
+        )
+    finally:
+        service.shutdown()
+
+    assert result["message"] == "Design artifact generation completed."
+    assert result["design"] == {"status": "completed", "app_id": "app-1"}
+    assert calls == []
+
+
 def test_design_operation_exposes_existing_llm_timing_events(monkeypatch) -> None:
     events = []
     monkeypatch.setattr(

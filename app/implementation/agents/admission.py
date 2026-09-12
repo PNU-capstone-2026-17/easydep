@@ -104,12 +104,11 @@ already declared in designEvidence. Do not make an option depend on an undeclare
 relationship endpoint, API field, or policy. If an alternative needs another authority target,
 do not present it as a local option for the current source reference.
 The source reference identifies the first contract that must change:
-- Use a use_case_spec reference only when the required user-visible outcome or policy
-  choice itself is not specified.
+- Use a use_case_spec reference when the required behavior, policy, value-source meaning,
+  trust boundary, or domain matching rule itself is not specified.
 - When that meaning is already stated but the API, class operation, sequence call, or state
-  contract leaves its semantic source, trust boundary, or public carrier undecided, use the
-  closest api or operation reference instead. Do not route mere runtime wiring to the
-  use-case specification.
+  contract lacks only a carrier for it, use the closest api or operation reference instead.
+  Do not route mere runtime wiring to the use-case specification.
 - When linked BCE design evidence lacks a required state or relationship, use the closest
   exact class reference available as the source reference.
 - Use an api reference only when the unresolved choice belongs to the caller-visible HTTP
