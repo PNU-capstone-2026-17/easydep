@@ -15,7 +15,10 @@ from app.metrics import langsmith as langsmith_metrics
 
 from ..agents.runtime import (
     OwnerConversationIncomplete,
+    _persist_admission_gap,
     execute_openhands_task,
+    execution_attempt,
+    preflight_behavior_task,
     write_execution_plan,
 )
 from ..agents.verification.build import WorkspaceVerificationError, verify_run_workspace
@@ -80,6 +83,7 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     if erd_model_path is not None:
         plan_persistence_tasks(spec, run_root)
     plan_backend_owner_task(spec, run_root)
+    _admit_planned_backend_tasks(run_root)
     plan_frontend_tasks(spec, run_root)
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = _read_json(manifest_path)
@@ -97,6 +101,53 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     build_rtm_traceability_map(spec, run_root)
     apply_repair_directives(run_root)
     return reconcile_workflow_state(run_root)
+
+
+def _task_source_refs(task: dict[str, object]) -> list[str]:
+    return [
+        value
+        for value in task.get("source_refs", task.get("sourceRefs", []))
+        if isinstance(value, str) and value
+    ]
+
+
+def _admit_planned_backend_tasks(run_root: Path) -> None:
+    """Run the bounded behavior readiness gate before OpenHands is planned.
+
+    This intentionally follows the persisted backend TaskSpec rather than
+    reconstructing capsule inputs from design artifacts.  A single gap blocks
+    the run just as the sequential owner executor would, leaving RTM to route
+    the returned source reference to its actual upstream owner.
+    """
+
+    manifest = _read_json(run_root / "reports" / "run-manifest.json")
+    for task in manifest.get("implementation_tasks", []):
+        if not isinstance(task, dict) or task.get("task_type") not in {
+            "backend-implementation",
+            "backend-operation",
+        }:
+            continue
+        context_file = task.get("context_file", task.get("contextFile"))
+        if not isinstance(context_file, str):
+            continue
+        context = _read_json(run_root / context_file)
+        if not isinstance(context.get("behaviorCapsule"), dict):
+            continue
+        task_id = str(task.get("task_id") or "")
+        if not task_id:
+            continue
+        started = time.monotonic()
+        gap = preflight_behavior_task(run_root, task, context, _task_source_refs(task))
+        if gap is not None:
+            _persist_admission_gap(
+                run_root,
+                task,
+                task_id,
+                gap,
+                execution_attempt(run_root, task_id),
+                started,
+            )
+            return
 
 
 def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
@@ -143,6 +194,13 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
                 else "INTERRUPTED"
             )
         elif (
+            result.get("status") == "NEEDS_INPUT"
+            and result.get("promptSha256", prompt_sha) == prompt_sha
+        ):
+            # A fresh admission decision supersedes a previously successful
+            # implementation when the current behavior contract now has a gap.
+            status = "NEEDS_INPUT"
+        elif (
             old.get("status") == "SUCCEEDED" and complete_outputs and not repair_replay_required
         ) or (result_matches and not old):
             status = "SUCCEEDED"
@@ -156,11 +214,6 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             and result.get("promptSha256", prompt_sha) == prompt_sha
         ):
             status = "INTERRUPTED"
-        elif (
-            result.get("status") == "NEEDS_INPUT"
-            and result.get("promptSha256", prompt_sha) == prompt_sha
-        ):
-            status = "NEEDS_INPUT"
         else:
             status = "PENDING"
         tasks.append(

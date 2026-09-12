@@ -26,7 +26,7 @@ from ..runtime.linux_runner_transport import (
     OWNER_TERMINAL_SHELL_ENV,
 )
 from ..workflows.repair import active_repair_for_task
-from .admission import admit_behavior_capsule
+from .admission import preflight_semantic_behavior
 from .canary import (
     TRANSIENT_CANARY_FAILURES,
     classify_canary_exception,
@@ -554,6 +554,19 @@ def _explicit_projection_gap(
     return None
 
 
+def preflight_behavior_task(
+    run_root: Path,
+    task: dict[str, object],
+    context: dict[str, object],
+    source_refs: list[str],
+) -> UpstreamGap | None:
+    """Run deterministic and cached semantic readiness checks once."""
+
+    return _explicit_projection_gap(context, source_refs) or preflight_semantic_behavior(
+        run_root, task, context, source_refs
+    )
+
+
 def _with_preserved_implementation_markers(
     run_root: Path,
     editable_paths: list[str],
@@ -755,7 +768,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             for value in task.get("source_refs", task.get("sourceRefs", []))
             if isinstance(value, str) and value
         ]
-        admission_gap = _explicit_projection_gap(context, source_refs)
+        admission_started = time.monotonic()
+        admission_gap = preflight_behavior_task(run_root, task, context, source_refs)
         if admission_gap is not None:
             return _persist_admission_gap(
                 run_root,
@@ -763,27 +777,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 task_id,
                 admission_gap,
                 execution_attempt(run_root, task_id),
-                time.monotonic(),
+                admission_started,
             )
-        if any(value.startswith("use_case_spec:") for value in source_refs):
-            persistence_dir, conversation_id = _owner_conversation_identity(
-                run_root, task_id
-            )
-            resumed = (
-                persistence_dir / conversation_id.hex / "base_state.json"
-            ).is_file()
-            if not resumed:
-                admission_started = time.monotonic()
-                admission_gap = admit_behavior_capsule(context, source_refs)
-                if admission_gap is not None:
-                    return _persist_admission_gap(
-                        run_root,
-                        task,
-                        task_id,
-                        admission_gap,
-                        execution_attempt(run_root, task_id),
-                        admission_started,
-                    )
     if bounded_evidence:
         owner_tool_mode = "restricted"
     connection = openhands_connection()

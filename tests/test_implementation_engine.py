@@ -1080,7 +1080,7 @@ def test_semantic_admission_is_rejected_before_openhands(
 
     with (
         patch(
-            "app.implementation.agents.runtime.admit_behavior_capsule",
+            "app.implementation.agents.runtime.preflight_behavior_task",
             return_value=UpstreamGap(
                 summary="A branch has no declared observable.",
                 source_ref="use_case_spec:UC-12",
@@ -2450,6 +2450,16 @@ def test_reconcile_preserves_a_typed_upstream_gap_as_needs_input(tmp_path: Path)
         ),
         encoding="utf-8",
     )
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {"task_id": task_id, "status": "SUCCEEDED", "attempts": 1}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     (executions / f"{task_id}.result.json").write_text(
         json.dumps(
             {
@@ -2747,7 +2757,12 @@ class Order <<Entity>> { - id: UUID }
         agent_max_output_tokens=1000,
     )
 
-    state = plan_workflow(run, spec)
+    with patch(
+        "app.implementation.workflows.coordinator.preflight_behavior_task",
+        return_value=None,
+    ) as preflight:
+        state = plan_workflow(run, spec)
+    preflight.assert_called()
     manifest = json.loads((run / "reports/run-manifest.json").read_text(encoding="utf-8"))
     tasks = manifest["implementation_tasks"]
     task_types = {task["task_type"] for task in tasks}
