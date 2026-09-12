@@ -25,6 +25,7 @@ def test_prompt_treats_runtime_transport_as_implementation_only_after_semantics(
     assert "treat\nthe capsule as a legacy context" in prompt
     assert "preflightFindings are deterministic evidence" in prompt
     assert "Every option must be resolvable by revising that same source reference" in prompt
+    assert "Do not make an option depend on an undeclared class" in prompt
 
 
 def test_implement_admission_uses_admission_connection_and_low_budget(monkeypatch) -> None:

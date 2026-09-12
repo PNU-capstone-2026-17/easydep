@@ -382,6 +382,25 @@ def test_status_not_a_stale_result_flag_controls_terminal_actions() -> None:
     ]
 
 
+def test_failed_change_confirmation_retries_the_confirmation_not_design_graph() -> None:
+    shaped = result_with_contract(
+        command(
+            status="FAILED",
+            stage="design",
+            action="confirm_change",
+            payload={"action_id": "pending-plan"},
+        ),
+        {},
+    )
+
+    assert shaped["actions"][1] == {
+        "action": "confirm_change",
+        "label": "Retry approved change",
+        "payload": {"action_id": "pending-plan"},
+        "auto_selectable": True,
+    }
+
+
 def test_reference_validation_accepts_only_a_published_payload() -> None:
     prior = command(
         status="AWAITING_INPUT",

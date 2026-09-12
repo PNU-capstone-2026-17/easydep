@@ -532,6 +532,17 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
         return [_offer(WorkspaceAction.MESSAGE, "Continue conversation", common)]
     if status in {"FAILED", "INTERRUPTED"}:
         discuss = _offer(WorkspaceAction.MESSAGE, "Ask about this error", common)
+        if command.get("action") == "confirm_change":
+            source_action_id = str((command.get("payload") or {}).get("action_id") or "")
+            return [
+                discuss,
+                _offer(
+                    WorkspaceAction.CONFIRM_CHANGE,
+                    "Retry approved change",
+                    {"action_id": source_action_id},
+                    auto=True,
+                ),
+            ]
         if stage == "requirements":
             return [
                 discuss,

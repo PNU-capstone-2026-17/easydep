@@ -17,7 +17,7 @@ from app.llm_connection import build_admission_llm_connection
 from .upstream_gap_tool import UpstreamGap, UpstreamGapOption
 
 ADMISSION_CHECKPOINT_SCHEMA = "implementation-admission/v1alpha1"
-ADMISSION_VALIDATOR_VERSION = "behavior-admission/v2"
+ADMISSION_VALIDATOR_VERSION = "behavior-admission/v3"
 
 
 class AdmissionOption(BaseModel):
@@ -99,6 +99,10 @@ Report at most one root ambiguity concisely, using exactly one allowed source re
 Every option must be resolvable by revising that same source reference. Options for an API,
 operation, or class reference must preserve the already-declared use-case behavior and policy;
 do not offer a choice that instead changes a requirement or another upstream target.
+Each option must also be independently executable within that source element and the elements
+already declared in designEvidence. Do not make an option depend on an undeclared class,
+relationship endpoint, API field, or policy. If an alternative needs another authority target,
+do not present it as a local option for the current source reference.
 The source reference identifies the first contract that must change:
 - Use a use_case_spec reference only when the required user-visible outcome or policy
   choice itself is not specified.
