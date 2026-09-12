@@ -544,6 +544,84 @@ def test_general_reply_preserves_the_underlying_workflow_actions(monkeypatch) ->
     assert stage == "design"
 
 
+def _testing_platform_wait() -> dict[str, Any]:
+    return {
+        "command_id": "testing-failure",
+        "app_id": "app-1",
+        "action": "start_testing",
+        "stage": "testing",
+        "status": "AWAITING_INPUT",
+        "payload": {},
+        "result": {
+            "requires_revision": True,
+            "can_delegate_repair": False,
+            "job": {"implementation_job_id": "implementation-1"},
+            "blocking_findings": [
+                {
+                    "repairable": True,
+                    "defect_class": "TEST_DEFECT",
+                    "repair_owner": "testing",
+                }
+            ],
+        },
+    }
+
+
+def test_testing_retry_message_uses_the_offered_retry_without_llm(monkeypatch) -> None:
+    latest = _testing_platform_wait()
+    monkeypatch.setattr(workspace_module.repository, "latest_command", lambda *_a, **_k: latest)
+    monkeypatch.setattr(workspace_module.repository, "get_command", lambda *_a, **_k: latest)
+
+    def unexpected_interpretation(*_args, **_kwargs):
+        raise AssertionError("An explicit Testing retry must not require conversation interpretation.")
+
+    monkeypatch.setattr(workspace_module.conversation_agent, "respond", unexpected_interpretation)
+    service = WorkspaceService()
+    try:
+        action, payload, stage = service._prepare_conversational_message(
+            "app-1",
+            action="message",
+            payload={"text": "test", "action_id": latest["command_id"]},
+            stage=None,
+        )
+    finally:
+        service.shutdown()
+
+    assert action == "start_testing"
+    assert payload["action_id"] == "testing-failure"
+    assert payload["implementation_job_id"] == "implementation-1"
+    assert stage is None
+
+
+def test_testing_clarification_preserves_the_retry_action(monkeypatch) -> None:
+    latest = _testing_platform_wait()
+    monkeypatch.setattr(workspace_module.repository, "latest_command", lambda *_a, **_k: latest)
+    monkeypatch.setattr(workspace_module.repository, "get_command", lambda *_a, **_k: latest)
+    monkeypatch.setattr(workspace_module, "build_conversation_context", lambda _app: context())
+    monkeypatch.setattr(
+        workspace_module.conversation_agent,
+        "respond",
+        lambda *_a, **_k: Clarification(question="What should be retried?"),
+    )
+    service = WorkspaceService()
+    try:
+        action, payload, stage = service._prepare_conversational_message(
+            "app-1",
+            action="message",
+            payload={"text": "What now?", "action_id": latest["command_id"]},
+            stage=None,
+        )
+    finally:
+        service.shutdown()
+
+    assert action == "message"
+    assert stage == "testing"
+    assert [item["action"] for item in payload["_conversation_actions"]] == [
+        "message",
+        "start_testing",
+    ]
+
+
 def test_conversation_failure_becomes_a_retryable_persisted_clarification(
     monkeypatch,
 ) -> None:
