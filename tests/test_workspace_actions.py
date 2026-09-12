@@ -78,6 +78,30 @@ def test_reviewed_local_requirements_revision_offers_fresh_plan_not_advance() ->
     assert "advance" not in {item["action"] for item in shaped["actions"]}
 
 
+def test_reviewed_implementation_gap_revision_returns_to_implementation() -> None:
+    resumed = result_with_contract(
+        command(status="AWAITING_INPUT", stage="design"),
+        {
+            "kind": "action_required",
+            "resume_implementation": True,
+        },
+    )
+    active_design_review = result_with_contract(
+        command(status="AWAITING_INPUT", stage="design"),
+        {"kind": "action_required"},
+    )
+
+    assert [item["action"] for item in resumed["actions"]] == [
+        "message",
+        "start_implementation",
+    ]
+    assert resumed["actions"][1]["label"] == "Resume implementation"
+    assert [item["action"] for item in active_design_review["actions"]] == [
+        "message",
+        "advance",
+    ]
+
+
 def test_choice_actions_carry_the_answer_in_their_payload() -> None:
     shaped = result_with_contract(
         command(status="AWAITING_INPUT"),

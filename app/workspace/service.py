@@ -1517,11 +1517,21 @@ class WorkspaceService:
             else:
                 plan = plan_revision(tools, interpretation)
             decision_refs = [target.ref for target in decision.authoritative_targets]
+            plan_is_valid = (
+                validate_plan(
+                    tools,
+                    plan,
+                    interpretation,
+                    origin_stage="implementation",
+                )
+                if implementation_gap
+                else validate_plan(tools, plan, interpretation)
+            )
             if (
                 plan.status != "needs_confirmation"
                 or [target.ref for target in plan.requested_targets] != decision_refs
                 or [target.ref for target in plan.authority_targets] != decision_refs
-                or not validate_plan(tools, plan, interpretation)
+                or not plan_is_valid
             ):
                 raise ValueError("The feedback question is stale.")
         except (TypeError, ValueError) as error:
@@ -3134,6 +3144,12 @@ class WorkspaceService:
             }
             result = self._stage_message(delegated, advance=False)
             response = self._attach_revision_execution(app_id, plan, result)
+            if (
+                origin_stage == "implementation"
+                and owner == "design"
+                and response.get("awaiting_input") is True
+            ):
+                response["resume_implementation"] = True
             return self._attach_downstream_revision_handoff(
                 delegated, plan, interpretation, response
             )
@@ -4249,12 +4265,17 @@ class WorkspaceService:
                     planned.append((semantic_scope, candidate))
             if not planned:
                 raise ValueError("no exact upstream revision path is available")
-            semantic_scope, plan = planned[0]
+            _, plan = planned[0]
             authority = plan.authority_targets[0]
+            allowed_semantic_scopes = tuple(
+                semantic_scope
+                for semantic_scope, candidate in planned
+                if candidate.authority_targets == plan.authority_targets
+            )
             snapshot = tools.revision_snapshot()
             versions = snapshot.get("artifact_versions")
             if not isinstance(versions, Mapping):
-                raise ValueError("the current artifact versions are unavailable")
+                raise TypeError("the current artifact versions are unavailable")
             version_id = versions.get(authority.artifact_type)
             if not isinstance(version_id, int) or isinstance(version_id, bool) or version_id < 1:
                 version_id = authority.artifact_version_id
@@ -4293,7 +4314,7 @@ class WorkspaceService:
                 options=[],
                 allow_free_text=True,
                 decision_policy=DecisionPolicy(
-                    allowed_semantic_scopes=(semantic_scope,),
+                    allowed_semantic_scopes=allowed_semantic_scopes,
                     allowed_change_types=("modify",),
                 ),
             )

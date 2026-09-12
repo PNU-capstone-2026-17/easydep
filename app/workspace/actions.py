@@ -488,12 +488,20 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
             actions=_answer_offers(command_id, result),
         )
 
-    next_action = (
-        WorkspaceAction.ADVANCE
-        if stage in {"requirements", "design"}
-        else WorkspaceAction.MESSAGE
-    )
-    next_label = "Continue to next stage" if next_action == WorkspaceAction.ADVANCE else "Send feedback"
+    if stage == "design" and result.get("resume_implementation") is True:
+        next_action = WorkspaceAction.START_IMPLEMENTATION
+        next_label = "Resume implementation"
+    else:
+        next_action = (
+            WorkspaceAction.ADVANCE
+            if stage in {"requirements", "design"}
+            else WorkspaceAction.MESSAGE
+        )
+        next_label = (
+            "Continue to next stage"
+            if next_action == WorkspaceAction.ADVANCE
+            else "Send feedback"
+        )
     next_payload: dict[str, Any] = dict(common)
     if stage == "design" and result.get("method_proposals"):
         next_label = "Approve method proposals and continue"

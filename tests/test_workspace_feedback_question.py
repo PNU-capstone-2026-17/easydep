@@ -136,6 +136,48 @@ def test_feedback_question_offers_stable_option_and_free_text() -> None:
     }
 
 
+def test_implementation_gap_question_accepts_behavior_or_contract_feedback(
+    monkeypatch,
+) -> None:
+    class GapTools(_Tools):
+        def validate_revision_selections(self, refs):
+            return {"valid": True, "valid_refs": list(refs)}
+
+        def normalize_revision_targets(self, _refs, *, require_editable):
+            assert require_editable is False
+            return [_target()]
+
+        def revision_snapshot(self):
+            return {"artifact_versions": {"USECASE_SPEC": 7}}
+
+    monkeypatch.setattr(workspace_module, "ProjectTools", GapTools)
+    monkeypatch.setattr(workspace_module, "plan_revision", lambda *_args, **_kwargs: _plan())
+    service = WorkspaceService()
+    try:
+        result = service._implementation_needs_input_result(
+            {
+                "app_id": "app-1",
+                "workflow": {
+                    "blockingDetails": [
+                        {
+                            "kind": "upstream_contract_gap",
+                            "taskId": "implementation-task-1",
+                            "summary": "An upstream operation contract is incomplete.",
+                            "sourceRef": "use_case_spec:UC1",
+                        }
+                    ]
+                },
+            },
+            "implementation-job-1",
+        )
+    finally:
+        service.shutdown()
+
+    assert result["feedback_question"]["decision_policy"][
+        "allowed_semantic_scopes"
+    ] == ["behavior", "contract"]
+
+
 def test_feedback_answer_fields_survive_http_request_validation() -> None:
     request = WorkspaceCommandRequest.model_validate(
         {
