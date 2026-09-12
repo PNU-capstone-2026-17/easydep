@@ -12,7 +12,7 @@ from app.artifact_trace_projection import project_artifact_trace
 from app.config import settings
 from app.design.schemas.class_model import BCEModel
 from app.design.schemas.sequence_model import SequenceCollection
-from app.llm_connection import build_llm_connection
+from app.llm_connection import build_openhands_llm_connection
 
 from ..domain.implementation_ir import (
     ApiPortIR,
@@ -1332,7 +1332,7 @@ def render_source_contracts(run_root: Path, paths: list[Path]) -> str:
 def llm_config(spec: JobSpec) -> dict[str, object]:
     """모든 구현 작업이 공유하는 OpenHands LLM 설정을 만든다."""
 
-    connection = build_llm_connection()
+    connection = build_openhands_llm_connection()
     return {
         "provider": connection.provider,
         # Stored as execution evidence. Runtime selection still reads the same

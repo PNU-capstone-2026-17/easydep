@@ -103,8 +103,20 @@ def _direct_model_id(model: str) -> str:
 def build_llm_connection(config: Settings = settings) -> LlmConnection:
     """명시된 공급자와 공통 설정으로 하나의 연결을 만든다."""
 
+    return _build_llm_connection(config, config.model)
+
+
+def build_openhands_llm_connection(config: Settings = settings) -> LlmConnection:
+    """Build the OpenHands connection, optionally overriding only MODEL."""
+
+    return _build_llm_connection(config, config.openhands_model or config.model)
+
+
+def _build_llm_connection(config: Settings, model_id: str) -> LlmConnection:
+    """Assemble one provider connection while the caller chooses its model."""
+
     provider = config.llm_provider
-    model = _direct_model_id(config.model)
+    model = _direct_model_id(model_id)
     account_id = (config.cloudflare_account_id or "").strip()
     api_token = (config.cloudflare_api_token or "").strip()
     gateway_id = (config.cloudflare_ai_gateway_id or "").strip()
@@ -156,12 +168,14 @@ def llm_subprocess_environment(config: Settings = settings) -> dict[str, str]:
     않으므로 여기에 provider 설정을 추가해도 구현 단계만 빠뜨리는 일이 생기지 않는다.
     """
 
-    connection = build_llm_connection(config)
+    design_connection = build_llm_connection(config)
+    openhands_connection = build_openhands_llm_connection(config)
     environment = {
-        "LLM_PROVIDER": connection.provider,
-        "API_KEY": connection.api_key,
-        "BASE_URL": connection.base_url,
-        "MODEL": connection.model,
+        "LLM_PROVIDER": design_connection.provider,
+        "API_KEY": design_connection.api_key,
+        "BASE_URL": design_connection.base_url,
+        "MODEL": design_connection.model,
+        "OPENHANDS_MODEL": openhands_connection.model,
         "LLM_TIMEOUT_SECONDS": str(config.llm_timeout_seconds),
         "LLM_WALL_TIMEOUT_SECONDS": str(config.llm_wall_timeout_seconds),
         "IMPLEMENTATION_OWNER_TOOL_MODE": config.implementation_owner_tool_mode,
@@ -192,6 +206,6 @@ def llm_subprocess_environment(config: Settings = settings) -> dict[str, str]:
     }
     # URL과 key는 위에서 최종값으로 바꿨으므로 account/token을 중복 전달하지 않는다.
     # Gateway 선택 header에 실제로 쓰이는 ID만 Cloudflare 하위 프로세스에 보낸다.
-    if connection.provider == "cloudflare" and config.cloudflare_ai_gateway_id:
+    if design_connection.provider == "cloudflare" and config.cloudflare_ai_gateway_id:
         environment["CLOUDFLARE_AI_GATEWAY_ID"] = config.cloudflare_ai_gateway_id.strip()
     return environment

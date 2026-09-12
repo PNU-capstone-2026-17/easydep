@@ -20,7 +20,7 @@ from app.design.contracts.api_spec import ApiSpecModel
 from app.design.contracts.application_runtime import application_security_required
 from app.design.schemas.class_model import BCEModel
 from app.design.schemas.sequence_model import SequenceCollection
-from app.llm_connection import build_llm_connection
+from app.llm_connection import build_openhands_llm_connection
 
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (
@@ -512,7 +512,7 @@ class PrototypeOrchestrator:
             }
 
     def _combined_input_hash(self) -> str:
-        connection = build_llm_connection()
+        connection = build_openhands_llm_connection()
         digest = hashlib.sha256()
         digest.update(self.spec.name.encode())
         digest.update(self.spec.job_type.encode())
