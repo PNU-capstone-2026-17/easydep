@@ -26,6 +26,8 @@ LLM은 두지 않는다.
 promotion은 canonical application을 즉시 갱신하므로 slice는 한 runner 안에서 순차 실행한다. 후속
 slice가 앞선 slice와 같은 production source를 수정하면 자신의 테스트와 앞선 관련 테스트를 함께
 통과해야 한다. 모든 owner 작업 뒤에는 전체 backend test도 한 번 실행해 나머지 회귀를 잡는다.
+행동 capsule에 `expression=null`인 direct-call 인자가 이미 표시되어 있으면 구현 가능한 작업으로
+보내지 않는다. OpenHands와 workspace를 시작하기 전에 기존 `NEEDS_INPUT` 상태로 멈춘다.
 
 Frontend owner는 React source, 생성 API client 사용, 테스트, lockfile과 build를 함께 책임진다.
 프론트엔드는 특정 backend task 하나가 아니라 backend phase 전체 완료에 의존한다. Integration
@@ -39,7 +41,9 @@ handoff다. 실제 container·Arazzo 검사는 Testing 단계가 담당하므로
 OpenHands는 task context에 명시된 파일만 읽고 owner source만 수정하며, 정해진 관련 테스트를
 `run_task_check`로 통과시켜야 한다. 대화 종료 뒤 EasyDep이 같은 workspace를 독립적으로 다시
 검증한 후 허용된 owner source만 정식 run에 승격한다. 표준 terminal은 통제된 비교 실행에서만
-명시적으로 선택한다.
+명시적으로 선택한다. 기본 제한 도구 모드는 coordinator가 경로를 검사하므로 별도 OS 사용자를
+만들지 않는다. 실패한 slice는 순차 fail-fast 동안 canonical source가 바뀌지 않으므로 보존한
+후보를 그대로 재개한다. UID/GID 권한 handoff는 실제 terminal을 제공할 때만 수행한다.
 
 표준 terminal은 고정 Linux toolchain runner에서만 활성화한다. 컨테이너에는 다음 경계만 보인다.
 

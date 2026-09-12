@@ -90,6 +90,7 @@ def prepare_agent_workspace(
     *,
     preserve_failed_edits: bool = True,
     persistent: bool = False,
+    requires_owner_terminal: bool = True,
 ) -> Path:
     """작업별 임시 공간을 만들고 현재 run source와 맞춘다.
 
@@ -153,17 +154,19 @@ def prepare_agent_workspace(
         for path in task.get("immutable_paths", [])
     }
     if sandbox_application.is_dir():
-        _restore_coordinator_access(sandbox)
-        _refresh_agent_workspace(
-            run_root,
-            source_application,
-            sandbox,
-            sandbox_application,
-            editable,
-            editable_roots,
-            immutable,
-            preserve_failed_edits=preserve_failed_edits,
-        )
+        if requires_owner_terminal:
+            _restore_coordinator_access(sandbox)
+        if not (persistent and preserve_failed_edits and not requires_owner_terminal):
+            _refresh_agent_workspace(
+                run_root,
+                source_application,
+                sandbox,
+                sandbox_application,
+                editable,
+                editable_roots,
+                immutable,
+                preserve_failed_edits=preserve_failed_edits,
+            )
     else:
         sandbox.mkdir(parents=True, exist_ok=True)
         shutil.copytree(
@@ -177,7 +180,8 @@ def prepare_agent_workspace(
         if os.name == "nt" and len(str(target.resolve())) > 240:
             raise ValueError(f"Agent write path exceeds safe Windows path budget: {target}")
     _copy_read_sources(run_root, sandbox, task)
-    _apply_fixed_runner_permissions(run_root, sandbox, task)
+    if requires_owner_terminal:
+        _apply_fixed_runner_permissions(run_root, sandbox, task)
     return sandbox
 
 
@@ -231,6 +235,7 @@ def preflight_owner_workspace(
     immutable_paths: list[str],
     logical_workspace: Path | None = None,
     enforce_write_scope: bool = True,
+    requires_owner_terminal: bool = True,
 ) -> dict[str, object]:
     """Check the real owner identity, workspace and shell before an LLM call."""
 
@@ -278,11 +283,20 @@ def preflight_owner_workspace(
         resolved,
     )
     probe_root.mkdir(parents=True, exist_ok=True)
+    logical = logical_workspace or resolved
+    if logical_workspace is not None and logical.resolve() != resolved:
+        raise RuntimeError("ENV_WORKSPACE_PERMISSION: logical workspace mapping is invalid")
 
-    # On development hosts there is no unprivileged owner shell. The same path
-    # containment checks still run, while the Linux image probe covers UID/GID.
+    # Restricted owners have no terminal. Their file editor executes through the
+    # coordinator and enforces the assigned paths, so a coordinator write probe
+    # is the relevant capability check. Do not recurse over the job tree merely
+    # to prepare an identity that cannot be used.
+    #
+    # On development hosts there is likewise no unprivileged owner shell. The
+    # same path containment checks still run, while the Linux image probe covers
+    # UID/GID when a terminal owner is actually enabled.
     shell = os.environ.get(OWNER_TERMINAL_SHELL_ENV, "").strip()
-    if os.name != "posix" or not shell:
+    if not requires_owner_terminal or os.name != "posix" or not shell:
         sentinel = probe_root / ".easydep-owner-preflight"
         try:
             sentinel.write_text("probe\n", encoding="utf-8")
@@ -296,9 +310,13 @@ def preflight_owner_workspace(
         return {
             "schemaVersion": "easydep-owner-workspace-preflight/v1",
             "passed": True,
-            "mode": "coordinator-host",
+            "mode": (
+                "coordinator-editor"
+                if not requires_owner_terminal
+                else "coordinator-host"
+            ),
             "workspace": str(resolved),
-            "logicalWorkspace": str(resolved),
+            "logicalWorkspace": str(logical),
             "pipefailPassed": None,
             "ownerIdentity": None,
             "coordinatorIdentity": None,
@@ -528,8 +546,7 @@ def _copy_read_sources(
         or not context_path.is_file()
     ):
         return
-    context_target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(context_path, context_target)
+    _copy_file_if_changed(context_path, context_target)
     context = json.loads(context_path.read_text(encoding="utf-8"))
     values = [
         *(context.get("readSourcePaths") or []),
@@ -537,6 +554,16 @@ def _copy_read_sources(
     ]
     for value in values:
         if not isinstance(value, str):
+            continue
+        relative = Path(value.replace("\\", "/"))
+        if (
+            relative.parts
+            and relative.parts[0] == "application"
+            and not any(part in _IGNORED_WORKSPACE_PARTS for part in relative.parts[1:])
+        ):
+            # Application source is already synchronized by
+            # _refresh_agent_workspace. Recopying it here turns every resume
+            # into an unnecessary bind-mounted filesystem write.
             continue
         source = (run_root / value).resolve()
         target = (resolved_sandbox / value).resolve()
@@ -546,8 +573,27 @@ def _copy_read_sources(
             or not source.is_file()
         ):
             continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(source, target)
+        _copy_file_if_changed(source, target)
+
+
+def _copy_file_if_changed(source: Path, target: Path) -> None:
+    """Copy a source file only when copy2 metadata says the target is stale."""
+
+    if (
+        source.is_file()
+        and not source.is_symlink()
+        and target.is_file()
+        and not target.is_symlink()
+    ):
+        source_stat = source.stat()
+        target_stat = target.stat()
+        if (
+            source_stat.st_size == target_stat.st_size
+            and source_stat.st_mtime_ns == target_stat.st_mtime_ns
+        ):
+            return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
 
 
 def _refresh_agent_workspace(
@@ -583,8 +629,7 @@ def _refresh_agent_workspace(
             and target.is_file()
         ):
             continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
+        _copy_file_if_changed(source, target)
 
     for target in sandbox_application.rglob("*"):
         if not target.is_file():

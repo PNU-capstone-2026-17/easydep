@@ -68,7 +68,7 @@ def classify_canary_exception(error: Exception) -> str:
         return "PROVIDER_OUTPUT_PARSE_TRANSIENT"
     if status_code == 429 or "ratelimit" in name or "rate limit" in message:
         return "PROVIDER_RATE_LIMIT"
-    if "timeout" in name or "timed out" in message:
+    if "provider_timeout" in message or "timeout" in name or "timed out" in message:
         return "PROVIDER_TIMEOUT"
     if "stream" in name and any(
         marker in message for marker in ("closed", "ended", "incomplete", "terminated")

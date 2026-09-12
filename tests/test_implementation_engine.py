@@ -197,6 +197,44 @@ def test_agent_workspace_refresh_preserves_ignored_build_outputs(
     assert not stale_source.exists()
 
 
+def test_restricted_owner_workspace_skips_linux_permission_handoff(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "generated" / "runs" / "run_abcdef1234567890"
+    source = run / "application" / "src" / "Main.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class Main {}", encoding="utf-8")
+    task = {"task_id": "restricted-owner", "allowed_write_paths": []}
+
+    with patch(
+        "app.implementation.agents.workspace.tempfile.gettempdir",
+        return_value=str(tmp_path / "temp"),
+    ), patch(
+        "app.implementation.agents.workspace._restore_coordinator_access"
+    ) as restore_access, patch(
+        "app.implementation.agents.workspace._apply_fixed_runner_permissions"
+    ) as apply_permissions, patch(
+        "app.implementation.agents.workspace._refresh_agent_workspace"
+    ) as refresh_workspace:
+        sandbox = prepare_agent_workspace(
+            run,
+            task,
+            persistent=True,
+            requires_owner_terminal=False,
+        )
+        refreshed = prepare_agent_workspace(
+            run,
+            task,
+            persistent=True,
+            requires_owner_terminal=False,
+        )
+
+    assert refreshed == sandbox
+    restore_access.assert_not_called()
+    apply_permissions.assert_not_called()
+    refresh_workspace.assert_not_called()
+
+
 def test_fixed_runner_hands_the_whole_disposable_sandbox_to_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -950,6 +988,73 @@ def test_bounded_owner_upstream_gap_preserves_candidate_without_verification(
     assert result["upstreamGap"]["sourceRef"] == "UC-12"
     assert result["candidateEvidence"]["changedFiles"] == [source_path]
     assert source.read_text(encoding="utf-8") == "class OrderService {}"
+
+
+def test_explicit_unresolved_projection_is_rejected_before_openhands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run, task_id, _source_path, _source = _write_minimal_agent_task(tmp_path)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task.update(
+        {
+            "task_type": "backend-implementation",
+            "owner": "backend",
+            "source_refs": [
+                "operation:OrderService::placeOrder(orderId:String)",
+                "use_case:UC-12",
+            ],
+        }
+    )
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    context_path = run / task["context_file"]
+    context_path.write_text(
+        json.dumps(
+            {
+                "useCaseIds": ["UC-12"],
+                "behaviorCapsule": {
+                    "directMethods": [
+                        {
+                            "method": {
+                                "operation_id": "OrderService::placeOrder(orderId:String)"
+                            },
+                            "directCalls": [
+                                {
+                                    "call_id": "UC-12::call:2",
+                                    "arguments": [
+                                        {
+                                            "parameter": "orderId",
+                                            "expression": None,
+                                            "reason": "unresolved_call_parameter",
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+
+    with patch(
+        "app.implementation.agents.runtime.openhands_connection",
+        side_effect=AssertionError("admission gate must run before OpenHands"),
+    ):
+        result = execute_openhands_task(run, task_id)
+
+    assert result["status"] == "NEEDS_INPUT"
+    assert result["terminationReason"] == "UPSTREAM_GAP"
+    assert result["upstreamGap"] == {
+        "summary": "Direct-call argument 'orderId' is unresolved (unresolved_call_parameter).",
+        "sourceRef": "operation:OrderService::placeOrder(orderId:String)",
+    }
+    assert result["eventCount"] == 0
+    assert result["toolCounts"] == {}
+    assert result["candidateEvidence"] == {"changedFiles": []}
 
 
 def test_owner_candidate_contract_change_is_rejected_before_verification(

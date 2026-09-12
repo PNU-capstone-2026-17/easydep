@@ -691,6 +691,10 @@ def test_model_tool_canary_persists_a_failed_attempt(
     ("error", "expected"),
     [
         (TimeoutError("provider timed out"), "PROVIDER_TIMEOUT"),
+        (
+            RuntimeError("ConversationRunError: PROVIDER_TIMEOUT: provider wall timeout exceeded"),
+            "PROVIDER_TIMEOUT",
+        ),
         (ConnectionError("DNS blocked"), "NETWORK_CONNECTION_ERROR"),
         (RuntimeError("HTTP 429 rate limit"), "PROVIDER_RATE_LIMIT"),
         (

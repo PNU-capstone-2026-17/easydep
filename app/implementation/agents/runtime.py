@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import asyncio
 import ast
+import asyncio
 import json
 import os
 import re
@@ -55,6 +55,7 @@ from .task_check import (
     register_task_check_tool,
 )
 from .upstream_gap_tool import (
+    UpstreamGap,
     register_upstream_gap_tool,
     reported_upstream_gap,
 )
@@ -486,6 +487,108 @@ def _candidate_application_changes(sandbox: Path, run_root: Path) -> set[str]:
     }
 
 
+def _explicit_projection_gap(
+    context: dict[str, object], source_refs: list[str]
+) -> UpstreamGap | None:
+    """Find one explicitly unresolved direct-call argument in bounded evidence."""
+
+    capsule = context.get("behaviorCapsule")
+    if not isinstance(capsule, dict) or not isinstance(
+        direct_methods := capsule.get("directMethods"), list
+    ):
+        return None
+    allowed_refs = set(source_refs)
+    for method_entry in direct_methods:
+        if not isinstance(method_entry, dict):
+            continue
+        method = method_entry.get("method")
+        operation_ref = (
+            f"operation:{method.get('operation_id')}"
+            if isinstance(method, dict) and method.get("operation_id")
+            else None
+        )
+        direct_calls = method_entry.get("directCalls")
+        if not isinstance(direct_calls, list):
+            continue
+        for direct_call in direct_calls:
+            if not isinstance(direct_call, dict):
+                continue
+            arguments = direct_call.get("arguments")
+            if not isinstance(arguments, list):
+                continue
+            for argument in arguments:
+                if not isinstance(argument, dict):
+                    continue
+                expression = argument.get("expression")
+                reason = argument.get("reason")
+                if expression is not None or not isinstance(reason, str) or not reason.strip():
+                    continue
+                call_id = direct_call.get("call_id")
+                use_case_ref = (
+                    f"use_case:{call_id.split('::', 1)[0]}"
+                    if isinstance(call_id, str) and "::" in call_id
+                    else None
+                )
+                source_ref = next(
+                    (
+                        ref
+                        for ref in (operation_ref, use_case_ref)
+                        if ref is not None and ref in allowed_refs
+                    ),
+                    None,
+                )
+                if source_ref is None:
+                    continue
+                parameter = argument.get("parameter")
+                label = str(parameter).strip() if parameter else "argument"
+                return UpstreamGap(
+                    summary=(
+                        f"Direct-call argument '{label}' is unresolved "
+                        f"({reason.strip()})."
+                    )[:500],
+                    source_ref=source_ref,
+                )
+    return None
+
+
+def _persist_admission_gap(
+    run_root: Path,
+    task: dict[str, object],
+    task_id: str,
+    gap: UpstreamGap,
+    attempt: int,
+    started: float,
+) -> dict[str, object]:
+    """Persist the existing NEEDS_INPUT contract without preparing an agent."""
+
+    execution_dir = run_root / "reports" / "agent-executions"
+    execution_dir.mkdir(parents=True, exist_ok=True)
+    journal = execution_dir / f"{task_id}.attempt-{attempt:03d}.events.jsonl"
+    journal.write_text("", encoding="utf-8")
+    result = {
+        "taskId": task_id,
+        "taskType": str(task.get("task_type") or ""),
+        "owner": str(task.get("owner") or ""),
+        "promptSha256": task.get("prompt_sha256"),
+        "effectiveModel": (
+            task.get("llm", {}).get("model")
+            if isinstance(task.get("llm"), dict)
+            else None
+        ),
+        "status": "NEEDS_INPUT",
+        "upstreamGap": gap.as_result(),
+        "candidateEvidence": {"changedFiles": []},
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "eventCount": 0,
+        "toolCounts": {},
+        "eventJournal": str(journal.relative_to(run_root)).replace("\\", "/"),
+        "terminationReason": "UPSTREAM_GAP",
+    }
+    write_execution_result(execution_dir, task_id, attempt, result)
+    shutil.copyfile(journal, execution_dir / f"{task_id}.events.jsonl")
+    return result
+
+
 def _owned_directory_roots(paths: list[str]) -> list[str]:
     """명시된 wiring 파일과 같은 패키지에는 새 구현 파일을 만들 수 있게 한다.
 
@@ -599,6 +702,31 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         "allowed_write_roots": editable_roots,
         "immutable_paths": immutable,
     }
+    owner_tool_mode = (
+        str(task.get("owner_tool_mode") or settings.implementation_owner_tool_mode)
+        if owner_task
+        else "restricted"
+    )
+    context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
+    bounded_evidence = isinstance(context.get("behaviorCapsule"), dict)
+    if owner_task and bounded_evidence:
+        source_refs = [
+            value
+            for value in task.get("source_refs", task.get("sourceRefs", []))
+            if isinstance(value, str) and value
+        ]
+        admission_gap = _explicit_projection_gap(context, source_refs)
+        if admission_gap is not None:
+            return _persist_admission_gap(
+                run_root,
+                task,
+                task_id,
+                admission_gap,
+                execution_attempt(run_root, task_id),
+                time.monotonic(),
+            )
+    if bounded_evidence:
+        owner_tool_mode = "restricted"
     connection = openhands_connection()
     compatibility = openhands_compatibility(connection)
     missing = [
@@ -609,16 +737,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     if missing:
         raise RuntimeError("OpenHands live mode prerequisites are missing: " + ", ".join(missing))
 
+    requires_owner_terminal = owner_task and owner_tool_mode == "terminal"
     sandbox = prepare_agent_workspace(
         run_root,
         task,
         preserve_failed_edits=True,
         persistent=owner_task,
-    )
-    owner_tool_mode = (
-        str(task.get("owner_tool_mode") or settings.implementation_owner_tool_mode)
-        if owner_task
-        else "restricted"
+        requires_owner_terminal=requires_owner_terminal,
     )
     logical_workspace = (
         prepare_owner_workspace_alias(sandbox, task_id) if owner_task else sandbox
@@ -628,10 +753,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     if not isinstance(prompt_file, str) or not (run_root / prompt_file).is_file():
         prompt_file = str(task["prompt_file"])
     prompt = (run_root / prompt_file).read_text(encoding="utf-8")
-    context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
-    bounded_evidence = isinstance(context.get("behaviorCapsule"), dict)
-    if bounded_evidence:
-        owner_tool_mode = "restricted"
     upstream_gap_source_refs = (
         [
             value
@@ -740,6 +861,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 immutable_paths=immutable_absolute,
                 logical_workspace=logical_workspace,
                 enforce_write_scope=owner_tool_mode != "terminal",
+                requires_owner_terminal=requires_owner_terminal,
             )
             expected_canary_id = (
                 model_tool_canary_id(
