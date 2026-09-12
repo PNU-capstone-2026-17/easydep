@@ -7,6 +7,16 @@ from app.implementation.agents.admission import admit_behavior_capsule
 from app.implementation.agents.upstream_gap_tool import UpstreamGap
 
 
+def test_prompt_treats_runtime_transport_as_implementation_only_after_semantics() -> None:
+    prompt = admission._SYSTEM_PROMPT
+
+    assert "semantic source and trust boundary" in prompt
+    assert "exact framework/runtime transport is not\nspecified" in prompt
+    assert "Never infer a semantic source" in prompt
+    assert "does not also need a method parameter or context accessor" in prompt
+    assert "caller-controlled input" in prompt
+
+
 def test_implement_admission_uses_admission_connection_and_low_budget(monkeypatch) -> None:
     calls = []
     connection = SimpleNamespace(model="@cf/zai-org/glm-5.3-flash")

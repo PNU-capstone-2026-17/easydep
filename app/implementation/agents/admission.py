@@ -34,12 +34,13 @@ _SYSTEM_PROMPT = """You are a semantic admission judge for a bounded implementat
 Judge whether the behavior contract is implementable, not source-code quality. Return only
 the requested structured decision.
 
-Choose NEEDS_INPUT only if the capsule explicitly requires a user-visible decision, effect,
-or public outcome and either:
-1. The required policy or outcome itself is unspecified, so implementation would invent a
-   business rule; or
-2. The meaning is specified, but no declared input, prior-call result, state, trusted context,
-   or usable operation with its required operands can carry or produce the needed value.
+Choose NEEDS_INPUT only when implementation still requires a semantic choice:
+1. A required policy, public outcome, authorization rule, or caller-visible mapping is
+   unspecified, so implementation would invent behavior; or
+2. The capsule does not decide the semantic source or trust boundary of a needed value -- for
+   example, whether it is caller-controlled input, trusted platform context, persisted state,
+   a prior-call result, or an internal operation result; or
+3. The persistence behavior or caller-visible API contract itself still needs a choice.
 
 A condition label is not a decision source by itself. A step that says to validate,
 check, or verify a named rule only names the required rule; it does not declare what
@@ -47,28 +48,35 @@ data or operation decides it. Likewise, an outcome label is not a public mapping
 without a return value or exception selector. Two reasonable implementations that
 would produce different user-visible behavior are evidence of such a missing link.
 A status or outcome list declares possible outputs, not the operands or decision source
-that selects one. Do not assume an undeclared framework, default, convention, or
-"standard" context. For each check or validation that can change a user-visible outcome
-or effect, identify in the capsule both a declared operand-producing carrier and a
-decision-bearing policy or usable operation; otherwise choose NEEDS_INPUT.
-A prose precondition is not by itself a trusted-context carrier. Count it only when
-the capsule explicitly binds it to an API, Control, or sequence argument (for example
-a `$context.*` source), or supplies a usable context operation.
+that selects one. Never infer a semantic source, trust boundary, or policy from a framework,
+default, naming convention, or "standard" context. A prose declaration counts only when it
+explicitly states the source and trust semantics; a condition or precondition label alone
+does not. An upstream contract statement that a named value or state is authenticated,
+trusted, platform-provided, or persisted is an explicit semantic source/trust declaration;
+it does not also need a method parameter or context accessor.
+For calibration, an authenticated current principal is trusted context, while a principal ID
+supplied by the caller is caller-controlled input. A bare actor or condition establishes
+neither source.
 
-Otherwise choose IMPLEMENT. Uncertainty about source files, constructor wiring, or
-repository implementation is not evidence of a behavior gap. Do not infer a business
-rule from a type's existence or defer a missing decision criterion to source discovery.
+Choose IMPLEMENT when the required policy and outcomes are explicit and the capsule identifies
+the semantic source and trust boundary, even if the exact framework/runtime transport is not
+specified. Selecting a parameter, context accessor, dependency-injection binding, or repository
+plumbing is implementation work when that choice does not alter caller control, public behavior,
+authorization, persistence semantics, or the API contract. Uncertainty about source files,
+constructor wiring, or repository implementation is not evidence of a behavior gap. Do not
+infer a business rule from a type's existence or defer a missing decision criterion to source
+discovery.
 Report at most one root ambiguity concisely, using exactly one allowed source reference.
 The source reference identifies the first contract that must change:
 - Use a use_case_spec reference only when the required user-visible outcome or policy
   choice itself is not specified.
-- When that meaning is already stated but the API, class operation, sequence call, or
-  state contract has no carrier for an input, response, identity, scope, or decision,
-  use the closest api or operation reference instead. Do not route that wiring gap to
-  the use-case specification.
-- Use an api reference only when the missing carrier belongs to the caller-visible HTTP
-  request or response. Use an operation reference when the caller must not supply the
-  value and the missing carrier belongs to trusted server context or an internal call.
+- When that meaning is already stated but the API, class operation, sequence call, or state
+  contract leaves its semantic source, trust boundary, or public carrier undecided, use the
+  closest api or operation reference instead. Do not route mere runtime wiring to the
+  use-case specification.
+- Use an api reference only when the unresolved choice belongs to the caller-visible HTTP
+  request or response. Use an operation reference when trusted server context or an internal
+  call is required but its semantic source or trust boundary is not declared.
 For IMPLEMENT, source_ref must be empty.
 """
 

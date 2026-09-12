@@ -418,7 +418,7 @@ def _build_backend_behavior_tasks(
         for entry in raw_entries
         if isinstance(entry, dict) and isinstance(entry.get("path"), str)
     ] if isinstance(raw_entries, list) else []
-    _requirements, use_cases, _sources = _all_requirement_artifacts(spec)
+    requirements, use_cases, _sources = _all_requirement_artifacts(spec)
     use_cases_by_id = {
         str(value.get("use_case_id") or value.get("id")): value
         for value in use_cases
@@ -617,6 +617,29 @@ def _build_backend_behavior_tasks(
             for use_case_id in use_case_ids
             if use_case_id in use_cases_by_id
         ]
+        requirements_by_id = {
+            str(requirement.get("id")): requirement
+            for requirement in requirements
+            if isinstance(requirement.get("id"), str) and requirement.get("id")
+        }
+        requirement_ids = sorted(
+            {
+                value
+                for use_case in selected_use_cases
+                for field in ("requirement_ids", "nfr_ids")
+                for value in use_case.get(field, [])
+                if isinstance(value, str) and value
+            }
+        )
+        selected_requirements = [
+            {
+                key: requirements_by_id[requirement_id][key]
+                for key in ("id", "type", "text")
+                if requirements_by_id[requirement_id].get(key) is not None
+            }
+            for requirement_id in requirement_ids
+            if requirement_id in requirements_by_id
+        ]
         read_paths = sorted(
             {
                 *source_paths,
@@ -657,6 +680,7 @@ def _build_backend_behavior_tasks(
             "apiOperationIds": api_operation_ids,
             "behaviorCapsule": {
                 "useCases": selected_use_cases,
+                "requirements": selected_requirements,
                 "endpoints": endpoint_contracts,
                 "directMethods": direct_methods,
             },
@@ -710,15 +734,6 @@ Application: {spec.name}
         prompt_path = output / f"{task_id}.prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
 
-        requirement_ids = sorted(
-            {
-                value
-                for use_case in selected_use_cases
-                for field in ("requirement_ids", "nfr_ids")
-                for value in use_case.get(field, [])
-                if isinstance(value, str) and value
-            }
-        )
         source_refs = sorted(
             {
                 *(f"use_case:{value}" for value in use_case_ids),

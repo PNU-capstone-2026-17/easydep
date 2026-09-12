@@ -34,11 +34,26 @@ def _build_fixture(
     api_model = root / "api-model.json"
     bce_model = root / "bce-model.json"
 
-    _write_json(requirements, [])
+    _write_json(
+        requirements,
+        [
+            {
+                "id": "REQ-A",
+                "type": "functional",
+                "text": f"The {vocabulary} first flow returns its result.",
+            },
+            {
+                "id": "REQ-Z",
+                "type": "non-functional",
+                "text": "This requirement must stay outside unrelated capsules.",
+            },
+        ],
+    )
     use_cases = [
         {
             "use_case_id": "UC-A",
             "name": f"{vocabulary} first flow",
+            "requirement_ids": ["REQ-A"],
             "main_scenario": [
                 {
                     "step_number": 1,
@@ -81,6 +96,7 @@ def _build_fixture(
         {
             "use_case_id": "UC-Z",
             "name": f"{vocabulary} unrelated flow",
+            "nfr_ids": ["REQ-Z"],
             "main_scenario": [
                 {"step_number": 1, "sentence": "This must stay outside the capsule."}
             ],
@@ -574,6 +590,13 @@ def test_capsule_contains_only_exact_flow_endpoint_and_direct_method_contexts(
         "op-shared",
         "op-exit",
     }
+    assert capsule["requirements"] == [
+        {
+            "id": "REQ-A",
+            "type": "functional",
+            "text": "The Original first flow returns its result.",
+        }
+    ]
     assert all(item["control_binding"] for item in capsule["endpoints"])
 
     direct_ids = {
