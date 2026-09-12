@@ -14,7 +14,7 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Iterator, Mapping
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -140,6 +140,19 @@ def _string_list(value: Any, path: str) -> None:
         _error(f"{path} must be a list of non-empty strings.")
     if len(set(value)) != len(value):
         _error(f"{path} must not contain duplicates.")
+
+
+def _walk_values(value: Any) -> Iterator[Any]:
+    """Yield nested scalar values from a JSON-compatible value."""
+
+    if isinstance(value, Mapping):
+        for child in value.values():
+            yield from _walk_values(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_values(child)
+    else:
+        yield value
 
 
 def parse_arazzo_runtime_expression(expression: str) -> tuple[str, tuple[str, ...], str | None]:
@@ -698,6 +711,23 @@ def _validate_openapi_step_profile(
         target = _nonempty_string(replacement.get("target"), f"{replacement_path}.target")
         if _POINTER.fullmatch(target.removeprefix("#")) is None:
             _error(f"{replacement_path}.target must be a JSON Pointer.")
+    payload = request_body.get("payload")
+    media = content.get("application/json") if isinstance(content, dict) else None
+    body_schema = media.get("schema") if isinstance(media, dict) else None
+    # Runtime expressions and replacements are resolved by the executor. A
+    # fully literal body can be checked now, while the rejected workflow is
+    # still available to the bounded LLM correction pass.
+    has_runtime_value = any(
+        isinstance(value, str) and value.startswith("$")
+        for value in _walk_values(payload)
+    )
+    if not replacements and not has_runtime_value and isinstance(body_schema, dict):
+        errors = schema_errors(openapi, body_schema, payload)
+        if errors:
+            _error(
+                f"{path}.requestBody.payload does not satisfy the frozen OpenAPI schema: "
+                + "; ".join(errors)
+            )
 
 
 def _actions(value: Any, path: str) -> list[tuple[dict[str, Any], str]]:

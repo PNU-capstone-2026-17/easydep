@@ -505,6 +505,62 @@ def _classify_missing_workflow_data(
     )
     if not isinstance(step, dict):
         return
+    references: list[tuple[str, str, str]] = []
+
+    def collect_references(value: Any) -> None:
+        if isinstance(value, dict):
+            for child in value.values():
+                collect_references(child)
+        elif isinstance(value, list):
+            for child in value:
+                collect_references(child)
+        elif isinstance(value, str):
+            match = re.fullmatch(
+                r"\$steps\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9._-]+)(#.*)?",
+                value,
+            )
+            if match:
+                references.append((match.group(1), match.group(2), match.group(3) or ""))
+
+    collect_references(step.get("parameters"))
+    collect_references(step.get("requestBody"))
+    source_reference = next(
+        (item for item in references if item[2] == pointer or item[2] == f"#{pointer}"),
+        None,
+    )
+    if source_reference is not None:
+        source_step_id, output_name, _ = source_reference
+        source_report = next(
+            (
+                item
+                for item in result.get("steps") or []
+                if isinstance(item, dict) and item.get("stepId") == source_step_id
+            ),
+            None,
+        )
+        source_value = (
+            (source_report.get("outputs") or {}).get(output_name)
+            if isinstance(source_report, dict)
+            and isinstance(source_report.get("outputs"), dict)
+            else None
+        )
+        if source_value in ([], {}):
+            reason = (
+                f"Workflow data prerequisite is unresolved: step {source_step_id} returned an "
+                f"empty {output_name}, but step {failed_step_id} requires {pointer}. "
+                "The frozen use case does not provide deterministic setup data for this selection."
+            )
+            result["defectClass"] = "UPSTREAM_AMBIGUITY"
+            result["reason"] = reason
+            finding.update(
+                {
+                    "code": "TEST_DATA_PRECONDITION_UNSATISFIED",
+                    "message": reason,
+                    "sourceStepId": source_step_id,
+                    "sourceOutput": output_name,
+                }
+            )
+            return
     operation_id = str(step.get("operationId") or "")
     operation = next(
         (
@@ -555,6 +611,8 @@ def _prompt(candidate: dict[str, Any], validation_error: str = "") -> str:
         "The first step has no previous step. Preconditions do not create step outputs. "
         "Never invent previousStep or setup operations. If a parameter has no grounded "
         "value, omit that parameter item so the executor can resolve it from OpenAPI.\n"
+        "If a literal requestBody does not satisfy the frozen OpenAPI schema, either correct every "
+        "field to that schema or omit the entire requestBody so the executor constructs it.\n"
         + validation_error
         if validation_error
         else ""

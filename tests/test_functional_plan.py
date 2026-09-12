@@ -612,6 +612,52 @@ def test_invented_workflow_output_pointer_remains_test_defect() -> None:
     assert result["finding"]["code"] == "RUNTIME_EXPRESSION_UNRESOLVED"
 
 
+def test_empty_prior_step_output_is_classified_as_missing_test_data() -> None:
+    workflow = {
+        "workflowId": "workflow-UC1",
+        "steps": [
+            {
+                "stepId": "search",
+                "operationId": "searchOfferings",
+                "outputs": {"offeringsList": "$response.body"},
+            },
+            {
+                "stepId": "details",
+                "operationId": "getOffering",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "offeringId",
+                        "value": "$steps.search.outputs.offeringsList#/0/id",
+                    }
+                ],
+            },
+        ],
+    }
+    result = {
+        "gateStatus": "FAIL",
+        "defectClass": "TEST_DEFECT",
+        "failedStepId": "details",
+        "reason": "JSON Pointer does not resolve: #/0/id",
+        "finding": {
+            "code": "RUNTIME_EXPRESSION_UNRESOLVED",
+            "message": "JSON Pointer does not resolve: #/0/id",
+            "stepId": "details",
+        },
+        "steps": [
+            {"stepId": "search", "outputs": {"offeringsList": []}},
+            {"stepId": "details", "status": "failed"},
+        ],
+    }
+
+    dynamic._classify_missing_workflow_data(result, workflow, {"operations": []}, {})
+
+    assert result["defectClass"] == "UPSTREAM_AMBIGUITY"
+    assert result["finding"]["code"] == "TEST_DATA_PRECONDITION_UNSATISFIED"
+    assert result["finding"]["sourceStepId"] == "search"
+    assert "deterministic setup data" in result["reason"]
+
+
 def test_plan_progress_identifies_completed_retrying_and_failed_use_cases(monkeypatch):
     from app.testing.progress import testing_progress_scope
 
