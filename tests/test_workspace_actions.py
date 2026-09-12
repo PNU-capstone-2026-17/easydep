@@ -440,6 +440,7 @@ def test_validated_conversation_scope_does_not_expand_a_message_offer() -> None:
                 "targets": ["class_diagram:OrderService"],
                 "instruction": "OrderService를 수정해줘",
             },
+            "revision_origin_stage": "implementation",
             "validated_targets": [{"ref": "class_diagram:OrderService"}],
             "validated_impact": {"refs": ["api_spec:createOrder"]},
         },

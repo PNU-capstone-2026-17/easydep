@@ -144,6 +144,7 @@ _INTERNAL_CONVERSATION_FIELDS = {
     "revision_execution",
     "revision_instructions",
     "revision_interpretation",
+    "revision_origin_stage",
     "revision_plan",
     "validated_impact",
     "validated_target_feedbacks",
