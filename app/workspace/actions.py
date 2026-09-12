@@ -355,9 +355,21 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
             if blocking_route == "design"
             else "Review deployment design or platform issue"
         )
+        actions = [_offer(WorkspaceAction.MESSAGE, label, common)]
+        if stage == "testing" and testing_implementation_job_id:
+            actions.append(
+                _offer(
+                    WorkspaceAction.START_TESTING,
+                    "Retry testing with current artifacts",
+                    {
+                        **common,
+                        "implementation_job_id": testing_implementation_job_id,
+                    },
+                )
+            )
         return AwaitingOutcome(
             wait_reason=WaitReason.REPAIR,
-            actions=[_offer(WorkspaceAction.MESSAGE, label, common)],
+            actions=actions,
         )
 
     if result.get("requires_revision"):

@@ -225,6 +225,7 @@ def test_upstream_testing_ambiguity_offers_review_without_automatic_repair() -> 
         {
             "requires_revision": True,
             "can_delegate_repair": False,
+            "job": {"implementation_job_id": "implementation-1"},
             "blocking_findings": [
                 {
                     "repairable": True,
@@ -236,8 +237,12 @@ def test_upstream_testing_ambiguity_offers_review_without_automatic_repair() -> 
     )
 
     assert shaped["wait_reason"] == "repair"
-    assert [item["action"] for item in shaped["actions"]] == ["message"]
+    assert [item["action"] for item in shaped["actions"]] == ["message", "start_testing"]
     assert shaped["actions"][0]["label"] == "Send design revision feedback"
+    assert shaped["actions"][1]["payload"] == {
+        "action_id": "command-1",
+        "implementation_job_id": "implementation-1",
+    }
 
 
 def test_exhausted_testing_plan_defect_is_an_easydep_platform_issue() -> None:
