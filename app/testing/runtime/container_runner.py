@@ -8,7 +8,7 @@ import time
 from contextvars import copy_context
 from dataclasses import dataclass
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 
 from app.config import settings
 from app.implementation.runtime.process import run_process_tree
@@ -21,6 +21,9 @@ TOFU_CACHE_VOLUME = "easydep-tofu-provider-cache"
 TOFU_CACHE_PATH = "/app/.cache/opentofu"
 CONTAINER_CHECK_ROOT = "/easydep-check"
 _HEARTBEAT_INTERVAL_SECONDS = 30
+_TOOLCHAIN_USER_ID = "1000:1000"
+_cache_ownership_lock = Lock()
+_prepared_tofu_cache_images: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,54 @@ def configured_runner_image(environment: dict[str, str] | None = None) -> str:
     return value or (settings.easydep_toolchain_image or "").strip() or DEFAULT_RUNNER_IMAGE
 
 
+def _prepare_tofu_cache(image: str, timeout: int) -> None:
+    """Make a legacy root-owned provider cache writable by the toolchain user.
+
+    Older runner invocations could populate the named volume as root.  The current
+    toolchain image runs checks as ``appuser``; normalize ownership once per server
+    process before OpenTofu tries to create its provider lock file.
+    """
+
+    with _cache_ownership_lock:
+        if image in _prepared_tofu_cache_images:
+            return
+        command = [
+            "docker",
+            "run",
+            "--rm",
+            "--user",
+            "root",
+            "--network",
+            "none",
+            "--security-opt",
+            "no-new-privileges:true",
+            "-v",
+            f"{TOFU_CACHE_VOLUME}:{TOFU_CACHE_PATH}",
+            "--entrypoint",
+            "chown",
+            image,
+            "-R",
+            _TOOLCHAIN_USER_ID,
+            TOFU_CACHE_PATH,
+        ]
+        completed = run_process_tree(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=min(timeout, 120),
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "").strip()[-2000:]
+            raise RuntimeError(
+                "Could not prepare the shared OpenTofu provider cache"
+                + (f": {detail}" if detail else ".")
+            )
+        _prepared_tofu_cache_images.add(image)
+
+
 def run_toolchain_command(
     command: list[str],
     *,
@@ -133,6 +184,8 @@ def run_toolchain_command(
             )
 
         image = configured_runner_image()
+        if str(command[0]).lower() == "tofu":
+            _prepare_tofu_cache(image, timeout)
         docker_command = [
             "docker",
             "run",
@@ -140,6 +193,8 @@ def run_toolchain_command(
             "--init",
             "--network",
             "none",
+            "--security-opt",
+            "no-new-privileges:true",
             "--label",
             "easydep.owner=testing-tool",
             "-v",

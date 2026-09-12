@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -45,7 +46,10 @@ JSONPath such as `$.response`; omit the entire parameter item for an unfrozen va
 executor obtain a schema-valid value from OpenAPI. Never use an empty object as a missing parameter
 value. Every literal must satisfy its OpenAPI type, format, and enum. Runtime
 expressions include `$statusCode` and `$response.body#/pointer`, not
-`$response.statusCode`. A simple criterion contains only condition; use context and type only for
+`$response.statusCode`. When a later step needs an array element or object property from an earlier
+step output, append an RFC 6901 JSON Pointer, for example
+`$steps.search.outputs.offeringsList#/0/id`; never use JavaScript-style `[0].id` selectors. A simple
+criterion contains only condition; use context and type only for
 RFC 9535 JSONPath. Add successCriteria only when the frozen requirement
 or use-case guarantee directly states the expected result; otherwise leave the workflow
 contract-only. Do not invent operations, paths, methods, status codes, schemas, credentials,
@@ -67,6 +71,10 @@ _STEP_OUTPUT_EXPRESSION_SCHEMA: dict[str, Any] = {
     "type": "string",
     "pattern": r"^\$steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9._-]+(?:#.*)?$",
 }
+_NONSTANDARD_STEP_OUTPUT_SELECTOR = re.compile(
+    r"^\$steps\.(?P<step>[A-Za-z0-9_-]+)\.outputs\."
+    r"(?P<output>[A-Za-z0-9_-]+)(?P<tail>(?:\[\d+\]|\.[A-Za-z0-9_-]+)+)$"
+)
 _PARAMETER_VALUE_SCHEMA: dict[str, Any] = {
     "oneOf": [
         _STEP_OUTPUT_EXPRESSION_SCHEMA,
@@ -296,7 +304,24 @@ def _normalize_authored_workflow(
     unknown content remains unchanged so the authoring-profile validator can reject it.
     """
 
-    normalized = deepcopy(value)
+    def normalize_runtime_selector(item: Any) -> Any:
+        if isinstance(item, dict):
+            return {key: normalize_runtime_selector(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [normalize_runtime_selector(child) for child in item]
+        if not isinstance(item, str):
+            return item
+        match = _NONSTANDARD_STEP_OUTPUT_SELECTOR.fullmatch(item)
+        if match is None or "[" not in match.group("tail"):
+            return item
+        pointer_parts = re.findall(r"\[(\d+)\]|\.([A-Za-z0-9_-]+)", match.group("tail"))
+        pointer = "/".join(index or name for index, name in pointer_parts)
+        return (
+            f"$steps.{match.group('step')}.outputs.{match.group('output')}#/"
+            f"{pointer}"
+        )
+
+    normalized = normalize_runtime_selector(deepcopy(value))
     operations = {
         str(operation.get("operationId")): operation
         for operation in candidate.get("operations") or []

@@ -315,6 +315,52 @@ def test_name_value_output_list_is_normalized_to_arazzo_output_map() -> None:
     dynamic._validate_authored_workflow(normalized)
 
 
+def test_javascript_style_step_output_selector_is_normalized_to_json_pointer() -> None:
+    workflow = {
+        "workflowId": "workflow-UC-1",
+        "steps": [
+            {
+                "stepId": "search",
+                "operationId": "searchOfferings",
+                "outputs": {"offeringsList": "$response.body"},
+            },
+            {
+                "stepId": "details",
+                "operationId": "getOffering",
+                "parameters": [
+                    {
+                        "name": "offeringId",
+                        "in": "path",
+                        "value": "$steps.search.outputs.offeringsList[0].id",
+                    }
+                ],
+            },
+        ],
+    }
+    candidate = {
+        "operations": [
+            {
+                "operationId": "searchOfferings",
+                "requestBody": None,
+                "parameters": [],
+            },
+            {
+                "operationId": "getOffering",
+                "requestBody": None,
+                "parameters": [{"name": "offeringId", "in": "path"}],
+            },
+        ]
+    }
+
+    normalized = dynamic._normalize_authored_workflow(workflow, candidate)
+
+    assert normalized["steps"][1]["parameters"][0]["value"] == (
+        "$steps.search.outputs.offeringsList#/0/id"
+    )
+    assert workflow["steps"][1]["parameters"][0]["value"].endswith("[0].id")
+    dynamic._validate_authored_workflow(normalized)
+
+
 def test_ambiguous_output_list_remains_invalid() -> None:
     workflow = {
         "workflowId": "workflow-UC-1",

@@ -240,6 +240,12 @@ def test_running_application_uses_test_database_and_keeps_container_for_logs(tmp
     assert "SPRING_SECURITY_USER_NAME=easydep-test" in start
     assert "SPRING_SECURITY_USER_PASSWORD=easydep-test" in start
     assert any(command[:2] == ["rm", "-f"] for command in commands)
+    network = app_container.runtime_network_name(info["container"])
+    assert commands[:3] == [
+        ["rm", "-f", info["container"]],
+        ["network", "rm", network],
+        ["network", "create", network],
+    ]
 
 
 def test_application_log_excerpt_is_bounded(tmp_path, monkeypatch):
