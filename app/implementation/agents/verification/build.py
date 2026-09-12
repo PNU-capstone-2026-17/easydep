@@ -216,7 +216,25 @@ def _verify_absent_markers(
 ) -> dict[str, object] | None:
     """Reject a marker checkpoint that finished without replacing its placeholder."""
 
-    contracts = (verification_profile or {}).get("requiredAbsentMarkers", [])
+    profile = verification_profile or {}
+    preserved_contracts = profile.get("requiredPreservedMarkers", [])
+    missing_preserved: list[dict[str, str]] = []
+    if isinstance(preserved_contracts, list):
+        for contract in preserved_contracts:
+            if not isinstance(contract, dict) or not isinstance(contract.get("path"), str):
+                continue
+            path = sandbox / str(contract["path"])
+            content = path.read_text(encoding="utf-8") if path.is_file() else ""
+            markers = contract.get("markers", [])
+            if not isinstance(markers, list):
+                continue
+            missing_preserved.extend(
+                {"path": str(contract["path"]), "marker": marker}
+                for marker in markers
+                if isinstance(marker, str) and marker and marker not in content
+            )
+
+    contracts = profile.get("requiredAbsentMarkers", [])
     if not isinstance(contracts, list):
         return None
     remaining: list[dict[str, str]] = []
@@ -235,15 +253,26 @@ def _verify_absent_markers(
             for marker in markers
             if isinstance(marker, str) and marker and marker in content
         )
-    if not remaining:
+    if not remaining and not missing_preserved:
         return None
+    messages = []
+    if missing_preserved:
+        messages.append(
+            "Restore unassigned implementation markers: "
+            + ", ".join(
+                f"{item['path']} -> {item['marker']}" for item in missing_preserved
+            )
+        )
+    if remaining:
+        messages.append("The assigned implementation marker is still present.")
     return {
         "command": ["implementation-marker-contract"],
         "exitCode": 1,
         "durationMs": 0,
         "stdout": "",
-        "stderr": "The assigned implementation marker is still present.",
+        "stderr": " ".join(messages),
         "testResults": "",
+        "missingPreservedMarkers": missing_preserved,
         "remainingMarkers": remaining,
     }
 

@@ -685,6 +685,12 @@ Implement this one API-to-result behavior using { _relative(run_root, context_pa
 - Every required branch decision and state change must have a concrete input, call result, or
   existing application contract. Do not invent default rules, in-memory substitutes, or new
   collaborators.
+- Complete only the generated operation bodies listed in `behaviorCapsule.directMethods`.
+  You may add private wiring or helpers needed to use existing application contracts, but
+  do not replace or remove other generated operation bodies or `EASYDEP-IMPLEMENT` markers,
+  even in a shared writable file.
+- Replace the assigned main-source markers in one edit batch before creating the focused test.
+  Then write the test against the resulting source and run `run_task_check` once.
 - Do not infer behavior from names or unrelated features. Report a design contract gap when
   the capsule and existing application contracts cannot express the required behavior.
 - Preserve completed behavior in shared files.

@@ -22,6 +22,7 @@ from app.implementation.agents.runtime import (
     _owner_message_required,
     _owner_workspace_guidance,
     _task_execution_scope,
+    _with_preserved_implementation_markers,
     create_openhands_conversation,
 )
 from app.implementation.agents.task_check import (
@@ -1314,6 +1315,46 @@ def test_successful_retry_promotes_changes_preserved_from_failed_sandbox(
     )
     assert (run / helper_path).read_text(encoding="utf-8") == "class OptionalHelper {}"
     assert {source_path, helper_path} <= set(result["changedFiles"])
+
+
+def test_backend_behavior_rejects_removed_unassigned_marker_in_shared_source(
+    tmp_path: Path,
+) -> None:
+    """A behavior task must keep another slice's marker in a shared Java file."""
+    source_path = "application/src/main/java/example/OrderService.java"
+    source = tmp_path / source_path
+    source.parent.mkdir(parents=True)
+    assigned = "EASYDEP-IMPLEMENT:assigned"
+    unassigned = "EASYDEP-IMPLEMENT:unassigned"
+    source.write_text(
+        f"class OrderService {{ // {assigned}\n    // {unassigned}\n}}",
+        encoding="utf-8",
+    )
+    profile = _with_preserved_implementation_markers(
+        tmp_path,
+        [source_path],
+        {
+            "requiredAbsentMarkers": [
+                {"path": source_path, "markers": [assigned]}
+            ]
+        },
+    )
+    source.write_text(
+        "class OrderService { void assigned() {} }",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(WorkspaceVerificationError) as raised:
+        verify_agent_workspace(
+            tmp_path,
+            "backend-implementation",
+            [source_path],
+            profile,
+        )
+
+    assert raised.value.evidence["missingPreservedMarkers"] == [
+        {"path": source_path, "marker": unassigned}
+    ]
 
 
 def test_verified_candidate_deletion_is_promoted(tmp_path: Path) -> None:

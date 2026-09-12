@@ -349,6 +349,8 @@ def _owner_workspace_guidance(
                 "- Inspect application source on demand to understand existing types, wiring, and test conventions. Source code may clarify how to implement the capsule, but must not add behavior absent from it.",
                 "- Every required branch decision and state change must have a concrete input, call result, or existing application contract. Do not invent default rules, in-memory substitutes, or new collaborators.",
                 "- If the capsule and existing application contracts cannot express the required behavior, call report_upstream_gap with a concise gap and one TaskSpec source_ref.",
+                "- Complete only the generated operation bodies listed in behaviorCapsule.directMethods. You may add private wiring or helpers needed to use existing application contracts, but do not replace or remove other generated operation bodies or EASYDEP-IMPLEMENT markers, even in a shared writable file.",
+                "- Replace the assigned main-source markers in one edit batch before creating the focused test. Then write the test against the resulting source and run run_task_check once.",
             ]
         )
     else:
@@ -549,6 +551,43 @@ def _explicit_projection_gap(
                     source_ref=source_ref,
                 )
     return None
+
+
+def _with_preserved_implementation_markers(
+    run_root: Path,
+    editable_paths: list[str],
+    verification_profile: dict[str, object] | None,
+) -> dict[str, object]:
+    """Protect shared-file markers that belong to later behavior slices."""
+
+    profile = dict(verification_profile or {})
+    assigned = {
+        marker
+        for contract in profile.get("requiredAbsentMarkers", [])
+        if isinstance(contract, dict)
+        for marker in contract.get("markers", [])
+        if isinstance(marker, str) and marker
+    }
+    preserved: list[dict[str, object]] = []
+    for relative in editable_paths:
+        normalized = relative.replace("\\", "/")
+        source = run_root / normalized
+        if "/src/main/java/" not in f"/{normalized}" or not source.is_file():
+            continue
+        markers = sorted(
+            set(
+                re.findall(
+                    r"EASYDEP-IMPLEMENT(?:: complete |:)[A-Za-z0-9_.:-]+",
+                    source.read_text(encoding="utf-8"),
+                )
+            )
+            - assigned
+        )
+        if markers:
+            preserved.append({"path": normalized, "markers": markers})
+    if preserved:
+        profile["requiredPreservedMarkers"] = preserved
+    return profile
 
 
 def _persist_admission_gap(
@@ -768,6 +807,12 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         if isinstance(verification_profile, dict) and verification_profile
         else None
     )
+    if owner_task and bounded_evidence:
+        verification_profile = _with_preserved_implementation_markers(
+            run_root,
+            editable_paths,
+            verification_profile,
+        )
     sandbox_root = sandbox.resolve()
     read_hints = [
         str((sandbox / value).resolve())
