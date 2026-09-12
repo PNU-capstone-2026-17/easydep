@@ -23,8 +23,11 @@ from app.testing.utils.arazzo_planner import (
     build_arazzo_document,
     build_workflow_candidates,
 )
-from app.testing.utils.functional_executor import InputValueRequest, UpstreamAmbiguity
-from app.testing.utils.functional_executor import resolve_schema
+from app.testing.utils.functional_executor import (
+    InputValueRequest,
+    UpstreamAmbiguity,
+    resolve_schema,
+)
 from app.validation import stable_digest
 
 PLAN_SYSTEM_PROMPT = """Return exactly one Arazzo v1.1 Workflow Object as JSON.
@@ -51,6 +54,11 @@ or use-case guarantee directly states the expected result; otherwise leave the w
 contract-only. Do not invent operations, paths, methods, status codes, schemas, credentials,
 external URLs, requirements, custom extensions, or implementation-derived expected values.
 Do not return an Arazzo document envelope, Markdown, comments, or prose outside the JSON object."""
+
+PLAN_ROLE_PROMPT = (
+    "This is only the Testing-stage workflow-planning subtask. Treat the supplied "
+    "requirements, use cases, OpenAPI contract, and trace evidence as immutable."
+)
 
 
 _JSON_VALUE_SCHEMA: dict[str, Any] = {
@@ -552,7 +560,10 @@ def _generate(
     request: dict[str, Any] = {
         "model": connection.model,
         "temperature": profile.temperature,
-        "messages": [{"role": "user", "content": _prompt(candidate, validation_error)}],
+        "messages": [
+            {"role": "system", "content": PLAN_ROLE_PROMPT},
+            {"role": "user", "content": _prompt(candidate, validation_error)},
+        ],
         "response_format": _response_format(),
         "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens),
     }

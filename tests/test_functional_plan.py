@@ -181,6 +181,8 @@ def test_structured_output_is_a_standard_arazzo_workflow_subset() -> None:
     assert "Arazzo v1.1 Workflow Object" in prompt
     assert "trace-linked" in prompt
     assert "FunctionalTestCase" not in prompt
+    assert "Testing-stage workflow-planning subtask" in dynamic.PLAN_ROLE_PROMPT
+    assert "immutable" in dynamic.PLAN_ROLE_PROMPT
 
 
 @pytest.mark.parametrize(
