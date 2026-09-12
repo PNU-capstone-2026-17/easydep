@@ -79,6 +79,7 @@ export interface TestingRunView {
     pending: number;
   };
   workflows: TestingWorkflowView[];
+  plans: Array<{ workflowId: string; useCaseId: string; name: string; status: TestingStatus; attempt?: number; detail?: string }>;
   gates: TestingGateView[];
   findings: Array<{
     code: string;
@@ -372,6 +373,29 @@ export function projectTestingRun(input: {
     : record(event?.metadata);
   const lastProgress = record(progress.last_event);
   const currentProgress = Object.keys(lastProgress).length ? lastProgress : record(event?.metadata);
+  const planRecords = { ...record(progress.plans) };
+  // SSE can arrive before the refreshed command checkpoint. Fold planning
+  // events over the saved rows, without letting older events overwrite them.
+  for (const item of input.events ?? []) {
+    const metadata = record(item.metadata);
+    if (item.command_id !== command?.command_id || metadata.progress_event !== 'testingProgressUpdated' ||
+        metadata.phase !== 'planning' || metadata.scope !== 'workflow' || !metadata.workflow_id) continue;
+    const previous = record(planRecords[metadata.workflow_id]);
+    if (String(metadata.updated_at ?? item.created_at ?? '') >= String(previous.updated_at ?? '')) {
+      planRecords[metadata.workflow_id] = metadata;
+    }
+  }
+  const plans = Object.values(planRecords).map((raw) => {
+    const item = record(raw);
+    return {
+      workflowId: String(item.workflow_id),
+      useCaseId: String(item.use_case_id ?? item.workflow_id),
+      name: String(item.use_case_name ?? item.progress_step_label ?? item.workflow_id),
+      status: status(item.status),
+      attempt: item.attempt == null ? undefined : Number(item.attempt),
+      detail: String(item.progress_detail ?? '') || undefined
+    };
+  });
   const dynamicReport = record(reports.dynamicFunctional);
   const reportWorkflows = workflowsFromReport(dynamicReport);
   const progressWorkflows = workflowsFromProgress(progress);
@@ -495,6 +519,7 @@ export function projectTestingRun(input: {
       )
     },
     workflows,
+    plans,
     gates,
     findings,
     repair: Object.keys(repairState).length
