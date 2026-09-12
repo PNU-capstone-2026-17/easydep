@@ -558,8 +558,21 @@ def preflight_behavior_task(
 ) -> UpstreamGap | None:
     """Run deterministic and cached semantic readiness checks once."""
 
-    return _explicit_projection_gap(context, source_refs) or preflight_semantic_behavior(
-        run_root, task, context, source_refs
+    projection_gap = _explicit_projection_gap(context, source_refs)
+    if projection_gap is None:
+        return preflight_semantic_behavior(run_root, task, context, source_refs)
+    capsule = context.get("behaviorCapsule")
+    if not isinstance(capsule, dict):
+        return projection_gap
+    admission_context = {
+        **context,
+        "behaviorCapsule": {
+            **capsule,
+            "preflightFindings": [projection_gap.as_result()],
+        },
+    }
+    return preflight_semantic_behavior(
+        run_root, task, admission_context, source_refs
     )
 
 

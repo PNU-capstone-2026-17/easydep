@@ -22,14 +22,39 @@ _REGISTRATION_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
+class UpstreamGapOption:
+    """One bounded, mutually exclusive upstream choice exposed to the user."""
+
+    id: str
+    label: str
+    description: str
+    requested_effect: str
+
+    def as_result(self) -> dict[str, str]:
+        return {
+            "id": self.id,
+            "label": self.label,
+            "description": self.description,
+            "requestedEffect": self.requested_effect,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class UpstreamGap:
     """The single TaskSpec reference that blocks a bounded implementation task."""
 
     summary: str
     source_ref: str
+    options: tuple[UpstreamGapOption, ...] = ()
 
-    def as_result(self) -> dict[str, str]:
-        return {"summary": self.summary, "sourceRef": self.source_ref}
+    def as_result(self) -> dict[str, object]:
+        result: dict[str, object] = {
+            "summary": self.summary,
+            "sourceRef": self.source_ref,
+        }
+        if self.options:
+            result["options"] = [option.as_result() for option in self.options]
+        return result
 
 
 class UpstreamGapAction(Action):
@@ -90,11 +115,11 @@ class UpstreamGapTool(ToolDefinition[UpstreamGapAction, UpstreamGapObservation])
         return [
             cls(
                 description=(
-                    "Stop this bounded task when its supplied evidence cannot express "
-                    "the required behavior. Use this immediately after reading the task "
-                    "context when a direct-call argument is explicitly unresolved or API "
-                    "and BCE signatures conflict; do not search source files for a "
-                    "workaround. Give a concise summary and exactly one "
+                    "Stop this preflighted task only when reading generated source reveals a "
+                    "concrete contradiction with the frozen capsule that makes the behavior impossible "
+                    "without an upstream change. Do not use this for ordinary wiring or "
+                    "framework choices, and do not keep searching without a concrete blocker. "
+                    "Give a concise summary and exactly one "
                     "source_ref from this exact allowlist:\n"
                     f"{allowed_refs}"
                 ),

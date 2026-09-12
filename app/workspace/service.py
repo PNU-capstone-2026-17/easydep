@@ -94,8 +94,10 @@ from .conversation.delivery import (
 from .conversation.feedback_envelope import (
     BaseRevision,
     Decision,
+    DecisionPayload,
     DecisionPolicy,
     Question,
+    QuestionOption,
     answer_option,
     free_text_decision,
 )
@@ -4195,7 +4197,7 @@ class WorkspaceService:
     def _implementation_needs_input_result(
         self, current: dict[str, Any], job_id: str
     ) -> dict[str, Any]:
-        """Expose one catalog-backed upstream contract gap as a typed question."""
+        """Expose one catalog-backed upstream decision as a typed question."""
 
         workflow = current.get("workflow")
         workflow = workflow if isinstance(workflow, Mapping) else {}
@@ -4244,7 +4246,14 @@ class WorkspaceService:
                 raise ValueError("sourceRef did not resolve to one catalog target")
             source_target = source_targets[0]
             planned: list[tuple[str, RevisionPlan]] = []
-            for semantic_scope in ("behavior", "contract"):
+            preferred_scope = (
+                "contract"
+                if source_ref.startswith(("api:", "operation:"))
+                else "behavior"
+            )
+            for semantic_scope in (preferred_scope, "behavior", "contract"):
+                if any(scope == semantic_scope for scope, _candidate in planned):
+                    continue
                 candidate = plan_revision(
                     tools,
                     RevisionInterpretation(
@@ -4265,7 +4274,7 @@ class WorkspaceService:
                     planned.append((semantic_scope, candidate))
             if not planned:
                 raise ValueError("no exact upstream revision path is available")
-            _, plan = planned[0]
+            semantic_scope, plan = planned[0]
             authority = plan.authority_targets[0]
             allowed_semantic_scopes = tuple(
                 semantic_scope
@@ -4283,6 +4292,47 @@ class WorkspaceService:
                 raise ValueError(
                     f"no current version is available for {authority.artifact_type}"
                 )
+            question_options: list[QuestionOption] = []
+            raw_options = gap.get("options")
+            if isinstance(raw_options, list) and 2 <= len(raw_options) <= 3:
+                option_ids: set[str] = set()
+                for raw_option in raw_options:
+                    if not isinstance(raw_option, Mapping):
+                        question_options = []
+                        break
+                    option_id = str(raw_option.get("id") or "").strip()
+                    label = str(raw_option.get("label") or "").strip()
+                    description = str(raw_option.get("description") or "").strip()
+                    requested_effect = str(
+                        raw_option.get("requestedEffect")
+                        or raw_option.get("requested_effect")
+                        or ""
+                    ).strip()
+                    if (
+                        not option_id
+                        or option_id in option_ids
+                        or not label
+                        or not description
+                        or not requested_effect
+                    ):
+                        question_options = []
+                        break
+                    option_ids.add(option_id)
+                    question_options.append(
+                        QuestionOption(
+                            option_id=option_id,
+                            label=label,
+                            description=description,
+                            decision_payload=DecisionPayload(
+                                normalized_meaning={
+                                    "semantic_scope": semantic_scope,
+                                    "requested_effect": requested_effect,
+                                    "change_type": "modify",
+                                },
+                                authoritative_target_refs=(authority.ref,),
+                            ),
+                        )
+                    )
             question = Question(
                 question_id=f"{job_id}:upstream-contract-gap:{task_id}",
                 question_version=1,
@@ -4305,17 +4355,15 @@ class WorkspaceService:
                 },
                 authority_candidates=[authority],
                 prompt=(
-                    f"Implementation is blocked by an upstream contract gap: {summary} "
-                    "Revise the upstream contract before retrying implementation."
+                    "Implementation needs an upstream requirements or design decision: "
+                    f"{summary} Choose an option or provide another answer before retrying "
+                    "implementation."
                 ),
-                # A diagnostic explains what is missing; it does not choose the
-                # missing business rule.  Keep this question free-text until
-                # concrete alternatives are available.
-                options=[],
+                options=question_options,
                 allow_free_text=True,
                 decision_policy=DecisionPolicy(
                     allowed_semantic_scopes=allowed_semantic_scopes,
-                    allowed_change_types=("modify",),
+                    allowed_change_types=("modify", "add"),
                 ),
             )
             return {

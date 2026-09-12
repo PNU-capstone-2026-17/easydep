@@ -640,6 +640,12 @@ def _build_backend_behavior_tasks(
             for requirement_id in requirement_ids
             if requirement_id in requirements_by_id
         ]
+        design_evidence, design_class_refs = _backend_behavior_design_evidence(
+            bce_model,
+            use_case_ids=set(use_case_ids),
+            endpoints=selected_endpoints,
+            method_metadata=typed_method_metadata,
+        )
         read_paths = sorted(
             {
                 *source_paths,
@@ -683,6 +689,7 @@ def _build_backend_behavior_tasks(
                 "requirements": selected_requirements,
                 "endpoints": endpoint_contracts,
                 "directMethods": direct_methods,
+                "designEvidence": design_evidence,
             },
             "readSourcePaths": read_paths,
             "completionMarkers": completion_markers,
@@ -698,22 +705,15 @@ Implement this one API-to-result behavior using { _relative(run_root, context_pa
 
 - Preserve generated public BCE/API and persistence declarations.
 - Implement only the listed scenarios, endpoint bindings, direct calls, and markers.
-- Read this context first. Treat the behavior capsule as the authoritative behavior boundary
-  and decide whether its endpoint and direct-call contracts can express the behavior.
-- If a direct-call argument is explicitly unresolved, or API and BCE signatures conflict
-  without a legal implementation, call `report_upstream_gap` immediately with one supplied
-  `source_ref`. Do not search source files for a workaround to an unresolved contract.
+- Read this context first. Its behavior capsule and linked design evidence already passed this
+  Implementation subtask's semantic preflight; do not re-decide product meaning.
+- If reading the generated source reveals a concrete contradiction with the frozen capsule that
+  makes the listed behavior impossible without changing an immutable declaration, call
+  `report_upstream_gap` with one supplied `source_ref`. Otherwise choose ordinary private wiring
+  and framework mechanics yourself.
 - Otherwise start from the writable implementation files. Use `readSourcePaths` as starting
   points, then inspect application source only as needed for existing types, wiring, or test
   conventions. Read access does not expand the behavior or write scope.
-- Before broad source exploration, check whether the capsule clearly declares the required
-  branch inputs or observables, effect owners, and public outcomes. Use targeted source lookup
-  to locate existing mechanics for those declared needs; require a reachable existing dependency
-  only for effects on external state.
-- If business meaning remains underspecified or no legal implementation remains after that
-  targeted lookup, call `report_upstream_gap` immediately. Available data, repositories, or types
-  do not establish business meaning; do not invent a mapping or convention and do not keep
-  searching for a workaround.
 - Group `completionMarkers` by unique path and read each path once before editing. Resolve
   each assigned marker only from the behavior capsule:
   - `EASYDEP_CONTROLLER_BODY_REQUIRED:<METHOD>:<PATH>` maps to the endpoint with the same
@@ -740,6 +740,7 @@ Application: {spec.name}
                 *(f"use_case_spec:{value}" for value in use_case_ids),
                 *(f"api:{value}" for value in api_operation_ids),
                 *_operation_source_refs(spec, set(use_case_ids)),
+                *design_class_refs,
             }
         )
         current_main_sources = {
@@ -961,6 +962,76 @@ def _backend_behavior_typed_dependency_paths(
         for kind, suffix in (("entity", "Entity"), ("repository", "Repository"))
     )
     return sorted({path for path in candidates if (run_root / path).is_file()})
+
+
+def _backend_behavior_design_evidence(
+    bce_model: dict[str, object],
+    *,
+    use_case_ids: set[str],
+    endpoints: list[dict[str, object]],
+    method_metadata: list[dict[str, object]],
+) -> tuple[dict[str, object], list[str]]:
+    """Project already-selected class and one-hop records without semantic inference."""
+
+    def records(model: dict[str, object], key: str) -> list[dict[str, object]]:
+        values = model.get(key)
+        return [item for item in values if isinstance(item, dict)] if isinstance(values, list) else []
+
+    classes = [item for item in records(bce_model, "Classes") if item.get("className")]
+    classes_by_name = {str(item["className"]): item for item in classes}
+    selected_names = {
+        str(item["className"])
+        for item in classes
+        if _use_case_ids(item) & use_case_ids
+    }
+    selected_names.update(
+        str(binding["control"])
+        for endpoint in endpoints
+        if isinstance(binding := endpoint.get("control_binding"), dict)
+        and isinstance(binding.get("control"), str)
+        and binding["control"]
+    )
+    selected_names.update(
+        name
+        for endpoint in endpoints
+        for name in (
+            endpoint.get("source_classes")
+            if isinstance(endpoint.get("source_classes"), list)
+            else []
+        )
+        if isinstance(name, str) and name
+    )
+    selected_names.update(
+        str(item["class_name"])
+        for item in method_metadata
+        if isinstance(item.get("class_name"), str) and item["class_name"]
+    )
+    selected_names.intersection_update(classes_by_name)
+
+    relationships = records(bce_model, "Relationships")
+    selected_relationships = [
+        item
+        for item in relationships
+        if {str(item.get("source") or ""), str(item.get("target") or "")}
+        & selected_names
+        and {str(item.get("source") or ""), str(item.get("target") or "")}
+        <= classes_by_name.keys()
+    ]
+    selected_names.update(
+        name
+        for item in selected_relationships
+        for name in (str(item["source"]), str(item["target"]))
+    )
+
+    return (
+        {
+            "Classes": [
+                item for name, item in classes_by_name.items() if name in selected_names
+            ],
+            "Relationships": selected_relationships,
+        },
+        [f"class_diagram:{name}" for name in sorted(selected_names)],
+    )
 
 
 def _typed_component_names(

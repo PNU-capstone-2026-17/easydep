@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import app.implementation.agents.admission as admission
 from app.implementation.agents.admission import admit_behavior_capsule
-from app.implementation.agents.upstream_gap_tool import UpstreamGap
+from app.implementation.agents.upstream_gap_tool import UpstreamGap, UpstreamGapOption
 
 
 def test_prompt_treats_runtime_transport_as_implementation_only_after_semantics() -> None:
@@ -15,6 +15,16 @@ def test_prompt_treats_runtime_transport_as_implementation_only_after_semantics(
     assert "Never infer a semantic source" in prompt
     assert "does not also need a method parameter or context accessor" in prompt
     assert "caller-controlled input" in prompt
+    assert "designEvidence is natural-language evidence" in prompt
+    assert "identifier" in prompt
+    assert "mapping" in prompt
+    assert "Do not require an ontology" in prompt
+    assert "exact class reference" in prompt
+    assert "does not by itself\ndeclare how domain records" in prompt
+    assert "relation, match key, or semantic source" in prompt
+    assert "treat\nthe capsule as a legacy context" in prompt
+    assert "preflightFindings are deterministic evidence" in prompt
+    assert "Every option must be resolvable by revising that same source reference" in prompt
 
 
 def test_implement_admission_uses_admission_connection_and_low_budget(monkeypatch) -> None:
@@ -48,6 +58,20 @@ def test_needs_input_admission_returns_one_upstream_gap() -> None:
             "decision": "NEEDS_INPUT",
             "summary": "  The retry policy is not specified.  ",
             "source_ref": "use_case_spec:UC-1",
+            "options": [
+                {
+                    "id": "retry-immediate",
+                    "label": "Retry immediately",
+                    "description": "Retry the operation without waiting.",
+                    "requested_effect": "Declare immediate retry as the policy.",
+                },
+                {
+                    "id": "retry-backoff",
+                    "label": "Retry with backoff",
+                    "description": "Wait between retry attempts.",
+                    "requested_effect": "Declare bounded backoff before retry.",
+                },
+            ],
         }
 
     assert admit_behavior_capsule(
@@ -55,7 +79,22 @@ def test_needs_input_admission_returns_one_upstream_gap() -> None:
         ["use_case:UC-1", "api:retry", "use_case_spec:UC-1"],
         proposal_call=propose,
     ) == UpstreamGap(
-        summary="The retry policy is not specified.", source_ref="use_case_spec:UC-1"
+        summary="The retry policy is not specified.",
+        source_ref="use_case_spec:UC-1",
+        options=(
+            UpstreamGapOption(
+                id="retry-immediate",
+                label="Retry immediately",
+                description="Retry the operation without waiting.",
+                requested_effect="Declare immediate retry as the policy.",
+            ),
+            UpstreamGapOption(
+                id="retry-backoff",
+                label="Retry with backoff",
+                description="Wait between retry attempts.",
+                requested_effect="Declare bounded backoff before retry.",
+            ),
+        ),
     )
     assert json.loads(calls[0][1]["content"])["sourceRefs"] == [
         "api:retry",
@@ -76,6 +115,20 @@ def test_preflight_reuses_exact_checkpoint_and_invalidates_changed_input(
     expected_gap = UpstreamGap(
         summary="The operation has no carrier for the required actor.",
         source_ref="operation:Note::create()",
+        options=(
+            UpstreamGapOption(
+                id="trusted-context",
+                label="Use trusted context",
+                description="Read the actor from the authenticated platform context.",
+                requested_effect="Declare the actor as trusted platform context.",
+            ),
+            UpstreamGapOption(
+                id="caller-input",
+                label="Accept caller input",
+                description="Add the actor as a caller-provided value.",
+                requested_effect="Declare the actor as an explicit caller input.",
+            ),
+        ),
     )
 
     def propose(context, source_refs):
@@ -90,6 +143,14 @@ def test_preflight_reuses_exact_checkpoint_and_invalidates_changed_input(
     assert admission.preflight_semantic_behavior(tmp_path, task, context, refs) == expected_gap
     assert admission.preflight_semantic_behavior(tmp_path, task, context, refs) == expected_gap
     assert len(calls) == 1
+    checkpoint = json.loads(
+        (tmp_path / "reports/agent-executions/behavior-1.admission.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert checkpoint["upstreamGap"]["options"][0]["requestedEffect"] == (
+        "Declare the actor as trusted platform context."
+    )
 
     result_path = tmp_path / "reports/agent-executions/behavior-1.result.json"
     result_path.write_text(json.dumps({"status": "NEEDS_INPUT"}), encoding="utf-8")

@@ -312,6 +312,13 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
                     if isinstance(task.get("upstreamGap"), dict)
                     else None
                 ),
+                **(
+                    {"options": task["upstreamGap"]["options"]}
+                    if isinstance(task.get("upstreamGap"), dict)
+                    and isinstance(task["upstreamGap"].get("options"), list)
+                    and task["upstreamGap"]["options"]
+                    else {}
+                ),
             }
             for task in pending
             if task["status"] == "NEEDS_INPUT"

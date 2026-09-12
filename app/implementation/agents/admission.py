@@ -14,10 +14,21 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.design.services.common.structured import parse_structured
 from app.llm_connection import build_admission_llm_connection
 
-from .upstream_gap_tool import UpstreamGap
+from .upstream_gap_tool import UpstreamGap, UpstreamGapOption
 
 ADMISSION_CHECKPOINT_SCHEMA = "implementation-admission/v1alpha1"
-ADMISSION_VALIDATOR_VERSION = "behavior-admission/v1"
+ADMISSION_VALIDATOR_VERSION = "behavior-admission/v2"
+
+
+class AdmissionOption(BaseModel):
+    """The small choice payload returned with a semantic admission gap."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
+    label: str = Field(min_length=1, max_length=80)
+    description: str = Field(min_length=1, max_length=300)
+    requested_effect: str = Field(min_length=1, max_length=500)
 
 
 class BehaviorAdmission(BaseModel):
@@ -28,9 +39,10 @@ class BehaviorAdmission(BaseModel):
     decision: Literal["IMPLEMENT", "NEEDS_INPUT"]
     summary: str = Field(min_length=1)
     source_ref: str
+    options: list[AdmissionOption] = Field(default_factory=list, max_length=3)
 
 
-_SYSTEM_PROMPT = """You are a semantic admission judge for a bounded implementation task.
+_SYSTEM_PROMPT = """You are the semantic preflight for a bounded implementation subtask.
 Judge whether the behavior contract is implementable, not source-code quality. Return only
 the requested structured decision.
 
@@ -66,7 +78,27 @@ authorization, persistence semantics, or the API contract. Uncertainty about sou
 constructor wiring, or repository implementation is not evidence of a behavior gap. Do not
 infer a business rule from a type's existence or defer a missing decision criterion to source
 discovery.
+The capsule's designEvidence is natural-language evidence, not a completeness proof. Choose
+NEEDS_INPUT when a required domain state, relationship, or semantic source is absent from the
+linked design and implementation would have to choose an upstream business rule, identifier
+mapping, external supplier, or immutable declaration. Do not require an ontology, exhaustive
+state list, or proof that every runtime detail is declared; private accessors, DI, repository
+plumbing, and role-token mapping remain implementation choices when they preserve the declared
+meaning. A trusted contextual value declares where that value comes from; it does not by itself
+declare how domain records are assigned, owned, visible, eligible, or otherwise related to it.
+When the required result is relative to a contextual value, choose NEEDS_INPUT unless the linked
+contracts and design evidence declare a relation, match key, or semantic source from which that
+selection can be implemented. An operation name alone is not such a declaration when the linked
+data and dependencies cannot evaluate the relation. If designEvidence is absent entirely, treat
+the capsule as a legacy context and do not infer a gap merely from that absence. Any
+preflightFindings are deterministic evidence to resolve in this same decision, not a separate
+decision. When NEEDS_INPUT is appropriate, provide two or three mutually exclusive options when
+the missing choice can be presented naturally. Each option needs a stable id, short label,
+description, and requested_effect describing the upstream change it would cause.
 Report at most one root ambiguity concisely, using exactly one allowed source reference.
+Every option must be resolvable by revising that same source reference. Options for an API,
+operation, or class reference must preserve the already-declared use-case behavior and policy;
+do not offer a choice that instead changes a requirement or another upstream target.
 The source reference identifies the first contract that must change:
 - Use a use_case_spec reference only when the required user-visible outcome or policy
   choice itself is not specified.
@@ -74,6 +106,8 @@ The source reference identifies the first contract that must change:
   contract leaves its semantic source, trust boundary, or public carrier undecided, use the
   closest api or operation reference instead. Do not route mere runtime wiring to the
   use-case specification.
+- When linked BCE design evidence lacks a required state or relationship, use the closest
+  exact class reference available as the source reference.
 - Use an api reference only when the unresolved choice belongs to the caller-visible HTTP
   request or response. Use an operation reference when trusted server context or an internal
   call is required but its semantic source or trust boundary is not declared.
@@ -144,7 +178,41 @@ def _checkpoint_gap(
         or source_ref not in _semantic_source_refs(source_refs)
     ):
         return False, None
-    return True, UpstreamGap(summary=summary, source_ref=source_ref)
+    raw_options = raw_gap.get("options", [])
+    if not isinstance(raw_options, list):
+        return False, None
+    options: list[UpstreamGapOption] = []
+    for raw_option in raw_options:
+        if not isinstance(raw_option, dict):
+            return False, None
+        try:
+            option = AdmissionOption.model_validate(
+                {
+                    "id": raw_option.get("id"),
+                    "label": raw_option.get("label"),
+                    "description": raw_option.get("description"),
+                    "requested_effect": raw_option.get(
+                        "requested_effect", raw_option.get("requestedEffect")
+                    ),
+                }
+            )
+        except ValueError:
+            return False, None
+        options.append(
+            UpstreamGapOption(
+                id=option.id,
+                label=option.label,
+                description=option.description,
+                requested_effect=option.requested_effect,
+            )
+        )
+    if len(options) < 2 or len(options) > 3 or len({option.id for option in options}) != len(options):
+        options = []
+    return True, UpstreamGap(
+        summary=summary,
+        source_ref=source_ref,
+        options=tuple(options),
+    )
 
 
 def _clear_stale_need_input(run_root: Path, task_id: str) -> None:
@@ -248,4 +316,19 @@ def admit_behavior_capsule(
     summary = shorten(admission.summary.strip(), width=500, placeholder="…")
     if not summary:
         raise ValueError("NEEDS_INPUT summary must not be blank")
-    return UpstreamGap(summary=summary, source_ref=admission.source_ref)
+    options = [
+        UpstreamGapOption(
+            id=option.id,
+            label=option.label,
+            description=option.description,
+            requested_effect=option.requested_effect,
+        )
+        for option in admission.options
+    ]
+    if len(options) < 2 or len(options) > 3 or len({option.id for option in options}) != len(options):
+        options = []
+    return UpstreamGap(
+        summary=summary,
+        source_ref=admission.source_ref,
+        options=tuple(options),
+    )

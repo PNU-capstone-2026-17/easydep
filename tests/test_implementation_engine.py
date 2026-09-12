@@ -991,7 +991,7 @@ def test_bounded_owner_upstream_gap_preserves_candidate_without_verification(
     assert source.read_text(encoding="utf-8") == "class OrderService {}"
 
 
-def test_explicit_unresolved_projection_is_rejected_before_openhands(
+def test_explicit_unresolved_projection_is_admitted_before_openhands(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1041,12 +1041,26 @@ def test_explicit_unresolved_projection_is_rejected_before_openhands(
     )
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
 
-    with patch(
-        "app.implementation.agents.runtime.openhands_connection",
-        side_effect=AssertionError("admission gate must run before OpenHands"),
+    expected_gap = UpstreamGap(
+        summary="Direct-call argument 'orderId' is unresolved (unresolved_call_parameter).",
+        source_ref="operation:OrderService::placeOrder(orderId:String)",
+    )
+    with (
+        patch(
+            "app.implementation.agents.runtime.preflight_semantic_behavior",
+            return_value=expected_gap,
+        ) as semantic_admission,
+        patch(
+            "app.implementation.agents.runtime.openhands_connection",
+            side_effect=AssertionError("admission gate must run before OpenHands"),
+        ),
     ):
         result = execute_openhands_task(run, task_id)
 
+    admission_context = semantic_admission.call_args.args[2]
+    assert admission_context["behaviorCapsule"]["preflightFindings"] == [
+        expected_gap.as_result()
+    ]
     assert result["status"] == "NEEDS_INPUT"
     assert result["terminationReason"] == "UPSTREAM_GAP"
     assert result["upstreamGap"] == {

@@ -164,6 +164,24 @@ def test_implementation_gap_question_accepts_behavior_or_contract_feedback(
                             "taskId": "implementation-task-1",
                             "summary": "An upstream operation contract is incomplete.",
                             "sourceRef": "use_case_spec:UC1",
+                            "options": [
+                                {
+                                    "id": "record_assignment",
+                                    "label": "Record assignment",
+                                    "description": "Model the actor-to-offering assignment.",
+                                    "requestedEffect": (
+                                        "Record the actor-to-offering assignment in the design."
+                                    ),
+                                },
+                                {
+                                    "id": "derive_assignment",
+                                    "label": "Derive assignment",
+                                    "description": "Declare an existing source for the assignment.",
+                                    "requestedEffect": (
+                                        "Declare the existing source that determines assignment."
+                                    ),
+                                },
+                            ],
                         }
                     ]
                 },
@@ -176,6 +194,17 @@ def test_implementation_gap_question_accepts_behavior_or_contract_feedback(
     assert result["feedback_question"]["decision_policy"][
         "allowed_semantic_scopes"
     ] == ["behavior", "contract"]
+    assert result["feedback_question"]["decision_policy"][
+        "allowed_change_types"
+    ] == ["modify", "add"]
+    assert result["feedback_question"]["allow_free_text"] is True
+    assert [option["option_id"] for option in result["feedback_question"]["options"]] == [
+        "record_assignment",
+        "derive_assignment",
+    ]
+    assert result["feedback_question"]["options"][0]["decision_payload"][
+        "normalized_meaning"
+    ]["requested_effect"] == "Record the actor-to-offering assignment in the design."
 
 
 def test_feedback_answer_fields_survive_http_request_validation() -> None:

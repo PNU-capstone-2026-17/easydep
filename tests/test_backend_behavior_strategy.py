@@ -143,19 +143,34 @@ def _build_fixture(
     _write_json(api_model, {"Endpoints": endpoints})
 
     result_type = f"{vocabulary}Result"
-    _write_json(
-        bce_model,
-        {
-            "Classes": [
-                {
-                    "className": result_type,
-                    "stereotype": "Entity",
-                    "fields": [],
-                }
-            ],
-            "DataTypes": [],
-        },
-    )
+    detail_type = f"{vocabulary}Detail"
+    unrelated_type = f"{vocabulary}Other"
+    bce_payload = {
+        "Classes": [
+            {
+                "className": name,
+                "stereotype": stereotype,
+                "use_case_ids": use_cases,
+                "fields": [],
+            }
+            for name, stereotype, use_cases in (
+                (result_type, "Entity", ["UC-A", "UC-B"]),
+                (f"{vocabulary}Entry", "Control", []),
+                (f"{vocabulary}Nested", "Control", []),
+                (detail_type, "Entity", []),
+                (unrelated_type, "Entity", ["UC-Z"]),
+            )
+        ],
+        "DataTypes": [],
+        "Relationships": [
+            {
+                "source": result_type,
+                "target": detail_type,
+                "type": "Association",
+            }
+        ],
+    }
+    _write_json(bce_model, bce_payload)
 
     controller = (
         "application/src/main/java/"
@@ -496,9 +511,9 @@ def test_exact_uc_api_components_form_deterministic_independent_tasks(
             "focused test at `requiredTestPath`",
         )
     )
-    assert "business meaning remains underspecified" in prompt
+    assert "already passed this\n  Implementation subtask's semantic preflight" in prompt
     assert "inspect application source only as needed" in prompt
-    assert "do not invent a mapping or convention" in prompt
+    assert "do not re-decide product meaning" in prompt
 
 
 def test_shared_source_stays_bounded_and_rechecks_the_earlier_slice(
@@ -603,8 +618,30 @@ def test_capsule_contains_only_exact_flow_endpoint_and_direct_method_contexts(
         item["method"]["stable_id"] for item in capsule["directMethods"]
     }
     assert direct_ids == {"method-entry", "method-shared"}
+    evidence = capsule["designEvidence"]
+    assert {item["className"] for item in evidence["Classes"]} == {
+        "OriginalResult",
+        "OriginalEntry",
+        "OriginalNested",
+        "OriginalDetail",
+    }
+    assert evidence["Relationships"] == [
+        {
+            "source": "OriginalResult",
+            "target": "OriginalDetail",
+            "type": "Association",
+        }
+    ]
+    assert {
+        "class_diagram:OriginalResult",
+        "class_diagram:OriginalEntry",
+        "class_diagram:OriginalNested",
+        "class_diagram:OriginalDetail",
+    } <= set(connected.source_refs)
     serialized = json.dumps(capsule, ensure_ascii=False)
     assert "UC-Z" not in serialized
+    assert "OriginalOther" not in serialized
+    assert "class_diagram:OriginalOther" not in connected.source_refs
     assert "method-unrelated" not in serialized
     assert "method-unbound" not in serialized
     # A direct call may name its immediate target, but that target's own
