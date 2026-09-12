@@ -109,7 +109,6 @@ class Settings(BaseSettings):
     design_class_structure_max_completion_tokens: int = 16384
     design_class_collaboration_max_completion_tokens: int = 8192
     implementation_max_workers: int = 1
-    implementation_task_parallelism: int = 2
     implementation_agent_temperature: float = 0.2
     implementation_agent_max_output_tokens: int = 16384
     implementation_reasoning_effort: str = "medium"

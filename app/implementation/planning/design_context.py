@@ -81,7 +81,7 @@ class _UseCaseBundle:
 
 
 def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
-    """Materialize backend evidence, then plan sequential observable behaviors."""
+    """Materialize backend evidence, then plan cohesive observable behaviors."""
     package_path = spec.base_package.replace(".", "/")
     java_root = run_root / "application" / "src" / "main" / "java" / package_path
     ir = build_implementation_ir(spec, run_root)
@@ -407,7 +407,7 @@ def _build_backend_behavior_tasks(
     bundle: _UseCaseBundle,
     owner_task: TaskSpec,
 ) -> list[TaskSpec]:
-    """Build sequential work units from exact UC-to-API connectivity."""
+    """Build cohesive work units from exact UC/API and writable-source evidence."""
 
     source_index = _read_json(
         output / "implement-backend-application.source-index.json"
@@ -443,9 +443,15 @@ def _build_backend_behavior_tasks(
         if item.stereotype.casefold() == "entity"
     }
     bce_model = _read_json(spec.inputs.get("bceModel"))
-    components = _backend_behavior_components(bundle.use_case_ids, list(bundle.endpoints))
+    components = _cohesive_backend_behavior_components(
+        _backend_behavior_components(bundle.use_case_ids, list(bundle.endpoints)),
+        method_entries=method_entries,
+        endpoints=list(bundle.endpoints),
+        run_root=run_root,
+        controller_paths=controller_paths,
+        writable_paths=set(owner_task.allowed_write_paths),
+    )
     tasks: list[TaskSpec] = []
-    previous_task_id: str | None = None
 
     for use_case_ids, api_operation_ids in components:
         identity = json.dumps(
@@ -645,7 +651,7 @@ def _build_backend_behavior_tasks(
             "schemaVersion": "implementation-context/v1alpha3",
             "taskId": task_id,
             "taskType": "backend-implementation",
-            "dependsOn": [previous_task_id] if previous_task_id else [],
+            "dependsOn": [],
             "useCaseIds": use_case_ids,
             "apiOperationIds": api_operation_ids,
             "behaviorCapsule": {
@@ -667,9 +673,13 @@ Implement this one API-to-result behavior using { _relative(run_root, context_pa
 
 - Preserve generated public BCE/API and persistence declarations.
 - Implement only the listed scenarios, endpoint bindings, direct calls, and markers.
-- Treat this behavior capsule as self-contained. Start with this context and the existing
-  writable implementation files; `readSourcePaths` is an optional readable allowlist, not a
-  checklist to open in full.
+- Treat this behavior capsule as self-contained. Read this context first. Before any other
+  read, decide whether its endpoint and direct-call contracts can express the behavior.
+- If a direct-call argument is explicitly unresolved, or API and BCE signatures conflict
+  without a legal implementation, call `report_upstream_gap` immediately with one supplied
+  `source_ref`. Do not search source files for a workaround to an unresolved contract.
+- Otherwise start from the existing writable implementation files; `readSourcePaths` is an
+  optional readable allowlist, not a checklist to open in full.
 - Open a listed contract only when a specific named type or member blocks an edit. Do not
   reopen per-method context already projected into this behavior capsule. The authoritative
   behavior boundary is `endpoints`, `directMethods`, and their `directCalls`.
@@ -716,20 +726,22 @@ Application: {spec.name}
             llm=llm_config(spec),
             owner="backend",
             task_type="backend-implementation",
-            depends_on=[previous_task_id] if previous_task_id else [],
+            depends_on=[],
             requirement_ids=requirement_ids,
             use_case_ids=use_case_ids,
             required_test_paths=[test_path],
             source_refs=source_refs,
             allowed_write_roots=[],
-            verification_profile={"requiredAbsentMarkers": completion_markers},
+            verification_profile={
+                "requiredAbsentMarkers": completion_markers,
+                "focusedTestPaths": [test_path],
+            },
         )
         (output / f"{task_id}.task.json").write_text(
             json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         tasks.append(task)
-        previous_task_id = task_id
     return tasks
 
 
@@ -777,6 +789,104 @@ def _backend_behavior_components(
     return result
 
 
+def _cohesive_backend_behavior_components(
+    components: list[tuple[list[str], list[str]]],
+    *,
+    method_entries: list[tuple[dict[str, object], dict[str, object]]],
+    endpoints: list[dict[str, object]],
+    run_root: Path,
+    controller_paths: list[str],
+    writable_paths: set[str],
+) -> list[tuple[list[str], list[str]]]:
+    """Merge behavior components only when their exact writable source overlaps."""
+
+    groups: list[tuple[set[str], set[str], set[str]]] = []
+    for use_case_ids, api_operation_ids in components:
+        production_paths = _behavior_component_production_paths(
+            use_case_ids,
+            api_operation_ids,
+            method_entries=method_entries,
+            endpoints=endpoints,
+            run_root=run_root,
+            controller_paths=controller_paths,
+            writable_paths=writable_paths,
+        )
+        matching = [
+            index
+            for index, (_use_cases, _operations, paths) in enumerate(groups)
+            if paths.intersection(production_paths)
+        ]
+        if not matching:
+            groups.append((set(use_case_ids), set(api_operation_ids), production_paths))
+            continue
+        first = matching[0]
+        merged_use_cases, merged_operations, merged_paths = groups[first]
+        merged_use_cases.update(use_case_ids)
+        merged_operations.update(api_operation_ids)
+        merged_paths.update(production_paths)
+        for index in reversed(matching[1:]):
+            other_use_cases, other_operations, other_paths = groups.pop(index)
+            merged_use_cases.update(other_use_cases)
+            merged_operations.update(other_operations)
+            merged_paths.update(other_paths)
+
+    return [
+        (
+            sorted(use_case_ids, key=_use_case_sort_key),
+            sorted(api_operation_ids),
+        )
+        for use_case_ids, api_operation_ids, _paths in groups
+    ]
+
+
+def _behavior_component_production_paths(
+    use_case_ids: list[str],
+    api_operation_ids: list[str],
+    *,
+    method_entries: list[tuple[dict[str, object], dict[str, object]]],
+    endpoints: list[dict[str, object]],
+    run_root: Path,
+    controller_paths: list[str],
+    writable_paths: set[str],
+) -> set[str]:
+    """Return exact writable main-source paths selected by one behavior component."""
+
+    refs = {
+        *(f"use_case:{value}" for value in use_case_ids),
+        *(f"api:{value}" for value in api_operation_ids),
+    }
+    paths = {
+        str(path)
+        for entry, context in method_entries
+        if {
+            str(value)
+            for value in entry.get("refs", [])
+            if isinstance(value, str)
+        }.intersection(refs)
+        for path in context.get("sourcePaths", entry.get("sourcePaths", []))
+        if isinstance(path, str)
+        and path in writable_paths
+        and path.startswith("application/src/main/java/")
+    }
+    selected_operation_ids = set(api_operation_ids)
+    for endpoint in endpoints:
+        operation_id = str(endpoint.get("operation_id") or endpoint.get("operationId") or "")
+        if operation_id not in selected_operation_ids:
+            continue
+        marker = controller_body_marker(
+            str(endpoint.get("method") or ""),
+            str(endpoint.get("path") or ""),
+        )
+        for controller_path in controller_paths:
+            if (
+                controller_path in writable_paths
+                and controller_path.startswith("application/src/main/java/")
+                and marker in (run_root / controller_path).read_text(encoding="utf-8")
+            ):
+                paths.add(controller_path)
+    return paths
+
+
 def _validate_backend_behavior_plan(
     run_root: Path,
     output: Path,
@@ -808,6 +918,18 @@ def _validate_backend_behavior_plan(
                 ]
             )
         )
+
+    production_owners: dict[str, str] = {}
+    for task in tasks:
+        for path in task.allowed_write_paths:
+            if not path.startswith("application/src/main/java/"):
+                continue
+            previous_owner = production_owners.setdefault(path, task.task_id)
+            if previous_owner != task.task_id:
+                raise ValueError(
+                    "Backend cohesive slices overlap on production write source: "
+                    f"{path} ({previous_owner}, {task.task_id})"
+                )
 
     source_index = _read_json(
         output / "implement-backend-application.source-index.json"
@@ -1124,8 +1246,6 @@ def _artifact_ids(items: list[dict[str, object]]) -> list[str]:
 def generate_frontend_tasks(
     spec: JobSpec,
     run_root: Path,
-    *,
-    backend_task_id: str = "implement-backend-application",
 ) -> list[TaskSpec]:
     """typed 화면 흐름과 생성된 API client를 한 frontend 구현 작업으로 만든다."""
     frontend = run_root / "application" / "frontend"
@@ -1193,7 +1313,9 @@ def generate_frontend_tasks(
         "taskId": task_id,
         "taskType": "frontend-implementation",
         "owner": "frontend",
-        "dependsOn": [backend_task_id],
+        # The workflow phase boundary already requires every backend slice to
+        # succeed. A dependency on one arbitrary backend task is misleading.
+        "dependsOn": [],
         "operationIds": operations,
         "generatedImportRoot": client_contracts.import_root,
         "callSkeletonPath": _relative(run_root, call_skeleton_path),
@@ -1264,7 +1386,7 @@ Complete the React application using the exact generated-client calls already wi
         llm=llm_config(spec),
         owner="frontend",
         task_type="frontend-implementation",
-        depends_on=[backend_task_id],
+        depends_on=[],
         source_refs=[
             *(f"api:{operation_id}" for operation_id in operations),
             *_workload_source_refs(deployment_context),

@@ -369,7 +369,7 @@ def _task_context(run: Path, task: TaskSpec) -> dict[str, object]:
     return json.loads((run / task.context_file).read_text(encoding="utf-8"))
 
 
-def test_exact_uc_api_components_form_deterministic_sequential_tasks(
+def test_exact_uc_api_components_form_deterministic_independent_tasks(
     tmp_path: Path,
 ) -> None:
     first = _build_tasks(tmp_path / "first")
@@ -383,15 +383,15 @@ def test_exact_uc_api_components_form_deterministic_sequential_tasks(
     }
     assert {frozenset(task.use_case_ids) for task in first} == expected_components
     assert [task.task_id for task in first] == [task.task_id for task in second]
-    assert [task.depends_on for task in first] == [
-        [],
-        [first[0].task_id],
-        [first[1].task_id],
-    ]
+    assert [task.depends_on for task in first] == [[], [], []]
     # Reuse the existing backend phase and cumulative test verifier.
     assert all(task.task_type == "backend-implementation" for task in first)
     assert all(task.allowed_write_roots == [] for task in first)
     assert all(len(task.required_test_paths) == 1 for task in first)
+    assert all(
+        task.verification_profile["focusedTestPaths"] == task.required_test_paths
+        for task in first
+    )
     assert len({task.required_test_paths[0] for task in first}) == len(first)
     assert all(
         Path(task.required_test_paths[0]).name.startswith("Behavior")
@@ -460,6 +460,52 @@ def test_exact_uc_api_components_form_deterministic_sequential_tasks(
     assert "Do not infer behavior from names" in prompt
     assert "gap only when the behavior capsule itself is insufficient" in prompt
     assert "report missing implementation context; do not read it" in prompt
+
+
+def test_components_with_a_shared_exact_production_source_form_one_slice(
+    tmp_path: Path,
+) -> None:
+    spec, run, output, package_path, bundle, owner = _build_fixture(tmp_path)
+    source_index_path = output / "implement-backend-application.source-index.json"
+    source_index = json.loads(source_index_path.read_text(encoding="utf-8"))
+    entries = source_index["methodContexts"]
+    entry = next(item for item in entries if item["stableId"] == "method-entry")
+    solo = next(item for item in entries if item["stableId"] == "method-solo")
+    shared_source = entry["sourcePaths"][0]
+    solo_context_path = run / solo["path"]
+    solo_context = json.loads(solo_context_path.read_text(encoding="utf-8"))
+    solo_context["sourcePaths"] = [shared_source]
+    solo_context_path.write_text(json.dumps(solo_context), encoding="utf-8")
+    solo["sourcePaths"] = [shared_source]
+    source_index_path.write_text(json.dumps(source_index), encoding="utf-8")
+    owner.allowed_write_paths.append(shared_source)
+
+    with patch(
+        "app.implementation.planning.design_context.llm_config",
+        return_value={"model": "test-model"},
+    ):
+        tasks = _build_backend_behavior_tasks(
+            spec, run, output, package_path, bundle, owner
+        )
+
+    assert {frozenset(task.use_case_ids) for task in tasks} == {
+        frozenset({"UC-A", "UC-B", "UC-C"}),
+        frozenset({"UC-Z"}),
+    }
+    cohesive = next(
+        task for task in tasks if set(task.use_case_ids) == {"UC-A", "UC-B", "UC-C"}
+    )
+    assert shared_source in cohesive.allowed_write_paths
+    assert all(task.depends_on == [] for task in tasks)
+    production_paths = [
+        {
+            path
+            for path in task.allowed_write_paths
+            if path.startswith("application/src/main/java/")
+        }
+        for task in tasks
+    ]
+    assert production_paths[0].isdisjoint(production_paths[1])
 
 
 def test_mechanical_vocabulary_rename_preserves_id_topology(

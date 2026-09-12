@@ -6,12 +6,10 @@ import os
 import tempfile
 import time
 from collections.abc import Callable
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.config import settings
 from app.design.contracts import bind_runtime_contract, build_provider_resource_plan
 from app.metrics import langsmith as langsmith_metrics
 
@@ -315,6 +313,8 @@ def _run_workflow(
     """Resume planned phases, checkpointing before and after every external task."""
     run_root = run_root.resolve()
     state = plan_workflow(run_root, spec)
+    if state.get("status") == "COMPLETE":
+        return state
     if state.get("status") == "NEEDS_INPUT":
         return state
     runnable = list(state.get("nextRunnableTasks", []))
@@ -367,45 +367,41 @@ def _run_workflow(
         # The dependency graph makes one owner phase runnable at a time.
         state["currentPhase"] = runnable_phases[0]
         state["currentPhases"] = runnable_phases
-        worker_limit = max(1, int(settings.implementation_task_parallelism))
-        # A batch helper still checkpoints the single runnable owner consistently.
-        for task_batch in _phase_task_batches("parallel", runnable_tasks):
-            failures = _execute_task_batch(
-                run_root,
-                state,
-                task_batch,
-                executor,
-                max_workers=worker_limit,
-            )
-            if failures:
-                task, error = failures[0]
-                if isinstance(error, OwnerConversationIncomplete):
-                    # The candidate and SDK checkpoint are already preserved.
-                    # This is an execution budget/stuck boundary, not evidence
-                    # for creating another source-repair prompt.
-                    paused_state = plan_workflow(run_root, spec)
-                    paused_state["blockingReason"] = str(error)
+        failures = _execute_task_batch(
+            run_root,
+            state,
+            runnable_tasks,
+            executor,
+        )
+        if failures:
+            task, error = failures[0]
+            if isinstance(error, OwnerConversationIncomplete):
+                # The candidate and SDK checkpoint are already preserved.
+                # This is an execution budget/stuck boundary, not evidence
+                # for creating another source-repair prompt.
+                paused_state = plan_workflow(run_root, spec)
+                paused_state["blockingReason"] = str(error)
+                _write_json_atomic(
+                    run_root / "reports" / "workflow-state.json",
+                    paused_state,
+                )
+                return paused_state
+            if isinstance(error, WorkspaceVerificationError):
+                repair = schedule_cross_phase_repair(
+                    run_root, str(task["task_id"]), error.evidence
+                )
+                if repair is not None:
+                    repaired_state = plan_workflow(run_root, spec)
+                    repaired_state["repairPlan"] = "reports/repair-plan.json"
+                    repaired_state["blockingReason"] = None
                     _write_json_atomic(
                         run_root / "reports" / "workflow-state.json",
-                        paused_state,
+                        repaired_state,
                     )
-                    return paused_state
-                if isinstance(error, WorkspaceVerificationError):
-                    repair = schedule_cross_phase_repair(
-                        run_root, str(task["task_id"]), error.evidence
-                    )
-                    if repair is not None:
-                        repaired_state = plan_workflow(run_root, spec)
-                        repaired_state["repairPlan"] = "reports/repair-plan.json"
-                        repaired_state["blockingReason"] = None
-                        _write_json_atomic(
-                            run_root / "reports" / "workflow-state.json",
-                            repaired_state,
-                        )
-                        return repaired_state
-                raise error
-            if any(task["status"] == "NEEDS_INPUT" for task in task_batch):
-                return plan_workflow(run_root, spec)
+                    return repaired_state
+            raise error
+        if any(task["status"] == "NEEDS_INPUT" for task in runnable_tasks):
+            return plan_workflow(run_root, spec)
         for phase_id in runnable_phases:
             next(phase for phase in state["phases"] if phase["phaseId"] == phase_id)["status"] = (
                 "SUCCEEDED"
@@ -488,33 +484,47 @@ def _finalize_workflow(
         _record_workflow_failure(run_root, state, error)
         raise
 
-    if (
-        spec.job_type == "FEEDBACK_REVISION"
-        and not str(getattr(spec, "repair_task_type", "")).startswith("testing-")
-    ):
+    if not str(getattr(spec, "repair_task_type", "")).startswith("testing-"):
+        feedback_revision = spec.job_type == "FEEDBACK_REVISION"
+        regression_report = (
+            "feedback-regression.json"
+            if feedback_revision
+            else "backend-regression.json"
+        )
         state["currentActivity"] = {
-            "id": "feedback-regression",
+            "id": "backend-regression",
             "owner": "integration",
             "phase": "integration",
-            "label": "Post-revision unit tests",
+            "label": "Backend regression tests",
             "status": "RUNNING",
-            "detail": "Checking that the revision preserves existing unit and focused integration tests.",
+            "detail": "Running the complete backend test suite once after all implementation slices.",
         }
         _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         try:
             verify_run_workspace(
                 run_root,
-                "feedback-regression.json",
+                regression_report,
                 verify_frontend=False,
                 verify_end_to_end=False,
             )
         except WorkspaceVerificationError as error:
-            repaired = _continue_after_feedback_regression_failure(run_root, spec, error)
+            repaired = _continue_after_backend_regression_failure(
+                run_root,
+                spec,
+                error,
+                failed_task_id=(
+                    "apply-source-feedback"
+                    if feedback_revision
+                    else _regression_owner_task_id(run_root, error.evidence)
+                ),
+            )
             if repaired is not None:
                 return repaired
             _record_workflow_failure(run_root, state, error)
             raise
-        state["feedbackRegression"] = "reports/feedback-regression.json"
+        state["backendRegression"] = f"reports/{regression_report}"
+        if feedback_revision:
+            state["feedbackRegression"] = f"reports/{regression_report}"
 
     _complete_implementation(run_root, spec, state, conformance)
     _set_phase_status(state, "integration", "SUCCEEDED")
@@ -531,173 +541,54 @@ def _finalize_workflow(
     return state
 
 
-def _phase_task_batches(
-    phase_id: str,
-    tasks: list[dict[str, object]],
-) -> list[list[dict[str, object]]]:
-    """같은 phase의 독립 작업만 한 batch로 묶는다.
-
-    요구사항 묶음은 가능한 한 병렬 실행하지만, planner가 명시한 선행 작업이나 편집 파일이
-    겹치면 순서대로 실행한다. 별도의 스케줄러를 만들지 않고 작은 위상 정렬과 경로 충돌
-    검사만 사용하므로 실행 규칙이 manifest에서 바로 보인다.
-    """
-    del phase_id
-    remaining = {str(task["task_id"]): task for task in tasks}
-    batches: list[list[dict[str, object]]] = []
-    completed_in_phase: set[str] = set()
-    while remaining:
-        ready = [
-            task
-            for task_id, task in remaining.items()
-            if all(
-                str(dependency) not in remaining or str(dependency) in completed_in_phase
-                for dependency in task.get("dependsOn", [])
-            )
-        ]
-        if not ready:
-            cycle = ", ".join(sorted(remaining))
-            raise ValueError(f"Implementation task dependency cycle: {cycle}")
-
-        batch: list[dict[str, object]] = []
-        occupied: set[str] = set()
-        for task in ready:
-            paths = {
-                str(path).replace("\\", "/")
-                for path in [
-                    *task.get("allowedWritePaths", []),
-                    *task.get("allowedWriteRoots", []),
-                ]
-            }
-            if batch and _write_scopes_overlap(occupied, paths):
-                continue
-            batch.append(task)
-            occupied.update(paths)
-        batches.append(batch)
-        for task in batch:
-            task_id = str(task["task_id"])
-            completed_in_phase.add(task_id)
-            remaining.pop(task_id, None)
-    return batches
-
-
-def _write_scopes_overlap(left: set[str], right: set[str]) -> bool:
-    """파일 경로나 디렉터리 범위가 같은 source를 가리키는지 확인한다."""
-    return any(
-        a == b or a.startswith(b.rstrip("/") + "/") or b.startswith(a.rstrip("/") + "/")
-        for a in left
-        for b in right
-    )
-
-
 def _execute_task_batch(
     run_root: Path,
     state: dict[str, object],
     tasks: list[dict[str, object]],
     executor: Callable[[Path, str], dict[str, object]],
-    *,
-    max_workers: int,
 ) -> list[tuple[dict[str, object], Exception]]:
-    """Execute a safe batch concurrently and checkpoint results deterministically."""
+    """Execute one owner at a time and stop at the first blocking outcome."""
     state_path = run_root / "reports" / "workflow-state.json"
-    workers = min(max(1, max_workers), len(tasks))
     for task in tasks:
-        # A task is marked RUNNING only immediately before it is submitted to
-        # an available worker.  In particular, do not increment attempts for
-        # queued tasks: a pending task has not started yet.
         task["status"] = "PENDING"
     state["updatedAt"] = _now()
     _write_json_atomic(state_path, state)
 
-    def run(task: dict[str, object]) -> dict[str, object]:
-        result = executor(run_root, str(task["task_id"]))
-        if result.get("status") not in {"SUCCEEDED", "NEEDS_INPUT"}:
-            raise RuntimeError(f"Task returned non-success status: {task['task_id']}")
-        return result
-
-    def mark_started(task: dict[str, object]) -> None:
+    failures: list[tuple[dict[str, object], Exception]] = []
+    for task in tasks:
         task["status"] = "RUNNING"
         task["attempts"] = int(task.get("attempts", 0)) + 1
         task["lastError"] = None
         state["updatedAt"] = _now()
         _write_json_atomic(state_path, state)
-
-    failures: list[tuple[dict[str, object], Exception]] = []
-
-    def record_completion(task: dict[str, object], future: Future[dict[str, object]]) -> None:
         try:
-            future.result()
+            result = executor(run_root, str(task["task_id"]))
+            if result.get("status") not in {"SUCCEEDED", "NEEDS_INPUT"}:
+                raise RuntimeError(
+                    f"Task returned non-success status: {task['task_id']}"
+                )
         except Exception as error:
             task["status"] = "FAILED"
             task["lastError"] = str(error)
             failures.append((task, error))
-        else:
-            result = future.result()
-            if result.get("status") == "NEEDS_INPUT":
-                task["status"] = "NEEDS_INPUT"
-                task["resultFile"] = f"reports/agent-executions/{task['task_id']}.result.json"
-                task["upstreamGap"] = result.get("upstreamGap")
-                task["candidateEvidence"] = result.get("candidateEvidence")
-                task["lastError"] = None
-                state["updatedAt"] = _now()
-                _write_json_atomic(state_path, state)
-                return
-            task["status"] = "SUCCEEDED"
+            state["updatedAt"] = _now()
+            _write_json_atomic(state_path, state)
+            break
+        if result.get("status") == "NEEDS_INPUT":
+            task["status"] = "NEEDS_INPUT"
             task["resultFile"] = f"reports/agent-executions/{task['task_id']}.result.json"
-            task["outputHashes"] = _task_output_hashes(run_root, str(task["task_id"]))
+            task["upstreamGap"] = result.get("upstreamGap")
+            task["candidateEvidence"] = result.get("candidateEvidence")
             task["lastError"] = None
+            state["updatedAt"] = _now()
+            _write_json_atomic(state_path, state)
+            break
+        task["status"] = "SUCCEEDED"
+        task["resultFile"] = f"reports/agent-executions/{task['task_id']}.result.json"
+        task["outputHashes"] = _task_output_hashes(run_root, str(task["task_id"]))
+        task["lastError"] = None
         state["updatedAt"] = _now()
         _write_json_atomic(state_path, state)
-
-    if workers == 1:
-        # Preserve the original calling-thread behavior when parallelism is
-        # disabled or a dependency/overlap reduced this to a singleton batch.
-        for task in tasks:
-            mark_started(task)
-            future: Future[dict[str, object]] = Future()
-            try:
-                future.set_result(run(task))
-            except Exception as error:
-                future.set_exception(error)
-            record_completion(task, future)
-    else:
-        next_index = 0
-        active: dict[Future[dict[str, object]], dict[str, object]] = {}
-
-        def submit_next(pool: ThreadPoolExecutor) -> None:
-            nonlocal next_index
-            if next_index >= len(tasks):
-                return
-            task = tasks[next_index]
-            next_index += 1
-            mark_started(task)
-            active[pool.submit(langsmith_metrics.bind_context(run), task)] = task
-
-        with ThreadPoolExecutor(
-            max_workers=workers, thread_name_prefix="easydep-implementation-task"
-        ) as pool:
-            # Keep no more than ``workers`` futures submitted at once.  This
-            # makes the durable PENDING/RUNNING state reflect actual execution
-            # instead of the executor's private unbounded queue.
-            for _ in range(workers):
-                submit_next(pool)
-            while active:
-                completed, _ = wait(active, return_when=FIRST_COMPLETED)
-                # Completion order is nondeterministic; process a group in
-                # manifest order so the checkpoint and selected error remain
-                # stable across runs.
-                done_tasks = sorted(
-                    ((future, active[future]) for future in completed),
-                    key=lambda item: tasks.index(item[1]),
-                )
-                for future, task in done_tasks:
-                    active.pop(future, None)
-                    record_completion(task, future)
-                # Refill only after every completed task in this checkpoint
-                # group has transitioned out of RUNNING.  Otherwise a fast
-                # completion group could briefly show a finished task and its
-                # replacement as RUNNING at the same time in the UI.
-                for _ in done_tasks:
-                    submit_next(pool)
 
     blocking_failures = failures
     if blocking_failures:
@@ -707,6 +598,29 @@ def _execute_task_batch(
         state["updatedAt"] = _now()
         _write_json_atomic(state_path, state)
     return blocking_failures
+
+
+def _regression_owner_task_id(
+    run_root: Path,
+    evidence: dict[str, object],
+) -> str:
+    """Map the primary JUnit failure to the slice that owns its exact test."""
+
+    test_results = str(evidence.get("testResults") or "")
+    primary_test = test_results.split(":", 1)[0].strip()
+    manifest = _read_json(run_root / "reports" / "run-manifest.json")
+    for task in manifest.get("implementation_tasks", []):
+        if not isinstance(task, dict) or task.get("task_type") != "backend-implementation":
+            continue
+        for path in task.get("required_test_paths", []):
+            normalized = str(path).replace("\\", "/")
+            _prefix, marker, relative = normalized.partition("/src/test/java/")
+            if not marker or not relative.endswith(".java"):
+                continue
+            class_name = relative.removesuffix(".java").replace("/", ".")
+            if primary_test.startswith(class_name + "."):
+                return str(task["task_id"])
+    return "backend-regression"
 
 
 def _record_workflow_failure(run_root: Path, state: dict[str, object], error: Exception) -> None:
@@ -1028,15 +942,17 @@ def _continue_after_conformance_failure(
     return state
 
 
-def _continue_after_feedback_regression_failure(
+def _continue_after_backend_regression_failure(
     run_root: Path,
     spec: JobSpec,
     error: WorkspaceVerificationError,
+    *,
+    failed_task_id: str,
 ) -> dict[str, object] | None:
-    """피드백 수리 뒤 깨진 단위 테스트를 같은 OpenHands 작업으로 되돌린다."""
+    """Route the one final backend regression failure to its owning slice."""
     repair = schedule_cross_phase_repair(
         run_root,
-        "apply-source-feedback",
+        failed_task_id,
         error.evidence,
     )
     if repair is None:

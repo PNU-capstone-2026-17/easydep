@@ -58,6 +58,7 @@ from app.implementation.workflows.conformance import (
 )
 from app.implementation.workflows.coordinator import (
     _execute_task_batch,
+    _regression_owner_task_id,
     plan_workflow,
     reconcile_workflow_state,
     run_workflow,
@@ -403,6 +404,22 @@ def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None
         "backend-implementation",
         ["application/src/test/java/com/example/BackendApplicationTest.java"],
     ) == ["gradlew", "test", "--build-cache"]
+    assert task_verification_command(
+        ["gradlew"],
+        "backend-implementation",
+        ["application/src/test/java/com/example/OrderService.java"],
+        {
+            "focusedTestPaths": [
+                "application/src/test/java/com/example/OrderBehaviorTest.java"
+            ]
+        },
+    ) == [
+        "gradlew",
+        "test",
+        "--tests",
+        "com.example.OrderBehaviorTest",
+        "--build-cache",
+    ]
 
 
 def test_dynamic_testing_repair_reruns_preserved_arazzo_workflow(
@@ -2201,7 +2218,6 @@ def test_retry_hides_previous_error_as_soon_as_task_is_running(tmp_path: Path) -
         state,
         [task],
         execute,
-        max_workers=1,
     )
 
     assert failures == []
@@ -2274,7 +2290,6 @@ def test_task_batch_keeps_needs_input_out_of_failed_tasks(tmp_path: Path) -> Non
             "upstreamGap": {"summary": "Missing rule", "sourceRef": "UC-12"},
             "candidateEvidence": {"changedFiles": []},
         },
-        max_workers=1,
     )
 
     assert failures == []
@@ -2557,17 +2572,14 @@ class Order <<Entity>> { - id: UUID }
         task["task_id"].startswith("implement-backend-behavior-")
         for task in backends
     )
-    assert [task["depends_on"] for task in backends] == [
-        [],
-        [backends[0]["task_id"]],
-    ]
-    assert state["nextRunnableTasks"] == [backends[0]["task_id"]]
+    assert [task["depends_on"] for task in backends] == [[], []]
+    assert state["nextRunnableTasks"] == [task["task_id"] for task in backends]
     assert {
         use_case_id
         for task in backends
         for use_case_id in task["use_case_ids"]
     } == {"UC1", "UC2"}
-    assert frontend["depends_on"] == [backends[-1]["task_id"]]
+    assert frontend["depends_on"] == []
     contexts = [
         json.loads((run / task["context_file"]).read_text(encoding="utf-8"))
         for task in backends
@@ -2579,6 +2591,18 @@ class Order <<Entity>> { - id: UUID }
     }
     assert all("behaviorCapsule" in context for context in contexts)
     assert all(context["requiredTestPath"] for context in contexts)
+    assert all(
+        task["verification_profile"]["focusedTestPaths"] == task["required_test_paths"]
+        for task in backends
+    )
+    owned_test = backends[0]["required_test_paths"][0]
+    owned_test_class = owned_test.partition("/src/test/java/")[2].removesuffix(
+        ".java"
+    ).replace("/", ".")
+    assert _regression_owner_task_id(
+        run,
+        {"testResults": f"{owned_test_class}.implementsContract: assertion failed"},
+    ) == backends[0]["task_id"]
     generated_api = {
         "application/src/main/java/com/example/orders/api/OrdersApi.java",
         "application/src/main/java/com/example/orders/api/CancelApi.java",
@@ -2642,7 +2666,8 @@ class Order <<Entity>> { - id: UUID }
     assert all("INTERNAL-REPAIR-MARKER" not in prompt for prompt in prompts)
     assert all("INTERNAL-USE-CASE-REPAIR" not in prompt for prompt in prompts)
 
-    backends[0]["depends_on"] = ["missing-backend-task"]
+    for backend in backends:
+        backend["depends_on"] = ["missing-backend-task"]
     (run / "reports/run-manifest.json").write_text(
         json.dumps(manifest),
         encoding="utf-8",
@@ -2654,18 +2679,18 @@ class Order <<Entity>> { - id: UUID }
     assert orphaned["blockingDetails"]
 
 
-def test_completed_workflow_hands_full_verification_to_testing(
+def test_completed_workflow_runs_one_backend_regression_gate_before_testing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """구현은 산출물을 완성하고 전체 build·container 검사는 실행하지 않는다."""
+    """구현은 backend 전체 test를 한 번 통과한 뒤 runtime 검사를 Testing에 넘긴다."""
     run = tmp_path / "run"
     reports = run / "reports"
     reports.mkdir(parents=True)
     monkeypatch.setattr(
         "app.implementation.workflows.coordinator.plan_workflow",
         lambda *_args: {
-            "status": "COMPLETE",
+                "status": "READY_TO_FINALIZE",
             "tasks": [
                 {
                     "task_id": "implement-order-use-cases",
@@ -2689,6 +2714,22 @@ def test_completed_workflow_hands_full_verification_to_testing(
         "app.implementation.workflows.coordinator.build_rtm_traceability_map",
         lambda *_args: {"summary": {"missing": 0}},
     )
+    gate_calls: list[tuple[str, bool, bool]] = []
+
+    def backend_gate(
+        _run: Path,
+        report_name: str,
+        *,
+        verify_frontend: bool,
+        verify_end_to_end: bool,
+    ) -> dict[str, object]:
+        gate_calls.append((report_name, verify_frontend, verify_end_to_end))
+        return {"status": "SUCCEEDED"}
+
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.verify_run_workspace",
+        backend_gate,
+    )
 
     result = run_workflow(
         run,
@@ -2702,9 +2743,23 @@ def test_completed_workflow_hands_full_verification_to_testing(
 
     assert result["status"] == "COMPLETE"
     assert result["testingRequired"] is True
+    assert gate_calls == [("backend-regression.json", False, False)]
+    assert result["backendRegression"] == "reports/backend-regression.json"
     assert (run / "application/Dockerfile").is_file()
     assert not (reports / "final-verification.json").exists()
     assert not (reports / "container-runtime-smoke.json").exists()
+
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.plan_workflow",
+        lambda *_args: dict(result),
+    )
+    resumed = run_workflow(
+        run,
+        SimpleNamespace(app_id="app-1", inputs={}, job_type="INITIAL_IMPLEMENTATION"),
+        auditor=lambda _run: pytest.fail("completed checkpoint must be reused"),
+    )
+    assert resumed["status"] == "COMPLETE"
+    assert gate_calls == [("backend-regression.json", False, False)]
 
 
 def test_owner_execution_boundary_preserves_checkpoint_without_source_repair(

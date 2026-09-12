@@ -1185,14 +1185,9 @@ def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> None:
     ]
     if not backend_tasks:
         raise ValueError("Frontend planning requires a persisted backend task plan.")
-    backend_task_id = str(backend_tasks[-1]["task_id"])
     _merge_implementation_tasks(
         run_root,
-        generate_frontend_tasks(
-            spec,
-            run_root,
-            backend_task_id=backend_task_id,
-        ),
+        generate_frontend_tasks(spec, run_root),
         replace_types={"frontend-implementation"},
     )
 
