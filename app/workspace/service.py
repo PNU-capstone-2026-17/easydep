@@ -92,8 +92,12 @@ from .conversation.delivery import (
     requirements_feedback_edit,
 )
 from .conversation.feedback_envelope import (
+    BaseRevision,
     Decision,
+    DecisionPayload,
+    DecisionPolicy,
     Question,
+    QuestionOption,
     answer_option,
     free_text_decision,
 )
@@ -336,6 +340,18 @@ class WorkspaceService:
         if job_status != "COMPLETED":
             self._sync_implementation_progress(app_id, str(command["command_id"]), job)
             if job_status in TERMINAL_JOB_STATUSES:
+                if job_status == "NEEDS_INPUT":
+                    pending = self._implementation_needs_input_result(job, job_id)
+                    pending.pop("awaiting_input", None)
+                    result = result_with_contract(
+                        {**command, "status": "AWAITING_INPUT"}, pending
+                    )
+                    return repository.update_command(
+                        command["command_id"],
+                        status="AWAITING_INPUT",
+                        result=result,
+                        error=None,
+                    )
                 result = {
                     **dict(command.get("result") or {}),
                     "job_id": job_id,
@@ -1401,21 +1417,29 @@ class WorkspaceService:
     ) -> tuple[str, dict[str, Any], str | None]:
         try:
             question = Question.model_validate(raw_question)
-            if (
-                prior.get("stage") != "design"
-                or question.app_id != app_id
-                or question.detected_at.stage != "design"
-                or question.trigger.category != "specification_gap"
-            ):
-                raise ValueError("This feedback question is not an executable requirements gap.")
+            design_gap = (
+                prior.get("stage") == "design"
+                and question.detected_at.stage == "design"
+                and question.trigger.category == "specification_gap"
+            )
+            implementation_gap = (
+                prior.get("stage") == "implementation"
+                and question.detected_at.stage == "implementation"
+                and question.trigger.category == "upstream_contract_gap"
+            )
+            if question.app_id != app_id or not (design_gap or implementation_gap):
+                raise ValueError("This feedback question is not an executable workspace gap.")
             targets = question.authority_candidates
-            if (
-                len(targets) != 1
-                or targets[0].owner != "requirements"
+            if len(targets) != 1:
+                raise ValueError("The feedback question must name one authority target.")
+            if design_gap and (
+                targets[0].owner != "requirements"
                 or targets[0].kind != "use_case_spec"
                 or targets[0].artifact_type != TYPE_USECASE_SPEC
             ):
                 raise ValueError("The feedback question must name one requirements use-case specification.")
+            if implementation_gap and targets[0].owner not in {"requirements", "design"}:
+                raise ValueError("The implementation gap must name a requirements or design authority.")
             option_id = str(payload.get("feedback_option_id") or "")
             if option_id:
                 decision = answer_option(
@@ -1482,7 +1506,14 @@ class WorkspaceService:
             )
             if not selected.get("valid"):
                 raise ValueError("The feedback question is stale.")
-            plan = plan_revision(tools, interpretation)
+            if implementation_gap:
+                plan = plan_revision(
+                    tools,
+                    interpretation,
+                    origin_stage="implementation",
+                )
+            else:
+                plan = plan_revision(tools, interpretation)
             decision_refs = [target.ref for target in decision.authoritative_targets]
             if (
                 plan.status != "needs_confirmation"
@@ -1498,6 +1529,13 @@ class WorkspaceService:
                 stage,
                 latest,
             )
+        routed_owner = (
+            "requirements"
+            if design_gap
+            else plan.authority_targets[0].owner
+            if plan.authority_targets
+            else targets[0].owner
+        )
         return (
             "message",
             {
@@ -1515,6 +1553,11 @@ class WorkspaceService:
                 "feedback_decision": decision.model_dump(mode="json"),
                 "revision_interpretation": interpretation.model_dump(mode="json"),
                 "revision_plan": plan.model_dump(mode="json"),
+                **(
+                    {"revision_origin_stage": "implementation"}
+                    if implementation_gap
+                    else {}
+                ),
                 "conversation_intent": {
                     "intent": "revise",
                     "targets": interpretation.targets,
@@ -1523,7 +1566,7 @@ class WorkspaceService:
                 "validated_targets": [target.model_dump(mode="json") for target in decision.authoritative_targets],
                 "_conversation_outcome": {"kind": "revision_plan"},
             },
-            "requirements",
+            routed_owner,
         )
 
     @staticmethod
@@ -1581,7 +1624,7 @@ class WorkspaceService:
             raise ValueError("The feedback Decision is invalid.") from error
         if (
             command.get("action") != "message"
-            or command.get("stage") != "requirements"
+            or command.get("stage") not in {"requirements", "design", "implementation"}
             or decision.status != "NORMALIZED"
             or decision.app_id != command.get("app_id")
         ):
@@ -3002,9 +3045,22 @@ class WorkspaceService:
                 if isinstance(raw_interpretation, dict)
                 else None
             )
-            if interpretation is None or not validate_plan(
-                ProjectTools(app_id), plan, interpretation
-            ):
+            origin_stage = original["payload"].get("revision_origin_stage")
+            if origin_stage not in {"requirements", "design", "implementation", "testing"}:
+                origin_stage = None
+            if interpretation is None:
+                return self._stale_revision_result(plan)
+            tools = ProjectTools(app_id)
+            if origin_stage is None:
+                plan_is_valid = validate_plan(tools, plan, interpretation)
+            else:
+                plan_is_valid = validate_plan(
+                    tools,
+                    plan,
+                    interpretation,
+                    origin_stage=origin_stage,
+                )
+            if not plan_is_valid:
                 return self._stale_revision_result(plan)
             authority_targets = plan.authority_targets or plan.requested_targets
             owners = {target.owner for target in authority_targets}
@@ -3407,7 +3463,10 @@ class WorkspaceService:
             )
 
         job_status = str(job.get("status") or private_job.get("status") or "")
-        terminal_failure = job_status in TERMINAL_JOB_STATUSES - {"COMPLETED"}
+        terminal_failure = job_status in TERMINAL_JOB_STATUSES - {
+            "COMPLETED",
+            "NEEDS_INPUT",
+        }
         failure_error = str(private_job.get("error") or job.get("error") or "").strip()
         failure_lines = [line.strip() for line in failure_error.splitlines() if line.strip()]
         meaningful_failure_lines = [
@@ -4108,6 +4167,158 @@ class WorkspaceService:
             )
         return "\n\n".join(parts)
 
+    def _implementation_needs_input_result(
+        self, current: dict[str, Any], job_id: str
+    ) -> dict[str, Any]:
+        """Expose one catalog-backed upstream contract gap as a typed question."""
+
+        workflow = current.get("workflow")
+        workflow = workflow if isinstance(workflow, Mapping) else {}
+        raw_details = workflow.get("blockingDetails")
+        if not isinstance(raw_details, list):
+            raw_details = workflow.get("blocking_details")
+        details = [item for item in raw_details or [] if isinstance(item, Mapping)]
+        gaps = [
+            item
+            for item in details
+            if str(item.get("kind") or "") == "upstream_contract_gap"
+            and str(item.get("taskId") or item.get("task_id") or "").strip()
+            and str(item.get("summary") or "").strip()
+            and str(item.get("sourceRef") or item.get("source_ref") or "").strip()
+        ]
+        base_result = {
+            "job_id": job_id,
+            "job": current,
+            "implementation_blocking_details": details,
+        }
+        if len(gaps) != 1:
+            return {
+                **base_result,
+                "awaiting_input": True,
+                "kind": "question",
+                "message": (
+                    "Implementation needs input before it can continue. "
+                    "Provide one exact upstream contract sourceRef from the current RTM."
+                ),
+            }
+
+        gap = gaps[0]
+        task_id = str(gap.get("taskId") or gap.get("task_id") or "").strip()
+        summary = str(gap.get("summary") or "").strip()
+        source_ref = str(gap.get("sourceRef") or gap.get("source_ref") or "").strip()
+        app_id = str(current.get("app_id") or "")
+        try:
+            tools = ProjectTools(app_id)
+            validation = tools.validate_revision_selections([source_ref])
+            if not validation.get("valid") or len(validation.get("valid_refs") or []) != 1:
+                raise ValueError("sourceRef is not an exact current catalog target")
+            source_targets = tools.normalize_revision_targets(
+                [source_ref], require_editable=False
+            )
+            if len(source_targets) != 1:
+                raise ValueError("sourceRef did not resolve to one catalog target")
+            source_target = source_targets[0]
+            planned: list[tuple[str, RevisionPlan]] = []
+            for semantic_scope in ("behavior", "contract"):
+                candidate = plan_revision(
+                    tools,
+                    RevisionInterpretation(
+                        targets=[source_target.ref],
+                        semantic_scope=semantic_scope,
+                        requested_effect=summary,
+                        change_type="modify",
+                    ),
+                    origin_stage="implementation",
+                )
+                if (
+                    candidate.status == "needs_confirmation"
+                    and len(candidate.requested_targets) == 1
+                    and candidate.requested_targets[0].ref == source_target.ref
+                    and len(candidate.authority_targets) == 1
+                    and candidate.authority_targets[0].owner in {"requirements", "design"}
+                ):
+                    planned.append((semantic_scope, candidate))
+            if not planned:
+                raise ValueError("no exact upstream revision path is available")
+            semantic_scope, plan = planned[0]
+            authority = plan.authority_targets[0]
+            snapshot = tools.revision_snapshot()
+            versions = snapshot.get("artifact_versions")
+            if not isinstance(versions, Mapping):
+                raise ValueError("the current artifact versions are unavailable")
+            version_id = versions.get(authority.artifact_type)
+            if not isinstance(version_id, int) or isinstance(version_id, bool) or version_id < 1:
+                version_id = authority.artifact_version_id
+            if not isinstance(version_id, int) or version_id < 1:
+                raise ValueError(
+                    f"no current version is available for {authority.artifact_type}"
+                )
+            question = Question(
+                question_id=f"{job_id}:upstream-contract-gap:{task_id}",
+                question_version=1,
+                app_id=app_id,
+                source_execution_id=task_id,
+                detected_at={
+                    "stage": "implementation",
+                    "artifact_ref": source_target.ref,
+                    "element_ref": source_target.ref,
+                },
+                base_revisions=[
+                    BaseRevision(
+                        artifact_type=authority.artifact_type,
+                        version_id=version_id,
+                    )
+                ],
+                trigger={
+                    "category": "upstream_contract_gap",
+                    "evidence_refs": [source_target.ref],
+                },
+                authority_candidates=[authority],
+                prompt=(
+                    f"Implementation is blocked by an upstream contract gap: {summary} "
+                    "Revise the upstream contract before retrying implementation."
+                ),
+                options=[
+                    QuestionOption(
+                        option_id="revise_upstream_contract",
+                        label="Revise upstream contract",
+                        description=summary,
+                        recommended=True,
+                        decision_payload=DecisionPayload(
+                            normalized_meaning={
+                                "semantic_scope": semantic_scope,
+                                "requested_effect": summary,
+                                "change_type": "modify",
+                            },
+                            authoritative_target_refs=(authority.ref,),
+                        ),
+                    )
+                ],
+                allow_free_text=True,
+                decision_policy=DecisionPolicy(
+                    allowed_semantic_scopes=(semantic_scope,),
+                    allowed_change_types=("modify",),
+                ),
+            )
+            return {
+                **base_result,
+                "awaiting_input": True,
+                "kind": "question",
+                "message": question.prompt,
+                "feedback_question": question.model_dump(mode="json"),
+            }
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            return {
+                **base_result,
+                "awaiting_input": True,
+                "kind": "question",
+                "message": (
+                    "Implementation is blocked by an upstream contract gap, but its exact "
+                    f"authority could not be planned ({error}). Verify sourceRef "
+                    f"{source_ref!r} against the current catalog/RTM and retry."
+                ),
+            }
+
     def _monitor_implementation(
         self,
         job: dict[str, Any],
@@ -4216,6 +4427,8 @@ class WorkspaceService:
                     last_agent_results[task_id] = fingerprint
             if status in TERMINAL_JOB_STATUSES:
                 if status != "COMPLETED":
+                    if status == "NEEDS_INPUT":
+                        return self._implementation_needs_input_result(current, job_id)
                     raise RuntimeError(str(current.get("error") or f"Implementation job {status}"))
                 return {
                     "message": "Review the generated implementation artifacts below.",

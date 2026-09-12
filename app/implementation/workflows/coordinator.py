@@ -153,6 +153,11 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             and result.get("promptSha256", prompt_sha) == prompt_sha
         ):
             status = "FAILED"
+        elif (
+            result.get("status") == "NEEDS_INPUT"
+            and result.get("promptSha256", prompt_sha) == prompt_sha
+        ):
+            status = "NEEDS_INPUT"
         else:
             status = "PENDING"
         tasks.append(
@@ -175,6 +180,16 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
                     result_path.relative_to(run_root).as_posix() if result_path.is_file() else None
                 ),
                 "lastError": result.get("error") if result.get("status") == "FAILED" else None,
+                "upstreamGap": (
+                    result.get("upstreamGap")
+                    if result.get("status") == "NEEDS_INPUT"
+                    else None
+                ),
+                "candidateEvidence": (
+                    result.get("candidateEvidence")
+                    if result.get("status") == "NEEDS_INPUT"
+                    else None
+                ),
             }
         )
 
@@ -186,7 +201,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         (
             phase["phaseId"]
             for phase in phases
-            if phase["status"] in {"PENDING", "RUNNING", "FAILED"}
+            if phase["status"] in {"PENDING", "RUNNING", "FAILED", "NEEDS_INPUT"}
         ),
         next(
             (phase["phaseId"] for phase in phases if phase["status"] == "UNPLANNED"),
@@ -200,6 +215,8 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
     status = (
         "COMPLETE"
         if not pending and integration_complete and previous.get("status") == "COMPLETE"
+        else "NEEDS_INPUT"
+        if any(task["status"] == "NEEDS_INPUT" for task in pending)
         else "FAILED"
         if any(task["status"] == "FAILED" for task in pending)
         else ("READY" if pending else "READY_TO_FINALIZE")
@@ -216,7 +233,27 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         "blockingReason": None,
         "blockingDetails": [],
     }
-    if not state["nextRunnableTasks"] and pending:
+    if state["status"] == "NEEDS_INPUT":
+        state["blockingReason"] = "An implementation task requires upstream design input."
+        state["blockingDetails"] = [
+            {
+                "kind": "upstream_contract_gap",
+                "taskId": task["task_id"],
+                "sourceRef": (
+                    task["upstreamGap"].get("sourceRef")
+                    if isinstance(task.get("upstreamGap"), dict)
+                    else None
+                ),
+                "summary": (
+                    task["upstreamGap"].get("summary")
+                    if isinstance(task.get("upstreamGap"), dict)
+                    else None
+                ),
+            }
+            for task in pending
+            if task["status"] == "NEEDS_INPUT"
+        ]
+    elif not state["nextRunnableTasks"] and pending:
         task_status = {str(task["task_id"]): str(task.get("status")) for task in tasks}
         state["status"] = "NEEDS_PLANNER"
         state["blockingReason"] = (
@@ -278,6 +315,8 @@ def _run_workflow(
     """Resume planned phases, checkpointing before and after every external task."""
     run_root = run_root.resolve()
     state = plan_workflow(run_root, spec)
+    if state.get("status") == "NEEDS_INPUT":
+        return state
     runnable = list(state.get("nextRunnableTasks", []))
     failed_runnable = [
         task_id
@@ -365,6 +404,8 @@ def _run_workflow(
                         )
                         return repaired_state
                 raise error
+            if any(task["status"] == "NEEDS_INPUT" for task in task_batch):
+                return plan_workflow(run_root, spec)
         for phase_id in runnable_phases:
             next(phase for phase in state["phases"] if phase["phaseId"] == phase_id)["status"] = (
                 "SUCCEEDED"
@@ -375,7 +416,7 @@ def _run_workflow(
 
     # Reconcile the completed owner result and any short repair directive.
     final_state = plan_workflow(run_root, spec)
-    if final_state.get("status") == "NEEDS_PLANNER":
+    if final_state.get("status") in {"NEEDS_INPUT", "NEEDS_PLANNER"}:
         return final_state
     if final_state.get("nextRunnableTasks"):
         # Every work unit performs its own focused verification.  Do not scan
@@ -569,7 +610,7 @@ def _execute_task_batch(
 
     def run(task: dict[str, object]) -> dict[str, object]:
         result = executor(run_root, str(task["task_id"]))
-        if result.get("status") != "SUCCEEDED":
+        if result.get("status") not in {"SUCCEEDED", "NEEDS_INPUT"}:
             raise RuntimeError(f"Task returned non-success status: {task['task_id']}")
         return result
 
@@ -590,6 +631,16 @@ def _execute_task_batch(
             task["lastError"] = str(error)
             failures.append((task, error))
         else:
+            result = future.result()
+            if result.get("status") == "NEEDS_INPUT":
+                task["status"] = "NEEDS_INPUT"
+                task["resultFile"] = f"reports/agent-executions/{task['task_id']}.result.json"
+                task["upstreamGap"] = result.get("upstreamGap")
+                task["candidateEvidence"] = result.get("candidateEvidence")
+                task["lastError"] = None
+                state["updatedAt"] = _now()
+                _write_json_atomic(state_path, state)
+                return
             task["status"] = "SUCCEEDED"
             task["resultFile"] = f"reports/agent-executions/{task['task_id']}.result.json"
             task["outputHashes"] = _task_output_hashes(run_root, str(task["task_id"]))
@@ -1031,6 +1082,8 @@ def _phase_states(
             status = "SUCCEEDED"
         elif any(task["status"] == "RUNNING" for task in phase_tasks):
             status = "RUNNING"
+        elif any(task["status"] == "NEEDS_INPUT" for task in phase_tasks):
+            status = "NEEDS_INPUT"
         elif any(task["status"] == "FAILED" for task in phase_tasks):
             status = "FAILED"
         else:

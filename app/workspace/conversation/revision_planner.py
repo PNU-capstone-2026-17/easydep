@@ -137,9 +137,16 @@ class OwnershipRegistry:
 class RevisionPlanner:
     """Plan revision authority and impact from one frozen ProjectTools view."""
 
-    def __init__(self, tools: ProjectTools, *, registry: OwnershipRegistry | None = None):
+    def __init__(
+        self,
+        tools: ProjectTools,
+        *,
+        registry: OwnershipRegistry | None = None,
+        origin_stage: Literal["requirements", "design", "implementation", "testing"] | None = None,
+    ):
         self.tools = tools
         self.registry = registry or OwnershipRegistry()
+        self.origin_stage = origin_stage
 
     def plan(self, interpretation: RevisionInterpretation | Mapping[str, object]) -> RevisionPlan:
         intent = (
@@ -463,9 +470,11 @@ class RevisionPlanner:
             return False
         if interpretation is None:
             return True
-        return RevisionPlanner(fresh, registry=self.registry).plan(interpretation).plan_digest == (
-            plan.plan_digest
-        )
+        return RevisionPlanner(
+            fresh,
+            registry=self.registry,
+            origin_stage=self.origin_stage,
+        ).plan(interpretation).plan_digest == plan.plan_digest
 
     def plan_is_stale(self, plan: RevisionPlan) -> bool:
         return not self.validate_plan(plan)
@@ -476,13 +485,15 @@ class RevisionPlanner:
     ) -> str | None:
         """Require confirmation whenever a revision moves to another owner stage."""
 
-        try:
-            workspace = self.tools.read_workspace()
-        except AttributeError:
-            return None
-        # ProjectTools exposes the public workspace field as ``current_stage``.
-        # Keep ``stage`` only as a compatibility fallback for small test doubles.
-        current = str(workspace.get("current_stage") or workspace.get("stage") or "")
+        current = self.origin_stage
+        if current is None:
+            try:
+                workspace = self.tools.read_workspace()
+            except AttributeError:
+                return None
+            # ProjectTools exposes the public workspace field as ``current_stage``.
+            # Keep ``stage`` only as a compatibility fallback for small test doubles.
+            current = str(workspace.get("current_stage") or workspace.get("stage") or "")
         order = {"requirements": 0, "design": 1, "implementation": 2, "testing": 3}
         current_index = order.get(current)
         if current_index is None:
@@ -653,19 +664,24 @@ class RevisionPlanner:
 
 
 def plan_revision(
-    tools: ProjectTools, interpretation: RevisionInterpretation | Mapping[str, object]
+    tools: ProjectTools,
+    interpretation: RevisionInterpretation | Mapping[str, object],
+    *,
+    origin_stage: Literal["requirements", "design", "implementation", "testing"] | None = None,
 ) -> RevisionPlan:
     """Function-form API for callers that do not need to retain a planner."""
-    return RevisionPlanner(tools).plan(interpretation)
+    return RevisionPlanner(tools, origin_stage=origin_stage).plan(interpretation)
 
 
 def validate_plan(
     tools: ProjectTools,
     plan: RevisionPlan,
     interpretation: RevisionInterpretation | Mapping[str, object] | None = None,
+    *,
+    origin_stage: Literal["requirements", "design", "implementation", "testing"] | None = None,
 ) -> bool:
     """Validate artifact versions and trace digest from a newly-read snapshot."""
-    return RevisionPlanner(tools).validate_plan(plan, interpretation)
+    return RevisionPlanner(tools, origin_stage=origin_stage).validate_plan(plan, interpretation)
 
 
 def _pipeline_target_key(target: RevisionTarget) -> tuple[int, str]:

@@ -174,18 +174,18 @@ def test_stage_order_does_not_invent_missing_upstream_authority() -> None:
 
 def test_local_revision_of_an_earlier_delivery_stage_requires_confirmation() -> None:
     tools = _Tools()
-    tools.current_stage = "implementation"
-
-    plan = RevisionPlanner(tools).plan(  # type: ignore[arg-type]
-        RevisionInterpretation(
-            targets=["class_diagram:Order"],
-            semantic_scope="contract",
-            requested_effect="Add an operation.",
-        )
+    planner = RevisionPlanner(tools, origin_stage="implementation")  # type: ignore[arg-type]
+    intent = RevisionInterpretation(
+        targets=["class_diagram:Order"],
+        semantic_scope="contract",
+        requested_effect="Add an operation.",
     )
+
+    plan = planner.plan(intent)
 
     assert plan.status == "needs_confirmation"
     assert "earlier_delivery_stage_requires_confirmation" in plan.reason_codes
+    assert planner.validate_plan(plan, intent) is True
 
 
 def test_local_revision_of_a_later_owner_stage_requires_confirmation() -> None:

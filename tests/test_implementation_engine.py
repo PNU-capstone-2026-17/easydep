@@ -29,6 +29,7 @@ from app.implementation.agents.task_check import (
     consume_successful_task_check,
     run_task_check,
 )
+from app.implementation.agents.upstream_gap_tool import UPSTREAM_GAP_TOOL_NAME, UpstreamGap
 from app.implementation.agents.verification.build import (
     WorkspaceVerificationError,
     read_gradle_test_failures,
@@ -842,6 +843,96 @@ def test_failed_verification_is_not_promoted_and_keeps_the_sandbox(
     assert failure_result["conversationStats"] == {
         "usage": {"promptTokens": 21, "completionTokens": 8}
     }
+
+
+def test_bounded_owner_upstream_gap_preserves_candidate_without_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task.update(
+        {
+            "task_type": "backend-implementation",
+            "owner": "backend",
+            "allowed_write_roots": [str(Path(source_path).parent)],
+            "source_refs": ["UC-12"],
+        }
+    )
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    context_path = run / task["context_file"]
+    context_path.write_text(json.dumps({"behaviorCapsule": {}}), encoding="utf-8")
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+    monkeypatch.setattr(
+        "app.implementation.agents.runtime.settings.implementation_openhands_canary",
+        False,
+    )
+
+    class FakeConversation:
+        def __init__(self, sandbox: Path) -> None:
+            self.sandbox = sandbox
+            self.state = SimpleNamespace(execution_status=None)
+
+        def send_message(self, _message: str) -> None:
+            pass
+
+        def run(self) -> None:
+            (self.sandbox / source_path).write_text(
+                "class OrderService { int unpromotedCandidate; }", encoding="utf-8"
+            )
+
+        def close(self) -> None:
+            pass
+
+    received_source_refs: list[str] | None = None
+
+    def create_conversation(sandbox: Path, *_args, **kwargs):
+        nonlocal received_source_refs
+        received_source_refs = kwargs["upstream_gap_source_refs"]
+        executor = SimpleNamespace(
+            session=SimpleNamespace(
+                result=UpstreamGap(
+                    summary="The response rule is not specified.", source_ref="UC-12"
+                )
+            )
+        )
+        return FakeConversation(sandbox), SimpleNamespace(
+            _tools={UPSTREAM_GAP_TOOL_NAME: SimpleNamespace(executor=executor)}
+        )
+
+    connection = LlmConnection(
+        provider="openrouter",
+        api_key="approved-key",
+        base_url="https://example.invalid/v1",
+        model="openai/gpt-oss-20b",
+        litellm_provider="openrouter",
+    )
+    with (
+        patch(
+            "app.implementation.agents.runtime.openhands_compatibility",
+            return_value={
+                "pythonCompatible": True,
+                "sdkInstalled": True,
+                "toolsInstalled": True,
+                "apiKeyConfigured": True,
+            },
+        ),
+        patch("app.implementation.agents.runtime.openhands_connection", return_value=connection),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            side_effect=create_conversation,
+        ),
+        patch("app.implementation.agents.runtime.verify_agent_workspace") as verify,
+    ):
+        result = execute_openhands_task(run, task_id)
+
+    verify.assert_not_called()
+    assert result["status"] == "NEEDS_INPUT"
+    assert received_source_refs == ["UC-12"]
+    assert result["upstreamGap"]["sourceRef"] == "UC-12"
+    assert result["candidateEvidence"]["changedFiles"] == [source_path]
+    assert source.read_text(encoding="utf-8") == "class OrderService {}"
 
 
 def test_owner_candidate_contract_change_is_rejected_before_verification(
@@ -1722,8 +1813,10 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
         [],
         bounded_evidence=True,
     )
+    assert "Before any other read" in bounded
     assert "readSourcePaths is an optional readable allowlist, not a checklist" in bounded
-    assert "call finish with the exact design contract gap" in bounded
+    assert "direct-call argument is explicitly unresolved" in bounded
+    assert "call report_upstream_gap with a concise gap" in bounded
     assert "report the missing implementation context" in bounded
     assert "investigation hints" not in bounded
     assert "open raw design inputs" not in bounded
@@ -2115,6 +2208,78 @@ def test_retry_hides_previous_error_as_soon_as_task_is_running(tmp_path: Path) -
     assert observed["status"] == "RUNNING"
     assert observed["attempts"] == 2
     assert observed["lastError"] is None
+
+
+def test_reconcile_preserves_a_typed_upstream_gap_as_needs_input(tmp_path: Path) -> None:
+    reports = tmp_path / "reports"
+    executions = reports / "agent-executions"
+    executions.mkdir(parents=True)
+    task_id = "implement-backend-application"
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_id": task_id,
+                        "task_type": "backend-implementation",
+                        "prompt_sha256": "prompt-v1",
+                        "required_output_paths": [],
+                        "allowed_write_paths": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (executions / f"{task_id}.result.json").write_text(
+        json.dumps(
+            {
+                "status": "NEEDS_INPUT",
+                "promptSha256": "prompt-v1",
+                "upstreamGap": {
+                    "summary": "The required response rule is absent.",
+                    "sourceRef": "UC-12",
+                },
+                "candidateEvidence": {"changedFiles": ["application/OrderService.java"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = reconcile_workflow_state(tmp_path)
+
+    assert state["status"] == "NEEDS_INPUT"
+    assert state["tasks"][0]["status"] == "NEEDS_INPUT"
+    assert state["blockingDetails"] == [
+        {
+            "kind": "upstream_contract_gap",
+            "taskId": task_id,
+            "sourceRef": "UC-12",
+            "summary": "The required response rule is absent.",
+        }
+    ]
+
+
+def test_task_batch_keeps_needs_input_out_of_failed_tasks(tmp_path: Path) -> None:
+    (tmp_path / "reports").mkdir()
+    task = {"task_id": "implement-backend-application", "status": "PENDING", "attempts": 0}
+    state = {"tasks": [task]}
+
+    failures = _execute_task_batch(
+        tmp_path,
+        state,
+        [task],
+        lambda *_args: {
+            "status": "NEEDS_INPUT",
+            "upstreamGap": {"summary": "Missing rule", "sourceRef": "UC-12"},
+            "candidateEvidence": {"changedFiles": []},
+        },
+        max_workers=1,
+    )
+
+    assert failures == []
+    assert task["status"] == "NEEDS_INPUT"
+    assert task["upstreamGap"]["sourceRef"] == "UC-12"
 
 
 def test_planned_manifest_uses_work_units_and_scopes_repairs_to_contracts(

@@ -12,8 +12,8 @@ from typing import Any, Literal
 
 from app.llm_connection import LlmConnection
 
-HARNESS_POLICY_VERSION = "easydep-openhands-harness/v3"
-OWNER_PROMPT_VERSION = "easydep-owner-prompt/v4"
+HARNESS_POLICY_VERSION = "easydep-openhands-harness/v4"
+OWNER_PROMPT_VERSION = "easydep-owner-prompt/v5"
 WORKSPACE_PATH_VERSION = "easydep-owner-workspace/v3"
 OWNER_TOOL_MODES = frozenset({"restricted", "terminal"})
 PROTOCOL_TOKENS = ("<|channel|>", "<|recipient|>", "<|start|>", "<|end|>")
@@ -408,12 +408,19 @@ class HarnessProgressTracker:
         }
 
 
-def owner_tool_names(mode: str) -> tuple[str, ...]:
+def owner_tool_names(
+    mode: str,
+    *,
+    include_upstream_gap: bool = False,
+) -> tuple[str, ...]:
     if mode not in OWNER_TOOL_MODES:
         raise ValueError(f"Unsupported OpenHands owner tool mode: {mode}")
     if mode == "terminal":
         return ("file_editor", "terminal", "finish")
-    return ("file_editor", "grep", "run_task_check", "finish")
+    names = ("file_editor", "grep", "run_task_check")
+    if include_upstream_gap:
+        names += ("report_upstream_gap",)
+    return (*names, "finish")
 
 
 def _installed_version(distribution: str) -> str:
@@ -423,7 +430,7 @@ def _installed_version(distribution: str) -> str:
         return "missing"
 
 
-def tool_schema_hash(mode: str) -> str:
+def tool_schema_hash(mode: str, *, include_upstream_gap: bool = False) -> str:
     """Hash the named tool contract without embedding task-specific absolute paths."""
 
     from openhands.sdk.tool.builtins.finish import FinishAction
@@ -432,6 +439,7 @@ def tool_schema_hash(mode: str) -> str:
     from openhands.tools.terminal import TerminalAction
 
     from .task_check_tool import TaskCheckAction
+    from .upstream_gap_tool import UpstreamGapAction
 
     action_types = {
         "file_editor": FileEditorAction,
@@ -439,11 +447,12 @@ def tool_schema_hash(mode: str) -> str:
         "run_task_check": TaskCheckAction,
         "terminal": TerminalAction,
         "finish": FinishAction,
+        "report_upstream_gap": UpstreamGapAction,
     }
     payload = {
         "tools": {
             name: action_types[name].model_json_schema()
-            for name in owner_tool_names(mode)
+            for name in owner_tool_names(mode, include_upstream_gap=include_upstream_gap)
         },
         "openhandsSdk": _installed_version("openhands-sdk"),
         "openhandsTools": _installed_version("openhands-tools"),
@@ -459,14 +468,20 @@ def build_harness_manifest(
     owner_tool_mode: str,
     reasoning_effort: str,
     canary_result_id: str | None = None,
+    include_upstream_gap: bool = False,
 ) -> dict[str, object]:
     return {
         "schemaVersion": "easydep-openhands-harness-manifest/v1",
         "harnessPolicyVersion": HARNESS_POLICY_VERSION,
         "promptVersion": OWNER_PROMPT_VERSION,
         "workspacePathVersion": WORKSPACE_PATH_VERSION,
-        "toolSchemaHash": tool_schema_hash(owner_tool_mode),
-        "toolNames": list(owner_tool_names(owner_tool_mode)),
+        "toolSchemaHash": tool_schema_hash(
+            owner_tool_mode,
+            include_upstream_gap=include_upstream_gap,
+        ),
+        "toolNames": list(
+            owner_tool_names(owner_tool_mode, include_upstream_gap=include_upstream_gap)
+        ),
         "ownerToolMode": owner_tool_mode,
         "provider": connection.provider,
         "model": connection.model,

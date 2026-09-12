@@ -53,6 +53,10 @@ from .task_check import (
     has_successful_task_check,
     register_task_check_tool,
 )
+from .upstream_gap_tool import (
+    register_upstream_gap_tool,
+    reported_upstream_gap,
+)
 from .verification.build import (
     WorkspaceVerificationError,
     verify_agent_workspace,
@@ -328,10 +332,11 @@ def _owner_workspace_guidance(
     if bounded_evidence:
         common.extend(
             [
-                "- Treat the behavior capsule as self-contained. Start with the task context and existing writable implementation files; readSourcePaths is an optional readable allowlist, not a checklist.",
+                "- Treat the behavior capsule as self-contained. Read the task context first. Before any other read, decide whether its endpoint and direct-call contracts can express the behavior; readSourcePaths is an optional readable allowlist, not a checklist.",
+                "- If a direct-call argument is explicitly unresolved, or API and BCE signatures conflict without a legal implementation, call report_upstream_gap immediately. Do not search source files for a workaround to an unresolved contract.",
                 "- Open a listed contract only when a specific named type or member blocks an edit. Do not reopen per-method context already projected into the behavior capsule; do not list or grep broader directories.",
                 "- Treat behaviorCapsule endpoints, directMethods, and directCalls as the authoritative behavior boundary.",
-                "- If that evidence cannot express required behavior, call finish with the exact design contract gap instead of inventing collaborators or broadening discovery. If verification names an unlisted file, do not read it; report the missing implementation context.",
+                "- If that evidence cannot express required behavior, call report_upstream_gap with a concise gap and one TaskSpec source_ref instead of inventing collaborators or broadening discovery. If verification names an unlisted file, do not read it; report the missing implementation context.",
             ]
         )
     else:
@@ -616,6 +621,15 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     bounded_evidence = isinstance(context.get("behaviorCapsule"), dict)
     if bounded_evidence:
         owner_tool_mode = "restricted"
+    upstream_gap_source_refs = (
+        [
+            value
+            for value in task.get("source_refs", task.get("sourceRefs", []))
+            if isinstance(value, str) and value
+        ]
+        if owner_task and bounded_evidence and owner_tool_mode == "restricted"
+        else None
+    )
     verification_profile = task.get("verification_profile")
     verification_profile = (
         dict(verification_profile)
@@ -731,6 +745,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 owner_tool_mode=owner_tool_mode,
                 reasoning_effort=reasoning_effort,
                 canary_result_id=expected_canary_id,
+                include_upstream_gap=upstream_gap_source_refs is not None,
             )
             verify_or_store_harness_manifest(
                 run_root / "reports" / "openhands-harness" / f"{task_id}.manifest.json",
@@ -767,6 +782,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             native_owner_tools=harness_task,
             enable_native_terminal=harness_task and owner_tool_mode == "terminal",
             owner_tool_mode=owner_tool_mode,
+            upstream_gap_source_refs=upstream_gap_source_refs,
             workspace=logical_workspace,
             owner_system_context=owner_system_context,
             persistence_dir=persistence_dir,
@@ -829,6 +845,40 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         ):
             conversation.send_message(OWNER_CONTINUATION_MESSAGE)
         conversation.run()
+        upstream_gap = reported_upstream_gap(agent)
+        if upstream_gap is not None:
+            candidate_changes = _candidate_application_changes(sandbox, run_root)
+            result = {
+                "taskId": task_id,
+                "taskType": task_type,
+                "owner": str(task.get("owner") or ""),
+                "promptSha256": task.get("prompt_sha256"),
+                "effectiveModel": connection.litellm_model(),
+                "status": "NEEDS_INPUT",
+                "upstreamGap": upstream_gap.as_result(),
+                "candidateEvidence": {"changedFiles": sorted(candidate_changes)},
+                "durationMs": int((time.monotonic() - started) * 1000),
+                "eventCount": journal.event_count,
+                "toolCounts": journal.tool_counts,
+                "eventJournal": str(journal.path.relative_to(run_root)).replace("\\", "/"),
+                "rawResponse": journal.latest_agent_message,
+                "conversationId": str(conversation_id) if conversation_id else None,
+                "conversationCheckpoint": (
+                    str(persistence_dir.relative_to(run_root)).replace("\\", "/")
+                    if persistence_dir is not None
+                    else None
+                ),
+                "resumedConversation": resumed_conversation,
+                "executionStatus": _conversation_execution_status(conversation),
+                "terminationReason": "UPSTREAM_GAP",
+                "workspacePreflight": workspace_preflight,
+                "harnessManifest": harness_manifest,
+                "conversationStats": _conversation_stats_snapshot(conversation),
+            }
+            conversation.close()
+            write_execution_result(execution_dir, task_id, attempt, result)
+            shutil.copyfile(journal.path, execution_dir / f"{task_id}.events.jsonl")
+            return result
         if owner_task and _conversation_is_stuck(conversation):
             stuck_recovery_used = True
             if no_action_guard is not None:
@@ -1269,6 +1319,7 @@ def create_openhands_conversation(
     native_owner_tools: bool = False,
     enable_native_terminal: bool = False,
     owner_tool_mode: str | None = None,
+    upstream_gap_source_refs: list[str] | None = None,
     workspace: Path | None = None,
     owner_system_context: str = "",
     canary_tools: bool = False,
@@ -1687,6 +1738,14 @@ def create_openhands_conversation(
                     ),
                 ]
             )
+            if upstream_gap_source_refs is not None:
+                upstream_gap_tool_name = register_upstream_gap_tool()
+                tools.append(
+                    Tool(
+                        name=upstream_gap_tool_name,
+                        params={"source_refs": upstream_gap_source_refs},
+                    )
+                )
         elif effective_owner_tool_mode != "terminal":
             raise ValueError(
                 f"Unsupported OpenHands owner tool mode: {effective_owner_tool_mode}"

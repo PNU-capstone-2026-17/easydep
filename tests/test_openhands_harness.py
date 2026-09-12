@@ -30,6 +30,11 @@ from app.implementation.agents.harness import (
     verify_or_store_harness_manifest,
 )
 from app.implementation.agents.runtime import create_openhands_conversation
+from app.implementation.agents.upstream_gap_tool import (
+    UPSTREAM_GAP_TOOL_NAME,
+    UpstreamGapAction,
+    reported_upstream_gap,
+)
 from app.implementation.agents.workspace import preflight_owner_workspace
 from app.llm_connection import LlmConnection
 
@@ -340,6 +345,51 @@ def test_restricted_owner_uses_the_minimal_tools_and_custom_prompt(tmp_path: Pat
         assert agent.llm.retry_min_wait == 1
         assert agent.llm.retry_max_wait == 8
         assert agent.llm.retry_multiplier == 1.0
+    finally:
+        conversation.close()
+
+
+def test_bounded_restricted_owner_exposes_and_records_upstream_gap_only(tmp_path: Path) -> None:
+    source_root = tmp_path / "application/src/main/java/example"
+    source_root.mkdir(parents=True)
+    connection = LlmConnection(
+        provider="openrouter",
+        api_key="validation-only-key",
+        base_url="https://example.invalid/v1",
+        model="openai/gpt-oss-20b",
+        litellm_provider="openrouter",
+    )
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        connection,
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        task_type="backend-implementation",
+        editable_roots=[str(source_root.resolve())],
+        native_owner_tools=True,
+        owner_tool_mode="restricted",
+        upstream_gap_source_refs=["UC-12"],
+    )
+    try:
+        conversation.send_message("Initialize tools without calling the model.")
+        assert UPSTREAM_GAP_TOOL_NAME in agent._tools
+        assert "UC-12" in agent._tools[UPSTREAM_GAP_TOOL_NAME].description
+        executor = agent._tools[UPSTREAM_GAP_TOOL_NAME].executor
+        invalid = executor(
+            UpstreamGapAction(summary="Missing behavior", source_ref="UC-unknown"),
+            conversation,
+        )
+        assert invalid.is_error is True
+        assert reported_upstream_gap(agent) is None
+
+        accepted = executor(
+            UpstreamGapAction(summary="The response rule is not specified.", source_ref="UC-12"),
+            conversation,
+        )
+        assert accepted.is_error is False
+        assert reported_upstream_gap(agent).as_result() == {
+            "summary": "The response rule is not specified.",
+            "sourceRef": "UC-12",
+        }
     finally:
         conversation.close()
 

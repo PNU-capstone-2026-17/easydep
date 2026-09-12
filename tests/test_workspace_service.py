@@ -527,17 +527,18 @@ def test_reconcile_does_not_finish_testing_command_with_completed_repair_job(
 
 
 @pytest.mark.parametrize(
-    ("command_status", "job_status"),
+    ("command_status", "job_status", "expected_status"),
     [
-        ("FAILED", "FAILED"),
-        ("INTERRUPTED", "NEEDS_PLANNER"),
-        ("RUNNING", "NEEDS_INPUT"),
+        ("FAILED", "FAILED", "FAILED"),
+        ("INTERRUPTED", "NEEDS_PLANNER", "FAILED"),
+        ("RUNNING", "NEEDS_INPUT", "AWAITING_INPUT"),
     ],
 )
 def test_reconcile_stopped_implementation_exposes_checkpoint_retry(
     monkeypatch,
     command_status: str,
     job_status: str,
+    expected_status: str,
 ) -> None:
     command = {
         "command_id": "command-1",
@@ -578,9 +579,12 @@ def test_reconcile_stopped_implementation_exposes_checkpoint_retry(
         service.shutdown()
 
     assert reconciled is not None
-    assert reconciled["status"] == "FAILED"
+    assert reconciled["status"] == expected_status
     assert reconciled["result"]["job_id"] == "job-1"
-    assert reconciled["result"]["checkpoint_retryable"] is True
+    if expected_status == "FAILED":
+        assert reconciled["result"]["checkpoint_retryable"] is True
+    else:
+        assert reconciled["result"]["kind"] == "question"
 
 
 def test_chat_event_timestamp_is_returned_as_explicit_korean_time() -> None:
@@ -2767,8 +2771,19 @@ def test_implementation_progress_snapshot_shows_owner_repair_in_existing_phase()
     assert updates["phase-integration"]["status"] == "pending"
 
 
-@pytest.mark.parametrize("job_status", ["FAILED", "NEEDS_INPUT", "NEEDS_PLANNER"])
-def test_implementation_progress_snapshot_marks_terminal_failure(job_status: str) -> None:
+@pytest.mark.parametrize(
+    ("job_status", "expected_status", "expected_detail"),
+    [
+        ("FAILED", "failed", "npm ci timed out"),
+        ("NEEDS_INPUT", "running", "Integration verification is in progress."),
+        ("NEEDS_PLANNER", "failed", "npm ci timed out"),
+    ],
+)
+def test_implementation_progress_snapshot_marks_terminal_failure(
+    job_status: str,
+    expected_status: str,
+    expected_detail: str,
+) -> None:
     service = WorkspaceService()
     try:
         progress = service._implementation_progress_snapshot(
@@ -2794,9 +2809,9 @@ def test_implementation_progress_snapshot_marks_terminal_failure(job_status: str
     assert list(updates) == ["phase-backend", "phase-frontend", "phase-integration"]
     assert updates["phase-backend"]["status"] == "completed"
     assert updates["phase-frontend"]["status"] == "completed"
-    assert updates["phase-integration"]["status"] == "failed"
-    assert progress["progress_status"] == "failed"
-    assert progress["progress_detail"] == "npm ci timed out"
+    assert updates["phase-integration"]["status"] == expected_status
+    assert progress["progress_status"] == expected_status
+    assert progress["progress_detail"] == expected_detail
 
 
 def test_implementation_progress_snapshot_marks_completed_workflow() -> None:
