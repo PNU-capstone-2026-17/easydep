@@ -140,14 +140,9 @@ def _render_method(
             if projection is not None
             else operation.stable_id or operation.operation_id
         )
-        context_path = (
-            "reports/implementation-tasks/method-context/"
-            f"{stable_id}.json"
-        )
         lines.extend(
             [
                 f"        // {IMPLEMENTATION_MARKER}: complete {stable_id}",
-                f"        // Context: {context_path}",
                 "        throw new UnsupportedOperationException("
                 f'"{IMPLEMENTATION_MARKER}:{stable_id}");',
             ]

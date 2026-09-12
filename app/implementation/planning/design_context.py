@@ -480,7 +480,6 @@ def _build_backend_behavior_tasks(
                 *(f"api:{value}" for value in api_operation_ids),
             }
         ]
-
         source_paths: set[str] = set()
         read_dependency_paths: set[str] = set()
         completion_markers: list[dict[str, object]] = []
@@ -534,7 +533,26 @@ def _build_backend_behavior_tasks(
                 )
                 if isinstance(value, str) and (run_root / value).is_file()
             ]
+            method = method_context.get("method")
+            stable_id = str(
+                method.get("stable_id") if isinstance(method, dict) else ""
+            )
+            candidates = [
+                f"EASYDEP-IMPLEMENT: complete {stable_id}",
+                f"EASYDEP-IMPLEMENT:{stable_id}",
+            ]
+            method_markers: list[dict[str, object]] = []
+            if stable_id:
+                for path in paths:
+                    source = (run_root / path).read_text(encoding="utf-8")
+                    present = [marker for marker in candidates if marker in source]
+                    if present:
+                        method_markers.append({"path": path, "markers": present})
+            if not method_markers:
+                continue
+
             source_paths.update(paths)
+            completion_markers.extend(method_markers)
             slices = [
                 method_slice
                 for method_slice in method_context.get("slices", [])
@@ -544,7 +562,6 @@ def _build_backend_behavior_tasks(
                 }
                 & set(use_case_ids)
             ]
-            method = method_context.get("method")
             if isinstance(method, dict):
                 typed_method_metadata.append(method)
             for method_slice in slices:
@@ -578,18 +595,6 @@ def _build_backend_behavior_tasks(
                     "sourcePaths": paths,
                 }
             )
-            stable_id = str(
-                method.get("stable_id") if isinstance(method, dict) else ""
-            )
-            candidates = [
-                f"EASYDEP-IMPLEMENT: complete {stable_id}",
-                f"EASYDEP-IMPLEMENT:{stable_id}",
-            ]
-            for path in paths:
-                source = (run_root / path).read_text(encoding="utf-8")
-                present = [marker for marker in candidates if marker in source]
-                if present:
-                    completion_markers.append({"path": path, "markers": present})
 
         selected_use_cases = [
             {
@@ -669,19 +674,19 @@ Implement this one API-to-result behavior using { _relative(run_root, context_pa
 
 - Preserve generated public BCE/API and persistence declarations.
 - Implement only the listed scenarios, endpoint bindings, direct calls, and markers.
-- Treat this behavior capsule as self-contained. Read this context first. Before any other
-  read, decide whether its endpoint and direct-call contracts can express the behavior.
+- Read this context first. Treat the behavior capsule as the authoritative behavior boundary
+  and decide whether its endpoint and direct-call contracts can express the behavior.
 - If a direct-call argument is explicitly unresolved, or API and BCE signatures conflict
   without a legal implementation, call `report_upstream_gap` immediately with one supplied
   `source_ref`. Do not search source files for a workaround to an unresolved contract.
-- Otherwise start from the existing writable implementation files; `readSourcePaths` is an
-  optional readable allowlist, not a checklist to open in full.
-- Open a listed contract only when a specific named type or member blocks an edit. Do not
-  reopen per-method context already projected into this behavior capsule. The authoritative
-  behavior boundary is `endpoints`, `directMethods`, and their `directCalls`.
-- Do not infer behavior from names or inspect unrelated features. Report a design contract
-  gap only when the behavior capsule itself is insufficient. If task-check names unlisted
-  source, report missing implementation context; do not read it.
+- Otherwise start from the writable implementation files. Use `readSourcePaths` as starting
+  points, then inspect application source only as needed for existing types, wiring, or test
+  conventions. Read access does not expand the behavior or write scope.
+- Every required branch decision and state change must have a concrete input, call result, or
+  existing application contract. Do not invent default rules, in-memory substitutes, or new
+  collaborators.
+- Do not infer behavior from names or unrelated features. Report a design contract gap when
+  the capsule and existing application contracts cannot express the required behavior.
 - Preserve completed behavior in shared files.
 - Add focused JUnit coverage at {test_path}.
 - Run run_task_check once after the edit batch, then finish when it passes.

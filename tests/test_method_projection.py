@@ -400,4 +400,4 @@ def test_renders_compile_safe_service_calls() -> None:
     assert "EASYDEP-IMPLEMENT" not in root
     leaf = files["com/example/app/application/impl/LookupControlService.java"]
     assert "EASYDEP-IMPLEMENT:" in leaf
-    assert "reports/implementation-tasks/method-context/" in leaf
+    assert "method-context/" not in leaf

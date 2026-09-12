@@ -344,11 +344,11 @@ def _owner_workspace_guidance(
     if bounded_evidence:
         common.extend(
             [
-                "- Treat the behavior capsule as self-contained. Read the task context first. Before any other read, decide whether its endpoint and direct-call contracts can express the behavior; readSourcePaths is an optional readable allowlist, not a checklist.",
+                "- Read the task context first. Treat the behavior capsule as the authoritative behavior boundary and readSourcePaths as useful starting points, not a checklist.",
                 "- If a direct-call argument is explicitly unresolved, or API and BCE signatures conflict without a legal implementation, call report_upstream_gap immediately. Do not search source files for a workaround to an unresolved contract.",
-                "- Open a listed contract only when a specific named type or member blocks an edit. Do not reopen per-method context already projected into the behavior capsule; do not list or grep broader directories.",
-                "- Treat behaviorCapsule endpoints, directMethods, and directCalls as the authoritative behavior boundary.",
-                "- If that evidence cannot express required behavior, call report_upstream_gap with a concise gap and one TaskSpec source_ref instead of inventing collaborators or broadening discovery. If verification names an unlisted file, do not read it; report the missing implementation context.",
+                "- Inspect application source on demand to understand existing types, wiring, and test conventions. Source code may clarify how to implement the capsule, but must not add behavior absent from it.",
+                "- Every required branch decision and state change must have a concrete input, call result, or existing application contract. Do not invent default rules, in-memory substitutes, or new collaborators.",
+                "- If the capsule and existing application contracts cannot express the required behavior, call report_upstream_gap with a concise gap and one TaskSpec source_ref.",
             ]
         )
     else:
@@ -779,22 +779,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     writable_files = [str((sandbox / path).resolve()) for path in editable_paths]
     writable_roots = [str((sandbox / root).resolve()) for root in editable_roots]
     immutable_absolute = [str((sandbox / path).resolve()) for path in immutable]
-    readable_files = (
-        sorted(
-            {
-                str(target)
-                for value in [
-                    task.get("context_file"),
-                    *context.get("readSourcePaths", []),
-                    *editable_paths,
-                ]
-                if isinstance(value, str)
-                and (target := (sandbox / value).resolve()).is_relative_to(sandbox_root)
-            }
-        )
-        if bounded_evidence
-        else None
-    )
+    # The owner works in an isolated task workspace and still has a strict write
+    # scope.  Let it inspect that workspace like a normal coding agent: the RTM-
+    # derived paths are starting hints, while existing source and wiring provide
+    # implementation mechanics that cannot be usefully duplicated in the capsule.
+    readable_files = None
     owner_system_context = ""
     if harness_task:
         owner_system_context = _owner_workspace_guidance(
@@ -903,7 +892,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             ],
             retry_listener=endpoint_retry_recorder,
             max_iterations=(
-                OWNER_TURN_ITERATIONS
+                MAX_AGENT_TURN_ITERATIONS
+                if owner_task and bounded_evidence
+                else OWNER_TURN_ITERATIONS
                 if owner_task
                 else (
                     MARKER_TURN_ITERATIONS

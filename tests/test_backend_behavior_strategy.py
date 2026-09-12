@@ -196,6 +196,7 @@ def _build_fixture(
         method: str,
         *,
         outgoing_target: str | None = None,
+        implementation_marker: bool = True,
     ) -> None:
         source = (
             "application/src/main/java/"
@@ -204,7 +205,11 @@ def _build_fixture(
         source_path = run / source
         source_path.parent.mkdir(parents=True, exist_ok=True)
         source_path.write_text(
-            f"class {class_name} {{ /* EASYDEP-IMPLEMENT:{stable_id} */ }}",
+            (
+                f"class {class_name} {{ /* EASYDEP-IMPLEMENT:{stable_id} */ }}"
+                if implementation_marker
+                else f"interface {class_name} {{}}"
+            ),
             encoding="utf-8",
         )
         refs = [f"operation:{class_name}::{method}()"]
@@ -292,6 +297,15 @@ def _build_fixture(
     # It has no exact UC/API membership and must not leak into UC-A's capsule.
     method_context(
         "method-nested", None, None, f"{vocabulary}Nested", "continueFlow"
+    )
+    # This method shares UC/API refs but has no implementation body owned by the task.
+    method_context(
+        "method-unbound",
+        "UC-A",
+        "op-entry",
+        f"{vocabulary}Boundary",
+        "notEndpointRoot",
+        implementation_marker=False,
     )
     _write_json(
         output / "implement-backend-application.source-index.json",
@@ -458,8 +472,9 @@ def test_exact_uc_api_components_form_deterministic_independent_tasks(
     assert any(item["directCalls"] for item in direct_methods)
     prompt = (run / connected.prompt_file).read_text(encoding="utf-8")
     assert "Do not infer behavior from names" in prompt
-    assert "gap only when the behavior capsule itself is insufficient" in prompt
-    assert "report missing implementation context; do not read it" in prompt
+    assert "capsule and existing application contracts cannot express" in prompt
+    assert "inspect application source only as needed" in prompt
+    assert "Do not invent default rules, in-memory substitutes" in prompt
 
 
 def test_shared_source_stays_bounded_and_rechecks_the_earlier_slice(
@@ -478,6 +493,12 @@ def test_shared_source_stays_bounded_and_rechecks_the_earlier_slice(
     solo_context_path.write_text(json.dumps(solo_context), encoding="utf-8")
     solo["sourcePaths"] = [shared_source]
     source_index_path.write_text(json.dumps(source_index), encoding="utf-8")
+    shared_path = run / shared_source
+    shared_path.write_text(
+        shared_path.read_text(encoding="utf-8")
+        + "\n/* EASYDEP-IMPLEMENT:method-solo */\n",
+        encoding="utf-8",
+    )
     owner.allowed_write_paths.append(shared_source)
 
     with patch(
@@ -554,6 +575,7 @@ def test_capsule_contains_only_exact_flow_endpoint_and_direct_method_contexts(
     serialized = json.dumps(capsule, ensure_ascii=False)
     assert "UC-Z" not in serialized
     assert "method-unrelated" not in serialized
+    assert "method-unbound" not in serialized
     # A direct call may name its immediate target, but that target's own
     # method-context must not be recursively promoted into this capsule.
     assert "method-nested" not in direct_ids

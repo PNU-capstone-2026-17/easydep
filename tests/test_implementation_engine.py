@@ -1499,6 +1499,9 @@ def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
         }
     )
     task_path.write_text(json.dumps(task), encoding="utf-8")
+    (run / task["context_file"]).write_text(
+        json.dumps({"behaviorCapsule": {}}), encoding="utf-8"
+    )
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
 
     class FakeConversation:
@@ -1528,9 +1531,11 @@ def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
             pass
 
     conversation: FakeConversation | None = None
+    conversation_options: dict[str, object] = {}
 
     def create_conversation(sandbox: Path, *_args, **_kwargs):
         nonlocal conversation
+        conversation_options.update(_kwargs)
         conversation = FakeConversation(sandbox)
         return conversation, SimpleNamespace(_tools={})
 
@@ -1570,6 +1575,15 @@ def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
     assert result["stuckRecoveryUsed"] is True
     assert result["executionStatus"] == "finished"
     assert "completedAfterStuck" in source.read_text(encoding="utf-8")
+    # A bounded backend owner may inspect the whole isolated workspace, while
+    # its editor remains limited to the task's owned source directory.
+    assert conversation_options["readable_files"] is None
+    assert conversation_options["editable_files"] == [
+        str((conversation.sandbox / source_path).resolve())
+    ]
+    assert conversation_options["editable_roots"] == [
+        str((conversation.sandbox / Path(source_path).parent).resolve())
+    ]
 
 
 def test_openhands_conversation_enables_stuck_detection_and_condensation(
@@ -1935,11 +1949,11 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
         [],
         bounded_evidence=True,
     )
-    assert "Before any other read" in bounded
-    assert "readSourcePaths is an optional readable allowlist, not a checklist" in bounded
+    assert "readSourcePaths as useful starting points, not a checklist" in bounded
+    assert "Inspect application source on demand" in bounded
     assert "direct-call argument is explicitly unresolved" in bounded
+    assert "Do not invent default rules, in-memory substitutes, or new collaborators" in bounded
     assert "call report_upstream_gap with a concise gap" in bounded
-    assert "report the missing implementation context" in bounded
     assert "investigation hints" not in bounded
     assert "open raw design inputs" not in bounded
 
