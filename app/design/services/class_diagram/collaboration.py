@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
@@ -403,6 +404,54 @@ def _field_matches_parameter(parameter: str, owner_type: str, field: str) -> boo
     return expected in {normalize(field), normalize(owner_type + field)}
 
 
+def _matching_precondition_sources(use_case: UseCase, parameter: str) -> list[str]:
+    """Offer a precondition only when it names this otherwise-unsourced value."""
+
+    parameter_tokens = {
+        token.casefold()
+        for token in re.findall(r"[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+", parameter)
+        if token.casefold() != "id"
+    }
+    if not parameter_tokens:
+        return []
+    preconditions = use_case.specification.get("preconditions") or []
+    return [
+        f"{source_ref}#{parameter}"
+        for source_ref, precondition in zip(use_case.precondition_refs, preconditions)
+        if parameter_tokens.intersection(
+            token.casefold()
+            for token in re.findall(
+                r"[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+", text(precondition)
+            )
+        )
+    ]
+
+
+def _is_boundary_control_handoff(
+    calls: list[dict[str, Any]],
+    call_index: int,
+    operations: dict[str, dict[str, Any]],
+) -> bool:
+    """Trusted context crosses only the entry Boundary→Control handoff."""
+
+    call = calls[call_index]
+    parent_call_id = text(call.get("parentCallId"))
+    parent = next(
+        (item for item in calls if text(item.get("callId")) == parent_call_id), None
+    )
+    parent_operation = (
+        operations.get(text(parent.get("receiverOperationId"))) if parent else None
+    )
+    target_operation = operations.get(text(call.get("receiverOperationId")))
+    return bool(
+        parent_operation
+        and target_operation
+        and not text(parent.get("parentCallId"))
+        and parent_operation.get("stereotype") == "boundary"
+        and target_operation.get("stereotype") == "control"
+    )
+
+
 def _binding_candidates(
     model: dict[str, Any],
     use_case: UseCase,
@@ -424,8 +473,6 @@ def _binding_candidates(
 
     if is_root and actor_step:
         candidates.append(f"{actor_step}#{name}")
-    if is_root:
-        candidates.extend(f"{ref}#{name}" for ref in use_case.precondition_refs)
     ancestors = _ancestors(calls, call_index)
     for ancestor in ancestors:
         operation = operations[text(ancestor.get("receiverOperationId"))]
@@ -519,6 +566,12 @@ def _binding_candidates(
             candidates.append(derived_value_source(target_type, mappings))
     if not candidates and runtime_value_source(target_type):
         candidates.append(runtime_value_source(target_type))
+    if (
+        not candidates
+        and target_type.casefold() == "string"
+        and _is_boundary_control_handoff(calls, call_index, operations)
+    ):
+        candidates.extend(_matching_precondition_sources(use_case, name))
     return list(dict.fromkeys(candidates))
 
 
@@ -532,7 +585,7 @@ def _binding_search_scopes(
     scopes: list[str] = []
     if is_root and actor_step:
         scopes.append("actor-entry-input")
-    if is_root and use_case.precondition_refs:
+    if use_case.precondition_refs:
         scopes.append("use-case-precondition")
     scopes.extend([
         "ancestor-call-parameter",

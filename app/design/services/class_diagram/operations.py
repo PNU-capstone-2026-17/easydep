@@ -115,6 +115,10 @@ When the steps refer to the current actor without explicitly providing an identi
 model that actor-scoped responsibility without an identity parameter. Do not move an
 unsourced internal identity parameter to the root Boundary merely to create a source.
 Only a subject explicitly selected or provided by the scenario is caller input.
+An explicit use-case precondition may instead provide trusted server context to a
+Control operation. Keep that parameter internal to the Control call; never add it to
+the actor-facing Boundary operation or expose it as an HTTP caller input. Do not infer
+trusted context from an actor name alone.
 
 When this use case reuses a reserved operation, include that operation in the
 fragment with its exact supplied name, parameters, and returnType, plus this use

@@ -805,6 +805,16 @@ def api_control_arguments(model: dict, state: dict) -> list[Finding]:
             ))
         available = _request_value_types(endpoint, schemas)
         for name, source in supplied.items():
+            try:
+                trusted_context = source == f"$context.{name}" and _normalise_contract_type(
+                    expected.get(name, "")
+                ) == "string"
+            except DesignTypeError:
+                trusted_context = False
+            if trusted_context:
+                # A precondition-derived server context stays outside the HTTP
+                # request, but is typed by the exact Control parameter it fills.
+                continue
             if source not in available:
                 found.append(Finding(
                     "api.control-arguments-match",

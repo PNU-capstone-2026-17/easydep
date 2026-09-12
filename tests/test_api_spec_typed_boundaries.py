@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from app.design.contracts.api_spec import ApiSpecModel, ApiSpecProposal
 from app.design.graphs import subgraphs as design_subgraphs
 from app.design.knowledge.detectors import (
+    api_control_arguments,
     api_executable_schema_fields,
     api_spec_findings,
 )
@@ -393,6 +394,85 @@ def test_control_arguments_do_not_fall_back_to_matching_names_or_types() -> None
 
     assert endpoint.control_binding is not None
     assert endpoint.control_binding.arguments == []
+
+
+def test_string_precondition_stays_internal_as_trusted_control_context() -> None:
+    payload = _bce_model().model_dump(by_alias=True)
+    control = payload["Classes"][1]["operations"][0]
+    control["parameters"].append({"name": "authenticatedPrincipal", "type": "String"})
+    payload["Collaborations"][0]["calls"][1]["receiverOperationId"] = (
+        "CatalogControl::searchCatalog(filter:CourseFilter,authenticatedPrincipal:String)"
+    )
+    payload["Collaborations"][0]["calls"][1]["argumentBindings"].append(
+        {
+            "parameter": "authenticatedPrincipal",
+            "sourceRef": "UC1:precondition:1#authenticatedPrincipal",
+        }
+    )
+    bce_model = BCEModel.model_validate(payload)
+
+    proposal = _proposal().model_dump()
+    proposal["Endpoints"][0]["interaction_id"] = (
+        "CatalogBoundary::browseCatalog(filter:CourseFilter) -> "
+        "CatalogControl::searchCatalog(filter:CourseFilter,authenticatedPrincipal:String)"
+    )
+    normalized = normalize_api_spec_model(ApiSpecProposal.model_validate(proposal), bce_model)
+    endpoint = normalized.Endpoints[0]
+
+    assert endpoint.control_binding is not None
+    assert [item.model_dump() for item in endpoint.control_binding.arguments] == [
+        {"name": "filter", "source": "$query.filter"},
+        {"name": "authenticatedPrincipal", "source": "$context.authenticatedPrincipal"},
+    ]
+    assert api_control_arguments(
+        normalized.model_dump(by_alias=True),
+        {"extracted_bce_classes": bce_model.model_dump(by_alias=True)},
+    ) == []
+
+
+@pytest.mark.parametrize(
+    ("parameter_type", "source"),
+    [
+        ("String", "$context.otherPrincipal"),
+        ("UUID", "$context.authenticatedPrincipal"),
+    ],
+)
+def test_control_context_rejects_arbitrary_or_non_string_values(
+    parameter_type: str, source: str
+) -> None:
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [
+                {
+                    "className": "CatalogControl",
+                    "stereotype": "Control",
+                    "methods": [
+                        f"search(authenticatedPrincipal: {parameter_type}): void"
+                    ],
+                }
+            ]
+        }
+    }
+    model = {
+        "Endpoints": [
+            {
+                "path": "/catalog",
+                "method": "get",
+                "control_binding": {
+                    "control": "CatalogControl",
+                    "method": "search",
+                    "arguments": [
+                        {"name": "authenticatedPrincipal", "source": source}
+                    ],
+                },
+            }
+        ],
+        "Schemas": [],
+    }
+
+    findings = api_control_arguments(model, state)
+
+    assert [finding.rule_id for finding in findings] == ["api.control-arguments-match"]
 
 
 def test_path_placeholder_does_not_assume_a_nested_field_role_from_its_name() -> None:

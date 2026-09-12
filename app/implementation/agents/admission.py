@@ -58,6 +58,9 @@ The source reference identifies the first contract that must change:
   state contract has no carrier for an input, response, identity, scope, or decision,
   use the closest api or operation reference instead. Do not route that wiring gap to
   the use-case specification.
+- Use an api reference only when the missing carrier belongs to the caller-visible HTTP
+  request or response. Use an operation reference when the caller must not supply the
+  value and the missing carrier belongs to trusted server context or an internal call.
 For IMPLEMENT, source_ref must be empty.
 """
 

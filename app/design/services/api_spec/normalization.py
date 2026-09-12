@@ -552,6 +552,9 @@ def _control_arguments(
         if parameter not in expected_parameters:
             continue
         source_call, separator, source_path = source_ref.partition("#")
+        if separator and ":precondition:" in source_call:
+            arguments.append({"name": parameter, "source": f"$context.{parameter}"})
+            continue
         if not separator or source_call != contract.boundary_call_id:
             continue
         boundary_parameter, dot, nested_path = source_path.partition(".")

@@ -551,7 +551,11 @@ def test_scalar_parameter_can_use_same_typed_request_fields_with_different_names
 
 
 def test_binding_candidates_require_matching_names_for_ancestor_uuid_values():
-    index = build_scenario_index(single_use_case())
+    specification = single_use_case()
+    specification["use_case_specs"][0]["preconditions"] = [
+        "The student is authenticated."
+    ]
+    index = build_scenario_index(specification)
     target = {"name": "studentId", "type": "UUID"}
     calls = [
         {
@@ -602,3 +606,60 @@ def test_binding_candidates_require_matching_names_for_ancestor_uuid_values():
     assert "UC1::call:1#result.registrationId" not in candidates
     assert "UC1::call:1#studentId" in candidates
     assert "UC1::call:1#result.studentId" in candidates
+    assert "UC1:precondition:1#studentId" not in candidates
+
+    no_value_model = {"Classes": [], "DataTypes": []}
+    uuid_handoff = [
+        {
+            "callId": "UC1::call:root",
+            "parentCallId": None,
+            "receiverOperationId": "RegistrationBoundary::submit()",
+        },
+        {
+            "callId": "UC1::call:handoff",
+            "parentCallId": "UC1::call:root",
+            "receiverOperationId": "RegistrationControl::register(studentId:UUID)",
+        },
+    ]
+    handoff_operations = {
+        "RegistrationBoundary::submit()": {"stereotype": "boundary", "parameters": []},
+        "RegistrationControl::register(studentId:UUID)": {
+            "stereotype": "control", "parameters": [target]
+        },
+    }
+    assert collaboration._binding_candidates(
+        no_value_model, index.use_case("UC1"), None, False, uuid_handoff, 1, target,
+        handoff_operations,
+    ) == []
+
+    nested_calls = [
+        *uuid_handoff[:1],
+        {
+            "callId": "UC1::call:handoff",
+            "parentCallId": "UC1::call:root",
+            "receiverOperationId": "RegistrationControl::register()",
+        },
+        {
+            "callId": "UC1::call:outbound",
+            "parentCallId": "UC1::call:handoff",
+            "receiverOperationId": "NotificationBoundary::notify()",
+        },
+        {
+            "callId": "UC1::call:second-handoff",
+            "parentCallId": "UC1::call:outbound",
+            "receiverOperationId": "RegistrationControl::continueWith(studentContext:String)",
+        },
+    ]
+    nested_target = {"name": "studentContext", "type": "String"}
+    nested_operations = {
+        "RegistrationBoundary::submit()": {"stereotype": "boundary", "parameters": []},
+        "RegistrationControl::register()": {"stereotype": "control", "parameters": []},
+        "NotificationBoundary::notify()": {"stereotype": "boundary", "parameters": []},
+        "RegistrationControl::continueWith(studentContext:String)": {
+            "stereotype": "control", "parameters": [nested_target]
+        },
+    }
+    assert collaboration._binding_candidates(
+        no_value_model, index.use_case("UC1"), None, False, nested_calls, 3,
+        nested_target, nested_operations,
+    ) == []

@@ -829,6 +829,10 @@ def sequence_argument_data_flow(model: dict, state: dict) -> list[Finding]:
         for participant in model.get("Participants", [])
         if str(participant.get("kind", "")).strip().lower() != "actor"
     }
+    participant_kinds = {
+        _participant_id(participant): str(participant.get("kind") or "").strip().lower()
+        for participant in model.get("Participants", [])
+    }
     contracts: dict[str, dict[str, tuple[dict[str, str], str | None]]] = {}
     class_model = state.get("extracted_bce_classes") or {}
     fields_by_type = structured_field_types(class_model)
@@ -904,7 +908,8 @@ def sequence_argument_data_flow(model: dict, state: dict) -> list[Finding]:
                     )
                 continue
             if source_kind == "precondition":
-                use_case_id, marker, index = source_ref.partition(":precondition:")
+                precondition_ref, separator, source_parameter = source_ref.partition("#")
+                use_case_id, marker, index = precondition_ref.partition(":precondition:")
                 specification = next((
                     item
                     for item in (state.get("usecase_spec") or {}).get("use_case_specs") or []
@@ -912,8 +917,31 @@ def sequence_argument_data_flow(model: dict, state: dict) -> list[Finding]:
                     and str(item.get("use_case_id") or "").strip() == use_case_id
                 ), {})
                 preconditions = specification.get("preconditions") or []
-                if marker != ":precondition:" or not index.isdigit() or not (
+                source_entry = next(
+                    (
+                        message
+                        for message in reversed(model.get("Messages", [])[:call_index])
+                        if str(message.get("target") or "").strip()
+                        == str(call.get("source") or "").strip()
+                        and str(message.get("type", "sync")).lower()
+                        in {"sync", "async", "self"}
+                    ),
+                    None,
+                )
+                if (
+                    not separator
+                    or source_parameter != parameter
+                    or marker != ":precondition:"
+                    or not index.isdigit()
+                    or participant_kinds.get(str(call.get("source") or "").strip()) != "boundary"
+                    or participant_kinds.get(target) != "control"
+                    or normalize_return_type(bound_type) != "string"
+                    or source_entry is None
+                    or participant_kinds.get(str(source_entry.get("source") or "").strip())
+                    != "actor"
+                    or not (
                     1 <= int(index) <= len(preconditions)
+                    )
                 ):
                     found.append(Finding(rule_id, f"선행조건 원천 '{source_ref}'가 명세에 없음", location))
                 continue
