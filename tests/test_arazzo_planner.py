@@ -11,6 +11,7 @@ from app.testing.utils.arazzo_planner import (
     ArazzoPlanningError,
     attach_workflow_trace,
     build_arazzo_document,
+    build_deterministic_workflow,
     build_workflow_candidates,
 )
 
@@ -216,6 +217,24 @@ def test_builds_one_candidate_per_functional_use_case() -> None:
         _candidate_for(candidates, "UC-1")["useCase"]["use_case_id"],
         _candidate_for(candidates, "UC-2")["useCase"]["use_case_id"],
     } == {"UC-1", "UC-2"}
+
+
+def test_single_operation_candidate_compiles_to_contract_only_workflow() -> None:
+    candidate = _candidate_for(_candidates(), "UC-2")
+
+    workflow = build_deterministic_workflow(candidate)
+
+    assert workflow == {
+        "workflowId": "workflow-UC-2",
+        "steps": [{"stepId": "auditItem", "operationId": "auditItem"}],
+        "x-easydep-trace": candidate["trace"],
+    }
+
+
+def test_multi_operation_candidate_requires_explicit_data_flow() -> None:
+    candidate = _candidate_for(_candidates(), "UC-1")
+
+    assert build_deterministic_workflow(candidate) is None
 
 
 def test_candidate_preserves_requirement_use_case_and_acceptance_context() -> None:

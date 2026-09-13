@@ -22,10 +22,11 @@ from app.testing.utils.arazzo_planner import (
     ArazzoPlanningError,
     attach_workflow_trace,
     build_arazzo_document,
+    build_deterministic_workflow,
     build_workflow_candidates,
 )
 from app.testing.utils.functional_executor import InputValueRequest, UpstreamAmbiguity
-from app.testing.utils.functional_executor import resolve_schema
+from app.testing.utils.functional_executor import resolve_schema, schema_errors
 from app.validation import stable_digest
 
 PLAN_SYSTEM_PROMPT = """Return exactly one Arazzo v1.1 Workflow Object as JSON.
@@ -56,6 +57,8 @@ RFC 9535 JSONPath. Add successCriteria only when the frozen requirement
 or use-case guarantee directly states the expected result; otherwise leave the workflow
 contract-only. Do not invent operations, paths, methods, status codes, schemas, credentials,
 external URLs, requirements, custom extensions, or implementation-derived expected values.
+If an OpenAPI parameter expects an object, omit that parameter item; the executor will construct a
+schema-valid object. Never flatten an object parameter into an arbitrary string.
 Do not return an Arazzo document envelope, Markdown, comments, or prose outside the JSON object."""
 
 # The larger-context planning model normally benefits from medium reasoning.
@@ -313,7 +316,9 @@ def _validate_authored_workflow(value: dict[str, Any]) -> None:
 
 
 def _normalize_authored_workflow(
-    value: dict[str, Any], candidate: dict[str, Any]
+    value: dict[str, Any],
+    candidate: dict[str, Any],
+    openapi: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Project common model spellings onto the frozen OpenAPI/Arazzo contract.
 
@@ -337,6 +342,13 @@ def _normalize_authored_workflow(
             f"$steps.{match.group('step')}.outputs.{match.group('output')}#/"
             f"{pointer}"
         )
+
+    def contains_runtime_expression(item: Any) -> bool:
+        if isinstance(item, dict):
+            return any(contains_runtime_expression(child) for child in item.values())
+        if isinstance(item, list):
+            return any(contains_runtime_expression(child) for child in item)
+        return isinstance(item, str) and item.startswith("$")
 
     normalized = normalize_runtime_selector(deepcopy(value))
     # The local Arazzo executor uses the standard equality tokens.  Several
@@ -404,6 +416,21 @@ def _normalize_authored_workflow(
             # canonicalize partial/provider-truncated values such as
             # "application/" before schema validation.
             step["requestBody"]["contentType"] = "application/json"
+            request_body = step["requestBody"]
+            body_contract = operation.get("requestBody")
+            body_schema = (
+                body_contract.get("schema") if isinstance(body_contract, dict) else None
+            )
+            if (
+                openapi is not None
+                and not request_body.get("replacements")
+                and not contains_runtime_expression(request_body.get("payload"))
+                and isinstance(body_schema, dict)
+                and schema_errors(openapi, body_schema, request_body.get("payload"))
+            ):
+                # Authored literals are test data, not frozen evidence. The
+                # executor can construct a valid required body from OpenAPI.
+                step.pop("requestBody", None)
         raw_parameters = step.get("parameters")
         if isinstance(raw_parameters, dict):
             # A name/value map omits `in`. Recover it only when every name has
@@ -425,7 +452,7 @@ def _normalize_authored_workflow(
         if not isinstance(step.get("parameters"), list):
             continue
         declared = {
-            (parameter.get("in"), parameter.get("name"))
+            (parameter.get("in"), parameter.get("name")): parameter.get("schema")
             for parameter in operation.get("parameters") or []
             if isinstance(parameter, dict)
         }
@@ -437,6 +464,18 @@ def _normalize_authored_workflow(
                 "value" in parameter
                 and parameter.get("value") != {}
                 and (parameter.get("in"), parameter.get("name")) in declared
+                and not (
+                    openapi is not None
+                    and not contains_runtime_expression(parameter.get("value"))
+                    and isinstance(
+                        declared[(parameter.get("in"), parameter.get("name"))], dict
+                    )
+                    and schema_errors(
+                        openapi,
+                        declared[(parameter.get("in"), parameter.get("name"))],
+                        parameter.get("value"),
+                    )
+                )
             )
         ]
         if parameters:
@@ -884,14 +923,40 @@ def _emit_plan_progress(candidate: dict[str, Any], status: str, *, attempt: int 
 
 
 def _generate_document(
-    client: OpenAI,
+    client: OpenAI | None,
     candidates: list[dict[str, Any]],
     openapi: dict[str, Any],
 ) -> dict[str, Any]:
+    def defer_remaining(candidate_index: int, failed_workflow_id: str) -> None:
+        detail = f"Planning stopped after {failed_workflow_id} failed validation"
+        for deferred in candidates[candidate_index + 1 :]:
+            _emit_plan_progress(deferred, "DEFERRED", detail=detail)
+
     workflows: list[dict[str, Any]] = []
     for candidate in candidates:
         _emit_plan_progress(candidate, "PENDING")
-    for candidate in candidates:
+    for candidate_index, candidate in enumerate(candidates):
+        deterministic = build_deterministic_workflow(candidate)
+        if deterministic is not None:
+            _emit_plan_progress(
+                candidate,
+                "RUNNING",
+                attempt=1,
+                detail="Compiling a deterministic contract test plan",
+            )
+            validated = _validate_document(
+                build_arazzo_document([deterministic]), [candidate], openapi
+            )
+            workflows.append(validated["workflows"][0])
+            _emit_plan_progress(
+                candidate,
+                "PASS",
+                attempt=1,
+                detail="Deterministic test plan generated and validated",
+            )
+            continue
+        if client is None:
+            client = _client()
         error = ""
         for attempt in range(2):
             _emit_plan_progress(candidate, "RUNNING", attempt=attempt + 1,
@@ -899,6 +964,7 @@ def _generate_document(
             workflow = None
             try:
                 workflow = _generate(client, candidate, error)
+                workflow = _normalize_authored_workflow(workflow, candidate, openapi)
                 validated = _validate_document(
                     build_arazzo_document([workflow]), [candidate], openapi
                 )
@@ -910,6 +976,7 @@ def _generate_document(
                 if attempt:
                     _emit_plan_progress(candidate, "FAIL", attempt=attempt + 1, detail=error[:2000])
                     workflow_id = str(candidate.get("workflowId") or "unknown")
+                    defer_remaining(candidate_index, workflow_id)
                     raise ValueError(
                         f"Arazzo workflow {workflow_id} generation failed validation: {error}"
                     ) from exc
@@ -922,6 +989,9 @@ def _generate_document(
                     )
             except Exception as exc:
                 _emit_plan_progress(candidate, "FAIL", attempt=attempt + 1, detail=str(exc)[:2000])
+                defer_remaining(
+                    candidate_index, str(candidate.get("workflowId") or "unknown")
+                )
                 raise
         else:  # pragma: no cover - both loop exits above are explicit
             raise AssertionError("The bounded workflow generation loop did not terminate.")
@@ -969,7 +1039,9 @@ def _repair_execution_plan(
         + "\nRejected workflow JSON:\n"
         + json.dumps(authored, ensure_ascii=False)
     )
-    revised = _generate(client, candidate, feedback)
+    revised = _normalize_authored_workflow(
+        _generate(client, candidate, feedback), candidate, openapi
+    )
     def oracle(value: dict[str, Any]) -> list[tuple[Any, Any, Any]]:
         return [
             (step.get("stepId"), step.get("operationId"), step.get("successCriteria"))
@@ -1351,9 +1423,13 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             client: OpenAI | None = None
             plan_source = "preserved"
         else:
-            client = _client()
+            deterministic_only = all(
+                build_deterministic_workflow(candidate) is not None
+                for candidate in candidates
+            )
+            client = None if deterministic_only else _client()
             document = _generate_document(client, candidates, frozen["openapi"])
-            plan_source = "generated"
+            plan_source = "deterministic" if deterministic_only else "hybrid"
     except (ArazzoPlanningError, UpstreamAmbiguity) as error:
         emit_testing_progress(
             phase="dynamic",

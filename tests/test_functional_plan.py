@@ -96,6 +96,25 @@ def _openapi() -> dict[str, Any]:
     }
 
 
+def _openapi_with_secondary_operation(*use_case_ids: str) -> dict[str, Any]:
+    openapi = _openapi()
+    openapi["paths"]["/secondary"] = {
+        "get": {
+            "operationId": "secondaryHealth",
+            "x-easydep-use-case-ids": list(use_case_ids or ("UC-1",)),
+            "responses": {
+                "200": {
+                    "description": "secondary available",
+                    "content": {
+                        "application/json": {"schema": {"type": "object"}}
+                    },
+                }
+            },
+        }
+    }
+    return openapi
+
+
 def _document(count: int = 1, *, criteria: bool = True) -> dict[str, Any]:
     candidates = build_workflow_candidates(_requirements(count), _use_cases(count), _openapi())
     workflows = []
@@ -282,6 +301,97 @@ def test_empty_object_parameter_value_is_treated_as_unspecified() -> None:
     assert "requestBody" not in normalized["steps"][0]
     assert workflow["steps"][0]["parameters"][0]["value"] == {}
     dynamic._validate_authored_workflow(normalized)
+
+
+def test_openapi_invalid_literal_parameter_is_deferred_to_input_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    openapi = _openapi_with_secondary_operation("UC-1")
+    operation = openapi["paths"]["/health"]["get"]
+    operation["parameters"] = [
+        {
+            "name": "criteria",
+            "in": "query",
+            "required": True,
+            "schema": {"$ref": "#/components/schemas/SearchCriteria"},
+        }
+    ]
+    openapi["components"] = {
+        "schemas": {
+            "SearchCriteria": {
+                "type": "object",
+                "required": ["status"],
+                "properties": {"status": {"type": "string"}},
+                "additionalProperties": False,
+            }
+        }
+    }
+    candidates = build_workflow_candidates(_requirements(), _use_cases(), openapi)
+    calls = 0
+
+    def generate(_client: object, candidate: dict[str, Any], error: str = "") -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        assert error == ""
+        return attach_workflow_trace(
+            {
+                "workflowId": candidate["workflowId"],
+                "steps": [
+                    {
+                        "stepId": "health",
+                        "operationId": "health",
+                        "parameters": [
+                            {"name": "criteria", "in": "query", "value": "published"}
+                        ],
+                    }
+                ],
+            },
+            candidate,
+        )
+
+    monkeypatch.setattr(dynamic, "_generate", generate)
+
+    document = dynamic._generate_document(object(), candidates, openapi)
+
+    assert calls == 1
+    assert "parameters" not in document["workflows"][0]["steps"][0]
+
+
+def test_openapi_invalid_literal_request_body_is_deferred_to_input_generation() -> None:
+    openapi = _openapi()
+    operation = openapi["paths"]["/health"]["get"]
+    operation["requestBody"] = {
+        "required": True,
+        "content": {
+            "application/json": {
+                "schema": {
+                    "type": "object",
+                    "required": ["courseOfferingId"],
+                    "properties": {"courseOfferingId": {"type": "string"}},
+                    "additionalProperties": False,
+                }
+            }
+        },
+    }
+    candidates = build_workflow_candidates(_requirements(), _use_cases(), openapi)
+    workflow = {
+        "workflowId": "workflow-UC-1",
+        "steps": [
+            {
+                "stepId": "health",
+                "operationId": "health",
+                "requestBody": {
+                    "contentType": "application/json",
+                    "payload": {"offeringId": "OFF-1"},
+                },
+            }
+        ],
+    }
+
+    normalized = dynamic._normalize_authored_workflow(workflow, candidates[0], openapi)
+
+    assert "requestBody" not in normalized["steps"][0]
+    assert "requestBody" in workflow["steps"][0]
 
 
 def test_request_body_content_type_is_projected_from_the_json_contract() -> None:
@@ -809,7 +919,12 @@ def test_empty_schema_valid_prior_step_output_is_classified_as_sut_defect() -> N
 def test_plan_progress_identifies_completed_retrying_and_failed_use_cases(monkeypatch):
     from app.testing.progress import testing_progress_scope
 
-    candidates = build_workflow_candidates(_requirements(2), _use_cases(2), _openapi())
+    openapi = _openapi()
+    openapi["paths"]["/health"]["get"]["x-easydep-use-case-ids"].append("UC-3")
+    openapi["paths"]["/secondary"] = _openapi_with_secondary_operation("UC-2")[
+        "paths"
+    ]["/secondary"]
+    candidates = build_workflow_candidates(_requirements(3), _use_cases(3), openapi)
     events = []
 
     def generate(_client, candidate, error=""):
@@ -819,22 +934,25 @@ def test_plan_progress_identifies_completed_retrying_and_failed_use_cases(monkey
 
     monkeypatch.setattr(dynamic, "_generate", generate)
     with testing_progress_scope(events.append), pytest.raises(ValueError, match="Invalid reference"):
-        dynamic._generate_document(object(), candidates, _openapi())
+        dynamic._generate_document(object(), candidates, openapi)
     assert [(e["workflow_id"], e["status"]) for e in events] == [
         ("workflow-UC-1", "PENDING"), ("workflow-UC-2", "PENDING"),
+        ("workflow-UC-3", "PENDING"),
         ("workflow-UC-1", "RUNNING"), ("workflow-UC-1", "PASS"),
         ("workflow-UC-2", "RUNNING"), ("workflow-UC-2", "RUNNING"),
-        ("workflow-UC-2", "FAIL"),
+        ("workflow-UC-2", "FAIL"), ("workflow-UC-3", "DEFERRED"),
     ]
-    assert events[-2]["attempt"] == 2
-    assert events[-1]["use_case_id"] == "UC-2"
-    assert events[-1]["use_case_name"] == "Check service 2"
+    assert events[-3]["attempt"] == 2
+    assert events[-2]["use_case_id"] == "UC-2"
+    assert events[-2]["use_case_name"] == "Check service 2"
+    assert events[-1]["use_case_id"] == "UC-3"
 
 
 def test_generated_document_gets_one_bounded_regeneration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    candidates = build_workflow_candidates(_requirements(), _use_cases(), _openapi())
+    openapi = _openapi_with_secondary_operation("UC-1")
+    candidates = build_workflow_candidates(_requirements(), _use_cases(), openapi)
     calls: list[str] = []
 
     def generate(_client: object, candidate: dict[str, Any], error: str = "") -> dict[str, Any]:
@@ -850,7 +968,7 @@ def test_generated_document_gets_one_bounded_regeneration(
 
     monkeypatch.setattr(dynamic, "_generate", generate)
 
-    document = dynamic._generate_document(object(), candidates, _openapi())
+    document = dynamic._generate_document(object(), candidates, openapi)
 
     assert len(calls) == 2
     assert calls[0] == ""
@@ -858,10 +976,52 @@ def test_generated_document_gets_one_bounded_regeneration(
     assert document["workflows"][0]["steps"][0]["operationId"] == "health"
 
 
+def test_single_operation_document_is_generated_without_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    openapi = _openapi()
+    candidates = build_workflow_candidates(_requirements(), _use_cases(), openapi)
+
+    def unexpected_generation(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        pytest.fail("A single-operation contract plan must not call the LLM")
+
+    monkeypatch.setattr(dynamic, "_generate", unexpected_generation)
+
+    document = dynamic._generate_document(None, candidates, openapi)
+
+    assert document["workflows"][0]["steps"] == [
+        {"stepId": "health", "operationId": "health"}
+    ]
+
+
+def test_single_operation_testing_does_not_require_plan_llm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_client() -> object:
+        pytest.fail("A deterministic plan with no generated inputs must not create an LLM client")
+
+    monkeypatch.setattr(dynamic, "_client", unexpected_client)
+    monkeypatch.setattr(
+        dynamic,
+        "execute_arazzo_workflow",
+        lambda _document, workflow_id, **_kwargs: _pass(workflow_id),
+    )
+
+    report = dynamic.dynamic_functional_node(
+        _state(fixed_arazzo_document=None)
+    )["dynamic_functional_report"]
+
+    assert report["gateStatus"] == "PASS"
+    assert report["candidatePlan"]["workflows"][0]["steps"] == [
+        {"stepId": "health", "operationId": "health"}
+    ]
+
+
 def test_generated_document_retries_only_the_failed_workflow(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    candidates = build_workflow_candidates(_requirements(2), _use_cases(2), _openapi())
+    openapi = _openapi_with_secondary_operation("UC-1", "UC-2")
+    candidates = build_workflow_candidates(_requirements(2), _use_cases(2), openapi)
     calls = {str(candidate["workflowId"]): 0 for candidate in candidates}
 
     def generate(_client: object, candidate: dict[str, Any], error: str = "") -> dict[str, Any]:
@@ -882,7 +1042,7 @@ def test_generated_document_retries_only_the_failed_workflow(
 
     monkeypatch.setattr(dynamic, "_generate", generate)
 
-    document = dynamic._generate_document(object(), candidates, _openapi())
+    document = dynamic._generate_document(object(), candidates, openapi)
 
     assert calls == {"workflow-UC-1": 1, "workflow-UC-2": 2}
     assert [workflow["workflowId"] for workflow in document["workflows"]] == [
@@ -944,7 +1104,7 @@ def test_workflow_generation_uses_medium_reasoning_by_default(
 def test_generation_repairs_rejected_candidate_without_executing_it(
     monkeypatch: pytest.MonkeyPatch, failure: str
 ) -> None:
-    openapi = _openapi()
+    openapi = _openapi_with_secondary_operation("UC-1")
     openapi["paths"]["/health"]["get"]["parameters"] = [
         {"name": "studentId", "in": "query", "schema": {"type": "string"}}
     ]
@@ -1000,7 +1160,11 @@ def test_unrepaired_unknown_step_remains_a_test_defect(monkeypatch: pytest.Monke
     monkeypatch.setattr(dynamic, "_client", lambda: object())
     monkeypatch.setattr(dynamic, "_generate", generate)
     monkeypatch.setattr(dynamic, "execute_arazzo_workflow", unexpected_execution)
-    report = dynamic.dynamic_functional_node(_state(fixed_arazzo_document=None))["dynamic_functional_report"]
+    state = _state(fixed_arazzo_document=None)
+    state["testing_input"]["contract_artifacts"]["openapi"]["content"] = (
+        _openapi_with_secondary_operation("UC-1")
+    )
+    report = dynamic.dynamic_functional_node(state)["dynamic_functional_report"]
     assert report["defectClass"] == "TEST_DEFECT"
     assert report["defect"]["repairOwner"] == "testing"
 

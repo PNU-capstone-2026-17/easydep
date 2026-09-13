@@ -20,6 +20,24 @@ def test_planning_progress_does_not_count_as_test_pass():
     assert snapshot["workflow_counts"]["passed"] == 0
 
 
+def test_deferred_plan_is_terminal_and_counted_separately():
+    snapshot = progress.reduce_testing_progress(
+        None,
+        progress.testing_progress_event(
+            phase="planning",
+            scope="workflow",
+            status="DEFERRED",
+            label="UC2 · Deferred",
+            workflow_id="workflow-UC2",
+            use_case_id="UC2",
+        ),
+    )
+
+    assert snapshot["plans"]["workflow-UC2"]["status"] == "DEFERRED"
+    assert snapshot["plan_counts"]["deferred"] == 1
+    assert snapshot["plan_counts"]["pending"] == 0
+
+
 def test_progress_reducer_tracks_workflows_steps_and_gates() -> None:
     snapshot = progress.reduce_testing_progress(
         None,
@@ -83,6 +101,7 @@ def test_progress_reducer_tracks_workflows_steps_and_gates() -> None:
         "pending": 0,
         "reused": 0,
         "inconclusive": 0,
+        "deferred": 0,
     }
 
 

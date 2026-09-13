@@ -400,6 +400,43 @@ def attach_workflow_trace(
     return value
 
 
+def build_deterministic_workflow(candidate: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Compile a contract-only workflow when no cross-operation decision is required.
+
+    A single traced OpenAPI operation has no ordering or response-to-request binding
+    decision. Request values remain absent so the executor can populate required
+    values from the frozen OpenAPI schema. Multi-operation candidates deliberately
+    remain outside this boundary until their data flow is explicit in an artifact.
+    """
+
+    operations = candidate.get("operations")
+    if not isinstance(operations, list) or len(operations) != 1:
+        return None
+    operation = operations[0]
+    if not isinstance(operation, Mapping):
+        raise ArazzoPlanningError("Candidate operation must be an object.")
+    responses = operation.get("responses")
+    if not isinstance(responses, list) or not any(
+        isinstance(response, Mapping)
+        and str(response.get("status") or "").startswith("2")
+        for response in responses
+    ):
+        return None
+    operation_id = _id(operation, "operationId")
+    step_id = _IDENTIFIER.sub("-", operation_id).strip("-")
+    if not step_id:
+        raise ArazzoPlanningError(
+            f"Operation cannot produce a deterministic stepId: {operation_id}"
+        )
+    return attach_workflow_trace(
+        {
+            "workflowId": _id(candidate, "workflowId"),
+            "steps": [{"stepId": step_id, "operationId": operation_id}],
+        },
+        candidate,
+    )
+
+
 def build_arazzo_document(workflows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     """Wrap frozen workflow objects in EasyDep's canonical local Arazzo envelope."""
     values: list[dict[str, Any]] = []
@@ -419,5 +456,6 @@ __all__ = [
     "ArazzoPlanningError",
     "attach_workflow_trace",
     "build_arazzo_document",
+    "build_deterministic_workflow",
     "build_workflow_candidates",
 ]

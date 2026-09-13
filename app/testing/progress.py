@@ -183,6 +183,7 @@ def _workflow_counts(workflows: Mapping[str, Any]) -> dict[str, int]:
         "pending": 0,
         "reused": 0,
         "inconclusive": 0,
+        "deferred": 0,
     }
     mapping = {
         "PASS": "passed",
@@ -191,6 +192,7 @@ def _workflow_counts(workflows: Mapping[str, Any]) -> dict[str, int]:
         "PENDING": "pending",
         "REUSED": "reused",
         "INCONCLUSIVE": "inconclusive",
+        "DEFERRED": "deferred",
     }
     for value in workflows.values():
         if not isinstance(value, Mapping):
