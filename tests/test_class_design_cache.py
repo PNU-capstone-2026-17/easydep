@@ -155,3 +155,40 @@ def test_operation_cache_hit_is_revalidated_before_it_is_accepted():
             index.use_case("UC1"),
             cache=InvalidHit(),
         )
+
+
+def test_operation_cache_validation_accepts_a_declared_reserved_type():
+    """A fragment may reuse a type declared by another accepted unit."""
+
+    from app.design.services.class_diagram import operations
+    from app.design.services.class_diagram.cache import CacheResult
+    from app.design.services.class_diagram.models import AcceptedInventory
+    from app.design.services.class_diagram.scenario import build_scenario_index
+    from tests.class_design_fixtures import operation_fragment, single_use_case
+
+    index = build_scenario_index(single_use_case())
+    inventory = AcceptedInventory.from_payload({
+        "Classes": [
+            {"className": "RequestBoundary", "stereotype": "Boundary"},
+            {"className": "RequestControl", "stereotype": "Control"},
+        ],
+        "DataTypes": [],
+        "Relationships": [],
+    })
+    fragment = operation_fragment()
+    shared_type = fragment["DataTypes"].pop()
+    shared_type["fields"] = ["accepted : Boolean"]
+
+    class ValidHit:
+        def get_or_compute(self, key, _compute):
+            return CacheResult(fragment, "hit", key)
+
+    accepted = operations.checked_fragment(
+        index,
+        inventory,
+        index.use_case("UC1"),
+        reserved_types=[shared_type],
+        cache=ValidHit(),
+    )
+
+    assert accepted.as_payload()["Classes"]

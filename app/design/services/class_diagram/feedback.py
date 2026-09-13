@@ -301,20 +301,29 @@ def _feedback_scope(
         use_case.id for use_case in index.use_cases
         if any(group.use_case_id == use_case.id for group in index.groups)
     }
+    collaboration_owners: dict[str, set[str]] = {}
     call_owners: dict[str, set[str]] = {}
     for collaboration in model.get("Collaborations") or []:
         if not isinstance(collaboration, dict):
             continue
         collaboration_id = text(collaboration.get("collaborationId"))
-        if collaboration_id not in collaboration_ids:
+        owners = {
+            text(use_case_id)
+            for use_case_id in collaboration.get("useCaseIds") or []
+            if text(use_case_id) in collaboration_ids
+        }
+        if collaboration_id in collaboration_ids:
+            owners.add(collaboration_id)
+        if not owners:
             continue
+        collaboration_owners[collaboration_id] = owners
         for call in collaboration.get("calls") or []:
             if not isinstance(call, dict):
                 continue
             for key in ("stableId", "callId"):
                 call_id = text(call.get(key))
                 if call_id:
-                    call_owners.setdefault(call_id, set()).add(collaboration_id)
+                    call_owners.setdefault(call_id, set()).update(owners)
     # 1. UI나 finding이 정확한 ID를 보냈다면 LLM을 호출하지 않는다. target 전체가 한
     # 소유 집합에 포함될 때만 확정해 부분적으로 잘못 해석된 ID를 조용히 버리지 않는다.
     if targets:
@@ -330,6 +339,13 @@ def _feedback_scope(
                 use_case_id for target in targets for use_case_id in operation_owners[target]
             }
             return FeedbackScope(kind="operation", ids=sorted(owners, key=id_key))
+        legacy_collaboration_targets = set(collaboration_owners) - collaboration_ids
+        if targets <= legacy_collaboration_targets:
+            owners = {
+                use_case_id for target in targets
+                for use_case_id in collaboration_owners[target]
+            }
+            return FeedbackScope(kind="collaboration", ids=sorted(owners, key=id_key))
         if targets <= call_owners.keys():
             owners = {
                 collaboration_id for target in targets
@@ -346,14 +362,29 @@ def _feedback_scope(
                     "Classify the feedback into exactly one smallest design owner. "
                     "inventory changes classes, fields, types, or structural relationships; "
                     "operation changes one or more use-case method contracts; collaboration "
-                    "changes call order or delegation only. Select ids only from candidates."
+                    "changes call order or delegation only. A request to add a method to an "
+                    "existing class is an operation change, not an inventory change. Use the "
+                    "selected collaboration context and use-case steps to identify the operation "
+                    "owners without treating those collaborations as part of the method contract. "
+                    "Select ids only from candidates."
                 ),
             },
             {"role": "user", "content": json.dumps({
                 "feedback": feedback,
+                "selectedTargets": sorted(targets),
                 "candidates": {
                     "inventory": sorted(inventory_ids),
-                    "operation": sorted(use_case_ids, key=id_key),
+                    "operation": [
+                        {
+                            "id": use_case.id,
+                            "name": use_case.name,
+                            "steps": [
+                                {"id": step.id, "sentence": step.sentence}
+                                for step in use_case.steps
+                            ],
+                        }
+                        for use_case in sorted(index.use_cases, key=lambda item: id_key(item.id))
+                    ],
                     "collaboration": sorted(collaboration_ids, key=id_key),
                 },
             }, ensure_ascii=False)},
@@ -364,6 +395,18 @@ def _feedback_scope(
         operation="InteractionFeedbackScope",
     )
     scope = FeedbackScope.model_validate(parsed)
+    context_operation_owners = {
+        use_case_id
+        for target in targets
+        for use_case_id in collaboration_owners.get(target, set())
+    }
+    if scope.kind == "operation" and context_operation_owners:
+        # The conversation layer already selected these collaborations from
+        # semantic search evidence.  This inner classifier chooses the owner
+        # kind; it must not silently discard one of the frozen companion flows.
+        scope = scope.model_copy(
+            update={"ids": sorted(context_operation_owners, key=id_key)}
+        )
     allowed = {
         "inventory": inventory_ids,
         "operation": use_case_ids,

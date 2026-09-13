@@ -202,6 +202,54 @@ def test_search_ranks_evidence_spread_across_multiple_elements(
     assert "class_diagram:OrderControl::placeOrder()" in refs
 
 
+def test_revision_search_maps_use_case_evidence_to_current_collaboration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _state()
+    state["extracted_bce_classes"]["Collaborations"] = [
+        {
+            "collaborationId": "UC-ORDER:main:1",
+            "useCaseIds": ["UC-ORDER"],
+            "calls": [],
+        }
+    ]
+    monkeypatch.setattr(
+        "app.workspace.conversation.project_tools.artifact_repository.load_state",
+        lambda app_id: state if app_id == APP_ID else {},
+    )
+    monkeypatch.setattr(
+        "app.workspace.conversation.project_tools.artifact_repository.load_file_snapshot",
+        lambda *_args: None,
+    )
+
+    result = ProjectTools(APP_ID).search_revision_context(
+        ["OrderControl", "place order"],
+        anchor_refs=["class_diagram:OrderControl"],
+    )
+
+    candidate_refs = [item["ref"] for item in result["candidates"]]
+    evidence_refs = [item["ref"] for item in result["evidence"]]
+    assert candidate_refs[:2] == [
+        "class_diagram:OrderControl",
+        "class_diagram:UC-ORDER:main:1",
+    ]
+    assert "use_case_spec:UC-ORDER" in evidence_refs
+    specification = next(
+        item for item in result["evidence"]
+        if item["ref"] == "use_case_spec:UC-ORDER"
+    )
+    assert specification["behavior"]["main_scenario"] == [
+        {"step_number": 1, "sentence": "Member submits an order."}
+    ]
+    collaboration = next(
+        item for item in result["evidence"]
+        if item["ref"] == "class_diagram:UC-ORDER:main:1"
+    )
+    assert collaboration["content"]["collaborationId"] == "UC-ORDER:main:1"
+    assert collaboration["content"]["useCaseIds"] == ["UC-ORDER"]
+    assert collaboration["content"]["calls"] == []
+
+
 def test_exact_identifier_and_path_search_work_across_registration_and_incident_domains(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -550,6 +598,19 @@ def test_stage_rewind_relations_include_exact_cross_delivery_downstream(
     assert "file:application/src/OrderService.java" in requirement_downstream
     assert "api_spec:placeOrder" in design_downstream
     assert "file:application/src/OrderService.java" in design_downstream
+
+
+def test_local_class_plan_uses_the_same_bounded_scope_as_the_design_change_plan(
+    tools: ProjectTools,
+) -> None:
+    relations = tools.revision_relations(["class_diagram:OrderControl"])
+    planned = set(
+        relations["relations"]["class_diagram:OrderControl"]["downstream"]
+    )
+    impact = tools.trace_impact(["class_diagram:OrderControl"], view="editing")
+    expected = set(impact["impacts"][0]["affected"])
+
+    assert expected <= planned
 
 
 def test_usecase_diagram_candidates_are_catalog_owned_and_cover_its_sections(

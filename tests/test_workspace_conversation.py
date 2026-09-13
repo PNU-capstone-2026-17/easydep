@@ -2,10 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.llm_schema import strict_json_schema
 from app.workspace import service as workspace_module
 from app.workspace.conversation.agent import ConversationAgent
 from app.workspace.conversation.context import ConversationContext
-from app.workspace.conversation.contracts import Clarification, CommandIntent, Reply
+from app.workspace.conversation.contracts import (
+    Clarification,
+    CommandIntent,
+    Reply,
+    RevisionInterpretation,
+    RevisionPatchIntent,
+)
 from app.workspace.service import WorkspaceService
 
 
@@ -149,6 +156,84 @@ def test_project_question_is_answered_from_read_only_tool_evidence() -> None:
     ]
 
 
+def test_revision_plan_reserves_queries_for_distinct_registration_flows() -> None:
+    class SearchTools(FakeTools):
+        def __init__(self) -> None:
+            super().__init__()
+            self.matches = [
+                {
+                    "ref": "class_diagram:CourseOffering",
+                    "label": "CourseOffering",
+                    "owner": "design",
+                    "editable": True,
+                },
+                {
+                    "ref": "class_diagram:UC3:main:1",
+                    "label": "UC3",
+                    "owner": "design",
+                    "editable": True,
+                },
+                {
+                    "ref": "class_diagram:UC5:main:1",
+                    "label": "UC5",
+                    "owner": "design",
+                    "editable": True,
+                },
+            ]
+            self.revision_queries: list[str] = []
+
+        def search_revision_context(self, queries, *, anchor_refs):
+            self.revision_queries = list(queries)
+            return {"candidates": list(self.matches), "evidence": []}
+
+    def propose(schema, messages):
+        if schema.__name__ == "_ConversationPlan":
+            prompt = str(messages[0].content)
+            assert '"drop registration"' in prompt
+            assert '"swap registration"' in prompt
+            return schema(
+                kind="command",
+                intent="revise",
+                query="CourseOffering",
+                search_queries=[
+                    "CourseOffering",
+                    "registration removal",
+                    "drop registration",
+                    "swap registration",
+                ],
+            )
+        return schema(
+            targets=[
+                "class_diagram:CourseOffering",
+                "class_diagram:UC3:main:1",
+                "class_diagram:UC5:main:1",
+            ],
+            semantic_scope="behavior",
+            requested_effect="Add the update to every relevant removal flow.",
+        )
+
+    tools = SearchTools()
+    result = ConversationAgent(propose).respond(
+        "app-1",
+        "Add the update to every relevant registration removal flow.",
+        context(),
+        tools=tools,
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert tools.revision_queries == [
+        "CourseOffering",
+        "registration removal",
+        "drop registration",
+        "swap registration",
+    ]
+    assert result.targets == [
+        "class_diagram:CourseOffering",
+        "class_diagram:UC3:main:1",
+        "class_diagram:UC5:main:1",
+    ]
+
+
 def test_cloud_question_adds_local_guidance_to_the_grounded_answer() -> None:
     guidance_calls: list[tuple[str, str, str]] = []
 
@@ -284,6 +369,268 @@ def test_selected_diagram_can_resolve_an_explicitly_named_nested_operation() -> 
 
     assert isinstance(result, CommandIntent)
     assert result.targets == [operation_ref]
+
+
+def test_llm_decomposed_class_feedback_keeps_all_grounded_subchanges() -> None:
+    class_ref = "class_diagram:CourseOffering"
+    uc3_ref = "class_diagram:UC3:main:1"
+    uc5_ref = "class_diagram:UC5:main:1"
+
+    def propose(schema, _messages):
+        if schema.__name__ == "_ConversationPlan":
+            return schema(kind="command", intent="revise", query="enrollment count")
+        return schema(
+            targets=[class_ref, uc3_ref, uc5_ref],
+            semantic_scope="contract",
+            requested_effect=(
+                "Add an enrollment decrement operation and invoke it when "
+                "registrations are removed in UC3 and UC5."
+            ),
+            change_type="add",
+            target_instructions=[
+                {
+                    "target": class_ref,
+                    "instruction": "Add a parameterless decrement operation.",
+                },
+                {
+                    "target": uc3_ref,
+                    "instruction": "Invoke it when the original registration is removed.",
+                },
+                {
+                    "target": uc5_ref,
+                    "instruction": "Invoke it when the dropped registration is removed.",
+                },
+            ],
+        )
+
+    tools = FakeTools()
+    tools.matches = [
+        {
+            "ref": class_ref,
+            "label": "CourseOffering",
+            "owner": "design",
+            "editable": True,
+        },
+        {
+            "ref": uc3_ref,
+            "label": "UC3 collaboration",
+            "owner": "design",
+            "editable": True,
+        },
+        {
+            "ref": uc5_ref,
+            "label": "UC5 collaboration",
+            "owner": "design",
+            "editable": True,
+        },
+    ]
+    selected_context = ConversationContext(
+        app_id="app-1",
+        workspace={
+            "stage": "design",
+            "status": "AWAITING_INPUT",
+            "selection": {"artifact_stage": "class_diagram"},
+        },
+    )
+
+    result = ConversationAgent(propose).respond(
+        "app-1",
+        "Add a decrement operation to CourseOffering and use it when "
+        "registrations are removed in UC3 step 4 and UC5 step 3.",
+        selected_context,
+        tools=tools,
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert result.targets == [class_ref, uc3_ref, uc5_ref]
+    assert [item.target for item in result.revision.target_instructions] == [
+        class_ref,
+        uc3_ref,
+        uc5_ref,
+    ]
+
+
+def test_revision_patch_intents_are_structured_and_kept_for_selected_targets() -> None:
+    class_ref = "class_diagram:Enrollment"
+
+    def propose(schema, _messages):
+        if schema.__name__ == "_ConversationPlan":
+            return schema(kind="command", intent="revise", query="Enrollment")
+        return schema(
+            targets=[class_ref],
+            semantic_scope="contract",
+            requested_effect="Add an operation while preserving the existing order.",
+            patch_intents=[
+                {
+                    "operation": "add_operation",
+                    "target": class_ref,
+                    "name": "decrement",
+                    "parameters": [{"name": "id", "type": "UUID"}],
+                    "returnType": "int",
+                    "stepRefs": ["UC1:main:2"],
+                },
+                {
+                    "operation": "preserve_existing_order",
+                    "target": class_ref,
+                },
+            ],
+        )
+
+    tools = FakeTools()
+    tools.matches = [
+        {"ref": class_ref, "label": "Enrollment", "owner": "design", "editable": True}
+    ]
+    result = ConversationAgent(propose).respond(
+        "app-1", "Add decrement to Enrollment and preserve order.", context(), tools=tools
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert result.revision is not None
+    patches = result.revision.patch_intents
+    assert [patch.operation for patch in patches] == [
+        "add_operation",
+        "preserve_existing_order",
+    ]
+    assert patches[0].parameters[0].type == "UUID"
+    assert patches[0].return_type == "int"
+    assert patches[0].step_refs == ["UC1:main:2"]
+    assert patches[0].model_dump(mode="json", by_alias=True)["returnType"] == "int"
+    assert patches[0].model_dump(mode="json", by_alias=True)["stepRefs"] == ["UC1:main:2"]
+
+
+def test_revision_patch_intent_requires_operation_specific_details() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="missing its required details"):
+        RevisionPatchIntent(operation="rename_operation", target="class:Enrollment")
+
+
+def test_revision_interpretation_patch_schema_is_strict_and_binding_aliases_round_trip() -> None:
+    schema = strict_json_schema(RevisionInterpretation)
+    binding_schema = schema["$defs"]["RevisionPatchArgumentBinding"]
+    assert binding_schema["additionalProperties"] is False
+    assert set(binding_schema["properties"]) == set(binding_schema["required"])
+
+    patch = RevisionPatchIntent(
+        operation="insert_call_after",
+        target="class_diagram:UC1:main:1",
+        anchor="Existing::remove()",
+        receiverOperationId="Counter::decrement()",
+        stepRefs=["UC1:main:3"],
+        argumentBindings=[{"parameter": "id", "sourceRef": "UC1:main:2#id"}],
+    )
+    dumped = patch.model_dump(mode="json", by_alias=True)
+    assert dumped["argumentBindings"] == [
+        {"parameter": "id", "sourceRef": "UC1:main:2#id"}
+    ]
+
+
+def test_quantified_revision_does_not_add_targets_outside_llm_selection() -> None:
+    class_ref = "class_diagram:CourseOffering"
+    uc3_ref = "class_diagram:UC3:main:1"
+    uc5_ref = "class_diagram:UC5:main:1"
+    candidates = [
+        {"ref": class_ref, "label": "CourseOffering", "owner": "design", "editable": True},
+        {"ref": uc3_ref, "label": "UC3", "owner": "design", "editable": True},
+        {"ref": uc5_ref, "label": "UC5", "owner": "design", "editable": True},
+    ]
+
+    def propose(schema, messages):
+        assert "do not stop after selecting the first named example" in str(
+            messages[0].content
+        )
+        return schema(
+            targets=[class_ref, uc3_ref],
+            semantic_scope="behavior",
+            requested_effect="Apply this to every relevant removal flow.",
+            patch_intents=[
+                {
+                    "operation": "add_operation",
+                    "target": class_ref,
+                    "name": "decrement",
+                },
+                {
+                    "operation": "insert_call_after",
+                    "target": uc3_ref,
+                    "anchor": "Registration::deleteById(id:UUID)",
+                    "receiverOperationId": "CourseOffering::decrement()",
+                    "stepRefs": ["UC3:main:4"],
+                },
+            ],
+        )
+
+    tools = FakeTools()
+    tools.matches = candidates
+    evidence = [
+        {
+            "ref": ref,
+            "content": content,
+        }
+        for ref, content in (
+            (class_ref, {"className": "CourseOffering", "operations": []}),
+            (
+                uc3_ref,
+                {
+                    "collaborationId": "UC3:main:1",
+                    "calls": [{"receiverOperationId": "Registration::deleteById(id:UUID)"}],
+                },
+            ),
+            (
+                uc5_ref,
+                {
+                    "collaborationId": "UC5:main:1",
+                    "calls": [{"receiverOperationId": "Registration::deleteById(id:UUID)"}],
+                },
+            ),
+        )
+    ]
+
+    result = ConversationAgent(propose)._select_revision(
+        "Apply this to every relevant removal flow.",
+        candidates,
+        tools,
+        evidence=evidence,
+    )
+
+    assert isinstance(result, CommandIntent)
+    # Evidence is supplied to the model, but target selection remains an LLM
+    # decision. Code must not manufacture UC5 merely because it shares an
+    # anchor with the model-selected UC3.
+    assert result.targets == [class_ref, uc3_ref]
+    assert [patch.target for patch in result.revision.patch_intents] == [
+        class_ref,
+        uc3_ref,
+    ]
+
+
+def test_shared_operation_step_refs_are_union_of_selected_insertions() -> None:
+    interpretation = RevisionInterpretation(
+        targets=["class_diagram:CourseOffering", "class_diagram:UC3", "class_diagram:UC5"],
+        semantic_scope="behavior",
+        patch_intents=[
+            {
+                "operation": "add_operation",
+                "target": "class_diagram:CourseOffering",
+                "name": "decrement",
+            },
+            {
+                "operation": "insert_call_after",
+                "target": "class_diagram:UC3",
+                "anchor": "Registration::deleteById(id:UUID)",
+                "receiverOperationId": "CourseOffering::decrement()",
+                "stepRefs": ["UC3:main:4"],
+            },
+            {
+                "operation": "insert_call_after",
+                "target": "class_diagram:UC5",
+                "anchor": "Registration::deleteById(id:UUID)",
+                "receiverOperationId": "CourseOffering::decrement()",
+                "stepRefs": ["UC5:main:3"],
+            },
+        ],
+    )
+
+    assert interpretation.patch_intents[0].step_refs == ["UC3:main:4", "UC5:main:3"]
 
 
 def test_exact_identifier_resolution_is_not_limited_to_class_operations() -> None:

@@ -53,9 +53,13 @@ class _ConversationPlan(BaseModel):
     question: str = ""
     stage: Literal["", "requirements", "design", "implementation", "testing"] = ""
     cloud_topic: Literal["", "provider_region", "sku", "free_tier", "topology"] = ""
+    search_queries: list[str] = Field(default_factory=list, max_length=5)
 
     @model_validator(mode="after")
     def validate_kind_fields(self) -> _ConversationPlan:
+        self.search_queries = list(
+            dict.fromkeys(item.strip() for item in self.search_queries if item.strip())
+        )
         if self.kind == "command" and not self.intent:
             raise ValueError("command plans require an intent")
         if self.kind == "command" and self.intent in {
@@ -91,6 +95,17 @@ Classify the user's utterance without inventing state or artifact references.
   corresponding pending-plan action is present in the supplied workspace context. Branch supports
   requirements, design, and implementation; rerun also supports testing. Choose only one stage.
 - clarification: the utterance is ambiguous between those categories.
+For a revise command, provide two to five short search_queries that let read-only project tools
+find both the named artifact and behaviorally related elements. Keep an explicitly named class as
+one query. Add ordinary domain synonyms for implied flows: for example, a missing update when a
+registration is removed should search for distinct flow mechanisms. In the specific
+registration-removal/enrollment-decrease example, you MUST emit separate queries for
+"registration removal", "drop registration", and "swap registration" (in addition to a named
+artifact query when one is present). Do not spend the limited slots on morphological or redundant
+variants such as "remove registration", "decrease enrollment", or "enrollment count decrement"
+when they describe the same flow. More generally, use each slot for a different business-flow
+synonym or mechanism rather than a word-form variation. These are search terms, not target refs,
+and must not assume that a matching artifact exists.
 An artifact selection in workspace context identifies what the user is viewing; it is not itself an
 instruction to revise it. Classify the user's utterance first.
 Never infer a file, impact scope, or target reference. A stage may be selected only for an explicit
@@ -171,6 +186,7 @@ class ConversationAgent:
                 utterance,
                 plan.query or utterance,
                 project_tools,
+                search_queries=plan.search_queries,
                 recent_refs=list(dict.fromkeys(context.target_remap.values())),
                 context=context,
             )
@@ -186,15 +202,27 @@ class ConversationAgent:
         query: str,
         tools: ProjectTools,
         *,
+        search_queries: list[str] | None = None,
         recent_refs: list[str] | None = None,
         context: ConversationContext | None = None,
     ) -> CommandIntent | Clarification:
         selected_candidates = self._selected_artifact_candidates(context, tools)
-        candidates = _merge_candidates(
-            self._exact_catalog_candidates(query, tools),
-            tools.search_elements(query),
-            selected_candidates,
+        exact_candidates = self._exact_catalog_candidates(text, tools)
+        queries = list(dict.fromkeys(
+            item.strip()
+            for item in [*(search_queries or []), query]
+            if item and item.strip()
+        ))[:5]
+        search_context = self._revision_search_context(
+            queries,
+            exact_candidates,
+            tools,
         )
+        candidates = _merge_candidates(
+            exact_candidates,
+            list(search_context.get("candidates") or []),
+            self._selected_scope_candidates(context, selected_candidates),
+        )[:20]
         if not candidates and query.strip() != text.strip():
             candidates = _merge_candidates(candidates, tools.search_elements(text))
         if recent_refs:
@@ -214,6 +242,7 @@ class ConversationAgent:
             candidates,
             tools,
             context=context,
+            evidence=list(search_context.get("evidence") or []),
         )
 
     def interpret_revision(
@@ -243,7 +272,9 @@ class ConversationAgent:
             self._exact_catalog_candidates(text, tools),
             exact_candidates,
             tools.search_elements(text),
-            self._selected_artifact_candidates(context, tools),
+            self._selected_scope_candidates(
+                context, self._selected_artifact_candidates(context, tools)
+            ),
         )[:12]
         return self._select_revision(
             text,
@@ -259,6 +290,7 @@ class ConversationAgent:
         tools: ProjectTools,
         *,
         context: ConversationContext | None = None,
+        evidence: list[dict] | None = None,
     ) -> CommandIntent | Clarification:
         """Use one structured call for target selection and revision semantics."""
 
@@ -273,8 +305,26 @@ class ConversationAgent:
                 SystemMessage(
                     content=(
                         "Select only refs from the supplied finite candidate list that are directly "
-                        "targeted by the revision. If the target is ambiguous, return no targets and "
+                        "targeted by the revision. A single request may contain multiple dependent "
+                        "changes: select every candidate that owns one of those changes and return one "
+                        "target_instructions entry per selected target. For example, adding a class "
+                        "operation and invoking it in named use cases selects the owning class plus "
+                        "the collaboration candidate for each named use case. Select a collaboration, "
+                        "not a call argument, when adding, removing, or reordering calls. Do not force "
+                        "Select an existing Boundary or Control operation only when the user asks to "
+                        "change that operation's own signature or contract; do not select it merely "
+                        "because a revised collaboration passes through it. "
+                        "Do not force "
+                        "the user to split one coherent request into separate messages. If the target "
+                        "is ambiguous, return no targets and "
                         "ask one concise clarification question. Never invent or rewrite a ref. "
+                        "For quantified wording such as all, every, each, or all relevant flows, treat "
+                        "the supplied candidate list and read-only evidence as the complete search "
+                        "universe. Inspect each collaboration's full content and select every relevant "
+                        "collaboration that contains the same trigger operation or equivalent behavior; "
+                        "do not stop after selecting the first named example. If multiple collaborations "
+                        "share the requested removal/update trigger in the evidence, all of them must be "
+                        "selected. This expands only to evidence-backed candidates and never invents refs. "
                         "Classify only the user's semantic scope as presentation, contract, behavior, "
                         "implementation, test_expectation, or unknown. Use implementation for a "
                         "testing finding that asks to repair trace-linked production code; use "
@@ -291,8 +341,30 @@ class ConversationAgent:
                         "specific details from both; do not invent details. Never name an executable stage, file, "
                         "owner, impact list, or inferred upstream target. Also classify change_type "
                         "as modify, add, rename, remove, or unknown. A selected artifact is context, "
-                        "not a requested mutation. Use unknown when the wording "
-                        "does not distinguish those meanings."
+                        "not a requested mutation. When the user explicitly asks to revise, "
+                        "regenerate, or replace an entire diagram, select only the matching "
+                        "design_stage candidate. Names of classes, operations, calls, or use cases "
+                        "inside that request describe the desired stage contents and must not narrow "
+                        "the explicit whole-diagram scope. Use unknown when the wording "
+                        "does not distinguish those meanings. For an atomic, target-specific edit, also "
+                        "emit patch_intents using only these operations: add_operation (target is the "
+                        "owning class, with name, parameters, returnType, and stepRefs), "
+                        "insert_call_before or insert_call_after (target is the owning collaboration, "
+                        "with the exact existing receiverOperationId in anchor, the new exact "
+                        "receiverOperationId, stepRefs, argumentBindings, and anchorOccurrence only "
+                        "when the anchor occurs more than once), remove_call (target is the owning "
+                        "collaboration, with the exact receiverOperationId), "
+                        "rename_operation (target is the operation, with new_name), and "
+                        "preserve_existing_order (target is the collaboration whose existing calls must "
+                        "remain ordered). For operation declarations, preserve parameters as objects with "
+                        "name and type, plus return_type, and use step_refs when the request names flow "
+                        "steps. When one added class operation is inserted into multiple selected flows, "
+                        "its step_refs must be the union of those selected insertion patches' step_refs. "
+                        "For calls, preserve receiver_operation_id, anchor_occurrence, step_refs, "
+                        "and argument_bindings when present; camelCase spellings are accepted on input. "
+                        "Patch targets must be selected candidates; never invent refs. "
+                        "Use patch_intents to describe the minimal edit and retain the natural-language "
+                        "instruction as the user-facing fallback."
                     )
                 ),
                 HumanMessage(
@@ -300,18 +372,29 @@ class ConversationAgent:
                         f"Revision conversation:\n{self._recent_turns_text(context)}\n\n"
                         f"Revision request:\n{text}\n\nCandidates:\n"
                         + json.dumps(candidates, ensure_ascii=False, default=str)
+                        + "\n\nRead-only search evidence:\n"
+                        + json.dumps(evidence or [], ensure_ascii=False, default=str)
                     )
                 ),
             ],
         )
         available = {str(item.get("ref") or "") for item in candidates}
         selected = list(dict.fromkeys(ref for ref in selection.targets if ref in available))
-        exact_refs = _exact_candidate_refs(text, candidates)
-        selected_exact = [ref for ref in selected if ref in exact_refs]
-        if len(selected_exact) == 1:
-            # Exact identity narrows an already model-selected target; merely
-            # mentioning another artifact is not authority to edit it.
-            selected = selected_exact
+        decomposed_refs = {
+            item.target
+            for item in selection.target_instructions
+            if item.target in available
+        }
+        complete_decomposition = (
+            len(decomposed_refs) > 1 and decomposed_refs == set(selected)
+        )
+        if not complete_decomposition:
+            exact_refs = _exact_candidate_refs(text, candidates)
+            selected_exact = [ref for ref in selected if ref in exact_refs]
+            if len(selected_exact) == 1:
+                # Exact identity narrows an already model-selected target; merely
+                # mentioning another artifact is not authority to edit it.
+                selected = selected_exact
         validation = tools.validate_revision_selections(selected)
         valid = list(validation.get("valid_refs") or [])
         if not valid:
@@ -334,10 +417,21 @@ class ConversationAgent:
             if context is not None and context.turns and selection.requested_effect.strip()
             else text.strip()
         )
+        selected_set = set(valid)
         interpretation = selection.model_copy(
             update={
                 "targets": valid,
                 "requested_effect": requested_effect,
+                "target_instructions": [
+                    item
+                    for item in selection.target_instructions
+                    if item.target in selected_set
+                ],
+                "patch_intents": [
+                    item
+                    for item in selection.patch_intents
+                    if item.target in selected_set
+                ],
             }
         )
         return CommandIntent(
@@ -430,6 +524,51 @@ class ConversationAgent:
         if not stage or not callable(artifact_candidates):
             return []
         return list(artifact_candidates(stage))
+
+    def _selected_scope_candidates(
+        self, context: ConversationContext | None, candidates: list[dict]
+    ) -> list[dict]:
+        """Keep only the explicit selection and its stage row as revision context."""
+
+        selection = self._selection(context)
+        selected_ref = str(selection.get("element_ref") or "").strip()
+        artifact_stage = str(selection.get("artifact_stage") or "").strip()
+        stage_refs = {
+            f"design_stage:{artifact_stage}",
+            f"requirements_stage:{artifact_stage}",
+        }
+        return [
+            item
+            for item in candidates
+            if str(item.get("ref") or "") == selected_ref
+            or str(item.get("ref") or "") in stage_refs
+        ]
+
+    @staticmethod
+    def _revision_search_context(
+        queries: list[str],
+        exact_candidates: list[dict],
+        tools: ProjectTools,
+    ) -> dict[str, list[dict]]:
+        """Ask the project tool for bounded semantic and RTM-backed evidence."""
+
+        search = getattr(tools, "search_revision_context", None)
+        if callable(search):
+            result = search(
+                queries,
+                anchor_refs=[
+                    str(item.get("ref") or "")
+                    for item in exact_candidates
+                    if item.get("ref")
+                ],
+            )
+            if isinstance(result, dict):
+                return {
+                    "candidates": list(result.get("candidates") or []),
+                    "evidence": list(result.get("evidence") or []),
+                }
+        matches = _merge_candidates(*(tools.search_elements(query) for query in queries))
+        return {"candidates": matches, "evidence": matches}
 
     @staticmethod
     def _exact_catalog_candidates(text: str, tools: ProjectTools) -> list[dict]:

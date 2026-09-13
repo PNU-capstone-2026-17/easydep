@@ -121,6 +121,102 @@ def test_ready_local_plan_is_attached_to_the_bounded_design_message(monkeypatch)
     assert payload["context"]["approved_downstream_targets"] == [downstream.ref]
 
 
+def test_composite_design_feedback_keeps_llm_subinstructions_and_dependency_order(
+    monkeypatch,
+) -> None:
+    class_target = _target("class_diagram:CourseOffering", kind="class")
+    collaboration_target = _target(
+        "class_diagram:UC5:main:1", kind="collaboration"
+    )
+    plan = _plan(
+        "ready_local",
+        requested=[collaboration_target, class_target],
+    )
+    interpretation = RevisionInterpretation(
+        targets=[collaboration_target.ref, class_target.ref],
+        semantic_scope="contract",
+        requested_effect="Add the decrement operation and use it in UC5.",
+        target_instructions=[
+            {
+                "target": collaboration_target.ref,
+                "instruction": "Invoke the decrement operation when the registration is removed.",
+            },
+            {
+                "target": class_target.ref,
+                "instruction": "Add a parameterless decrement operation.",
+            },
+        ],
+        patch_intents=[
+            {
+                "operation": "add_operation",
+                "target": class_target.ref,
+                "name": "decrementEnrolledCount",
+                "returnType": "void",
+                "stepRefs": ["UC5:main:3"],
+            },
+            {
+                "operation": "insert_call_after",
+                "target": collaboration_target.ref,
+                "anchor": "Registration::deleteById(id:UUID)",
+                "receiverOperationId": "CourseOffering::decrementEnrolledCount()",
+                "stepRefs": ["UC5:main:3"],
+            },
+        ],
+    )
+    intent = CommandIntent(
+        intent="revise",
+        targets=list(interpretation.targets),
+        instruction=interpretation.requested_effect,
+        revision=interpretation,
+    )
+    monkeypatch.setattr(workspace_module, "ProjectTools", _Tools)
+    monkeypatch.setattr(workspace_module, "plan_revision", lambda *_args: plan)
+    monkeypatch.setattr(
+        workspace_module.repository,
+        "latest_command",
+        lambda *_args, **_kwargs: _latest(),
+    )
+
+    service = WorkspaceService()
+    try:
+        action, payload, stage = service._route_conversation_intent(
+            "app-1", {"text": interpretation.requested_effect}, intent, _latest()
+        )
+    finally:
+        service.shutdown()
+
+    assert (action, stage) == ("message", "design")
+    revisions = payload["context"]["validated_target_feedbacks"]
+    assert [item["target"] for item in revisions] == [
+        class_target.ref,
+        collaboration_target.ref,
+    ]
+    assert [item["feedback"] for item in revisions] == [
+        "Add a parameterless decrement operation.",
+        "Invoke the decrement operation when the registration is removed.",
+    ]
+    assert revisions[0]["patch_intents"] == [{
+        "operation": "add_operation",
+        "target": class_target.ref,
+        "name": "decrementEnrolledCount",
+        "returnType": "void",
+        "stepRefs": ["UC5:main:3"],
+    }]
+    assert revisions[1]["patch_intents"] == [{
+        "operation": "insert_call_after",
+        "target": collaboration_target.ref,
+        "anchor": "Registration::deleteById(id:UUID)",
+        "receiverOperationId": "CourseOffering::decrementEnrolledCount()",
+        "stepRefs": ["UC5:main:3"],
+    }]
+    assert payload["revision_instructions"] == {
+        collaboration_target.ref: (
+            "Invoke the decrement operation when the registration is removed."
+        ),
+        class_target.ref: "Add a parameterless decrement operation.",
+    }
+
+
 def test_design_execution_passes_the_frozen_downstream_scope(monkeypatch) -> None:
     observed: dict[str, Any] = {}
     monkeypatch.setattr(
@@ -130,6 +226,7 @@ def test_design_execution_passes_the_frozen_downstream_scope(monkeypatch) -> Non
     )
 
     def revise(_app_id, _request, **kwargs):
+        observed["request"] = _request
         observed.update(kwargs)
         return {"changed": [], "touched": {}, "related": {}}
 
@@ -146,6 +243,11 @@ def test_design_execution_passes_the_frozen_downstream_scope(monkeypatch) -> Non
                             {
                                 "target": "class_diagram:OrderControl::create()",
                                 "feedback": "Change the selected operation.",
+                                "patch_intents": [{
+                                    "operation": "rename_operation",
+                                    "target": "class_diagram:OrderControl::create()",
+                                    "new_name": "place",
+                                }],
                             }
                         ],
                         "approved_authority_targets": [
@@ -164,6 +266,8 @@ def test_design_execution_passes_the_frozen_downstream_scope(monkeypatch) -> Non
         "class_diagram:OrderControl::create()"
     }
     assert observed["approved_downstream_targets"] == {"api_spec:createOrder"}
+    request = observed["request"]
+    assert request.revisions[0].patch_intents[0]["new_name"] == "place"
 
 
 def test_revision_after_a_reply_and_clarification_uses_the_stage_action_anchor(monkeypatch) -> None:

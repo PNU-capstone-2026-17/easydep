@@ -13,13 +13,14 @@ from __future__ import annotations
 import uuid
 from typing import Any, cast
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.artifacts_api import to_web_response
 from app.db.models import ORIGIN_FEEDBACK_REVISED
 from app.design.cascade import (
     UnapprovedScopeExpansion,
     UnknownTarget,
+    _design_target,
     persist_cascade,
     revise_and_cascade,
 )
@@ -36,7 +37,7 @@ from app.design.graphs.design_graph import (
     start_design,
     sync_design_state,
 )
-from app.design.graphs.subgraphs import DESIGN_STAGES
+from app.design.graphs.subgraphs import DESIGN_SPECS, DESIGN_STAGES
 from app.design.schemas.architecture_state import ArchitectureState
 from app.design.services.deployment_diagram.bundle import (
     hydrate_deployment_diagram_bundle,
@@ -69,6 +70,24 @@ class ReviseRequest(BaseModel):
     # it is not the old implicit permission to discover an upstream authority.
     approved_authority_targets: list[str] | None = None
     approved_downstream_targets: list[str] | None = None
+    # The conversation model may resolve a natural-language request into a
+    # finite, non-executable patch vocabulary.  These values remain part of the
+    # existing command JSON; they do not require a persistence schema change.
+    patch_intents: list[dict[str, Any]] = Field(
+        default_factory=list,
+        max_length=40,
+        exclude_if=lambda value: not value,
+    )
+
+    @model_validator(mode="after")
+    def patches_stay_within_target(self) -> ReviseRequest:
+        """Reject a patch attached to a different authority revision."""
+        target = self.target.strip()
+        for patch in self.patch_intents:
+            patch_target = str(patch.get("target") or "").strip()
+            if not patch_target or patch_target != target:
+                raise ValueError("Every structured patch must match its revision target.")
+        return self
 
 
 class BatchReviseRequest(BaseModel):
@@ -516,6 +535,18 @@ def revise_design_elements(
     touched: dict[str, set[str]] = {}
     related: dict[str, list[str]] = {}
     regenerated: dict[str, set[str]] = {}
+    batch_targets = {revision.target for revision in request.revisions}
+
+    def class_inventory_target(state: ArchitectureState, target: str) -> bool:
+        parsed = _design_target(target)
+        if parsed is None or parsed.kind != "class_diagram":
+            return False
+        model = state.get(DESIGN_SPECS["class_diagram"].model_key) or {}
+        return any(
+            isinstance(item, dict)
+            and str(item.get("className") or "").strip() == parsed.id
+            for item in model.get("Classes") or []
+        ) if isinstance(model, dict) else False
 
     try:
         for revision in request.revisions:
@@ -533,6 +564,12 @@ def revise_design_elements(
                     if revision.approved_downstream_targets is not None
                     else approved_downstream_targets
                 ),
+                revision_context_targets=(
+                    batch_targets - {revision.target}
+                    if class_inventory_target(working, revision.target)
+                    else None
+                ),
+                patch_intents=revision.patch_intents,
             )
             working = result["state"]
             for stage in result["changed"]:

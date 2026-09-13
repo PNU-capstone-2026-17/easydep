@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class ConversationIntent(StrEnum):
@@ -54,6 +54,175 @@ class RevisionTarget(BaseModel):
         return self
 
 
+class TargetedRevisionInstruction(BaseModel):
+    """One model-proposed subchange grounded to a finite candidate ref."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: Annotated[str, Field(min_length=3)]
+    instruction: Annotated[str, Field(min_length=1, max_length=8_000)]
+
+    @model_validator(mode="after")
+    def normalize_instruction(self) -> TargetedRevisionInstruction:
+        self.target = self.target.strip()
+        self.instruction = self.instruction.strip()
+        if not self.target or not self.instruction:
+            raise ValueError("targeted revision fields must not be blank")
+        return self
+
+
+class RevisionPatchParameter(BaseModel):
+    """A lossless name/type pair for a newly declared operation parameter."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Annotated[str, Field(min_length=1, max_length=500)]
+    type: Annotated[str, Field(min_length=1, max_length=500)]
+
+    @model_validator(mode="after")
+    def normalize_parameter(self) -> RevisionPatchParameter:
+        self.name = self.name.strip()
+        self.type = self.type.strip()
+        if not self.name or not self.type:
+            raise ValueError("patch parameter name and type must not be blank")
+        return self
+
+
+class RevisionPatchArgumentBinding(BaseModel):
+    """Closed argument-binding object matching persisted collaboration calls."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    parameter: Annotated[str, Field(min_length=1, max_length=500)]
+    source_ref: Annotated[
+        str,
+        Field(
+            min_length=1,
+            max_length=2_000,
+            validation_alias=AliasChoices("source_ref", "sourceRef"),
+            serialization_alias="sourceRef",
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def normalize_binding(self) -> RevisionPatchArgumentBinding:
+        self.parameter = self.parameter.strip()
+        self.source_ref = self.source_ref.strip()
+        if not self.parameter or not self.source_ref:
+            raise ValueError("patch argument binding requires parameter and sourceRef")
+        return self
+
+
+class RevisionPatchIntent(BaseModel):
+    """One atomic, target-scoped edit proposed by the conversation model.
+
+    The intent is deliberately a small vocabulary rather than an executable
+    command.  The design/implementation stage owns applying it after checking
+    the target against its catalog.  Optional fields describe the subject of
+    the edit without embedding stage-specific IDs or database concerns.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    operation: Literal[
+        "add_operation",
+        "insert_call_before",
+        "insert_call_after",
+        "remove_call",
+        "rename_operation",
+        "preserve_existing_order",
+    ] = Field(validation_alias=AliasChoices("operation", "kind"))
+    target: Annotated[str, Field(min_length=3)]
+    anchor: Annotated[str, Field(max_length=2_000)] = ""
+    call: Annotated[str, Field(max_length=2_000)] = ""
+    name: Annotated[str, Field(max_length=500)] = ""
+    signature: Annotated[str, Field(max_length=2_000)] = ""
+    new_name: Annotated[
+        str,
+        Field(
+            max_length=500,
+            validation_alias=AliasChoices("new_name", "newName"),
+            serialization_alias="newName",
+        ),
+    ] = ""
+    parameters: Annotated[list[RevisionPatchParameter], Field(max_length=20)] = Field(
+        default_factory=list
+    )
+    return_type: Annotated[
+        str,
+        Field(
+            max_length=500,
+            validation_alias=AliasChoices("return_type", "returnType"),
+            serialization_alias="returnType",
+        ),
+    ] = ""
+    step_refs: Annotated[
+        list[str],
+        Field(
+            max_length=20,
+            validation_alias=AliasChoices("step_refs", "stepRefs"),
+            serialization_alias="stepRefs",
+        ),
+    ] = Field(default_factory=list)
+    receiver_operation_id: Annotated[
+        str,
+        Field(
+            max_length=500,
+            validation_alias=AliasChoices("receiver_operation_id", "receiverOperationId"),
+            serialization_alias="receiverOperationId",
+        ),
+    ] = ""
+    anchor_occurrence: int | None = Field(
+        default=None,
+        ge=1,
+        validation_alias=AliasChoices("anchor_occurrence", "anchorOccurrence"),
+        serialization_alias="anchorOccurrence",
+    )
+    argument_bindings: list[RevisionPatchArgumentBinding] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices("argument_bindings", "argumentBindings"),
+        serialization_alias="argumentBindings",
+    )
+
+    @model_validator(mode="after")
+    def validate_patch_shape(self) -> RevisionPatchIntent:
+        for field in (
+            "target",
+            "anchor",
+            "call",
+            "name",
+            "signature",
+            "new_name",
+            "return_type",
+            "receiver_operation_id",
+        ):
+            setattr(self, field, getattr(self, field).strip())
+        self.step_refs = [item.strip() for item in self.step_refs]
+        if any(not item for item in self.step_refs):
+            raise ValueError("patch step refs must not be blank")
+        if not self.target:
+            raise ValueError("patch target must not be blank")
+        required = {
+            # Return type and flow provenance can be completed from the
+            # insertion patches on the surrounding interpretation.  Requiring
+            # them here made an otherwise useful structured response fail on
+            # a harmless omission by the model.
+            "add_operation": self.name or self.signature,
+            "insert_call_before": self.anchor
+            and (self.receiver_operation_id or self.call),
+            "insert_call_after": self.anchor
+            and (self.receiver_operation_id or self.call),
+            "remove_call": self.call or self.receiver_operation_id,
+            "rename_operation": self.new_name,
+            "preserve_existing_order": True,
+        }
+        if not required[self.operation]:
+            raise ValueError(
+                f"patch operation {self.operation!r} is missing its required details"
+            )
+        return self
+
+
 class RevisionInterpretation(BaseModel):
     """Small revision intent proposed by the model and checked by the planner."""
 
@@ -71,6 +240,12 @@ class RevisionInterpretation(BaseModel):
     requested_effect: Annotated[str, Field(max_length=8_000)] = ""
     clarification: Annotated[str, Field(max_length=2_000)] = ""
     change_type: Literal["modify", "add", "rename", "remove", "unknown"] = "modify"
+    target_instructions: Annotated[
+        list[TargetedRevisionInstruction], Field(max_length=20)
+    ] = Field(default_factory=list)
+    patch_intents: Annotated[list[RevisionPatchIntent], Field(max_length=40)] = Field(
+        default_factory=list
+    )
 
     @model_validator(mode="after")
     def normalize_interpretation(self) -> RevisionInterpretation:
@@ -81,6 +256,50 @@ class RevisionInterpretation(BaseModel):
             raise ValueError("revision targets must not be blank")
         if len(set(self.targets)) != len(self.targets):
             raise ValueError("revision targets must be unique")
+        instruction_targets = [item.target for item in self.target_instructions]
+        if len(set(instruction_targets)) != len(instruction_targets):
+            raise ValueError("targeted revision instructions must be unique")
+        if any(target not in self.targets for target in instruction_targets):
+            raise ValueError("targeted revision instructions must reference selected targets")
+        if any(item.target not in self.targets for item in self.patch_intents):
+            raise ValueError("patch intents must reference selected targets")
+        # A class operation shared by several flows should carry the union of
+        # the insertion flow steps.  This also repairs a common structured
+        # output omission without inventing any target or step reference.
+        insertions = [
+            item
+            for item in self.patch_intents
+            if item.operation in {"insert_call_before", "insert_call_after"}
+            and item.step_refs
+        ]
+        additions = [
+            item for item in self.patch_intents if item.operation == "add_operation"
+        ]
+
+        def operation_name(value: str) -> str:
+            return value.rsplit("::", 1)[-1].split("(", 1)[0].strip()
+
+        all_insertion_steps = list(
+            dict.fromkeys(step for item in insertions for step in item.step_refs)
+        )
+        for addition in additions:
+            matched_steps = list(
+                dict.fromkeys(
+                    step
+                    for item in insertions
+                    if any(
+                        operation_name(value)
+                        == operation_name(addition.name)
+                        for value in (item.receiver_operation_id, item.call)
+                        if value
+                    )
+                    for step in item.step_refs
+                )
+            )
+            if not matched_steps and len(additions) == 1:
+                matched_steps = all_insertion_steps
+            if matched_steps:
+                addition.step_refs = matched_steps
         return self
 
 
@@ -211,6 +430,13 @@ class CommandIntent(BaseModel):
 
 ConversationOutcome = Reply | Clarification | CommandIntent
 
+# The module uses postponed annotations so contracts can refer to one another.
+# Rebuild after all model classes are present; this keeps direct construction in
+# tests and adapters working (not only structured LLM deserialization).
+RevisionPatchIntent.model_rebuild()
+RevisionInterpretation.model_rebuild()
+CommandIntent.model_rebuild()
+
 
 __all__ = [
     "Clarification",
@@ -220,6 +446,10 @@ __all__ = [
     "Reply",
     "RevisionExecutionResult",
     "RevisionInterpretation",
+    "RevisionPatchArgumentBinding",
+    "RevisionPatchIntent",
+    "RevisionPatchParameter",
     "RevisionPlan",
     "RevisionTarget",
+    "TargetedRevisionInstruction",
 ]

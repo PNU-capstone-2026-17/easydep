@@ -1046,12 +1046,6 @@ def _validate_accepted_fragment(
             else field
             for field in item.get("fields") or []
         ]
-    try:
-        _compose(inventory, [(use_case.id, normalized)])
-    except Exception as error:
-        raise ValueError(
-            f"cached operation fragment {use_case.id} is not a valid accepted BCE fragment: {error}"
-        ) from error
     validation_inventory = {
         **inventory,
         "DataTypes": [
@@ -1069,6 +1063,12 @@ def _validate_accepted_fragment(
             ),
         ],
     }
+    try:
+        _compose(validation_inventory, [(use_case.id, normalized)])
+    except Exception as error:
+        raise ValueError(
+            f"cached operation fragment {use_case.id} is not a valid accepted BCE fragment: {error}"
+        ) from error
     report = run_checks(
         OPERATION_CHECKS,
         normalized,

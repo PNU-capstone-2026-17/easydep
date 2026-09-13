@@ -7,6 +7,7 @@ from copy import deepcopy
 import pytest
 from pydantic import ValidationError
 
+from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram import feedback as feedback_stage
 from app.design.services.class_diagram import generation, service
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
@@ -67,6 +68,108 @@ def test_exact_operation_and_call_targets_resolve_without_scope_llm(monkeypatch)
     assert call_scope == FeedbackScope(kind="collaboration", ids=["UC1"])
     assert legacy_operation_scope == operation_scope
     assert legacy_call_scope == call_scope
+
+
+def test_selected_legacy_collaboration_keeps_its_id_and_rebinds_parent_ids(
+    monkeypatch,
+) -> None:
+    index = build_scenario_index(single_use_case())
+    current = BCEModel.model_validate({
+        "Classes": [
+            {
+                "className": "RequestBoundary",
+                "stereotype": "Boundary",
+                "use_case_ids": ["UC1"],
+                "operations": [{"name": "submit", "operationId": "ignored"}],
+            },
+            {
+                "className": "RequestControl",
+                "stereotype": "Control",
+                "use_case_ids": ["UC1"],
+                "operations": [{"name": "process", "operationId": "ignored"}],
+            },
+            {
+                "className": "Request",
+                "stereotype": "Entity",
+                "use_case_ids": ["UC1"],
+                "operations": [{"name": "save", "operationId": "ignored"}],
+            },
+        ],
+        "Collaborations": [
+            {
+                "collaborationId": "UC1:main:1",
+                "useCaseIds": ["UC1"],
+                "calls": [
+                    {
+                        "callId": "ignored",
+                        "receiverOperationId": "RequestBoundary::submit()",
+                        "parentCallId": None,
+                    },
+                    {
+                        "callId": "ignored",
+                        "receiverOperationId": "RequestControl::process()",
+                        "parentCallId": "UC1:main:1::call:1",
+                    },
+                ],
+            }
+        ],
+    })
+    replacement = BCEModel.model_validate({
+        **current.model_dump(by_alias=True),
+        "Collaborations": [
+            {
+                "collaborationId": "UC1",
+                "useCaseIds": ["UC1"],
+                "calls": [
+                    {
+                        "callId": "ignored",
+                        "receiverOperationId": "RequestBoundary::submit()",
+                        "parentCallId": None,
+                    },
+                    {
+                        "callId": "ignored",
+                        "receiverOperationId": "RequestControl::process()",
+                        "parentCallId": "UC1::call:1",
+                    },
+                    {
+                        "callId": "ignored",
+                        "receiverOperationId": "Request::save()",
+                        "parentCallId": "UC1::call:2",
+                    },
+                ],
+            }
+        ],
+    }).Collaborations[0]
+    monkeypatch.setattr(
+        service,
+        "_replace_use_cases",
+        lambda *_args, **_kwargs: ({"UC1": replacement}, []),
+    )
+    skeleton = BCEModel.model_validate({
+        **current.model_dump(by_alias=True),
+        "Collaborations": [],
+    })
+
+    revised = service._replace_selected_collaborations(
+        index,
+        skeleton,
+        current,
+        [index.use_case("UC1")],
+        feedback="Add the missing call.",
+    )
+
+    collaboration = revised.Collaborations[0]
+    call_ids = {call.call_id for call in collaboration.calls}
+    assert collaboration.collaboration_id == "UC1:main:1"
+    assert [call.parent_call_id for call in collaboration.calls] == [
+        None,
+        "UC1:main:1::call:1",
+        "UC1:main:1::call:2",
+    ]
+    assert all(
+        call.parent_call_id is None or call.parent_call_id in call_ids
+        for call in collaboration.calls
+    )
 
 
 def test_targeted_inventory_revision_allows_baseline_but_rejects_regression(monkeypatch):

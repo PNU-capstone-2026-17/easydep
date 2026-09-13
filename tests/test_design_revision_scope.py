@@ -260,3 +260,47 @@ def test_direct_collaboration_uses_its_own_merge_unit(monkeypatch) -> None:
     cascade.revise_and_cascade(state, "class_diagram:UC1", "Revise collaboration")
 
     assert observed == [({"UC1"}, {"UC1"})]
+
+
+def test_class_revision_receives_companion_collaborations_as_read_only_context(
+    monkeypatch,
+) -> None:
+    state = _state()
+    state["extracted_bce_classes"] = {
+        "Classes": [{"className": "CourseOffering", "operations": []}],
+        "Collaborations": [
+            {"collaborationId": "UC3:main:1", "useCaseIds": ["UC3"], "calls": []},
+            {"collaborationId": "UC5:main:1", "useCaseIds": ["UC5"], "calls": []},
+        ],
+    }
+    rtm = _rtm()
+    rtm["rows"] = [
+        {"stage": "class_diagram", "element": "CourseOffering"},
+        {"stage": "class_diagram", "element": "UC3:main:1"},
+        {"stage": "class_diagram", "element": "UC5:main:1"},
+    ]
+    observed: list[tuple[set[str], set[str]]] = []
+    monkeypatch.setattr(cascade, "build_design_rtm", lambda _state: rtm)
+    monkeypatch.setattr(cascade, "affected_by_element", lambda *_args: [])
+
+    def apply(spec, current, _feedback, targets, **kwargs):
+        observed.append((set(targets), set(kwargs["revision_targets"])))
+        return {spec.model_key: current.get(spec.model_key) or {}}
+
+    monkeypatch.setattr(cascade, "_apply", apply)
+    cascade.revise_and_cascade(
+        state,
+        "class_diagram:CourseOffering",
+        "Add a decrement operation.",
+        revision_context_targets={
+            "class_diagram:UC3:main:1",
+            "class_diagram:UC5:main:1",
+        },
+    )
+
+    assert observed == [
+        (
+            {"CourseOffering"},
+            {"CourseOffering", "UC3:main:1", "UC5:main:1"},
+        )
+    ]

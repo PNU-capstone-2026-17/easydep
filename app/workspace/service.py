@@ -1046,6 +1046,13 @@ class WorkspaceService:
                 "validated_targets": targets,
                 "validated_impact": tools.trace_impact(valid_refs, view="editing"),
             }
+            decomposed_instructions = {
+                item.target: item.instruction
+                for item in interpretation.target_instructions
+                if item.target in valid_refs
+            }
+            if decomposed_instructions:
+                routed_payload["revision_instructions"] = decomposed_instructions
             if owner == "implementation" and any(
                 target.kind == "finding" for target in plan.requested_targets
             ):
@@ -1082,6 +1089,7 @@ class WorkspaceService:
                     plan,
                     intent.instruction,
                     instructions_by_ref=revision_instructions,
+                    patch_intents=interpretation.patch_intents,
                 )
                 routed_payload["context"] = {
                     **offered_context,
@@ -3187,6 +3195,7 @@ class WorkspaceService:
                     plan,
                     feedback,
                     instructions_by_ref=revision_instructions,
+                    patch_intents=interpretation.patch_intents,
                 )
                 delegated_payload["context"] = {
                     "validated_target_feedbacks": [

@@ -6,6 +6,7 @@ import pytest
 
 from app.workspace.conversation.contracts import (
     RevisionInterpretation,
+    RevisionPatchIntent,
     RevisionPlan,
     RevisionTarget,
 )
@@ -96,6 +97,46 @@ def test_design_adapter_carries_explicit_frozen_scope() -> None:
     assert revision.target == "class_diagram:Order"
     assert revision.approved_authority_targets == ["class_diagram:Order"]
     assert revision.approved_downstream_targets is None
+
+
+def test_design_adapter_carries_structured_patch_intents_without_db_fields() -> None:
+    authority = _target("class_diagram:Enrollment", "class", "design")
+    patch = RevisionPatchIntent(
+        operation="add_operation",
+        target=authority.ref,
+        name="decrement",
+        parameters=[{"name": "id", "type": "UUID"}],
+        returnType="int",
+        stepRefs=["UC1:main:2"],
+    )
+
+    payload = design_revision_payload(
+        _plan("design", [authority]),
+        "Add the operation.",
+        patch_intents=[patch],
+    )
+
+    assert payload.patch_intents == (patch,)
+    assert payload.patch_intents[0].receiver_operation_id == ""
+    assert payload.revisions[0].patch_intents == [{
+        "operation": "add_operation",
+        "target": authority.ref,
+        "name": "decrement",
+        "parameters": [{"name": "id", "type": "UUID"}],
+        "returnType": "int",
+        "stepRefs": ["UC1:main:2"],
+    }]
+
+    with pytest.raises(RevisionDeliveryError, match="approved design authorities"):
+        design_revision_payload(
+            _plan("design", [authority]),
+            "Add the operation.",
+            patch_intents=[
+                RevisionPatchIntent(
+                    operation="preserve_existing_order", target="class_diagram:Other"
+                )
+            ],
+        )
 
 
 def test_design_adapter_scopes_each_batch_revision_to_its_own_authority() -> None:
