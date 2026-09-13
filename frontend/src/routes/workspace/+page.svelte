@@ -29,6 +29,7 @@
   let appId = $state('');
   let apps = $state.raw<WorkspaceApp[]>([]);
   let events = $state.raw<WorkspaceEvent[]>([]);
+  let progressCursor = 0;
   let command = $state.raw<WorkspaceCommand | null>(null);
   let currentStage = $state<Stage>('requirements');
   let artifacts = $state.raw<ArtifactDocument | null>(null);
@@ -227,6 +228,7 @@
     try {
       const [snapshot, document] = await Promise.all([getWorkspace(id), getArtifacts(id)]);
       events = snapshot.events;
+      progressCursor = snapshot.progress_cursor;
       classPreview = null;
       previewOpenedForCommand = '';
       command = snapshot.command ?? null;
@@ -261,12 +263,16 @@
 
   function connect(id: string) {
     source?.close();
-    const after = events.at(-1)?.event_id ?? 0;
     source = connectEvents(
       id,
-      after,
+      progressCursor,
       (event) => {
         connected = true;
+        progressCursor = Math.max(progressCursor, event.event_id);
+        if (event.metadata?.progress_event === 'commandStateChanged') {
+          void refreshState(id);
+          return;
+        }
         if (!events.some((item) => item.event_id === event.event_id)) events = [...events, event];
         if (
           event.metadata?.progress_event === 'classDiagramPreviewUpdated' &&
@@ -309,6 +315,7 @@
     const [snapshot, document] = await Promise.all([getWorkspace(id), getArtifacts(id)]);
     const nextCommand = snapshot.command ?? null;
     events = snapshot.events;
+    progressCursor = Math.max(progressCursor, snapshot.progress_cursor);
     command = nextCommand;
     deploymentPreferences = snapshot.deployment_preferences ?? null;
     currentStage = (command?.stage ?? snapshot.current_stage ?? currentStage) as Stage;

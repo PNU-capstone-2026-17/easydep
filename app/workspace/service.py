@@ -395,18 +395,13 @@ class WorkspaceService:
             completed_at=repository.now(),
             error=None,
         )
-        repository.append_event(
+        repository.notify_command_changed(
             app_id,
             command_id=command["command_id"],
             stage="implementation",
-            kind="status",
-            actor="system",
-            text="Implementation completed.",
-            metadata={"status": "COMPLETED", "job_id": job_id},
         )
-        # Publish the durable three-phase snapshot after the completion marker.
-        # ChatTimeline intentionally hides superseded implementation progress before
-        # that marker, so this ordering also restores the final card after a restart.
+        # Rebuild the final three-phase progress view from the durable job state.
+        # The completed card itself is projected from the updated command above.
         self._sync_implementation_progress(app_id, str(command["command_id"]), job)
         return updated
 
@@ -415,7 +410,7 @@ class WorkspaceService:
     ) -> None:
         """재시작 뒤에도 저장된 job 상태를 Workspace 진행 이벤트로 복원한다."""
         previous_updates: dict[str, str] = {}
-        for event in repository.list_events(app_id):
+        for event in repository.list_progress_events(app_id):
             if (
                 event.get("command_id") != command_id
                 or event.get("stage") != "implementation"
@@ -464,12 +459,10 @@ class WorkspaceService:
             )
             if previous_updates.get(step) == key:
                 continue
-            repository.append_event(
+            repository.append_progress_event(
                 app_id,
                 command_id=command_id,
                 stage="implementation",
-                kind="progress",
-                actor="system",
                 text=detail or label,
                 metadata={
                     "progress_event": "implementationStepUpdated",
@@ -620,7 +613,6 @@ class WorkspaceService:
         stage: str | None = None,
     ) -> dict[str, Any]:
         artifact_repository.ensure_app_exists(app_id)
-        user_text = str(payload.get("text") or "").strip()
         action, payload, stage = self._prepare_conversational_message(
             app_id,
             action=action,
@@ -643,20 +635,9 @@ class WorkspaceService:
         resolved_stage = stage or self.infer_stage(app_id, action, payload)
         self._validate_payload(action, payload)
         self._validate_action_reference(app_id, action, payload)
-        text = user_text or str(payload.get("text") or "").strip()
         command_id = str(uuid.uuid4())
         with self._submission_lock:
             command = repository.create_command(command_id, app_id, action, resolved_stage, payload)
-        if text:
-            repository.append_event(
-                app_id,
-                command_id=command_id,
-                stage=resolved_stage,
-                kind="message",
-                actor="user",
-                text=text,
-                metadata={"context": payload.get("context")},
-            )
 
         self._executor.submit(self._execute, command_id)
         return command
@@ -1160,12 +1141,24 @@ class WorkspaceService:
         ):
             return None
         try:
+            target_labels = [
+                str(target.get("provider") or "").upper()
+                + " "
+                + str(target.get("region") or "")
+                for target in preferences.get("targets") or []
+                if isinstance(target, dict)
+            ]
             return self.submit(
                 app_id,
                 action="apply_deployment_preferences",
                 payload={
                     "action_id": latest["command_id"],
                     "deployment_preferences": preferences,
+                    "_timeline_text": (
+                        "Deployment alternatives selected: " + ", ".join(target_labels)
+                        if target_labels
+                        else "Deployment preferences updated."
+                    ),
                 },
                 stage="requirements",
             )
@@ -1203,14 +1196,10 @@ class WorkspaceService:
             completed_at=None if awaiting_input else repository.now(),
             error=None,
         )
-        repository.append_event(
+        repository.notify_command_changed(
             app_id,
             command_id=latest["command_id"],
             stage="design",
-            kind=str(visible.get("kind") or "status"),
-            actor="assistant",
-            text=str(visible.get("message") or "Deployment configuration updated."),
-            metadata={"status": status, **visible},
         )
 
     def present_command(self, app_id: str, command: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1374,14 +1363,10 @@ class WorkspaceService:
             completed_at=None,
             error=None,
         )
-        repository.append_event(
+        repository.notify_command_changed(
             app_id,
             command_id=command_id,
             stage=stage,
-            kind="status",
-            actor="system",
-            text=f"Started {self._stage_label(stage)}.",
-            metadata={"status": "RUNNING", "action": command["action"]},
         )
         try:
             result = self._dispatch(command)
@@ -1406,14 +1391,10 @@ class WorkspaceService:
                     command["stage"] = routed_stage
                     stage = routed_stage
                 repository.update_command(command_id, **changes)
-                repository.append_event(
+                repository.notify_command_changed(
                     app_id,
                     command_id=command_id,
                     stage=stage,
-                    kind=str(result.get("kind") or "action_required"),
-                    actor="assistant",
-                    text=str(result.get("message") or "User input is required."),
-                    metadata=result,
                 )
                 if stage == "requirements":
                     self.apply_saved_deployment_preferences(app_id)
@@ -1425,14 +1406,10 @@ class WorkspaceService:
                 result=result,
                 completed_at=repository.now(),
             )
-            repository.append_event(
+            repository.notify_command_changed(
                 app_id,
                 command_id=command_id,
                 stage=stage,
-                kind="status",
-                actor="assistant",
-                text=str(result.get("message") or f"Completed {self._stage_label(stage)}."),
-                metadata={"status": "COMPLETED", **result},
             )
         except Exception as error:
             detail = self._error_text(error)
@@ -1448,14 +1425,10 @@ class WorkspaceService:
                 error=detail,
                 completed_at=repository.now(),
             )
-            repository.append_event(
+            repository.notify_command_changed(
                 app_id,
                 command_id=command_id,
                 stage=stage,
-                kind="error",
-                actor="system",
-                text=detail,
-                metadata={"status": "FAILED", "error_type": type(error).__name__},
             )
             raise
 
@@ -1984,12 +1957,10 @@ class WorkspaceService:
                 # The retry starts a new implementation run.  Tell the UI to
                 # discard only the previous implementation timeline while
                 # preserving requirement and design conversation history.
-                repository.append_event(
+                repository.append_progress_event(
                     str(command["app_id"]),
                     command_id=str(command["command_id"]),
                     stage="implementation",
-                    kind="status",
-                    actor="system",
                     text="",
                     metadata={"reset_implementation_timeline": True},
                 )
@@ -2016,14 +1987,13 @@ class WorkspaceService:
             current_job = implementation_worker.get(str(payload["job_id"]))
             if str(current_job.get("app_id") or "") != str(command["app_id"]):
                 raise ValueError("The implementation checkpoint does not belong to this app.")
-            repository.append_event(
+            repository.append_progress_event(
                 str(command["app_id"]),
                 command_id=str(command["command_id"]),
                 stage="implementation",
-                kind="status",
-                actor="system",
                 text="Resuming the failed implementation checkpoint.",
                 metadata={
+                    "progress_event": "implementationCheckpointRetryStarted",
                     "status": "CHECKPOINT_RETRY_STARTED",
                     "job_id": str(payload["job_id"]),
                 },
@@ -2511,12 +2481,10 @@ class WorkspaceService:
             detail: str,
             metadata: dict[str, Any] | None = None,
         ) -> None:
-            repository.append_event(
+            repository.append_progress_event(
                 app_id,
                 command_id=command_id,
                 stage="design",
-                kind="progress",
-                actor="system",
                 text=label,
                 metadata={
                     "progress_event": "designStageProgress",
@@ -2633,12 +2601,10 @@ class WorkspaceService:
                 # 그대로 제공한다. 공개 Workspace event에 같은 dict를 넣어 평가 도구가
                 # 내부 설계 함수를 직접 호출하지 않고도 호출·token·repair·cache를 셀 수
                 # 있게 한다. prompt나 LLM 응답 원문은 이 목록에 포함되지 않는다.
-                repository.append_event(
+                repository.append_progress_event(
                     app_id,
                     command_id=command_id,
                     stage="design",
-                    kind="progress",
-                    actor="system",
                     text="Design LLM metrics recorded.",
                     metadata={
                         "progress_event": "designLlmMetrics",
@@ -2793,12 +2759,10 @@ class WorkspaceService:
                 )
             else:
                 return
-            repository.append_event(
+            repository.append_progress_event(
                 app_id,
                 command_id=command_id,
                 stage="requirements",
-                kind="progress",
-                actor="system",
                 text=text,
                 metadata=metadata,
             )
@@ -4472,14 +4436,16 @@ class WorkspaceService:
             status = str(current.get("status") or "")
             if app_id and command_id:
                 if status and status != last_status:
-                    repository.append_event(
+                    repository.append_progress_event(
                         app_id,
                         command_id=command_id,
                         stage="implementation",
-                        kind="status",
-                        actor="system",
                         text=f"Implementation job status: {status}.",
-                        metadata={"status": status, "job_id": job_id},
+                        metadata={
+                            "progress_event": "implementationStatusUpdated",
+                            "status": status,
+                            "job_id": job_id,
+                        },
                     )
                     last_status = status
                 progress = self._implementation_progress_snapshot(current)
@@ -4504,12 +4470,10 @@ class WorkspaceService:
                     )
                     if last_progress.get(step) == progress_key:
                         continue
-                    repository.append_event(
+                    repository.append_progress_event(
                         app_id,
                         command_id=command_id,
                         stage="implementation",
-                        kind="progress",
-                        actor="system",
                         text=str(
                             update.get("detail")
                             or update.get("label")
@@ -4549,12 +4513,10 @@ class WorkspaceService:
                     if last_agent_results.get(task_id) == fingerprint:
                         continue
                     raw_response = str(result.get("raw_response") or "").strip()
-                    repository.append_event(
+                    repository.append_progress_event(
                         app_id,
                         command_id=command_id,
                         stage="implementation",
-                        kind="progress",
-                        actor="system",
                         text=raw_response or f"The result for {task_id} was recorded.",
                         metadata={
                             "progress_event": "implementationAgentResult",
@@ -4637,12 +4599,10 @@ class WorkspaceService:
                 return
             last_progress_fingerprint = fingerprint
             try:
-                repository.append_event(
+                repository.append_progress_event(
                     str(command["app_id"]),
                     command_id=command_id,
                     stage="testing",
-                    kind="progress",
-                    actor="system",
                     text=str(
                         last_event.get("progress_detail")
                         or last_event.get("progress_step_label")
@@ -4693,12 +4653,10 @@ class WorkspaceService:
                 ],
             }.get(node, [])
             for step, label, status, detail in updates:
-                repository.append_event(
+                repository.append_progress_event(
                     str(command["app_id"]),
                     command_id=command_id,
                     stage="testing",
-                    kind="progress",
-                    actor="system",
                     text=detail,
                     metadata={
                         "progress_event": "testingStepUpdated",

@@ -363,29 +363,10 @@ def save_deployment_preferences(
     # Pydantic 기본값은 이전 클라이언트의 요청도 받을 수 있게 해 주지만, 사용자가 직접
     # 선택했다는 뜻은 아니다. exclude_unset=True로 실제 전송한 필드만 저장한다.
     selection = request.model_dump(mode="json", exclude_unset=True)
-    previous = repository.get_deployment_preferences(app_id)
     stored = repository.save_deployment_preferences(app_id, selection)
     if "resource_constraints_text" in selection:
         artifact_repository.update_inputs(
             app_id, resource_constraints_text=request.resource_constraints_text
-        )
-    # 같은 값을 다시 저장할 때 사용자 메시지를 중복으로 남기지 않는다. 실제 선택이
-    # 달라졌을 때만 사람이 읽을 수 있는 요약과 원본 JSON을 이벤트에 함께 기록한다.
-    if previous != stored:
-        summary = ", ".join(
-            (
-                f"{target.provider.upper()} {target.region}"
-                + (f" [{', '.join(target.zones)}]" if target.zones else "")
-            )
-            for target in request.targets
-        )
-        repository.append_event(
-            app_id,
-            stage="requirements",
-            kind="message",
-            actor="user",
-            text=f"Deployment alternatives selected: {summary}",
-            metadata={"deployment_preferences": stored},
         )
     resume = workspace_service.apply_saved_deployment_preferences(app_id)
     return {"preferences": stored, "resume_command": resume}
@@ -468,7 +449,8 @@ def get_workspace(app_id: str) -> dict[str, Any]:
             else repository.get_app_summary(app_id)["current_stage"]
         ),
         "command": command,
-        "events": repository.list_events(app_id, include_llm_timings=False),
+        "events": repository.list_timeline_events(app_id, include_llm_timings=False),
+        "progress_cursor": repository.progress_cursor(app_id),
         "artifacts": artifacts,
         "deployment_preferences": repository.get_deployment_preferences(app_id),
     }
@@ -538,7 +520,7 @@ async def stream_events(
         nonlocal cursor
         idle = 0
         while not await request.is_disconnected():
-            events = repository.list_events(
+            events = repository.list_progress_events(
                 app_id, after=cursor, limit=100, include_llm_timings=False
             )
             if events:

@@ -147,8 +147,9 @@ def test_frontend_can_create_read_and_advance_a_workspace(
         lambda _app_id: commands[-1] if commands else None,
     )
     monkeypatch.setattr(
-        workspace_api.repository, "list_events", lambda _app_id, **_kwargs: []
+        workspace_api.repository, "list_timeline_events", lambda _app_id, **_kwargs: []
     )
+    monkeypatch.setattr(workspace_api.repository, "progress_cursor", lambda _app_id: 0)
     monkeypatch.setattr(
         workspace_api.repository, "get_deployment_preferences", lambda _app_id: None
     )
@@ -167,6 +168,7 @@ def test_frontend_can_create_read_and_advance_a_workspace(
     assert created.json()["command"]["status"] == "QUEUED"
     assert snapshot.status_code == 200
     assert snapshot.json()["current_stage"] == "requirements"
+    assert snapshot.json()["progress_cursor"] == 0
     assert snapshot.json()["artifacts"]["refined_requirements"] == {
         "available": True,
         "status": "ready",

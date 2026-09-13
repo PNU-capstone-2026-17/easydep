@@ -1,4 +1,4 @@
-"""workspace command는 MySQL에, 실시간 event는 bounded process memory에 둔다.
+"""영구 Workspace 대화는 command에, 실행 중 진행 이벤트는 메모리에 둔다.
 
 이 모듈은 action이 무엇을 실행할지 판단하지 않는다. command의 동시 실행 방지, 상태 저장과
 시간 직렬화처럼 데이터베이스에 가까운 규칙만 담당하며 HTTP status code도 결정하지 않는다.
@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from datetime import UTC, datetime, timedelta, timezone
-from itertools import count
 from threading import RLock
 from typing import Any
 
@@ -36,10 +35,8 @@ DESIGN_ARTIFACT_STAGES = {
 
 KST = timezone(timedelta(hours=9), name="KST")
 _EVENT_LIMIT_PER_APP = 1_000
-# Use an epoch-based start so a browser's Last-Event-ID from before a process
-# restart cannot hide newly emitted in-memory events behind a reset-to-one cursor.
-_event_ids = count(int(datetime.now(UTC).timestamp() * 1_000_000))
 _event_lock = RLock()
+_last_progress_event_id = 0
 _events: dict[str, deque[dict[str, Any]]] = defaultdict(lambda: deque(maxlen=_EVENT_LIMIT_PER_APP))
 
 
@@ -57,6 +54,12 @@ def _timestamp_in_kst(value: datetime | None) -> str | None:
     if value is None:
         return None
     return value.replace(tzinfo=UTC).astimezone(KST).isoformat()
+
+
+def _timeline_event_id(value: datetime, slot: int) -> int:
+    """Create sortable numeric IDs without sharing the SSE progress cursor."""
+
+    return int(value.replace(tzinfo=UTC).timestamp() * 1_000_000) * 4 + slot
 
 
 def workflow_stage(stage: str | None) -> str:
@@ -199,17 +202,16 @@ def update_command(command_id: str, **changes: Any) -> dict[str, Any]:
         return command_dict(row)
 
 
-def append_event(
+def append_progress_event(
     app_id: str,
     *,
     stage: str,
-    kind: str,
-    actor: str,
     text: str,
     command_id: str | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """프로세스 메모리의 bounded workspace timeline에 event를 추가한다."""
+    """실시간 표시용 진행 이벤트만 bounded process memory에 추가한다."""
+
     with session_scope() as session:
         if session.get(App, app_id) is None:
             raise KeyError(app_id)
@@ -218,32 +220,55 @@ def append_event(
             if command is None or command.app_id != app_id:
                 raise KeyError(command_id)
     with _event_lock:
+        global _last_progress_event_id
+        created_at = now()
+        _last_progress_event_id = max(
+            _timeline_event_id(created_at, 1),
+            _last_progress_event_id + 1,
+        )
         event = {
-            "event_id": next(_event_ids),
+            "event_id": _last_progress_event_id,
             "app_id": app_id,
             "command_id": command_id,
             "stage": stage,
-            "kind": kind,
-            "actor": actor,
+            "kind": "progress",
+            "actor": "system",
             "text": text,
             "metadata": metadata or {},
-            "created_at": _timestamp_in_kst(now()),
+            "created_at": _timestamp_in_kst(created_at),
         }
         _events[app_id].append(event)
         return dict(event)
 
 
-def list_events(
+def notify_command_changed(
+    app_id: str,
+    *,
+    stage: str,
+    command_id: str,
+) -> dict[str, Any]:
+    """Wake live clients without duplicating the command's durable cards."""
+
+    return append_progress_event(
+        app_id,
+        command_id=command_id,
+        stage=stage,
+        text="Workspace state changed.",
+        metadata={"progress_event": "commandStateChanged"},
+    )
+
+
+def list_progress_events(
     app_id: str,
     *,
     after: int = 0,
     limit: int = 500,
     include_llm_timings: bool = True,
 ) -> list[dict[str, Any]]:
-    """현재 process가 보유한 ``after`` 이후 event를 반환한다.
+    """현재 process가 보유한 ``after`` 이후 진행 이벤트를 반환한다.
 
-    서버 재시작 전 event는 의도적으로 복원하지 않는다. 최종 상태는 MySQL의 command에서
-    복원하고, event history는 앱당 최근 1,000건으로 제한한다.
+    서버 재시작 전 진행 상황은 복원하지 않는다. 사용자 메시지와 최종 카드는
+    ``list_timeline_events``가 MySQL command에서 복원한다.
     """
     with _event_lock:
         events = [
@@ -255,6 +280,134 @@ def list_events(
             include_llm_timings=include_llm_timings,
         )
     return events
+
+
+def _command_timeline_events(row: WorkspaceCommand) -> list[dict[str, Any]]:
+    """Project one persisted command into its durable user and terminal cards."""
+
+    payload = row.payload if isinstance(row.payload, dict) else {}
+    result = row.result if isinstance(row.result, dict) else {}
+    events: list[dict[str, Any]] = []
+    user_text = str(payload.get("text") or payload.get("_timeline_text") or "").strip()
+    if user_text:
+        events.append(
+            {
+                "event_id": _timeline_event_id(row.created_at, 0),
+                "app_id": row.app_id,
+                "command_id": row.command_id,
+                "stage": row.stage,
+                "kind": "message",
+                "actor": "user",
+                "text": user_text,
+                "metadata": {"context": payload.get("context")},
+                "created_at": _timestamp_in_kst(row.created_at),
+            }
+        )
+
+    status = str(row.status or "")
+    if status in ACTIVE_STATUSES:
+        return events
+    result_kind = str(result.get("kind") or "")
+    if status in {"FAILED", "INTERRUPTED"}:
+        kind = "error"
+        actor = "system"
+        text = str(row.error or result.get("message") or "Workspace command failed.")
+        metadata = {"status": status, "error": row.error}
+    else:
+        text = str(result.get("message") or "").strip()
+        if not text:
+            return events
+        kind = (
+            "message"
+            if result_kind == "reply"
+            else result_kind
+            if result_kind in {"question", "action_required"}
+            else "status"
+        )
+        actor = "assistant"
+        metadata = {"status": status, **result}
+
+    # Questions can be marked COMPLETED later when their answer arrives. Keep
+    # the card beside its original command instead of moving it after the answer.
+    conversational = result_kind in {"reply", "question", "action_required"}
+    terminal_at = (
+        row.started_at if conversational else row.completed_at
+    ) or row.started_at or row.created_at
+    events.append(
+        {
+            "event_id": _timeline_event_id(terminal_at, 2),
+            "app_id": row.app_id,
+            "command_id": row.command_id,
+            "stage": row.stage,
+            "kind": kind,
+            "actor": actor,
+            "text": text,
+            "metadata": metadata,
+            "created_at": _timestamp_in_kst(terminal_at),
+        }
+    )
+    return events
+
+
+def list_timeline_events(
+    app_id: str,
+    *,
+    command_limit: int = 500,
+    include_llm_timings: bool = False,
+) -> list[dict[str, Any]]:
+    """Combine durable command cards with this process's transient progress."""
+
+    with session_scope() as session:
+        rows = list(
+            session.scalars(
+                select(WorkspaceCommand)
+                .where(WorkspaceCommand.app_id == app_id)
+                .order_by(WorkspaceCommand.created_at.desc())
+                .limit(command_limit)
+            ).all()
+        )
+    rows.reverse()
+    durable = [event for row in rows for event in _command_timeline_events(row)]
+    progress = [
+        event
+        for event in list_progress_events(
+            app_id,
+            limit=_EVENT_LIMIT_PER_APP,
+            include_llm_timings=include_llm_timings,
+        )
+        if event.get("metadata", {}).get("progress_event") != "commandStateChanged"
+    ]
+
+    # An awaiting command has no completed_at. During the current process, put
+    # its terminal card after the last progress update for that command.
+    last_progress = {
+        command_id: max(
+            int(event["event_id"])
+            for event in progress
+            if event.get("command_id") == command_id
+        )
+        for command_id in {
+            str(event.get("command_id") or "") for event in progress
+        }
+        if command_id
+    }
+    for event in durable:
+        if event.get("actor") == "user":
+            continue
+        progress_id = last_progress.get(str(event.get("command_id") or ""))
+        if progress_id is not None and int(event["event_id"]) <= progress_id:
+            event["event_id"] = progress_id + 1
+    return sorted([*durable, *progress], key=lambda event: int(event["event_id"]))
+
+
+def progress_cursor(app_id: str) -> int:
+    """Return the SSE cursor independently from durable timeline card IDs."""
+
+    with _event_lock:
+        return max(
+            (int(event["event_id"]) for event in _events.get(app_id, ())),
+            default=0,
+        )
 
 
 def get_event_llm_timings(

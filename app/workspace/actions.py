@@ -146,6 +146,7 @@ _INTERNAL_CONVERSATION_FIELDS = {
     "revision_interpretation",
     "revision_origin_stage",
     "revision_plan",
+    "_timeline_text",
     "validated_impact",
     "validated_target_feedbacks",
     "validated_targets",
