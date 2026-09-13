@@ -342,6 +342,11 @@ def _normalize_authored_workflow(
             return [normalize_runtime_selector(child) for child in item]
         if not isinstance(item, str):
             return item
+        # `#/` addresses an empty-key member under RFC 6901, not the response
+        # root. Models commonly use it as a shorthand for the full body; that
+        # intent has one unambiguous executable representation.
+        if item == "$response.body#/":
+            return "$response.body"
         match = _NONSTANDARD_STEP_OUTPUT_SELECTOR.fullmatch(item)
         if match is None or "[" not in match.group("tail"):
             return item

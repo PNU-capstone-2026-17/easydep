@@ -557,7 +557,7 @@ def test_name_value_output_list_is_normalized_to_arazzo_output_map() -> None:
     normalized = dynamic._normalize_authored_workflow(workflow, candidate)
 
     assert normalized["steps"][0]["outputs"] == {
-        "exportFile": "$response.body#/"
+        "exportFile": "$response.body"
     }
     assert isinstance(workflow["steps"][0]["outputs"], list)
     dynamic._validate_authored_workflow(normalized)
