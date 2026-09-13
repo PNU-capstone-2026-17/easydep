@@ -286,6 +286,7 @@ export interface WorkspaceSnapshot {
   current_stage: Stage;
   command?: WorkspaceCommand | null;
   events: WorkspaceEvent[];
+  progress_cursor: number;
   artifacts: Record<string, ArtifactSummary>;
   deployment_preferences?: DeploymentPreferences | null;
 }

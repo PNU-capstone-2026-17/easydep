@@ -285,6 +285,76 @@ def _complete_collaborations(
     })
 
 
+def _replace_selected_collaborations(
+    index: ScenarioIndex,
+    model: BCEModel,
+    current: BCEModel,
+    selected: list[UseCase],
+    *,
+    feedback: str,
+    cache: AcceptedUnitCache | None = None,
+) -> BCEModel:
+    """Replace only selected use-case collaborations and preserve legacy IDs."""
+
+    replacements, signals = _replace_use_cases(
+        index, model, selected, feedback=feedback, cache=cache,
+    )
+    if signals:
+        raise ValueError(
+            "The selected collaboration needs an operation-contract revision first."
+        )
+    selected_ids = {use_case.id for use_case in selected}
+    originals_by_use_case: dict[str, list[Collaboration]] = {
+        use_case.id: [
+            item for item in current.Collaborations
+            if use_case.id in item.use_case_ids
+        ]
+        for use_case in selected
+    }
+    if any(len(items) > 1 for items in originals_by_use_case.values()):
+        raise ValueError(
+            "The selected legacy use case has multiple collaboration roots and cannot be "
+            "replaced as one bounded target."
+        )
+
+    replacement_by_original_id: dict[str, Collaboration] = {}
+    append_replacements: list[Collaboration] = []
+    for use_case in selected:
+        replacement = replacements.get(use_case.id)
+        if replacement is None:
+            raise ValueError(f"No revised collaboration was produced for {use_case.id}.")
+        originals = originals_by_use_case[use_case.id]
+        if originals:
+            original_id = originals[0].collaboration_id
+            payload = replacement.model_dump(by_alias=True)
+            call_id_map = {
+                str(call.get("callId") or ""): f"{original_id}::call:{position}"
+                for position, call in enumerate(payload.get("calls") or [], start=1)
+                if isinstance(call, dict) and call.get("callId")
+            }
+            for call in payload.get("calls") or []:
+                if not isinstance(call, dict) or not call.get("parentCallId"):
+                    continue
+                call["parentCallId"] = call_id_map.get(
+                    str(call["parentCallId"]), str(call["parentCallId"])
+                )
+            payload["collaborationId"] = original_id
+            replacement_by_original_id[original_id] = Collaboration.model_validate(payload)
+        else:
+            append_replacements.append(replacement)
+
+    preserved = [
+        replacement_by_original_id.get(item.collaboration_id, item)
+        for item in current.Collaborations
+        if not selected_ids.intersection(item.use_case_ids)
+        or item.collaboration_id in replacement_by_original_id
+    ]
+    return BCEModel.model_validate({
+        **_payload(model),
+        "Collaborations": [*preserved, *append_replacements],
+    })
+
+
 def _validated(model: BCEModel, index: ScenarioIndex, action: str) -> BCEModel:
     report = validate_class_model(model, index)
     if report.errors or report.findings:
@@ -444,6 +514,23 @@ def revise_class_model(
                 cache=cache,
             )
         skeleton = operations.compose_fragments(accepted_inventory, fragments)
+        operation_ids = {
+            operation.operation_id
+            for item in skeleton.Classes
+            for operation in item.operations
+        }
+        if all(
+            call.receiver_operation_id in operation_ids
+            for item in current.Collaborations
+            for call in item.calls
+        ):
+            revised = BCEModel.model_validate({
+                **_payload(skeleton),
+                "Collaborations": [
+                    item.model_dump(by_alias=True) for item in current.Collaborations
+                ],
+            })
+            return _accepted_model(current, revised, targeted_refs=targets)
         selected_use_cases = [
             use_case for use_case in _standalone(index)
             if use_case.id in selected_ids or any(
@@ -466,6 +553,15 @@ def revise_class_model(
             use_case for use_case in _standalone(index) if use_case.id in selected_ids
         ]
         directive = feedback
+        revised = _replace_selected_collaborations(
+            index,
+            skeleton,
+            current,
+            selected_use_cases,
+            feedback=directive,
+            cache=cache,
+        )
+        return _accepted_model(current, revised, targeted_refs=targets)
     revised = _complete_collaborations(
         index,
         skeleton,

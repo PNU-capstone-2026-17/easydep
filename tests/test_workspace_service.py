@@ -60,7 +60,7 @@ def test_testing_failure_waits_without_starting_implementation(
     }
     updates: list[dict[str, Any]] = []
     monkeypatch.setattr(repository, "update_command", lambda _id, **kw: updates.append(kw))
-    monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(repository, "append_progress_event", lambda *args, **kwargs: None)
     monkeypatch.setattr(repository, "now", lambda: datetime.now(UTC).replace(tzinfo=None))
 
     service = WorkspaceService()
@@ -224,6 +224,39 @@ def test_workspace_event_summary_omits_large_llm_contents() -> None:
     assert len(row.event_data["llm_timing_events"]) == 2
 
 
+def test_persisted_command_projects_user_message_and_terminal_card() -> None:
+    created_at = datetime(2026, 9, 13, 1, 2, 3, tzinfo=UTC)
+    row = SimpleNamespace(
+        command_id="command-1",
+        app_id="app-1",
+        action="message",
+        stage="design",
+        status="AWAITING_INPUT",
+        payload={
+            "text": "Revise CourseOffering.",
+            "context": {"artifact_stage": "class_diagram"},
+        },
+        result={
+            "kind": "action_required",
+            "message": "Design revision completed. Review the result.",
+            "current_stage": "class_diagram",
+        },
+        error=None,
+        created_at=created_at,
+        started_at=created_at,
+        completed_at=None,
+    )
+
+    events = repository._command_timeline_events(row)
+
+    assert [(event["actor"], event["kind"]) for event in events] == [
+        ("user", "message"),
+        ("assistant", "action_required"),
+    ]
+    assert events[0]["text"] == "Revise CourseOffering."
+    assert events[1]["metadata"]["current_stage"] == "class_diagram"
+
+
 @pytest.mark.parametrize("action", ["start_implementation", "delegate_repair"])
 def test_reconcile_implementation_command_closes_stale_running_command(
     monkeypatch,
@@ -249,8 +282,8 @@ def test_reconcile_implementation_command_closes_stale_running_command(
         workspace_module.implementation_worker, "get", lambda _job_id: completed_job
     )
     monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: updated)
-    monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: events.append(kwargs))
-    monkeypatch.setattr(repository, "list_events", lambda _app_id: [])
+    monkeypatch.setattr(repository, "append_progress_event", lambda *args, **kwargs: events.append(kwargs))
+    monkeypatch.setattr(repository, "list_progress_events", lambda _app_id: [])
     monkeypatch.setattr(
         repository,
         "now",
@@ -264,7 +297,7 @@ def test_reconcile_implementation_command_closes_stale_running_command(
         service.shutdown()
 
     assert result["status"] == "COMPLETED"
-    assert events[0]["metadata"]["status"] == "COMPLETED"
+    assert events[0]["metadata"]["progress_event"] == "commandStateChanged"
     assert [event["metadata"]["step"] for event in events[1:]] == [
         "phase-backend",
         "phase-frontend",
@@ -375,8 +408,8 @@ def test_reconcile_implementation_command_restores_progress_after_restart(
         "get",
         lambda _job_id: {"job_id": "job-1", "status": "RUNNING"},
     )
-    monkeypatch.setattr(repository, "list_events", lambda _app_id: [])
-    monkeypatch.setattr(repository, "append_event", lambda *args, **kwargs: events.append(kwargs))
+    monkeypatch.setattr(repository, "list_progress_events", lambda _app_id: [])
+    monkeypatch.setattr(repository, "append_progress_event", lambda *args, **kwargs: events.append(kwargs))
     monkeypatch.setattr(
         repository,
         "update_command",
@@ -444,10 +477,10 @@ def test_sync_implementation_progress_emits_changed_owner_file_only(monkeypatch)
             }
         )
     appended: list[dict] = []
-    monkeypatch.setattr(repository, "list_events", lambda _app_id: previous_events)
+    monkeypatch.setattr(repository, "list_progress_events", lambda _app_id: previous_events)
     monkeypatch.setattr(
         repository,
-        "append_event",
+        "append_progress_event",
         lambda *args, **kwargs: appended.append(kwargs),
     )
     monkeypatch.setattr(
@@ -1310,6 +1343,49 @@ def test_saved_coordinates_do_not_answer_a_later_budget_question(monkeypatch) ->
         service.shutdown()
 
 
+def test_saved_coordinates_add_durable_timeline_text_to_the_resume_command(
+    monkeypatch,
+) -> None:
+    preferences = {
+        "targets": [
+            {
+                "provider": "aws",
+                "region": "ap-northeast-2",
+                "zones": ["ap-northeast-2a"],
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        repository, "get_deployment_preferences", lambda _app_id: preferences
+    )
+    monkeypatch.setattr(
+        repository,
+        "latest_command",
+        lambda _app_id: {
+            "command_id": "provider-question",
+            "stage": "requirements",
+            "status": "AWAITING_INPUT",
+            "result": {"resource_questions": [{"field": "provider"}]},
+        },
+    )
+    submitted: dict[str, Any] = {}
+    service = WorkspaceService()
+    monkeypatch.setattr(
+        service,
+        "submit",
+        lambda app_id, **values: submitted.update({"app_id": app_id, **values})
+        or values,
+    )
+    try:
+        service.apply_saved_deployment_preferences("app-1")
+    finally:
+        service.shutdown()
+
+    assert submitted["payload"]["_timeline_text"] == (
+        "Deployment alternatives selected: AWS ap-northeast-2"
+    )
+
+
 def test_initial_workspace_request_forwards_structured_monthly_budget(
     monkeypatch,
 ) -> None:
@@ -1361,11 +1437,11 @@ def test_workspace_cloud_options_include_supported_default_regions() -> None:
     assert seoul["zones"]
 
 
-def test_requirements_progress_is_persisted_as_workspace_events(monkeypatch) -> None:
+def test_requirements_progress_is_emitted_as_transient_workspace_events(monkeypatch) -> None:
     events = []
     monkeypatch.setattr(
         repository,
-        "append_event",
+        "append_progress_event",
         lambda *args, **kwargs: events.append({"app_id": args[0], **kwargs}),
     )
 
@@ -1380,7 +1456,7 @@ def test_requirements_progress_is_persisted_as_workspace_events(monkeypatch) -> 
         },
     )
 
-    assert [event["kind"] for event in events] == ["progress", "progress"]
+    assert len(events) == 2
     assert events[0]["stage"] == "requirements"
     assert events[0]["command_id"] == "command-1"
     assert events[1]["metadata"]["elapsedSeconds"] == 1.25
@@ -1439,7 +1515,7 @@ def test_design_operation_emits_a_named_progress_card(monkeypatch) -> None:
     events = []
     monkeypatch.setattr(
         repository,
-        "append_event",
+        "append_progress_event",
         lambda *args, **kwargs: events.append({"app_id": args[0], **kwargs}),
     )
 
@@ -1538,7 +1614,7 @@ def test_design_operation_exposes_existing_llm_timing_events(monkeypatch) -> Non
     events = []
     monkeypatch.setattr(
         repository,
-        "append_event",
+        "append_progress_event",
         lambda *args, **kwargs: events.append({"app_id": args[0], **kwargs}),
     )
 
@@ -1592,7 +1668,7 @@ def test_design_operation_publishes_only_the_latest_class_preview(monkeypatch) -
     )
     monkeypatch.setattr(
         repository,
-        "append_event",
+        "append_progress_event",
         lambda *args, **kwargs: events.append({"app_id": args[0], **kwargs}),
     )
 
@@ -1722,7 +1798,7 @@ def test_design_operation_marks_a_generated_draft_as_needing_review(
     events = []
     monkeypatch.setattr(
         repository,
-        "append_event",
+        "append_progress_event",
         lambda *args, **kwargs: events.append({"app_id": args[0], **kwargs}),
     )
 
@@ -1903,7 +1979,7 @@ def test_completed_deployment_configuration_finishes_workspace_wait(
     )
     monkeypatch.setattr(
         repository,
-        "append_event",
+        "append_progress_event",
         lambda app_id, **values: events.append((app_id, values)),
     )
     monkeypatch.setattr(repository, "now", lambda: "now")
@@ -1919,7 +1995,7 @@ def test_completed_deployment_configuration_finishes_workspace_wait(
         "message",
         "start_implementation",
     ]
-    assert events[0][1]["metadata"]["status"] == "COMPLETED"
+    assert events[0][1]["metadata"]["progress_event"] == "commandStateChanged"
 
 
 def test_design_findings_without_an_artifact_require_revision() -> None:
@@ -2013,7 +2089,7 @@ def test_requirements_progress_tracks_only_active_use_case_spec_tasks(
     events = []
     monkeypatch.setattr(
         repository,
-        "append_event",
+        "append_progress_event",
         lambda *args, **kwargs: events.append({"app_id": args[0], **kwargs}),
     )
 
@@ -2043,7 +2119,7 @@ def test_requirements_progress_exposes_concurrent_analysis_steps(monkeypatch) ->
     events = []
     monkeypatch.setattr(
         repository,
-        "append_event",
+        "append_progress_event",
         lambda *args, **kwargs: events.append({"app_id": args[0], **kwargs}),
     )
 
@@ -2318,7 +2394,7 @@ def test_start_testing_persists_checkpoint_in_the_command(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         repository,
-        "append_event",
+        "append_progress_event",
         lambda _app_id, **values: events.append(values) or values,
     )
 
@@ -2361,7 +2437,6 @@ def test_start_testing_persists_checkpoint_in_the_command(monkeypatch) -> None:
 
     assert updates[0]["payload"]["testing_checkpoint"]["current_node"] == "queued"
     assert len(events) == 2
-    assert all(event["kind"] == "progress" for event in events)
     assert [event["metadata"]["progress_event"] for event in events] == [
         "testingProgressUpdated",
         "testingStepUpdated",
@@ -2980,7 +3055,7 @@ def test_rerun_implementation_creates_a_new_job(monkeypatch) -> None:
     monkeypatch.setattr(workspace_module.implementation_worker, "create_job", fake_create_job)
     monkeypatch.setattr(
         workspace_module.repository,
-        "append_event",
+        "append_progress_event",
         lambda *args, **kwargs: events.append(kwargs),
     )
     monkeypatch.setattr(
@@ -3048,7 +3123,7 @@ def test_retry_implementation_resumes_the_failed_job_checkpoint(monkeypatch) -> 
     )
     monkeypatch.setattr(
         workspace_module.repository,
-        "append_event",
+        "append_progress_event",
         lambda *args, **kwargs: events.append(kwargs),
     )
     monkeypatch.setattr(

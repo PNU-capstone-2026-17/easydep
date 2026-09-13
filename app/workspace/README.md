@@ -8,7 +8,8 @@
 
 - **command:** 사용자가 보낸 한 번의 요청. `QUEUED → RUNNING → COMPLETED/FAILED` 또는
   `AWAITING_INPUT` 상태를 가진다.
-- **event:** 타임라인에 추가되는 읽기 전용 기록. 진행률, 질문, 결과와 오류를 표시한다.
+- **timeline card:** command 입력·결과에서 복원하는 영구 사용자 메시지와 최종 카드.
+- **progress event:** 실행 중에만 메모리와 SSE로 전달하는 진행률·미리보기 신호.
 - **artifact:** 단계가 만든 구조화된 결과나 파일.
 - **live preview:** 클래스 생성처럼 오래 걸리는 작업의 중간 결과. 완료 artifact와 구분한다.
 
@@ -20,7 +21,7 @@
 | `contracts.py` | 공통 대기 이유와 action offer 계약 |
 | `actions.py` | action 이름·payload·단계 정책과 다음 action registry |
 | `service.py` | 명령 실행, 단계 전환, 복구, 진행 event와 결과 요약 |
-| `repository.py` | workspace command/event의 MySQL 읽기·쓰기 |
+| `repository.py` | MySQL command 기반 타임라인 복원과 process-local 진행 이벤트 |
 | `checkpoints.py` | 완료된 단계까지의 최신 산출물을 새 앱으로 복사 |
 | `live_preview.py` | process-local 중간 다이어그램과 SVG cache |
 | `conversation/` | 자연어 의도, 영속 대화 문맥과 읽기 전용 프로젝트 도구 |
@@ -33,10 +34,13 @@ POST /api/workspace/apps/{app_id}/commands
   → workspace_commands에 QUEUED 저장
   → worker가 RUNNING으로 선점
   → 요구사항·설계·구현·테스팅 단계의 공개된 진입 함수 호출
-  → 진행 event를 append
+  → 실행 중 progress event를 append
   → 결과를 저장하고 최종 상태 갱신
-  → SSE 연결을 열어 둔 브라우저가 새 event를 표시
+  → 상태 변경 신호를 받은 브라우저가 command 기반 최종 카드를 다시 조회
 ```
+
+사용자 메시지와 질문·완료·오류 카드는 `workspace_commands.payload/result/status`에서
+재구성하므로 서버를 재시작해도 유지된다. 메모리에는 영구 카드의 복사본을 두지 않는다.
 
 서버가 재시작되면 실행 중이던 command를 무조건 성공이나 실패로 바꾸지 않는다. 저장된
 상태와 단계별 checkpoint를 확인해 이어서 실행할 수 있는 것은 다시 실행하고, 외부 process 상태를

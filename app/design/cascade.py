@@ -39,6 +39,8 @@ from app.design.rtm import (
     linked_elements,
 )
 from app.design.schemas.architecture_state import ArchitectureState
+from app.design.schemas.class_model import BCEModel
+from app.design.services.class_diagram.patches import apply_structured_patches
 from app.repositories import artifact_repository
 
 
@@ -167,16 +169,28 @@ def _apply(
     targets: set[str],
     *,
     revision_targets: set[str] | None = None,
+    patch_intents: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """한 스테이지에서 대상 항목만 고치고, 검사·렌더까지 마친 상태 조각을 돌려준다."""
     original = state.get(spec.model_key) or {}
     reviser_targets = revision_targets if revision_targets is not None else targets
-    revised = spec.revise(original, feedback, state, reviser_targets)
+    if patch_intents:
+        if spec.stage != "class_diagram":
+            raise ValueError("Structured design patches currently require a class target.")
+        revised = apply_structured_patches(original, patch_intents)
+        # Validate the accepted schema without serializing it again: a dump of
+        # a legacy artifact would add optional ``stableId: null`` fields to
+        # every untouched element and violate the minimal-diff contract.
+        BCEModel.model_validate(revised)
+    else:
+        revised = spec.revise(original, feedback, state, reviser_targets)
 
     merge_targets = set(targets)
     if spec.stage == "class_diagram":
         merge_targets.update(
-            _class_collaboration_dependency_targets(original, revised, targets)
+            _changed_collaboration_targets(original, revised)
+            if patch_intents
+            else _class_collaboration_dependency_targets(original, revised, targets)
         )
     merged = merge_model(spec, original, revised, merge_targets)
     # The LLM boundary ends here: merge_model must retain every non-target
@@ -199,6 +213,33 @@ def _apply(
     if spec.check_key:
         patch[spec.check_key] = _check_report(spec, merged, working)
     return patch
+
+
+def _changed_collaboration_targets(
+    original: dict[str, Any], revised: dict[str, Any]
+) -> set[str]:
+    """Return exact collaboration IDs changed by a deterministic patch.
+
+    Operation renames must update receiver references, while operation additions
+    do not own any collaboration change. Comparing the two bounded artifacts
+    avoids widening the merge to every collaboration that mentions the class.
+    """
+
+    def indexed(model: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        return {
+            str(item.get("collaborationId") or "").strip(): item
+            for item in model.get("Collaborations") or []
+            if isinstance(item, dict)
+            and str(item.get("collaborationId") or "").strip()
+        }
+
+    before = indexed(original)
+    after = indexed(revised)
+    return {
+        collaboration_id
+        for collaboration_id in before.keys() | after.keys()
+        if before.get(collaboration_id) != after.get(collaboration_id)
+    }
 
 
 def _class_collaboration_dependency_targets(
@@ -421,6 +462,8 @@ def revise_and_cascade(
     *,
     approved_authority_targets: set[str] | None = None,
     approved_downstream_targets: set[str] | None = None,
+    revision_context_targets: set[str] | None = None,
+    patch_intents: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """`{stage}:{element}` 를 고치고, 증명된 관련 항목만 따라 고친다.
 
@@ -461,6 +504,17 @@ def revise_and_cascade(
         row["stage"] == stage and row["element"] == element for row in rtm["rows"]
     ):
         raise UnknownTarget(f"{target} is not in the current artifacts.")
+    context_elements: set[str] = set()
+    for context_target in revision_context_targets or set():
+        parsed_context = _design_target(context_target)
+        if parsed_context is None or parsed_context.kind != stage:
+            continue
+        if not any(
+            row["stage"] == stage and row["element"] == parsed_context.id
+            for row in rtm["rows"]
+        ):
+            raise UnknownTarget(f"{context_target} is not in the current artifacts.")
+        context_elements.add(parsed_context.id)
 
     scheduled = _frozen_cascade_scope(
         working,
@@ -493,12 +547,20 @@ def revise_and_cascade(
         if deterministic_projection:
             patch = _apply_projection(DESIGN_SPECS[target_stage], working, pending)
         else:
+            reviser_pending = set(pending)
+            if target_stage == stage and element in pending:
+                reviser_pending.update(context_elements)
             patch = _apply(
                 DESIGN_SPECS[target_stage],
                 working,
                 revision_feedback,
                 merge_pending,
-                revision_targets=pending,
+                revision_targets=reviser_pending,
+                patch_intents=(
+                    patch_intents
+                    if target_stage == stage and element in pending
+                    else None
+                ),
             )
         working.update(patch)
         processed.setdefault(target_stage, set()).update(pending)

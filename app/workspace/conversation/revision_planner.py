@@ -71,6 +71,10 @@ class OwnershipRegistry:
             for kind in {"api", "schema"}
             for scope in {"presentation", "contract"}
         },
+        **{
+            ("workload", scope): OwnershipRule(local=True)
+            for scope in {"presentation", "contract", "behavior"}
+        },
         # A sequence topology is a projection of an explicit class
         # collaboration/operation. Broad trace provenance is intentionally not
         # enough to enter this rule.
@@ -282,6 +286,47 @@ class RevisionPlanner:
                 explanation=(
                     "This broad change requires regenerating the selected design stage and "
                     "its current downstream artifacts. Confirm this scope before continuing."
+                ),
+            )
+        read_only_deployment = all(
+            target.owner == "design"
+            and (
+                target.kind == "resource"
+                or (
+                    target.kind == "workload"
+                    and not target.ref.startswith("deployment_diagram:")
+                )
+            )
+            for target in requested
+        )
+        if read_only_deployment:
+            try:
+                authority = tuple(self._normalize_targets(
+                    ["design_stage:deployment_diagram"],
+                    require_editable=False,
+                ))
+            except (TypeError, ValueError):
+                return self._result(
+                    intent,
+                    snapshot,
+                    status="unsupported",
+                    requested=requested,
+                    reasons=("targeted_reviser_unavailable",),
+                    explanation="The selected deployment projection has no current owning stage.",
+                )
+            relations = self.tools.revision_relations(authority)
+            return self._result(
+                intent,
+                snapshot,
+                status="needs_confirmation",
+                requested=requested,
+                authority=authority,
+                downstream=self._downstream_targets(relations, authority),
+                execution_mode="stage_rewind",
+                reasons=("targeted_reviser_unavailable", "stage_rewind_requires_confirmation"),
+                explanation=(
+                    "This deployment projection is not directly editable. Confirm regenerating "
+                    "its owning deployment stage with the requested change."
                 ),
             )
         rules = [self.registry.lookup(target.kind, intent.semantic_scope) for target in requested]

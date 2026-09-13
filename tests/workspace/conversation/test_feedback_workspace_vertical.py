@@ -101,7 +101,7 @@ def test_feedback_option_requires_confirmation_then_revises_requirements(
         repository, "latest_command", lambda _app_id, **_kw: list(commands.values())[-1]
     )
     monkeypatch.setattr(repository, "update_command", update)
-    monkeypatch.setattr(repository, "append_event", lambda *_args, **_kw: None)
+    monkeypatch.setattr(repository, "append_progress_event", lambda *_args, **_kw: None)
     monkeypatch.setattr(repository, "now", lambda: datetime.now(UTC).replace(tzinfo=None))
     monkeypatch.setattr(
         workspace_module.artifact_repository, "ensure_app_exists", lambda _app: None

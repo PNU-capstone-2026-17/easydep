@@ -547,7 +547,7 @@ def test_failed_dispatch_does_not_close_the_source_question(monkeypatch) -> None
     closed: list[dict[str, Any]] = []
     monkeypatch.setattr(repository, "get_command", lambda *_args, **_kwargs: command)
     monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: command)
-    monkeypatch.setattr(repository, "append_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(repository, "append_progress_event", lambda *_args, **_kwargs: None)
 
     def record_closed(source: dict[str, Any]) -> None:
         closed.append(source)
@@ -595,7 +595,7 @@ def test_stale_dispatch_does_not_close_the_source_question(monkeypatch) -> None:
     generic_completed: list[dict[str, Any]] = []
     monkeypatch.setattr(repository, "get_command", lambda *_args, **_kwargs: command)
     monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: command)
-    monkeypatch.setattr(repository, "append_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(repository, "append_progress_event", lambda *_args, **_kwargs: None)
 
     def record_closed(source: dict[str, Any]) -> None:
         closed.append(source)

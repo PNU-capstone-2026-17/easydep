@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from app.design.service import BatchReviseRequest, ReviseRequest
 from app.requirements.contracts.request import FeedbackEdit
 
-from .contracts import RevisionPlan, RevisionTarget
+from .contracts import RevisionPatchIntent, RevisionPlan, RevisionTarget
 
 
 class RevisionDeliveryError(ValueError):
@@ -37,6 +37,7 @@ class DesignRevisionPayload:
     revisions: tuple[ReviseRequest, ...]
     approved_authority_targets: tuple[str, ...]
     approved_downstream_targets: tuple[str, ...]
+    patch_intents: tuple[RevisionPatchIntent, ...] = ()
 
     def batch_request(self) -> BatchReviseRequest:
         """Build the design service request without dropping frozen scope."""
@@ -105,14 +106,25 @@ def design_revision_payload(
     instruction: str,
     *,
     instructions_by_ref: Mapping[str, str] | None = None,
+    patch_intents: Iterable[RevisionPatchIntent] | None = None,
 ) -> DesignRevisionPayload:
     """Create explicit design refs plus frozen authority/downstream boundaries."""
     _require_instruction(instruction)
-    authority = _execution_targets(plan)
+    authority = tuple(sorted(_execution_targets(plan), key=_design_revision_order))
     if not authority or any(target.owner != "design" for target in authority):
         raise RevisionDeliveryError("Design delivery requires design-owned authority targets.")
     authority_refs = _refs(authority)
     downstream_refs = _refs(plan.downstream_targets)
+    patches = tuple(patch_intents or ())
+    authority_ref_set = set(authority_refs)
+    invalid_patch_targets = sorted(
+        {patch.target for patch in patches if patch.target not in authority_ref_set}
+    )
+    if invalid_patch_targets:
+        raise RevisionDeliveryError(
+            "Patch intents must target approved design authorities: "
+            + ", ".join(invalid_patch_targets)
+        )
     revisions = tuple(
         ReviseRequest(
             target=target.ref,
@@ -121,6 +133,16 @@ def design_revision_payload(
             # The batch-level delivery carries the one frozen RTM scope shared by
             # all revisions. Leaving this unset delegates to that exact scope.
             approved_downstream_targets=None,
+            patch_intents=[
+                patch.model_dump(
+                    mode="json",
+                    by_alias=True,
+                    exclude_defaults=True,
+                    exclude_none=True,
+                )
+                for patch in patches
+                if patch.target == target.ref
+            ],
         )
         for target in authority
     )
@@ -128,7 +150,22 @@ def design_revision_payload(
         revisions=revisions,
         approved_authority_targets=authority_refs,
         approved_downstream_targets=downstream_refs,
+        patch_intents=patches,
     )
+
+
+def _design_revision_order(target: RevisionTarget) -> tuple[int, str]:
+    """Apply structural owners before operations and collaboration call plans."""
+
+    order = {
+        "class": 0,
+        "operation": 1,
+        "collaboration": 2,
+        "call": 2,
+        "api": 3,
+        "schema": 3,
+    }
+    return order.get(target.kind, 4), target.ref
 
 
 def implementation_revision_payload(
@@ -192,6 +229,7 @@ def revision_delivery_payload(
     instruction: str,
     *,
     instructions_by_ref: Mapping[str, str] | None = None,
+    patch_intents: Iterable[RevisionPatchIntent] | None = None,
 ) -> FeedbackEdit | DesignRevisionPayload | ImplementationRevisionPayload:
     """Dispatch one executable plan to its supported typed delivery payload."""
     targets = _execution_targets(plan)
@@ -206,6 +244,7 @@ def revision_delivery_payload(
             plan,
             instruction,
             instructions_by_ref=instructions_by_ref,
+            patch_intents=patch_intents,
         )
     if owner == "implementation":
         return implementation_revision_payload(targets)

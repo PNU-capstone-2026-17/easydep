@@ -27,7 +27,8 @@ agent_checkpoint_writes
   `graph_type`을 기본키 첫 열에 둬 충돌을 막는다.
 - `workspace_events`는 영구 데이터가 아니다. 현재 SSE 진행 이벤트는 프로세스 메모리에
   최대 1,000개만 보관하므로 서버 재시작 뒤 과거 이벤트를 재생하지 않는다. 완료 결과와
-  오류는 `workspace_commands`에 남는다.
+  오류뿐 아니라 사용자 메시지와 최종 카드의 표시 정보는 `workspace_commands`에 남으며,
+  Workspace 조회 시 여기서 영구 타임라인을 재구성한다.
 - Testing의 고정 입력, 현재 노드와 누적 repair 이력은 해당 `workspace_commands.payload`의
   `testing_checkpoint`에 함께 저장한다. 명령과 수명주기가 같아 별도 1:1 테이블을 만들지 않으며,
   서버 재시작 뒤 checkpoint가 있는 중단 명령만 안전한 재개 대상으로 구분한다.
@@ -100,8 +101,8 @@ Linux 배포 경로와 맞도록 `file_path`만 대소문자를 구분하며, �
 | `started_at` | `DATETIME(6)` | NULL | 시작 시각 |
 | `completed_at` | `DATETIME(6)` | NULL | 종료 시각 |
 
-실행 도중 갱신되는 현재 상태와 최종 결과만 영구 보존한다. UI용 진행 이벤트는 재생을 위한
-업무 데이터가 아니므로 이 테이블과 분리된 bounded 메모리 버퍼를 쓴다.
+명령 입력과 최종 결과를 영구 보존하고 이를 사용자 메시지와 질문·완료·오류 카드로 투영한다.
+UI용 중간 진행 이벤트는 재생을 위한 업무 데이터가 아니므로 bounded 메모리 버퍼를 쓴다.
 
 ### `agent_checkpoints` — 그래프 실행 뼈대
 
