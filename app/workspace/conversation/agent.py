@@ -583,14 +583,6 @@ class ConversationAgent:
                     "candidates": list(result.get("candidates") or []),
                     "evidence": list(result.get("evidence") or []),
                 }
-        search = getattr(tools, "search_revision_context", None)
-        if callable(search):
-            result = search(queries, anchor_refs=anchors)
-            if isinstance(result, dict):
-                return {
-                    "candidates": list(result.get("candidates") or []),
-                    "evidence": list(result.get("evidence") or []),
-                }
         matches = _merge_candidates(*(tools.search_elements(query) for query in queries))
         return {"candidates": matches, "evidence": matches}
 

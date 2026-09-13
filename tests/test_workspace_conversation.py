@@ -182,7 +182,7 @@ def test_revision_plan_reserves_queries_for_distinct_registration_flows() -> Non
             ]
             self.revision_queries: list[str] = []
 
-        def search_revision_context(self, queries, *, anchor_refs):
+        def search_change_context(self, queries, *, anchor_refs, artifact_stage=None):
             self.revision_queries = list(queries)
             return {"candidates": list(self.matches), "evidence": []}
 

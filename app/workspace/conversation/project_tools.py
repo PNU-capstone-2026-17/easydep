@@ -970,7 +970,6 @@ class ProjectTools:
         )
         catalog = self._catalog()
         context_index = _artifact_context_index(catalog)
-        trace = context_index.trace
         change_plans = {
             str(item.get("ref") or ""): item
             for item in _records(catalog.design_rtm.get("change_plan"))
@@ -980,16 +979,7 @@ class ProjectTools:
         def include_trace_downstream(refs: Sequence[str]) -> list[str]:
             expanded = set(refs)
             for ref in refs:
-                trace_ref = _trace_ref_for_element(catalog.resolve(ref))
-                if trace_ref is None or trace_ref not in trace.refs:
-                    continue
-                expanded.update(
-                    _catalog_refs_for_trace(
-                        catalog,
-                        trace.downstream(trace_ref),
-                        require_editable=False,
-                    )
-                )
+                expanded.update(context_index.relations(ref).downstream)
             return sorted(expanded)
 
         def editable_context_refs(refs: Sequence[str]) -> list[str]:
@@ -1304,21 +1294,6 @@ class ProjectTools:
                 for ref, relation in selection.relations.items()
             },
         }
-
-    def search_revision_context(
-        self,
-        queries: Sequence[str],
-        *,
-        anchor_refs: Sequence[str] = (),
-        limit_per_query: int = 12,
-    ) -> dict[str, Any]:
-        """Compatibility alias for clients using the former class-centric name."""
-
-        return self.search_change_context(
-            queries,
-            anchor_refs=anchor_refs,
-            limit_per_query=limit_per_query,
-        )
 
     def resolve_exact_elements(self, text: str, *, limit: int = 20) -> list[dict[str, Any]]:
         """Return catalog elements whose public identifier occurs literally in text.
@@ -1657,25 +1632,6 @@ def _trace_ref_for_element(element: _Element | None) -> TraceRef | None:
         return TraceRef.parse(element.trace_alias or element.ref)
     except (TypeError, ValueError):
         return None
-
-
-def _catalog_refs_for_trace(
-    catalog: _Catalog,
-    refs: Sequence[TraceRef],
-    *,
-    require_editable: bool = True,
-) -> list[str]:
-    """Map trace refs to catalog refs without manufacturing edit authority."""
-    result: set[str] = set()
-    for trace_ref in refs:
-        element = catalog.resolve(str(trace_ref))
-        if element is not None and (element.editable or not require_editable):
-            result.add(
-                (element.canonical_ref or element.ref)
-                if require_editable
-                else element.ref
-            )
-    return sorted(result)
 
 
 def _artifact_context_index(catalog: _Catalog) -> ArtifactContextIndex:

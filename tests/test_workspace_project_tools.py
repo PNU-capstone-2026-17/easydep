@@ -208,7 +208,7 @@ def test_search_ranks_evidence_spread_across_multiple_elements(
     assert "class_diagram:OrderControl::placeOrder()" in refs
 
 
-def test_revision_search_maps_use_case_evidence_to_current_collaboration(
+def test_change_context_maps_use_case_evidence_to_current_collaboration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     state = _state()
@@ -228,7 +228,7 @@ def test_revision_search_maps_use_case_evidence_to_current_collaboration(
         lambda *_args: None,
     )
 
-    result = ProjectTools(APP_ID).search_revision_context(
+    result = ProjectTools(APP_ID).search_change_context(
         ["OrderControl", "place order"],
         anchor_refs=["class_diagram:OrderControl"],
     )
