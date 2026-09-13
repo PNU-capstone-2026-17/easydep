@@ -4,9 +4,8 @@
 유스케이스 관계만 압축해 전달한다. 응답 ``InventoryProposal``은 저장 shape로 정규화한 뒤
 ``INVENTORY_CHECKS``를 통과해야 ``AcceptedInventory``가 된다.
 
-이 모듈은 LLM 호출과 이력 기반 inventory replacement라는 부작용을 가진다. 숫자 수리
-상한은 두지 않지만 같은 후보를 다시 받으면 반복 실패로 중단한다. 연산, 협업, graph state와
-저장소를 직접 참조하지 않는다.
+이 모듈은 LLM 호출과 이력 기반 inventory replacement라는 부작용을 가진다. 수리는 유한한
+공유 예산 안에서만 수행한다. 연산, 협업, graph state와 저장소를 직접 참조하지 않는다.
 """
 
 from __future__ import annotations
@@ -23,7 +22,7 @@ from app.design.services.class_diagram.cache import (
     configured_provider_identity,
     record_cache_outcome,
 )
-from app.design.services.class_diagram.models import AcceptedInventory
+from app.design.services.class_diagram.models import AcceptedInventory, RepairBudget
 from app.design.services.class_diagram.proposals import InventoryProposal
 from app.design.services.class_diagram.scenario import ScenarioIndex, id_key, text
 from app.design.services.class_diagram.type_system import (
@@ -292,8 +291,7 @@ def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
 
     Notes:
         repair에는 최초 messages, 현재 전체 candidate, 모든 finding과 누적 실패 이력을 함께
-        보낸다. 같은 실패가 반복돼도 숫자 횟수로 중단하지 않고, 다음 요청에 반복 사실을
-        명시한다. 부분 patch는 허용하지 않으며 모든 결과는 같은 schema와 규칙을 통과해야 한다.
+        보낸다. 부분 patch는 허용하지 않으며 모든 결과는 같은 schema와 규칙을 통과해야 한다.
     """
 
     # 1. 원문을 재전송하지 않고 inventory 결정에 필요한 압축 payload를 한 번 만든다.
@@ -305,11 +303,13 @@ def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
     ledger = RepairLedger()
     input_digest = stable_digest(source_payload)
     candidate: dict[str, Any] | None = None
+    budget = RepairBudget("inventory")
     attempt = 0
     while True:
         operation = "InteractionInventory" if attempt == 0 else "InteractionInventoryRepair"
         prompt = messages
         if candidate is not None:
+            budget.consume("; ".join(ledger.attempts[-1].finding_keys_after))
             repeated_state = ledger.attempts[-1].outcome == "repeated_candidate"
             prompt = [
                 *messages,

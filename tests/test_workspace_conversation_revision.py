@@ -280,7 +280,7 @@ def test_clarification_after_reply_reuses_its_preserved_message_action() -> None
     assert payload["action_id"] == "stage-gate"
 
 
-def test_single_selected_feedback_keeps_the_ref_out_of_user_instruction(
+def test_single_selected_feedback_pins_the_ref_and_interprets_only_effect(
     monkeypatch,
 ) -> None:
     latest = {
@@ -302,6 +302,7 @@ def test_single_selected_feedback_keeps_the_ref_out_of_user_instruction(
             ],
         },
     }
+    selected_ref = "sequence_diagram:UC4"
     observed: dict[str, Any] = {}
     monkeypatch.setattr(
         workspace_module.repository, "latest_command", lambda *_a, **_k: latest,
@@ -313,11 +314,31 @@ def test_single_selected_feedback_keeps_the_ref_out_of_user_instruction(
     def interpret(text, refs, **_kwargs):
         observed["text"] = text
         observed["refs"] = refs
-        return Clarification(question="Choose the exact operation.")
+        revision = RevisionInterpretation(
+            targets=[
+                "class_diagram:MemberBoundary::cancelReservation()",
+                "sequence_diagram:UC4",
+            ],
+            semantic_scope="behavior",
+            requested_effect=text,
+        )
+        return CommandIntent(
+            intent=ConversationIntent.REVISE,
+            targets=list(revision.targets),
+            instruction=text,
+            revision=revision,
+        )
 
     monkeypatch.setattr(
         workspace_module.conversation_agent, "interpret_revision", interpret,
     )
+
+    def route(_self, _app_id, payload, intent, _latest):
+        observed["payload"] = payload
+        observed["intent"] = intent
+        return "message", payload, "design"
+
+    monkeypatch.setattr(WorkspaceService, "_route_conversation_intent", route)
     service = WorkspaceService()
     try:
         service._prepare_conversational_message(
@@ -328,7 +349,7 @@ def test_single_selected_feedback_keeps_the_ref_out_of_user_instruction(
                 "action_id": "stage-gate",
                 "context": {
                     "artifact_stage": "sequence_diagram",
-                    "element_ref": "sequence_diagram:UC4",
+                    "element_ref": selected_ref,
                 },
             },
             stage=None,
@@ -336,7 +357,10 @@ def test_single_selected_feedback_keeps_the_ref_out_of_user_instruction(
     finally:
         service.shutdown()
 
-    assert observed == {
-        "text": "Rename MemberBoundary.cancelReservation.",
-        "refs": ["sequence_diagram:UC4"],
+    assert observed["text"] == "Rename MemberBoundary.cancelReservation."
+    assert observed["refs"] == [selected_ref]
+    assert observed["payload"]["revision_instructions"] == {
+        selected_ref: "Rename MemberBoundary.cancelReservation."
     }
+    assert observed["intent"].targets == [selected_ref]
+    assert observed["intent"].revision.targets == [selected_ref]

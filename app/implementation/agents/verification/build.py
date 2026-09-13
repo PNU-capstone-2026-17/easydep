@@ -78,13 +78,15 @@ def verify_run_workspace(
             "allowed_write_paths": [],
             "required_output_paths": [],
         },
+        # This disposable workspace is owned by the coordinator running build
+        # commands, not by an OpenHands terminal owner inside the fixed runner.
+        requires_owner_terminal=False,
     )
     try:
-        verification = verify_agent_workspace(
-            sandbox,
-            "" if verify_end_to_end else "wiring",
-            None if verify_end_to_end else [],
-        )
+        # The implementation handoff always needs one complete backend test
+        # pass. ``verify_end_to_end`` controls only the later HTTP scenarios;
+        # it must not silently downgrade this gate to ``compileJava``.
+        verification = verify_agent_workspace(sandbox)
         scenario_verification = (
             verify_use_case_scenarios(sandbox, run_root)
             if verify_end_to_end
@@ -161,6 +163,15 @@ def verify_agent_workspace(
         if evidence.get("gateStatus") != "PASS":
             raise WorkspaceVerificationError(evidence)
         return evidence
+    if task_type == "integration-implementation":
+        backend = verify_agent_workspace(sandbox)
+        frontend = verify_frontend_workspace(sandbox)
+        return {
+            "command": ["thin-integration", "backend-test", "frontend-build"],
+            "exitCode": 0,
+            "backendVerification": backend,
+            "frontendVerification": frontend,
+        }
     if task_type in {"frontend", "frontend-implementation"}:
         return verify_frontend_workspace(sandbox)
     marker_evidence = _verify_absent_markers(sandbox, verification_profile)
@@ -170,6 +181,7 @@ def verify_agent_workspace(
         gradle_command(),
         task_type,
         allowed_write_paths,
+        verification_profile,
     )
     started = time.monotonic()
     environment = os.environ.copy()
@@ -216,7 +228,25 @@ def _verify_absent_markers(
 ) -> dict[str, object] | None:
     """Reject a marker checkpoint that finished without replacing its placeholder."""
 
-    contracts = (verification_profile or {}).get("requiredAbsentMarkers", [])
+    profile = verification_profile or {}
+    preserved_contracts = profile.get("requiredPreservedMarkers", [])
+    missing_preserved: list[dict[str, str]] = []
+    if isinstance(preserved_contracts, list):
+        for contract in preserved_contracts:
+            if not isinstance(contract, dict) or not isinstance(contract.get("path"), str):
+                continue
+            path = sandbox / str(contract["path"])
+            content = path.read_text(encoding="utf-8") if path.is_file() else ""
+            markers = contract.get("markers", [])
+            if not isinstance(markers, list):
+                continue
+            missing_preserved.extend(
+                {"path": str(contract["path"]), "marker": marker}
+                for marker in markers
+                if isinstance(marker, str) and marker and marker not in content
+            )
+
+    contracts = profile.get("requiredAbsentMarkers", [])
     if not isinstance(contracts, list):
         return None
     remaining: list[dict[str, str]] = []
@@ -235,15 +265,26 @@ def _verify_absent_markers(
             for marker in markers
             if isinstance(marker, str) and marker and marker in content
         )
-    if not remaining:
+    if not remaining and not missing_preserved:
         return None
+    messages = []
+    if missing_preserved:
+        messages.append(
+            "Restore unassigned implementation markers: "
+            + ", ".join(
+                f"{item['path']} -> {item['marker']}" for item in missing_preserved
+            )
+        )
+    if remaining:
+        messages.append("The assigned implementation marker is still present.")
     return {
         "command": ["implementation-marker-contract"],
         "exitCode": 1,
         "durationMs": 0,
         "stdout": "",
-        "stderr": "The assigned implementation marker is still present.",
+        "stderr": " ".join(messages),
         "testResults": "",
+        "missingPreservedMarkers": missing_preserved,
         "remainingMarkers": remaining,
     }
 
@@ -283,6 +324,7 @@ def task_verification_command(
     executable: list[str],
     task_type: str = "",
     allowed_write_paths: list[str] | None = None,
+    verification_profile: dict[str, object] | None = None,
 ) -> list[str]:
     """작업 중에는 관련 test만, 최종 단계에는 전체 build와 test를 고른다.
 
@@ -296,9 +338,11 @@ def task_verification_command(
         # 실행해 같은 jar packaging을 연속으로 두 번 하지 않는다.
         command = [*executable, "test", "--build-cache"]
     elif task_type == "backend-implementation":
-        # The backend owner is responsible for the complete Spring application.
-        # Its independent acceptance check therefore executes the full backend test suite.
-        command = [*executable, "test", "--build-cache"]
+        focused_test_classes = _focused_test_classes(verification_profile)
+        command = [*executable, "test"]
+        for test_class in focused_test_classes:
+            command.extend(["--tests", test_class])
+        command.append("--build-cache")
     else:
         test_names = sorted(
             {
@@ -316,6 +360,29 @@ def task_verification_command(
             command.append("compileJava")
         command.append("--build-cache")
     return command
+
+
+def _focused_test_classes(
+    verification_profile: dict[str, object] | None,
+) -> list[str]:
+    """Turn planner-owned Java test paths into exact Gradle class selectors."""
+
+    paths = (verification_profile or {}).get("focusedTestPaths")
+    if not isinstance(paths, list):
+        return []
+    classes: set[str] = set()
+    for value in paths:
+        if not isinstance(value, str):
+            continue
+        normalized = value.replace("\\", "/")
+        marker = "/src/test/java/"
+        _prefix, separator, relative = normalized.partition(marker)
+        if not separator or not relative.endswith(".java"):
+            continue
+        class_name = relative.removesuffix(".java").replace("/", ".")
+        if class_name and all(part.isidentifier() for part in class_name.split(".")):
+            classes.add(class_name)
+    return sorted(classes)
 
 
 def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:

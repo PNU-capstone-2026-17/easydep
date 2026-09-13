@@ -117,9 +117,9 @@ def design_revision_payload(
         ReviseRequest(
             target=target.ref,
             feedback=str((instructions_by_ref or {}).get(target.ref) or instruction).strip(),
-            approved_authority_targets=list(authority_refs),
-            # RTM-derived downstream refs describe expected impact, but the design
-            # cascade may discover additional exact dependents while editing.
+            approved_authority_targets=[target.ref],
+            # The batch-level delivery carries the one frozen RTM scope shared by
+            # all revisions. Leaving this unset delegates to that exact scope.
             approved_downstream_targets=None,
         )
         for target in authority

@@ -309,7 +309,26 @@ def _collaboration_bindings(
             elif source_type == "__entry__":
                 valid = bool(actor_step and source_ref == f"{actor_step}#{parameter}")
             elif source_type == "__precondition__":
-                valid = source_id in preconditions
+                _source, separator, source_parameter = source_ref.partition("#")
+                parent_call_id = text(call.get("parentCallId"))
+                parent_call = next(
+                    (item for item in calls if text(item.get("callId")) == parent_call_id),
+                    None,
+                )
+                parent_operation = (
+                    operations.get(text(parent_call.get("receiverOperationId")))
+                    if parent_call else None
+                )
+                valid = bool(
+                    source_id in preconditions
+                    and separator
+                    and source_parameter == parameter
+                    and expected.casefold() == "string"
+                    and operation.get("stereotype") == "control"
+                    and parent_operation
+                    and not text(parent_call.get("parentCallId"))
+                    and parent_operation.get("stereotype") == "boundary"
+                )
             else:
                 valid = bool(source_type and types_compatible(source_type, expected))
             if not valid:

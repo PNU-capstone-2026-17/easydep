@@ -12,6 +12,7 @@ import pytest
 import app.implementation.agents.workspace as workspace_module
 from app.design.services.erd.mapping import build_logical_model
 from app.implementation.agents import execute_openhands_task
+from app.implementation.agents.admission import integration_evidence_paths
 from app.implementation.agents.runtime import (
     OWNER_TURN_ITERATIONS,
     NoActionResponseGuard,
@@ -22,6 +23,7 @@ from app.implementation.agents.runtime import (
     _owner_message_required,
     _owner_workspace_guidance,
     _task_execution_scope,
+    _with_preserved_implementation_markers,
     create_openhands_conversation,
 )
 from app.implementation.agents.task_check import (
@@ -29,6 +31,7 @@ from app.implementation.agents.task_check import (
     consume_successful_task_check,
     run_task_check,
 )
+from app.implementation.agents.upstream_gap_tool import UPSTREAM_GAP_TOOL_NAME, UpstreamGap
 from app.implementation.agents.verification.build import (
     WorkspaceVerificationError,
     read_gradle_test_failures,
@@ -39,6 +42,7 @@ from app.implementation.agents.verification.build import (
 )
 from app.implementation.agents.workspace import (
     _apply_fixed_runner_permissions,
+    _copy_read_sources,
     _harden_control_tree,
     cleanup_agent_workspace,
     grant_owner_file_access,
@@ -56,6 +60,7 @@ from app.implementation.workflows.conformance import (
 )
 from app.implementation.workflows.coordinator import (
     _execute_task_batch,
+    _regression_owner_task_id,
     plan_workflow,
     reconcile_workflow_state,
     run_workflow,
@@ -89,12 +94,17 @@ def test_final_workspace_verification_publishes_success_report(
     verification = {"exitCode": 0, "testResults": ""}
     with (
         patch(
+            "app.implementation.agents.verification.build.prepare_agent_workspace",
+            wraps=prepare_agent_workspace,
+        ) as prepare,
+        patch(
             "app.implementation.agents.verification.build.verify_agent_workspace",
             return_value=verification,
         ),
     ):
         result = verify_run_workspace(run)
 
+    assert prepare.call_args.kwargs["requires_owner_terminal"] is False
     report = json.loads((run / "reports/final-verification.json").read_text(encoding="utf-8"))
     assert result["status"] == "SUCCEEDED"
     assert report["verification"] == verification
@@ -122,6 +132,40 @@ def test_feedback_regression_succeeds_when_http_scenarios_are_deferred(
 
     assert result["status"] == "SUCCEEDED"
     assert result["scenarioVerification"]["status"] == "NOT_CHECKED"
+
+
+def test_thin_integration_check_runs_backend_then_frontend(tmp_path: Path) -> None:
+    application = tmp_path / "application"
+    application.mkdir()
+    calls: list[str] = []
+
+    def passed_backend(*_args: object, **_kwargs: object):
+        calls.append("backend")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    def passed_frontend(_sandbox: Path) -> dict[str, object]:
+        calls.append("frontend")
+        return {"command": ["npm", "run", "build"], "exitCode": 0}
+
+    with (
+        patch(
+            "app.implementation.agents.verification.build.subprocess.run",
+            side_effect=passed_backend,
+        ),
+        patch(
+            "app.implementation.agents.verification.build.verify_frontend_workspace",
+            side_effect=passed_frontend,
+        ),
+    ):
+        result = verify_agent_workspace(
+            tmp_path,
+            task_type="integration-implementation",
+        )
+
+    assert calls == ["backend", "frontend"]
+    assert result["exitCode"] == 0
+    assert result["backendVerification"]["exitCode"] == 0
+    assert result["frontendVerification"]["exitCode"] == 0
 
 
 def test_one_scenario_method_can_cover_multiple_use_cases(tmp_path: Path) -> None:
@@ -192,6 +236,44 @@ def test_agent_workspace_refresh_preserves_ignored_build_outputs(
     restore_access.assert_called_once_with(sandbox)
     assert build_output.read_bytes() == b"test output"
     assert not stale_source.exists()
+
+
+def test_restricted_owner_workspace_skips_linux_permission_handoff(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "generated" / "runs" / "run_abcdef1234567890"
+    source = run / "application" / "src" / "Main.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class Main {}", encoding="utf-8")
+    task = {"task_id": "restricted-owner", "allowed_write_paths": []}
+
+    with patch(
+        "app.implementation.agents.workspace.tempfile.gettempdir",
+        return_value=str(tmp_path / "temp"),
+    ), patch(
+        "app.implementation.agents.workspace._restore_coordinator_access"
+    ) as restore_access, patch(
+        "app.implementation.agents.workspace._apply_fixed_runner_permissions"
+    ) as apply_permissions, patch(
+        "app.implementation.agents.workspace._refresh_agent_workspace"
+    ) as refresh_workspace:
+        sandbox = prepare_agent_workspace(
+            run,
+            task,
+            persistent=True,
+            requires_owner_terminal=False,
+        )
+        refreshed = prepare_agent_workspace(
+            run,
+            task,
+            persistent=True,
+            requires_owner_terminal=False,
+        )
+
+    assert refreshed == sandbox
+    restore_access.assert_not_called()
+    apply_permissions.assert_not_called()
+    refresh_workspace.assert_not_called()
 
 
 def test_fixed_runner_hands_the_whole_disposable_sandbox_to_owner(
@@ -401,6 +483,22 @@ def test_work_unit_verification_runs_related_tests_directly_with_cache() -> None
         "backend-implementation",
         ["application/src/test/java/com/example/BackendApplicationTest.java"],
     ) == ["gradlew", "test", "--build-cache"]
+    assert task_verification_command(
+        ["gradlew"],
+        "backend-implementation",
+        ["application/src/test/java/com/example/OrderService.java"],
+        {
+            "focusedTestPaths": [
+                "application/src/test/java/com/example/OrderBehaviorTest.java"
+            ]
+        },
+    ) == [
+        "gradlew",
+        "test",
+        "--tests",
+        "com.example.OrderBehaviorTest",
+        "--build-cache",
+    ]
 
 
 def test_dynamic_testing_repair_reruns_preserved_arazzo_workflow(
@@ -635,6 +733,35 @@ def _write_minimal_agent_task(tmp_path: Path) -> tuple[Path, str, str, Path]:
     return run, task_id, source_path, source
 
 
+def test_copy_read_sources_includes_task_context_and_external_source(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    sandbox = tmp_path / "sandbox"
+    context_path = run / "reports" / "implementation-tasks" / "orders.context.json"
+    source_path = run / "reports" / "testing-runtime.log"
+    context_path.parent.mkdir(parents=True)
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    context_path.write_text(
+        json.dumps({"readSourcePaths": ["reports/testing-runtime.log"]}),
+        encoding="utf-8",
+    )
+    source_path.write_text("test evidence", encoding="utf-8")
+
+    _copy_read_sources(
+        run,
+        sandbox,
+        {"context_file": "reports/implementation-tasks/orders.context.json"},
+    )
+
+    assert (sandbox / "reports/implementation-tasks/orders.context.json").read_text(
+        encoding="utf-8"
+    ) == context_path.read_text(encoding="utf-8")
+    assert (sandbox / "reports/testing-runtime.log").read_text(encoding="utf-8") == (
+        "test evidence"
+    )
+
+
 def test_runner_does_not_duplicate_openhands_provider_retries(
     tmp_path: Path,
 ) -> None:
@@ -811,6 +938,248 @@ def test_failed_verification_is_not_promoted_and_keeps_the_sandbox(
     assert failure_result["verificationEvidence"]["exitCode"] == 1
     assert failure_result["conversationStats"] == {
         "usage": {"promptTokens": 21, "completionTokens": 8}
+    }
+
+
+def test_bounded_owner_upstream_gap_after_recovery_preserves_candidate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task.update(
+        {
+            "task_type": "backend-implementation",
+            "owner": "backend",
+            "allowed_write_roots": [str(Path(source_path).parent)],
+            "source_refs": ["UC-12"],
+        }
+    )
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    context_path = run / task["context_file"]
+    context_path.write_text(json.dumps({"behaviorCapsule": {}}), encoding="utf-8")
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+    monkeypatch.setattr(
+        "app.implementation.agents.runtime.settings.implementation_openhands_canary",
+        False,
+    )
+
+    gap_session = SimpleNamespace(result=None)
+
+    class FakeConversation:
+        def __init__(self, sandbox: Path) -> None:
+            self.sandbox = sandbox
+            self.state = SimpleNamespace(execution_status=None)
+            self.run_count = 0
+
+        def send_message(self, _message: str) -> None:
+            pass
+
+        def run(self) -> None:
+            from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+            self.run_count += 1
+            (self.sandbox / source_path).write_text(
+                "class OrderService { int unpromotedCandidate; }", encoding="utf-8"
+            )
+            if self.run_count == 1:
+                self.state.execution_status = ConversationExecutionStatus.STUCK
+                return
+            gap_session.result = UpstreamGap(
+                summary="The response rule is not specified.", source_ref="UC-12"
+            )
+            self.state.execution_status = ConversationExecutionStatus.FINISHED
+
+        def close(self) -> None:
+            pass
+
+    received_source_refs: list[str] | None = None
+
+    def create_conversation(sandbox: Path, *_args, **kwargs):
+        nonlocal received_source_refs
+        received_source_refs = kwargs["upstream_gap_source_refs"]
+        executor = SimpleNamespace(session=gap_session)
+        return FakeConversation(sandbox), SimpleNamespace(
+            _tools={UPSTREAM_GAP_TOOL_NAME: SimpleNamespace(executor=executor)}
+        )
+
+    connection = LlmConnection(
+        provider="openrouter",
+        api_key="approved-key",
+        base_url="https://example.invalid/v1",
+        model="openai/gpt-oss-20b",
+        litellm_provider="openrouter",
+    )
+    with (
+        patch(
+            "app.implementation.agents.runtime.openhands_compatibility",
+            return_value={
+                "pythonCompatible": True,
+                "sdkInstalled": True,
+                "toolsInstalled": True,
+                "apiKeyConfigured": True,
+            },
+        ),
+        patch("app.implementation.agents.runtime.openhands_connection", return_value=connection),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            side_effect=create_conversation,
+        ),
+        patch("app.implementation.agents.runtime.verify_agent_workspace") as verify,
+    ):
+        result = execute_openhands_task(run, task_id)
+
+    verify.assert_not_called()
+    assert result["status"] == "NEEDS_INPUT"
+    assert received_source_refs == ["UC-12"]
+    assert result["upstreamGap"]["sourceRef"] == "UC-12"
+    assert result["candidateEvidence"]["changedFiles"] == [source_path]
+    assert source.read_text(encoding="utf-8") == "class OrderService {}"
+
+
+def test_explicit_unresolved_projection_is_admitted_before_openhands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run, task_id, _source_path, _source = _write_minimal_agent_task(tmp_path)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task.update(
+        {
+            "task_type": "backend-implementation",
+            "owner": "backend",
+            "source_refs": [
+                "operation:OrderService::placeOrder(orderId:String)",
+                "use_case:UC-12",
+            ],
+        }
+    )
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    context_path = run / task["context_file"]
+    context_path.write_text(
+        json.dumps(
+            {
+                "useCaseIds": ["UC-12"],
+                "behaviorCapsule": {
+                    "directMethods": [
+                        {
+                            "method": {
+                                "operation_id": "OrderService::placeOrder(orderId:String)"
+                            },
+                            "directCalls": [
+                                {
+                                    "call_id": "UC-12::call:2",
+                                    "arguments": [
+                                        {
+                                            "parameter": "orderId",
+                                            "expression": None,
+                                            "reason": "unresolved_call_parameter",
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+
+    expected_gap = UpstreamGap(
+        summary="Direct-call argument 'orderId' is unresolved (unresolved_call_parameter).",
+        source_ref="operation:OrderService::placeOrder(orderId:String)",
+    )
+    with (
+        patch(
+            "app.implementation.agents.runtime.preflight_semantic_behavior",
+            return_value=expected_gap,
+        ) as semantic_admission,
+        patch(
+            "app.implementation.agents.runtime.openhands_connection",
+            side_effect=AssertionError("admission gate must run before OpenHands"),
+        ),
+    ):
+        result = execute_openhands_task(run, task_id)
+
+    admission_context = semantic_admission.call_args.args[2]
+    assert admission_context["behaviorCapsule"]["preflightFindings"] == [
+        expected_gap.as_result()
+    ]
+    assert result["status"] == "NEEDS_INPUT"
+    assert result["terminationReason"] == "UPSTREAM_GAP"
+    assert result["upstreamGap"] == {
+        "summary": "Direct-call argument 'orderId' is unresolved (unresolved_call_parameter).",
+        "sourceRef": "operation:OrderService::placeOrder(orderId:String)",
+    }
+    assert result["eventCount"] == 0
+    assert result["toolCounts"] == {}
+    assert result["candidateEvidence"] == {"changedFiles": []}
+
+
+@pytest.mark.parametrize(
+    ("task_type", "owner", "preflight_name"),
+    [
+        (
+            "backend-implementation",
+            "backend",
+            "app.implementation.agents.runtime.preflight_behavior_task",
+        ),
+        (
+            "integration-implementation",
+            "implementation",
+            "app.implementation.agents.runtime.preflight_semantic_integration",
+        ),
+    ],
+)
+def test_semantic_admission_is_rejected_before_openhands(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    task_type: str,
+    owner: str,
+    preflight_name: str,
+) -> None:
+    run, task_id, _source_path, _source = _write_minimal_agent_task(tmp_path)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task.update(
+        {
+            "task_type": task_type,
+            "owner": owner,
+            "source_refs": ["use_case_spec:UC-12"],
+        }
+    )
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    (run / "reports/run-manifest.json").write_text(
+        json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
+    )
+    context = {"behaviorCapsule": {"useCases": [{"use_case_id": "UC-12"}]}}
+    if task_type == "integration-implementation":
+        context["readSourcePaths"] = []
+    (run / task["context_file"]).write_text(json.dumps(context), encoding="utf-8")
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+
+    with (
+        patch(
+            preflight_name,
+            return_value=UpstreamGap(
+                summary="A branch has no declared observable.",
+                source_ref="use_case_spec:UC-12",
+            ),
+        ),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation"
+        ) as create_conversation,
+    ):
+        result = execute_openhands_task(run, task_id)
+
+    create_conversation.assert_not_called()
+    assert result["status"] == "NEEDS_INPUT"
+    assert result["upstreamGap"] == {
+        "summary": "A branch has no declared observable.",
+        "sourceRef": "use_case_spec:UC-12",
     }
 
 
@@ -1073,6 +1442,46 @@ def test_successful_retry_promotes_changes_preserved_from_failed_sandbox(
     assert {source_path, helper_path} <= set(result["changedFiles"])
 
 
+def test_backend_behavior_rejects_removed_unassigned_marker_in_shared_source(
+    tmp_path: Path,
+) -> None:
+    """A behavior task must keep another slice's marker in a shared Java file."""
+    source_path = "application/src/main/java/example/OrderService.java"
+    source = tmp_path / source_path
+    source.parent.mkdir(parents=True)
+    assigned = "EASYDEP-IMPLEMENT:assigned"
+    unassigned = "EASYDEP-IMPLEMENT:unassigned"
+    source.write_text(
+        f"class OrderService {{ // {assigned}\n    // {unassigned}\n}}",
+        encoding="utf-8",
+    )
+    profile = _with_preserved_implementation_markers(
+        tmp_path,
+        [source_path],
+        {
+            "requiredAbsentMarkers": [
+                {"path": source_path, "markers": [assigned]}
+            ]
+        },
+    )
+    source.write_text(
+        "class OrderService { void assigned() {} }",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(WorkspaceVerificationError) as raised:
+        verify_agent_workspace(
+            tmp_path,
+            "backend-implementation",
+            [source_path],
+            profile,
+        )
+
+    assert raised.value.evidence["missingPreservedMarkers"] == [
+        {"path": source_path, "marker": unassigned}
+    ]
+
+
 def test_verified_candidate_deletion_is_promoted(tmp_path: Path) -> None:
     run, task_id, source_path, _source = _write_minimal_agent_task(tmp_path)
     task_path = run / "reports/implementation-tasks/order.task.json"
@@ -1239,7 +1648,7 @@ def test_terminal_openhands_failure_is_persisted_without_a_fresh_conversation(
     ]
 
 
-def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
+def test_stuck_after_successful_check_uses_finish_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1256,6 +1665,9 @@ def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
         }
     )
     task_path.write_text(json.dumps(task), encoding="utf-8")
+    (run / task["context_file"]).write_text(
+        json.dumps({"behaviorCapsule": {}}), encoding="utf-8"
+    )
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
 
     class FakeConversation:
@@ -1275,19 +1687,17 @@ def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
             if self.run_count == 1:
                 self.state.execution_status = ConversationExecutionStatus.STUCK
                 return
-            (self.sandbox / source_path).write_text(
-                "class OrderService { int completedAfterStuck; }",
-                encoding="utf-8",
-            )
             self.state.execution_status = ConversationExecutionStatus.FINISHED
 
         def close(self) -> None:
             pass
 
     conversation: FakeConversation | None = None
+    conversation_options: dict[str, object] = {}
 
     def create_conversation(sandbox: Path, *_args, **_kwargs):
         nonlocal conversation
+        conversation_options.update(_kwargs)
         conversation = FakeConversation(sandbox)
         return conversation, SimpleNamespace(_tools={})
 
@@ -1314,6 +1724,10 @@ def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
             side_effect=create_conversation,
         ),
         patch(
+            "app.implementation.agents.runtime.has_successful_task_check",
+            return_value=True,
+        ),
+        patch(
             "app.implementation.agents.runtime.verify_agent_workspace",
             return_value={"command": ["gradle", "test"], "exitCode": 0},
         ),
@@ -1323,10 +1737,20 @@ def test_typed_stuck_state_resumes_once_in_the_same_owner_conversation(
     assert conversation is not None
     assert conversation.run_count == 2
     assert len(conversation.messages) == 2
-    assert "repeated-action loop" in conversation.messages[-1]
-    assert result["stuckRecoveryUsed"] is True
+    assert "FinishTool now" in conversation.messages[-1]
+    assert result["stuckRecoveryUsed"] is False
+    assert result["finishRecoveryUsed"] is True
     assert result["executionStatus"] == "finished"
-    assert "completedAfterStuck" in source.read_text(encoding="utf-8")
+    assert source.read_text(encoding="utf-8") == "class OrderService {}"
+    # A bounded backend owner may inspect the whole isolated workspace, while
+    # its editor remains limited to the task's owned source directory.
+    assert conversation_options["readable_files"] is None
+    assert conversation_options["editable_files"] == [
+        str((conversation.sandbox / source_path).resolve())
+    ]
+    assert conversation_options["editable_roots"] == [
+        str((conversation.sandbox / Path(source_path).parent).resolve())
+    ]
 
 
 def test_openhands_conversation_enables_stuck_detection_and_condensation(
@@ -1675,6 +2099,7 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
         "backend-implementation",
         tmp_path,
         ["application/src/main/java/com/example"],
+        owner_files=["application/src/main/java/com/example/OrderService.java"],
     )
 
     assert f"`{tmp_path.resolve()}`" in guidance
@@ -1683,13 +2108,49 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
     assert "SPRING_PROFILES_ACTIVE=test" in guidance
     assert "run the canonical verification once" in guidance
     assert "Do not disable tests or alter test reporting" in guidance
+    assert "never change or delete an existing public signature" in guidance
+    assert "Choose one legal conventional implementation" in guidance
+    assert "Agent: Implementation" in guidance
+    assert "Current state: EXECUTE" in guidance
+    assert "Writable task files (authoritative exact-file scope)" in guidance
+    assert str(
+        tmp_path.resolve()
+        / "application/src/main/java/com/example/OrderService.java"
+    ) in guidance
+    assert str(
+        tmp_path.resolve() / "application/src/main/java/com/example"
+    ) in guidance
+    assert "Completion markers identify required bodies" in guidance
+    assert "Every path not listed above" in guidance
+    assert 'command="str_replace" with old_str and new_str' in guidance
+    assert 'command="create" with file_text' in guidance
+    assert 'command="edit" and old_string/new_string are invalid' in guidance
+    assert "report_upstream_gap" not in guidance
     assert "permission denied" not in guidance.casefold()
     assert OWNER_TURN_ITERATIONS < 500
 
+    bounded = _owner_workspace_guidance(
+        "backend-implementation",
+        tmp_path,
+        [],
+        owner_files=["application/src/main/java/com/example/Order.java"],
+        bounded_evidence=True,
+    )
+    assert "Read the task context before source code" in bounded
+    assert "call report_upstream_gap when no legal implementation is declared" in bounded
+    assert "generation: hint is advisory" in bounded
+    assert "read-only dependency declarations as ready integration contracts" in bounded
+    assert "Do not reread unchanged files" in bounded
+    assert "implementation marker not assigned to this task" in bounded
+    assert "readSourcePaths" not in bounded
+    assert "direct-call argument" not in bounded
+    assert "effect owners" not in bounded
+    assert "assigned main-source markers" not in bounded
+    assert "investigation hints" not in bounded
+    assert "open raw design inputs" not in bounded
 
-def test_repeated_typed_no_action_responses_stop_at_openhands_threshold() -> None:
+def test_typed_no_action_response_starts_bounded_recovery() -> None:
     from openhands.sdk.conversation.state import ConversationExecutionStatus
-    from openhands.sdk.conversation.types import StuckDetectionThresholds
     from openhands.sdk.event import MessageEvent
     from openhands.sdk.llm import Message, TextContent
 
@@ -1710,12 +2171,11 @@ def test_repeated_typed_no_action_responses_stop_at_openhands_threshold() -> Non
         ),
     )
 
-    for _ in range(StuckDetectionThresholds().monologue):
-        guard(empty)
-        guard(corrective_user_message)
+    guard(empty)
+    guard(corrective_user_message)
 
     assert guard.triggered is True
-    assert guard.max_consecutive_count == StuckDetectionThresholds().monologue
+    assert guard.max_consecutive_count == 1
     assert conversation.state.execution_status is ConversationExecutionStatus.STUCK
     assert _conversation_terminal_failure(conversation) is True
 
@@ -2066,13 +2526,93 @@ def test_retry_hides_previous_error_as_soon_as_task_is_running(tmp_path: Path) -
         state,
         [task],
         execute,
-        max_workers=1,
     )
 
     assert failures == []
     assert observed["status"] == "RUNNING"
     assert observed["attempts"] == 2
     assert observed["lastError"] is None
+
+
+def test_reconcile_preserves_a_typed_upstream_gap_as_needs_input(tmp_path: Path) -> None:
+    reports = tmp_path / "reports"
+    executions = reports / "agent-executions"
+    executions.mkdir(parents=True)
+    task_id = "implement-backend-application"
+    (reports / "run-manifest.json").write_text(
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    {
+                        "task_id": task_id,
+                        "task_type": "backend-implementation",
+                        "prompt_sha256": "prompt-v1",
+                        "required_output_paths": [],
+                        "allowed_write_paths": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "tasks": [
+                    {"task_id": task_id, "status": "SUCCEEDED", "attempts": 1}
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    (executions / f"{task_id}.result.json").write_text(
+        json.dumps(
+            {
+                "status": "NEEDS_INPUT",
+                "promptSha256": "prompt-v1",
+                "upstreamGap": {
+                    "summary": "The required response rule is absent.",
+                    "sourceRef": "UC-12",
+                },
+                "candidateEvidence": {"changedFiles": ["application/OrderService.java"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    state = reconcile_workflow_state(tmp_path)
+
+    assert state["status"] == "NEEDS_INPUT"
+    assert state["tasks"][0]["status"] == "NEEDS_INPUT"
+    assert state["blockingDetails"] == [
+        {
+            "kind": "upstream_contract_gap",
+            "taskId": task_id,
+            "sourceRef": "UC-12",
+            "summary": "The required response rule is absent.",
+        }
+    ]
+
+
+def test_task_batch_keeps_needs_input_out_of_failed_tasks(tmp_path: Path) -> None:
+    (tmp_path / "reports").mkdir()
+    task = {"task_id": "implement-backend-application", "status": "PENDING", "attempts": 0}
+    state = {"tasks": [task]}
+
+    failures = _execute_task_batch(
+        tmp_path,
+        state,
+        [task],
+        lambda *_args: {
+            "status": "NEEDS_INPUT",
+            "upstreamGap": {"summary": "Missing rule", "sourceRef": "UC-12"},
+            "candidateEvidence": {"changedFiles": []},
+        },
+    )
+
+    assert failures == []
+    assert task["status"] == "NEEDS_INPUT"
+    assert task["upstreamGap"]["sourceRef"] == "UC-12"
 
 
 def test_planned_manifest_uses_work_units_and_scopes_repairs_to_contracts(
@@ -2171,13 +2711,19 @@ class Order <<Entity>> { - id: UUID }
                     "id": "UC1",
                     "use_case_id": "UC1",
                     "name": "Place order",
+                    "requirement_ids": ["FR-ORDER"],
                     "main_scenario": [
                         {"step_number": 1, "sentence": "The customer places an order."}
                     ],
                     "repair_iters": 7,
                     "repair_history": {"marker": "INTERNAL-USE-CASE-REPAIR"},
                 },
-                {"id": "UC2", "use_case_id": "UC2", "name": "Cancel order"},
+                {
+                    "id": "UC2",
+                    "use_case_id": "UC2",
+                    "name": "Cancel order",
+                    "requirement_ids": ["FR-CANCEL"],
+                },
             ]
         ),
         encoding="utf-8",
@@ -2316,11 +2862,20 @@ class Order <<Entity>> { - id: UUID }
         agent_max_output_tokens=1000,
     )
 
-    state = plan_workflow(run, spec)
+    with patch(
+        "app.implementation.workflows.coordinator.preflight_behavior_task",
+        return_value=None,
+    ) as preflight:
+        state = plan_workflow(run, spec)
+    preflight.assert_called()
     manifest = json.loads((run / "reports/run-manifest.json").read_text(encoding="utf-8"))
     tasks = manifest["implementation_tasks"]
     task_types = {task["task_type"] for task in tasks}
-    assert task_types == {"backend-implementation", "frontend-implementation"}
+    assert task_types == {
+        "backend-implementation",
+        "frontend-implementation",
+        "integration-implementation",
+    }
     assert (
         run / "application/src/main/java/com/example/orders/persistence/entity/OrderEntity.java"
     ).is_file()
@@ -2335,52 +2890,223 @@ class Order <<Entity>> { - id: UUID }
     for task in tasks:
         assert set(task["required_output_paths"]) <= set(task["allowed_write_paths"])
 
-    backend = next(task for task in tasks if task["owner"] == "backend")
+    backends = [task for task in tasks if task["owner"] == "backend"]
     frontend = next(task for task in tasks if task["owner"] == "frontend")
-    assert len(tasks) == 2
+    integration = next(
+        task for task in tasks if task["task_type"] == "integration-implementation"
+    )
+    assert len(tasks) == 4
+    assert len(backends) == 2
     assert not any(task["task_id"] == "implement-use-cases-stale-common" for task in tasks)
-    assert backend["task_id"] == "implement-backend-application"
-    assert set(backend["use_case_ids"]) == {"UC1", "UC2"}
-    assert frontend["depends_on"] == ["implement-backend-application"]
-    assert state["nextRunnableTasks"] == ["implement-backend-application"]
-    context = json.loads((run / backend["context_file"]).read_text(encoding="utf-8"))
-    assert set(context["useCaseIds"]) == {"UC1", "UC2"}
-    assert set(context["requirementIds"]) == {"FR-ORDER", "FR-CANCEL"}
-    assert "application/src/main/java/com/example/orders/bce/Order.java" in set(
-        backend["allowed_write_paths"]
+    assert all(
+        task["task_id"].startswith("implement-backend-behavior-")
+        for task in backends
     )
-    assert "application/src/main/java/com/example/orders/bce/Order.java" in set(
-        backend["required_output_paths"]
+    assert [task["depends_on"] for task in backends] == [[], []]
+    assert state["nextRunnableTasks"] == [task["task_id"] for task in backends]
+    assert {
+        use_case_id
+        for task in backends
+        for use_case_id in task["use_case_ids"]
+    } == {"UC1", "UC2"}
+    assert frontend["depends_on"] == []
+    assert integration["owner"] == "implementation"
+    assert integration["depends_on"] == [
+        *(task["task_id"] for task in backends),
+        frontend["task_id"],
+    ]
+    assert next(
+        phase for phase in state["phases"] if phase["phaseId"] == "integration"
+    )["taskIds"] == [integration["task_id"]]
+    assert integration["required_output_paths"] == []
+    assert integration["allowed_write_roots"] == []
+    assert set(integration["allowed_write_paths"]) <= {
+        "application/frontend/src/api.ts",
+        "application/frontend/src/config.ts",
+    }
+    assert "application/src/main/resources/application.yml" not in integration[
+        "allowed_write_paths"
+    ]
+    assert all("/src/test/" not in path for path in integration["allowed_write_paths"])
+    assert not any(
+        path.startswith("application/frontend/src/generated")
+        for path in integration["allowed_write_paths"]
     )
+    integration_context = json.loads(
+        (run / integration["context_file"]).read_text(encoding="utf-8")
+    )
+    assert integration_context["batchUseCaseIds"] == ["UC1", "UC2"]
+    assert integration_context["traceEvidence"]["ownerTaskIds"] == integration[
+        "depends_on"
+    ]
+    assert "ownerContextPaths" not in integration_context
+    assert "priorVerificationPaths" not in integration_context
+    assert not {task["context_file"] for task in [*backends, frontend]}.intersection(
+        integration_context["readSourcePaths"]
+    )
+    assert all(
+        set(task["required_output_paths"]) <= set(integration_context["readSourcePaths"])
+        for task in [*backends, frontend]
+    )
+    integration_prompt = (run / integration["prompt_file"]).read_text(
+        encoding="utf-8"
+    )
+    assert "one representative happy path" in integration_prompt
+    assert "Semantic integration admission has already accepted" in integration_prompt
+    assert "resolve only concrete connector mechanics" in integration_prompt
+    assert "defect in any read-only owner" in integration_prompt
+    assert "Requirements, Design, OpenAPI, generated clients" in integration_prompt
+    assert "application/deployment/runtime/compose.yaml" not in integration[
+        "allowed_write_paths"
+    ]
+    if (run / "application/deployment/runtime/compose.yaml").exists():
+        assert "application/deployment/runtime/compose.yaml" in integration_context[
+            "runtimeConfigPaths"
+        ]
+    if (run / "application/src/main/resources/application.yml").exists():
+        assert "application/src/main/resources/application.yml" in integration_context[
+            "readSourcePaths"
+        ]
+    integration_state = next(
+        task for task in state["tasks"] if task["task_id"] == integration["task_id"]
+    )
+    assert integration_state["promptSha256"] != integration["prompt_sha256"]
+    executions = run / "reports/agent-executions"
+    executions.mkdir(exist_ok=True)
+    for owner_task in [*backends, frontend]:
+        (executions / f"{owner_task['task_id']}.result.json").write_text(
+            json.dumps(
+                {
+                    "status": "SUCCEEDED",
+                    "promptSha256": owner_task["prompt_sha256"],
+                }
+            ),
+            encoding="utf-8",
+        )
+    new_component = run / "application/frontend/src/components/OrderResult.tsx"
+    new_component.parent.mkdir(parents=True, exist_ok=True)
+    new_component.write_text("export const OrderResult = () => null;", encoding="utf-8")
+    frontend_result_path = executions / f"{frontend['task_id']}.result.json"
+    frontend_result = json.loads(frontend_result_path.read_text(encoding="utf-8"))
+    frontend_result["changedFiles"] = [
+        "application/frontend/src/components/OrderResult.tsx",
+        "application/../outside.txt",
+        "application/frontend/src/generated/apis/OrdersApi.ts",
+    ]
+    frontend_result_path.write_text(json.dumps(frontend_result), encoding="utf-8")
+    evidence_paths = integration_evidence_paths(run, integration, integration_context)
+    assert "application/frontend/src/components/OrderResult.tsx" in evidence_paths
+    assert not {
+        "application/../outside.txt",
+        "application/frontend/src/generated/apis/OrdersApi.ts",
+    }.intersection(evidence_paths)
+    owners_completed = reconcile_workflow_state(run)
+    current_integration = next(
+        task
+        for task in owners_completed["tasks"]
+        if task["task_id"] == integration["task_id"]
+    )
+    (executions / f"{integration['task_id']}.result.json").write_text(
+        json.dumps(
+            {
+                "status": "SUCCEEDED",
+                "promptSha256": current_integration["promptSha256"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    workflow_state_path = run / "reports/workflow-state.json"
+    executed_state = json.loads(workflow_state_path.read_text(encoding="utf-8"))
+    next(
+        task
+        for task in executed_state["tasks"]
+        if task["task_id"] == integration["task_id"]
+    )["status"] = "SUCCEEDED"
+    workflow_state_path.write_text(json.dumps(executed_state), encoding="utf-8")
+    reused = reconcile_workflow_state(run)
+    assert next(
+        task
+        for task in reused["tasks"]
+        if task["task_id"] == integration["task_id"]
+    )["status"] == "SUCCEEDED"
+    new_component.write_text(
+        "export const OrderResult = () => <div>updated</div>;", encoding="utf-8"
+    )
+    invalidated = reconcile_workflow_state(run)
+    assert next(
+        task
+        for task in invalidated["tasks"]
+        if task["task_id"] == integration["task_id"]
+    )["status"] == "PENDING"
+    new_component.unlink()
+    assert "application/frontend/src/components/OrderResult.tsx" in integration_evidence_paths(
+        run, integration, integration_context
+    )
+    contexts = [
+        json.loads((run / task["context_file"]).read_text(encoding="utf-8"))
+        for task in backends
+    ]
+    assert [context["useCaseIds"] for context in contexts] == [["UC1"], ["UC2"]]
+    assert {requirement_id for task in backends for requirement_id in task["requirement_ids"]} == {
+        "FR-ORDER",
+        "FR-CANCEL",
+    }
+    assert all("behaviorCapsule" in context for context in contexts)
+    assert all(context["requiredTestPath"] for context in contexts)
+    assert all(
+        task["verification_profile"]["focusedTestPaths"] == task["required_test_paths"]
+        for task in backends
+    )
+    owned_test = backends[0]["required_test_paths"][0]
+    owned_test_class = owned_test.partition("/src/test/java/")[2].removesuffix(
+        ".java"
+    ).replace("/", ".")
+    assert _regression_owner_task_id(
+        run,
+        {"testResults": f"{owned_test_class}.implementsContract: assertion failed"},
+    ) == backends[0]["task_id"]
     generated_api = {
         "application/src/main/java/com/example/orders/api/OrdersApi.java",
         "application/src/main/java/com/example/orders/api/CancelApi.java",
     }
-    assert not set(backend["allowed_write_paths"]).intersection(generated_api)
+    assert all(
+        not set(task["allowed_write_paths"]).intersection(generated_api)
+        for task in backends
+    )
     immutable_bce = {
         "application/src/main/java/com/example/orders/bce/OrderBoundary.java",
         "application/src/main/java/com/example/orders/bce/OrderControl.java",
         "application/src/main/java/com/example/orders/bce/CancelControl.java",
     }
-    assert not set(backend["allowed_write_paths"]).intersection(immutable_bce)
+    assert all(
+        not set(task["allowed_write_paths"]).intersection(immutable_bce)
+        for task in backends
+    )
     persistence_root = (
         "application/src/main/java/com/example/orders/persistence"
     )
-    assert persistence_root in backend["immutable_paths"]
-    assert "application/src/main/resources/db/migration" in backend["immutable_paths"]
+    assert all(persistence_root in task["immutable_paths"] for task in backends)
+    assert all(
+        "application/src/main/resources/db/migration" in task["immutable_paths"]
+        for task in backends
+    )
     assert not any(
         path == persistence_root or path.startswith(persistence_root + "/")
-        for path in backend["allowed_write_paths"]
+        for task in backends
+        for path in task["allowed_write_paths"]
     )
-    assert backend["allowed_write_roots"]
+    assert all(task["allowed_write_roots"] == [] for task in backends)
     assert frontend["allowed_write_roots"] == ["application/frontend"]
     source_index = json.loads(
-        (run / context["sourceIndexPath"]).read_text(encoding="utf-8")
+        (
+            run
+            / "reports/implementation-tasks/"
+            "implement-backend-application.source-index.json"
+        ).read_text(encoding="utf-8")
     )
     assert source_index["hintsOnly"] is True
     assert source_index["startingSourcePaths"]
     assert source_index["methodContexts"]
-    assert context["methodContextRoot"].endswith("method-context")
     assert all(
         (run / item["path"]).is_file()
         for item in source_index["methodContexts"]
@@ -2390,34 +3116,46 @@ class Order <<Entity>> { - id: UUID }
     )
     assert method_context["refs"]
     assert method_context["designInputs"] == source_index["designInputs"]
-    assert context["sourceIndexPath"] in context["readSourcePaths"]
-    assert all(
-        path not in context["readSourcePaths"]
-        for path in source_index["startingSourcePaths"]
+    assert {"api:placeOrder", "api:cancelOrder"} <= {
+        source_ref for task in backends for source_ref in task["source_refs"]
+    }
+    assert {"use_case_spec:UC1", "use_case_spec:UC2"} <= {
+        source_ref for task in backends for source_ref in task["source_refs"]
+    }
+    prompts = [
+        (run / task["prompt_file"]).read_text(encoding="utf-8")
+        for task in backends
+    ]
+    assert all('"call_id"' not in prompt for prompt in prompts)
+    assert all('"control_binding"' not in prompt for prompt in prompts)
+    assert all("INTERNAL-REPAIR-MARKER" not in prompt for prompt in prompts)
+    assert all("INTERNAL-USE-CASE-REPAIR" not in prompt for prompt in prompts)
+
+    for backend in backends:
+        backend["depends_on"] = ["missing-backend-task"]
+    (run / "reports/run-manifest.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
     )
-    assert {"api:placeOrder", "api:cancelOrder"} <= set(backend["source_refs"])
-    prompt = (run / backend["prompt_file"]).read_text(encoding="utf-8")
-    assert "The customer can place an order." not in prompt
-    assert '"call_id"' not in prompt
-    assert '"control_binding"' not in prompt
-    assert context["sourceIndexPath"] in prompt
-    assert context["methodContextRoot"] in prompt
-    assert "INTERNAL-REPAIR-MARKER" not in prompt
-    assert "INTERNAL-USE-CASE-REPAIR" not in prompt
+    orphaned = reconcile_workflow_state(run)
+    assert orphaned["status"] == "NEEDS_PLANNER"
+    assert orphaned["nextRunnableTasks"] == []
+    assert orphaned["blockingReason"]
+    assert orphaned["blockingDetails"]
 
 
-def test_completed_workflow_hands_full_verification_to_testing(
+def test_completed_workflow_runs_one_backend_regression_gate_before_testing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """구현은 산출물을 완성하고 전체 build·container 검사는 실행하지 않는다."""
+    """구현은 backend 전체 test를 한 번 통과한 뒤 runtime 검사를 Testing에 넘긴다."""
     run = tmp_path / "run"
     reports = run / "reports"
     reports.mkdir(parents=True)
     monkeypatch.setattr(
         "app.implementation.workflows.coordinator.plan_workflow",
         lambda *_args: {
-            "status": "COMPLETE",
+                "status": "READY_TO_FINALIZE",
             "tasks": [
                 {
                     "task_id": "implement-order-use-cases",
@@ -2441,6 +3179,22 @@ def test_completed_workflow_hands_full_verification_to_testing(
         "app.implementation.workflows.coordinator.build_rtm_traceability_map",
         lambda *_args: {"summary": {"missing": 0}},
     )
+    gate_calls: list[tuple[str, bool, bool]] = []
+
+    def backend_gate(
+        _run: Path,
+        report_name: str,
+        *,
+        verify_frontend: bool,
+        verify_end_to_end: bool,
+    ) -> dict[str, object]:
+        gate_calls.append((report_name, verify_frontend, verify_end_to_end))
+        return {"status": "SUCCEEDED"}
+
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.verify_run_workspace",
+        backend_gate,
+    )
 
     result = run_workflow(
         run,
@@ -2454,9 +3208,23 @@ def test_completed_workflow_hands_full_verification_to_testing(
 
     assert result["status"] == "COMPLETE"
     assert result["testingRequired"] is True
+    assert gate_calls == [("backend-regression.json", False, False)]
+    assert result["backendRegression"] == "reports/backend-regression.json"
     assert (run / "application/Dockerfile").is_file()
     assert not (reports / "final-verification.json").exists()
     assert not (reports / "container-runtime-smoke.json").exists()
+
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.plan_workflow",
+        lambda *_args: dict(result),
+    )
+    resumed = run_workflow(
+        run,
+        SimpleNamespace(app_id="app-1", inputs={}, job_type="INITIAL_IMPLEMENTATION"),
+        auditor=lambda _run: pytest.fail("completed checkpoint must be reused"),
+    )
+    assert resumed["status"] == "COMPLETE"
+    assert gate_calls == [("backend-regression.json", False, False)]
 
 
 def test_owner_execution_boundary_preserves_checkpoint_without_source_repair(
@@ -2480,9 +3248,9 @@ def test_owner_execution_boundary_preserves_checkpoint_without_source_repair(
         "nextRunnableTasks": [task["task_id"]],
     }
     paused_state = {
-        "status": "FAILED",
-        "tasks": [{**task, "status": "FAILED", "attempts": 1}],
-        "phases": [{"phaseId": "backend", "status": "FAILED"}],
+        "status": "INTERRUPTED",
+        "tasks": [{**task, "status": "INTERRUPTED", "attempts": 1}],
+        "phases": [{"phaseId": "backend", "status": "INTERRUPTED"}],
         "nextRunnableTasks": [task["task_id"]],
     }
     plan_calls = 0
@@ -2513,7 +3281,7 @@ def test_owner_execution_boundary_preserves_checkpoint_without_source_repair(
         executor=stop_at_execution_boundary,
     )
 
-    assert result["status"] == "FAILED"
+    assert result["status"] == "INTERRUPTED"
     assert "execution boundary" in result["blockingReason"]
     assert repair_calls == []
     assert not (run / "reports/repair-plan.json").exists()
@@ -2670,11 +3438,22 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
     prompt_path = task_dir / "backend.md"
     initial_prompt = "INITIAL IMPLEMENTATION CONTEXT\n" + ("all requirements\n" * 100)
     prompt_path.write_text(initial_prompt, encoding="utf-8")
+    context_path = task_dir / "backend.context.json"
+    context_path.write_text(
+        json.dumps(
+            {
+                "behaviorCapsule": {"useCases": [{"use_case_id": "UC1"}]},
+                "readSourcePaths": [source_path],
+            }
+        ),
+        encoding="utf-8",
+    )
     task = {
         "task_id": "implement-backend-application",
         "task_type": "backend-implementation",
         "owner": "backend",
         "prompt_file": str(prompt_path.relative_to(run)).replace("\\", "/"),
+        "context_file": str(context_path.relative_to(run)).replace("\\", "/"),
         "allowed_write_paths": [source_path],
         "allowed_write_roots": ["application/src/main/java/com/example"],
         "required_output_paths": [source_path],
@@ -2700,6 +3479,7 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
         },
     )
     assert entry is not None
+    assert entry["ownerTaskIds"] == ["implement-backend-application"]
     assert entry["repairPaths"] == [source_path]
     assert "application/src/main/java/com/example/api/Contract.java" in entry["relatedPaths"]
     assert "application/frontend/src/App.tsx" in entry["relatedPaths"]
@@ -2751,7 +3531,13 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
     assert "INITIAL IMPLEMENTATION CONTEXT" not in repair_prompt
     assert "401 Unauthorized" in repair_prompt
     assert "SecurityConfiguration.java was changed, but HTTP 401 persists" in repair_prompt
-    assert "Use the terminal to reproduce the failure" in repair_prompt
+    assert "with the file editor" in repair_prompt
+    assert "`run_task_check`" in repair_prompt
+    assert "terminal" not in repair_prompt
+    assert "trace evidence, not extra read permission" in repair_prompt
+    assert "only when the task context already lists it" in repair_prompt
+    assert "Use the terminal to reproduce the failure" not in repair_prompt
+    assert "not an exhaustive list of relevant source" not in repair_prompt
     assert "State new diagnostic hypothesis 2" in repair_prompt
     assert len({item["strategy"] for item in repeated_entries}) == 6
     assert source_path in repair_prompt

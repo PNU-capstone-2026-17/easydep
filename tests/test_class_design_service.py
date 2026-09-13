@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.design.services.class_diagram import feedback as feedback_stage
-from app.design.services.class_diagram import service
+from app.design.services.class_diagram import generation, service
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
@@ -67,6 +67,126 @@ def test_exact_operation_and_call_targets_resolve_without_scope_llm(monkeypatch)
     assert call_scope == FeedbackScope(kind="collaboration", ids=["UC1"])
     assert legacy_operation_scope == operation_scope
     assert legacy_call_scope == call_scope
+
+
+def test_targeted_inventory_revision_allows_baseline_but_rejects_regression(monkeypatch):
+    proposal = inventory_proposal()
+    for name, scope in (("LegacyRecord", []), ("OtherRecord", ["UC1"])):
+        proposal["items"].append({
+            "name": name, "kind": "Entity", "description": "Legacy state",
+            "fields": [{"name": "recordId", "type": "String"}],
+            "identifier": ["recordId"], "values": [], "useCaseIds": scope,
+        })
+    relationship = {
+        "source": "LegacyRecord", "target": "OtherRecord", "type": "Association",
+        "sourceMultiplicity": "1", "targetMultiplicity": "*", "description": "legacy",
+    }
+    proposal["Relationships"] = [relationship, deepcopy(relationship)]
+    current = feedback_stage.inventory._normalize_inventory(
+        InventoryProposal.model_validate(proposal)
+    )
+    proposal = deepcopy(proposal)
+    next(
+        item for item in proposal["items"] if item["name"] == "RequestControl"
+    )["description"] = "New coordination"
+    monkeypatch.setattr(feedback_stage, "parse_structured", lambda *_args, **_kwargs: proposal)
+
+    accepted = feedback_stage.AcceptedInventory.from_payload(current)
+    revised = feedback_stage.propose_inventory_revision(
+        build_scenario_index(single_use_case()),
+        accepted,
+        "Update only the control description.",
+        {"RequestControl"},
+    ).as_payload()
+
+    control = next(item for item in revised["Classes"] if item["className"] == "RequestControl")
+    assert control["description"] == "New coordination"
+    legacy = next(item for item in revised["Classes"] if item["className"] == "LegacyRecord")
+    assert legacy["useCaseIds"] == []
+
+    proposal["Relationships"].append(deepcopy(relationship))
+    with pytest.raises(ValueError, match="both directions"):
+        feedback_stage.propose_inventory_revision(
+            build_scenario_index(single_use_case()),
+            accepted,
+            "Change relation.",
+            {"LegacyRecord"},
+        )
+
+
+def test_inventory_revision_preserves_valid_operations_and_calls(monkeypatch):
+    combined_calls = 0
+
+    def fake_parse(messages, schema, **_kwargs):
+        nonlocal combined_calls
+        if schema is InventoryProposal:
+            proposal = inventory_proposal()
+            if "currentInventory" in json.loads(messages[-1]["content"]):
+                proposal["items"][1]["description"] = "Revised coordination"
+            return proposal
+        if schema is CombinedUnitProposal:
+            combined_calls += 1
+            return combined_unit_proposal()
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    index = build_scenario_index(single_use_case())
+    current = service.generate_class_model(index)
+    operations_before = [
+        operation.model_dump(by_alias=True)
+        for item in current.Classes for operation in item.operations
+    ]
+    calls_before = current.Collaborations[0].model_dump(by_alias=True)
+
+    revised = service.revise_class_model(
+        current, index, "Update the control description.", {"RequestControl"}
+    )
+
+    assert combined_calls == 1
+    assert [
+        operation.model_dump(by_alias=True)
+        for item in revised.Classes for operation in item.operations
+    ] == operations_before
+    assert revised.Collaborations[0].model_dump(by_alias=True) == calls_before
+
+    expanded_payload = feedback_stage.inventory_from_model(current).as_payload()
+    expanded_payload["Classes"].append({
+        "className": "AuditRecord", "stereotype": "Entity",
+        "description": "Durable audit state", "fields": ["recordId : String"],
+        "identifier": ["recordId"], "values": [], "useCaseIds": ["UC1"],
+    })
+    expanded = feedback_stage.AcceptedInventory.from_payload(expanded_payload)
+    monkeypatch.setattr(
+        feedback_stage, "propose_inventory_revision", lambda *_args, **_kwargs: expanded
+    )
+    monkeypatch.setattr(
+        feedback_stage,
+        "feedback_scope",
+        lambda *_args, **_kwargs: FeedbackScope(kind="inventory", ids=[]),
+    )
+    rebuilds = []
+    def rebuild(*_args, **_kwargs):
+        rebuilds.append(True)
+        return current
+    monkeypatch.setattr(service.generation, "build_model", rebuild)
+
+    service.revise_class_model(current, index, "Add durable audit state.", set())
+
+    assert rebuilds == [True]
+
+    type_payload = feedback_stage.inventory_from_model(current).as_payload()
+    type_payload["DataTypes"].append({
+        "name": "AuditId", "kind": "valueObject", "fields": ["value : String"],
+        "values": [], "identifier": [], "useCaseIds": ["UC1"],
+    })
+    type_expanded = feedback_stage.AcceptedInventory.from_payload(type_payload)
+    monkeypatch.setattr(
+        feedback_stage, "propose_inventory_revision", lambda *_args, **_kwargs: type_expanded
+    )
+
+    service.revise_class_model(current, index, "Add a structural identifier type.", set())
+
+    assert rebuilds == [True, True]
 
 
 def test_generate_uses_one_combined_call_and_keeps_the_public_model(monkeypatch):
@@ -157,8 +277,8 @@ def test_combined_cache_skips_warm_calls_and_revalidates_the_hit(monkeypatch):
 
 def test_repeated_call_plan_regenerates_the_use_case_combined_unit(monkeypatch):
     combined_calls = 0
-    call_plan_calls = 0
     combined_payloads: list[dict] = []
+    call_plan_payloads: list[dict] = []
 
     # 루트와 자식을 구분하는 값은 null일 수 있지만 생략할 수는 없다. 이 계약을
     # 구조화 출력 단계에서 강제해야 모든 호출이 루트로 해석되는 일을 막을 수 있다.
@@ -170,18 +290,18 @@ def test_repeated_call_plan_regenerates_the_use_case_combined_unit(monkeypatch):
             schema.model_validate(payload)
 
     def fake_parse(messages, schema, **_kwargs):
-        nonlocal call_plan_calls, combined_calls
+        nonlocal combined_calls
         if schema is InventoryProposal:
             return inventory_proposal()
         if schema is CombinedUnitProposal:
             combined_calls += 1
             combined_payloads.append(json.loads(messages[-1]["content"]))
             proposal = multiple_root_combined_proposal()
-            if combined_calls < 3:
+            if combined_calls == 1:
                 proposal["calls"][2]["parentCallIndex"] = 2
             return proposal
         if issubclass(schema, CallPlanProposal):
-            call_plan_calls += 1
+            call_plan_payloads.append(json.loads(messages[-1]["content"]))
             plan = multiple_root_call_plan()
             plan["calls"][2]["parentCallIndex"] = 2
             return plan
@@ -192,10 +312,53 @@ def test_repeated_call_plan_regenerates_the_use_case_combined_unit(monkeypatch):
 
     # 각 call plan은 한 번만 교체한다. 그 결과도 실패하면 오류 문구를 바꿔가며 같은
     # 범위에 머물지 않고 operation과 calls를 함께 고치는 결합 수리로 올라간다.
-    assert (combined_calls, call_plan_calls) == (3, 2)
-    assert len(combined_payloads[-1]["repairHistory"]) >= 2
+    assert combined_calls > 1
+    assert combined_payloads[-1]["repairHistory"]
+    assert call_plan_payloads[0]["previousPlan"]["calls"][2]["parentCallIndex"] == 2
     assert [item.collaboration_id for item in model.Collaborations] == ["UC1"]
     assert sum(call.parent_call_id is None for call in model.Collaborations[0].calls) == 2
+
+
+def test_repeated_invalid_call_plan_stops_as_generation_stalled(monkeypatch):
+    def fake_parse(_messages, schema, **_kwargs):
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is CombinedUnitProposal:
+            proposal = multiple_root_combined_proposal()
+            proposal["calls"][2]["parentCallIndex"] = 2
+            return proposal
+        if issubclass(schema, CallPlanProposal):
+            plan = multiple_root_call_plan()
+            plan["calls"][2]["parentCallIndex"] = 2
+            return plan
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+
+    with pytest.raises(generation.GenerationStalled) as caught:
+        service.generate_class_model(build_scenario_index(multiple_entry_use_case()))
+
+    assert caught.value.unit_id == "UC1"
+    assert "last finding: ValueError:" in str(caught.value)
+
+
+def test_invalid_operation_repairs_stop_as_generation_stalled(monkeypatch):
+    def fake_parse(_messages, schema, **_kwargs):
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is CombinedUnitProposal:
+            proposal = combined_unit_proposal()
+            proposal["fragment"]["DataTypes"][0]["fields"][0]["type"] = "MissingType"
+            return proposal
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+
+    with pytest.raises(generation.GenerationStalled) as caught:
+        service.generate_class_model(build_scenario_index(single_use_case()))
+
+    assert caught.value.unit_id == "UC1"
+    assert "cached operation fragment UC1" in caught.value.finding
 
 
 def test_resume_and_revision_keep_errors_and_use_case_ownership(monkeypatch):
@@ -255,6 +418,10 @@ def test_resume_and_revision_keep_errors_and_use_case_ownership(monkeypatch):
     assert {item[1] for item in previews} == {"operations", "collaborations"}
 
     failure = ""
+    before_revision_call_plans = call_plan_calls
+    parents_before = [
+        call.parent_call_id for call in resumed.Collaborations[0].calls
+    ]
     result = service.revise_class_model(
         resumed, index, "Rename the actor-facing operation.", {"UC1"},
     )
@@ -262,3 +429,7 @@ def test_resume_and_revision_keep_errors_and_use_case_ownership(monkeypatch):
     boundary = next(item for item in result.Classes if item.class_name == "RequestBoundary")
     assert boundary.operations[0].name == "send"
     assert [item.collaboration_id for item in result.Collaborations] == ["UC1"]
+    assert call_plan_calls == before_revision_call_plans
+    assert [
+        call.parent_call_id for call in result.Collaborations[0].calls
+    ] == parents_before

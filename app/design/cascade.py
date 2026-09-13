@@ -36,7 +36,6 @@ from app.design.nodes.artifact import (
 from app.design.rtm import (
     affected_by_element,
     build_design_rtm,
-    exact_contract_links,
     linked_elements,
 )
 from app.design.schemas.architecture_state import ArchitectureState
@@ -72,74 +71,6 @@ def _root_rtm_element(value: str) -> str:
 
     marker = value.find("#")
     return value if marker < 0 else value[:marker]
-
-
-def _class_authority_merge_targets(
-    state: ArchitectureState,
-    approved_targets: set[str],
-) -> set[str]:
-    """Normalize class authority refs to actual ``Classes`` merge units.
-
-    RTM rows can name an operation or a collaboration call, while the class
-    reviser can safely merge only a declared class (and its dependent
-    collaborations).  Operation refs are therefore normalized to their owning
-    class.  Collaboration/call refs do not identify a safely editable class
-    inventory unit, so fail closed instead of handing an opaque ref to an LLM.
-    """
-    class_spec = DESIGN_SPECS["class_diagram"]
-    model = state.get(class_spec.model_key) or {}
-    classes = model.get("Classes") or [] if isinstance(model, dict) else []
-    collaborations = model.get("Collaborations") or [] if isinstance(model, dict) else []
-    class_names = {
-        str(item.get("className") or "").strip()
-        for item in classes
-        if isinstance(item, dict) and str(item.get("className") or "").strip()
-    }
-    operation_owner = {
-        str(operation.get("operationId") or "").strip(): str(item.get("className") or "").strip()
-        for item in classes
-        if isinstance(item, dict)
-        for operation in item.get("operations") or []
-        if isinstance(operation, dict)
-        and str(operation.get("operationId") or "").strip()
-    }
-    collaboration_refs = {
-        str(item.get("collaborationId") or "").strip()
-        for item in collaborations
-        if isinstance(item, dict) and str(item.get("collaborationId") or "").strip()
-    }
-    call_refs = {
-        str(call.get("callId") or "").strip()
-        for item in collaborations
-        if isinstance(item, dict)
-        for call in item.get("calls") or []
-        if isinstance(call, dict) and str(call.get("callId") or "").strip()
-    }
-
-    normalized: set[str] = set()
-    for ref in approved_targets:
-        parsed = _design_target(ref)
-        # A complete approved plan commonly includes its requested API/class
-        # target alongside authority targets.  This helper owns only the class
-        # subset, so non-class refs are intentionally ignored rather than
-        # turning a local API plan into an error.
-        if parsed is not None and parsed.kind != "class_diagram":
-            continue
-        candidate = parsed.id if parsed is not None else ref
-        if candidate in class_names:
-            normalized.add(candidate)
-        elif candidate in operation_owner:
-            normalized.add(operation_owner[candidate])
-        elif candidate in collaboration_refs or _root_rtm_element(candidate) in call_refs:
-            raise UnapprovedScopeExpansion(
-                f"Class collaboration authority {ref!r} cannot be safely normalized "
-                "to a Classes merge unit."
-            )
-        else:
-            raise UnapprovedScopeExpansion(
-                f"Approved class authority {ref!r} is absent from the frozen class model."
-            )
-    return normalized
 
 
 def _class_execution_merge_targets(
@@ -235,64 +166,12 @@ def _apply(
     feedback: str,
     targets: set[str],
     *,
-    reverse_class_targets: set[str] | None = None,
     revision_targets: set[str] | None = None,
 ) -> dict[str, Any]:
     """한 스테이지에서 대상 항목만 고치고, 검사·렌더까지 마친 상태 조각을 돌려준다."""
     original = state.get(spec.model_key) or {}
-    delta: dict[str, Any] = {}
     reviser_targets = revision_targets if revision_targets is not None else targets
-    if spec.revise_state is not None:
-        # Sequence feedback owns an upstream class-collaboration revision as one
-        # atomic state transition.  Calling only ``spec.revise`` would merely
-        # re-project the unchanged class model and then make the cascade guess an
-        # unrelated reverse class edit from RTM links.
-        delta = spec.revise_state(original, feedback, state, reviser_targets)
-        if spec.model_key not in delta:
-            raise ValueError(
-                f"{spec.stage} state revision did not return {spec.model_key}"
-            )
-        revised = delta[spec.model_key]
-    else:
-        revised = spec.revise(original, feedback, state, reviser_targets)
-
-    # ``sequence_diagram.revise_state`` edits its source class model as part of
-    # projection.  Do not allow that internal state transition to bypass the
-    # executor's approved authority boundary: merge the returned class model
-    # through the same target-preserving gate before it reaches ``working``.
-    if reverse_class_targets:
-        class_spec = DESIGN_SPECS["class_diagram"]
-        class_key = class_spec.model_key
-        reverse_candidate = delta.get(class_key)
-        reverse_original = state.get(class_key) or {}
-        if not isinstance(reverse_candidate, dict) or not isinstance(reverse_original, dict):
-            raise UnapprovedScopeExpansion(
-                "A reverse class revision did not return a valid class model."
-            )
-        reverse_merge_targets = set(reverse_class_targets)
-        reverse_merge_targets.update(
-            _class_collaboration_dependency_targets(
-                reverse_original, reverse_candidate, reverse_class_targets
-            )
-        )
-        reverse_merged = merge_model(
-            class_spec, reverse_original, reverse_candidate, reverse_merge_targets
-        )
-        assert_untargeted_elements_preserved(
-            class_spec, reverse_original, reverse_merged, reverse_merge_targets
-        )
-        delta[class_key] = reverse_merged
-        reverse_working: ArchitectureState = {**state, **delta, class_key: reverse_merged}
-        if class_spec.finalize:
-            finalized = class_spec.finalize(reverse_working)
-            delta.update(finalized)
-            reverse_working.update(finalized)
-        reverse_model = reverse_working.get(class_key) or reverse_merged
-        delta.update(render_and_validate(class_spec, reverse_model, reverse_working))
-        if class_spec.check_key:
-            delta[class_spec.check_key] = _check_report(
-                class_spec, reverse_model, reverse_working
-            )
+    revised = spec.revise(original, feedback, state, reviser_targets)
 
     merge_targets = set(targets)
     if spec.stage == "class_diagram":
@@ -308,8 +187,8 @@ def _apply(
     # 지목 수정은 비대상 보존이 계약이므로 전체 흐름 재추출을 포함하는 reconcile은
     # 실행하지 않는다. 대신 최종 구성 규칙은 반드시 적용해, 새 시퀀스 호출의 메서드는
     # 수신 클래스에 결정론적으로 보강한 뒤에만 렌더한다.
-    working: ArchitectureState = {**state, **delta, spec.model_key: merged}
-    patch: dict[str, Any] = {**delta, spec.model_key: merged}
+    working: ArchitectureState = {**state, spec.model_key: merged}
+    patch: dict[str, Any] = {spec.model_key: merged}
     if spec.finalize:
         finalized = spec.finalize(working)
         patch.update(finalized)
@@ -379,7 +258,7 @@ def _refs_by_stage(refs: list[str]) -> dict[str, set[str]]:
 def _selected_source_payload(
     state: ArchitectureState, stage: str, elements: set[str]
 ) -> dict[str, Any]:
-    """Return only the source elements that justified a reverse update.
+    """Return only the source elements that justify a downstream update.
 
     Passing an entire diagram/API document back to a reviser gives it needless
     opportunities to reinterpret unrelated content.  The feedback already
@@ -455,8 +334,7 @@ def _apply_projection(
     """Refresh derived sequence units without invoking a reviser.
 
     A class-authority change is already approved and sequence is its
-    deterministic projection.  Calling ``sequence.revise_state`` again here
-    would make a second, unapproved reverse class LLM edit.
+    deterministic projection.  It never invokes a sequence feedback reviser.
     """
     original = state.get(spec.model_key) or {}
     projected = spec.extract(state)
@@ -482,82 +360,22 @@ def _apply_projection(
     return patch
 
 
-def _reverse_class_authorities(
-    rtm: dict,
-    stage: str,
-    element: str,
-) -> set[str]:
-    """Return only the directed exact links that authorize a class reverse edit."""
-    relation = {"sequence_diagram": "invokes", "api_spec": "binds"}.get(stage)
-    if relation is None:
-        return set()
-    authorities: set[str] = set()
-    for link in exact_contract_links(
-        rtm, stage, element, direction="outgoing", relations={relation}
-    ):
-        target = str(link["to"])
-        parsed = _design_target(target)
-        if parsed is not None and parsed.kind == "class_diagram":
-            authorities.add(target)
-    return authorities
-
-
 def _frozen_cascade_scope(
     state: ArchitectureState,
     rtm: dict,
     stage: str,
     element: str,
-    approved_authority_targets: set[str] | None,
     approved_downstream_targets: set[str] | None,
-    *,
-    allow_legacy_implicit_scope: bool,
-) -> tuple[set[str], dict[str, set[str]], dict[str, set[str]]]:
-    """Validate reverse authority and calculate all editable forward targets.
-
-    The calculation happens before any reviser call.  In particular a sequence
-    state revision owns an internal class mutation, so discovering its class
-    dependency after ``_apply`` would already be too late.
-    """
-    exact_reverse_refs = _reverse_class_authorities(rtm, stage, element)
-    if stage == "sequence_diagram" and not exact_reverse_refs:
-        raise UnapprovedScopeExpansion(
-            f"{stage}:{element} has no exact class contract link; reverse authority "
-            "cannot be guessed."
-        )
-
-    approved_classes = (
-        set()
-        if stage == "class_diagram"
-        else _class_authority_merge_targets(
-            state, set(approved_authority_targets or set())
-        )
-    )
-    if stage == "sequence_diagram":
-        required_classes = _class_authority_merge_targets(state, exact_reverse_refs)
-        if approved_authority_targets is None and allow_legacy_implicit_scope:
-            approved_classes = set(required_classes)
-    elif stage == "api_spec" and approved_classes:
-        # API endpoint/schema revisions are local by default.  A planner can
-        # explicitly elevate one to class authority; then, and only then, the
-        # exact ``binds`` edge must prove every approved class target.
-        required_classes = _class_authority_merge_targets(state, exact_reverse_refs)
-    else:
-        required_classes = set()
-    if not required_classes <= approved_classes:
-        missing = sorted(required_classes - approved_classes)
-        raise UnapprovedScopeExpansion(
-            "The requested revision needs approved class authority targets: "
-            + ", ".join(f"class_diagram:{value}" for value in missing)
-        )
+) -> dict[str, set[str]]:
+    """Calculate bounded forward targets from the frozen pre-change RTM."""
 
     directly_linked = _refs_by_stage(linked_elements(rtm, stage, element))
     scheduled = {
         target_stage: set(elements)
         for target_stage, elements in directly_linked.items()
-        if target_stage in {"sequence_diagram", "api_spec"}
+        if stage == "class_diagram"
+        and target_stage in {"sequence_diagram", "api_spec"}
     }
-    # A direct class revision is already authoritative.  A reverse sequence/API
-    # revision may use only the normalized, approved class targets above.
     if stage == "class_diagram":
         class_units = _class_execution_merge_targets(state, {element})
         class_names = {
@@ -565,14 +383,15 @@ def _frozen_cascade_scope(
             for item in (state.get(DESIGN_SPECS["class_diagram"].model_key) or {}).get("Classes") or []
             if isinstance(item, dict) and str(item.get("className") or "").strip()
         }
-        classes_for_forward = class_units & class_names
-    else:
-        classes_for_forward = required_classes
-    for class_name in classes_for_forward:
-        for affected in affected_by_element(rtm, "class_diagram", class_name):
-            affected_ref = _design_target(affected)
-            if affected_ref is not None:
-                scheduled.setdefault(affected_ref.kind, set()).add(affected_ref.id)
+        # Exact operation targets use exact contract links. Expanding their
+        # owner class would turn one operation edit into every artifact that
+        # merely mentions the same Boundary or Control.
+        classes_for_forward = class_units & class_names if element in class_names else set()
+        for class_name in classes_for_forward:
+            for affected in affected_by_element(rtm, "class_diagram", class_name):
+                affected_ref = _design_target(affected)
+                if affected_ref is not None:
+                    scheduled.setdefault(affected_ref.kind, set()).add(affected_ref.id)
 
     # Do not revise the selected element twice.  It is a requested target, not
     # a downstream expansion, even when a frozen RTM has a cycle through it.
@@ -592,7 +411,7 @@ def _frozen_cascade_scope(
             raise UnapprovedScopeExpansion(
                 "The frozen approved downstream scope excludes: " + ", ".join(unapproved)
             )
-    return required_classes, directly_linked, scheduled
+    return scheduled
 
 
 def revise_and_cascade(
@@ -602,16 +421,15 @@ def revise_and_cascade(
     *,
     approved_authority_targets: set[str] | None = None,
     approved_downstream_targets: set[str] | None = None,
-    allow_legacy_implicit_scope: bool = False,
 ) -> dict[str, Any]:
     """`{stage}:{element}` 를 고치고, 증명된 관련 항목만 따라 고친다.
 
     반환 {"state": 바뀐 상태, "changed": [스테이지...], "touched": {스테이지: [항목...]}}
     — 화면이 "무엇을 고쳤는지" 보여줄 재료다.
 
-    클래스 수정은 기존처럼 provenance RTM을 따라 하류를 고친다. 시퀀스/API 수정은
-    ``links``의 *정확한* Control-binding/sequence-call 계약이 있을 때만 관련 클래스를
-    역방향으로 고치고, 그 클래스에서 다시 하류를 맞춘다. 링크가 없으면 추측하지 않는다.
+    클래스 authority는 반드시 class target으로 실행하고 frozen RTM을 따라 하류를 고친다.
+    sequence는 class의 결정론적 projection이므로 직접 수정할 수 없으며, API 수정도 API
+    산출물에만 국소 적용한다. 이전 design stage를 역방향으로 수정하지 않는다.
 
     어느 경로든 무관한 스테이지는 리바이저를 **부르지도 않는다**. LLM 출력은
     finalizer보다 먼저 ``assert_untargeted_elements_preserved``를 통과해야 하므로,
@@ -622,6 +440,20 @@ def revise_and_cascade(
     if parsed_target is None or parsed_target.kind == "erd":
         raise UnknownTarget(f"{target} is not an editable design element.")
     stage, element = parsed_target.kind, parsed_target.id
+    if stage == "sequence_diagram":
+        raise UnapprovedScopeExpansion(
+            "Sequence diagrams are deterministic class projections; revise the exact "
+            "linked class authority instead."
+        )
+    approved_authority_targets = approved_authority_targets or set()
+    unexpected_authority = sorted(
+        ref for ref in approved_authority_targets if ref != target
+    )
+    if unexpected_authority:
+        raise UnapprovedScopeExpansion(
+            "A targeted design revision cannot apply additional authority targets: "
+            + ", ".join(unexpected_authority)
+        )
 
     working: ArchitectureState = dict(state)
     rtm = build_design_rtm(working)
@@ -630,23 +462,17 @@ def revise_and_cascade(
     ):
         raise UnknownTarget(f"{target} is not in the current artifacts.")
 
-    # Calculate and validate reverse class authority *before* the selected
-    # stage's reviser runs.  ``sequence_diagram`` has an internal class model
-    # revision, so checking after that call would leak an unapproved LLM edit.
-    reverse_classes, directly_linked, scheduled = _frozen_cascade_scope(
+    scheduled = _frozen_cascade_scope(
         working,
         rtm,
         stage,
         element,
-        approved_authority_targets,
         approved_downstream_targets,
-        allow_legacy_implicit_scope=allow_legacy_implicit_scope,
     )
 
     changed: list[str] = []
     touched: dict[str, list[str]] = {}
     processed: dict[str, set[str]] = {}
-    revised_upstream_stages: set[str] = set()
 
     def apply_targets(
         target_stage: str,
@@ -672,25 +498,9 @@ def revise_and_cascade(
                 working,
                 revision_feedback,
                 merge_pending,
-                reverse_class_targets=(
-                    reverse_classes if target_stage == "sequence_diagram" and reverse_classes else None
-                ),
                 revision_targets=pending,
             )
         working.update(patch)
-        upstream_stages = {
-            str(value)
-            for value in patch.get("revised_upstream_stages") or []
-            if str(value) in DESIGN_SPECS and str(value) != target_stage
-        }
-        revised_upstream_stages.update(upstream_stages)
-        for upstream in sorted(
-            upstream_stages,
-            key=lambda value: list(DESIGN_SPECS).index(value),
-        ):
-            if upstream not in changed:
-                changed.append(upstream)
-                touched[upstream] = []
         processed.setdefault(target_stage, set()).update(pending)
         if target_stage not in changed:
             changed.append(target_stage)
@@ -702,28 +512,14 @@ def revise_and_cascade(
     source_elements = {element}
     trace_feedback = _trace_backed_feedback(state, stage, source_elements, feedback)
 
-    # API revisions do not own an internal class transition, unlike sequence
-    # projection.  Apply their already-approved authority explicitly.  A
-    # guessed class name is never passed to a reviser.
-    if stage == "api_spec" and reverse_classes:
-        apply_targets(
-            "class_diagram",
-            reverse_classes,
-            trace_feedback,
-        )
-
-    # The user-selected element is the only unconditionally editable source.
-    # For an explicitly elevated API revision, its approved class authority was
-    # intentionally applied first; ordinary API revisions remain local.
+    # The user-selected element is the only editable source.  Earlier stages
+    # are never reverse-mutated from a later design artifact.
     apply_targets(stage, {element}, feedback)
 
     # ③ A touched class is now the authoritative structural change.  Follow its
     # frozen forward provenance links, but do not re-edit the user-selected
     # source element.  Reprocessing it could overwrite the feedback it just
     # approved and would create a new LLM opportunity for unrelated changes.
-    # Keep the design order after the reverse class patch.  An API feedback can
-    # therefore repair its exact sequence card against the bounded class result;
-    # a sequence feedback can repair only the exact API operation that binds it.
     for next_stage in ("sequence_diagram", "api_spec"):
         apply_targets(
             next_stage,
@@ -735,7 +531,7 @@ def revise_and_cascade(
     # ERD is deterministic, never LLM-revised.  As before, do not materialize a
     # future stage solely because an earlier one was edited.
     if (
-        (processed.get("class_diagram") or reverse_classes)
+        processed.get("class_diagram")
         and "erd" in DESIGN_SPECS
         and working.get(DESIGN_SPECS["erd"].model_key)
     ):
@@ -751,12 +547,6 @@ def revise_and_cascade(
         scheduled.get("deployment_diagram", set()),
         trace_feedback,
     )
-
-    # ``persist_cascade`` saves every stage recorded above itself.  Do not leave
-    # the graph-only upstream marker in the synchronized checkpoint, where a
-    # later ordinary graph persist could save the same class revision again.
-    if revised_upstream_stages:
-        working["revised_upstream_stages"] = []
 
     return {
         "state": working,

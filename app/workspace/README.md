@@ -48,9 +48,10 @@ POST /api/workspace/apps/{app_id}/commands
 `auto_selectable=true`인 첫 action을 payload 변경 없이 클릭하는 기능이다. 질문에 답을
 발명하거나 단계·상태에서 action을 추측하지 않는다.
 
-사용자가 한 번 `delegate_repair`를 선택하면 같은 수리 episode 안의 기계적인 finding은
-백엔드가 누적 repair history를 사용해 계속 처리한다. 첫 위임, 배포 대상 선택, 요구사항의 뜻,
-외부 환경 복구처럼 실제 결정이 필요한 경우에는 `AWAITING_INPUT`으로 남는다.
+`delegate_repair`도 일반 action과 같은 새 command다. 특히 Testing은 실패 근거를 남기고
+`AWAITING_INPUT`에서 멈추며, 수리 위임을 선택하면 별도 Implementation command가 해당
+checkpoint만 수정한다. 구현이 끝난 뒤 `start_testing`을 선택해야 별도 Testing command가
+검사를 이어 간다. 자동 모드는 이 action들을 차례로 클릭할 뿐 단계 경계를 합치지 않는다.
 
 ## 실패한 단계 다시 실행하기
 
@@ -71,6 +72,14 @@ RTM을 읽는 도구 결과로 답한다.
 수정 명령에서 LLM은 유한한 element ref 후보만 고른다. owner, 편집 가능 여부, 현재 app과
 artifact version, 하류 영향은 코드가 검증한다. 검증된 명령은 공개 action registry와 같은
 실행 경로로 들어가므로 자연어 명령을 위한 별도 stage router는 없다.
+
+설계 단계가 `specification_gap` 타입의 `feedback_question`을 반환하면 Workspace는 선택지를
+기존 `message` action으로 노출한다. 선택지는 LLM 없이 정규화된 `Decision`이 되고, 자유 입력만
+기존 수정 해석기를 거친다. 답은 설계 산출물을 직접 바꾸지 않고 별도의 요구사항 수정 command로
+전달된다. 국소 UC 명세 수정 검토에서는 일반 `advance`를 노출하지 않고, 사용자가
+`plan_downstream_revision`을 선택하면 현재 RTM에서 정확한 설계 진입점을 다시 계산한다. 그 새
+범위를 승인한 뒤에만 별도 설계 수정 command를 실행한다.
+현재 연결부는 단계가 완성된 typed Question을 반환할 때만 작동하며 질문 생성 자체는 하지 않는다.
 
 ## 분기와 단계 재실행
 

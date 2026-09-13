@@ -1,36 +1,49 @@
 # 구현 단계
 
 `app.implementation`은 고정된 설계 산출물에서 실행 가능한 애플리케이션을 만들고 Testing에
-전달한다. 구현 LLM은 한 run에서 백엔드 담당자 하나와 프론트엔드 담당자 하나만 사용한다.
-유스케이스별 작업자, 선제 wiring 작업자, 별도 감독 LLM은 만들지 않는다.
+전달한다. 백엔드는 설계가 명시한 UC↔API 연결요소를 작은 행동 슬라이스로 사용한다. 공유 source를
+이유로 서로 다른 흐름을 전이적으로 합치지 않으며, 각 슬라이스는 별도의 GLM/OpenHands 대화가
+구현한다. 프론트엔드는 생성 API client를 사용하는 하나의 owner 작업으로 유지한다. 별도 감독
+LLM은 두지 않는다.
 
 ## 실행 흐름
 
 ```text
 설계 snapshot과 공개 계약 고정
   → 결정론적 backend/frontend scaffold 생성
-  → Backend owner 대화
-  → backend 독립 검증과 승격
+  → UC↔API 연결요소 기준 backend slice 계획
+  → backend slice를 하나씩 GLM/OpenHands로 구현
+  → slice별 관련 JUnit 검증과 승격
   → Frontend owner 대화
   → frontend 독립 검증과 승격
-  → Integration verification
+  → 완료 감사·공개 계약 검사·backend 전체 test 1회
   → 소스 산출물 저장
   → Testing의 정적·동적 검사
 ```
 
-Backend owner는 Java production source, 설정, 테스트와 build를 함께 책임진다. Frontend owner는
-React source, 생성 API client 사용, 테스트, lockfile과 build를 함께 책임진다. 두 작업은 같은
-frozen OpenAPI를 읽지만 초기 실행은 `backend → frontend` 순서로 진행한다. Integration
+각 Backend slice는 자신의 Java production source와 하나의 관련 JUnit 시나리오 파일을 함께
+책임진다. Service·Controller·Entity 파일을 여러 흐름이 공유해도 슬라이스를 합치지 않는다. 현재
+promotion은 canonical application을 즉시 갱신하므로 slice는 한 runner 안에서 순차 실행한다. 후속
+slice가 앞선 slice와 같은 production source를 수정하면 자신의 테스트와 앞선 관련 테스트를 함께
+통과해야 한다. 모든 owner 작업 뒤에는 전체 backend test도 한 번 실행해 나머지 회귀를 잡는다.
+행동 capsule에 `expression=null`인 direct-call 인자가 이미 표시되어 있으면 구현 가능한 작업으로
+보내지 않는다. OpenHands와 workspace를 시작하기 전에 기존 `NEEDS_INPUT` 상태로 멈춘다.
+
+Frontend owner는 React source, 생성 API client 사용, 테스트, lockfile과 build를 함께 책임진다.
+프론트엔드는 특정 backend task 하나가 아니라 backend phase 전체 완료에 의존한다. Integration
 verification은 LLM 작업이 아니라 EasyDep이 실행하는 완료 감사, 공개 계약 보존 검사와 Testing
-handoff다. 전체 runtime·Arazzo 검사는 Testing 단계가 담당하므로 구현 단계에서 중복 실행하지
+handoff다. 실제 container·Arazzo 검사는 Testing 단계가 담당하므로 구현 단계에서 중복 실행하지
 않는다.
 
 ## OpenHands 실행 경계
 
-두 owner는 OpenHands의 표준 `file_editor`, `terminal`, `finish` 도구를 사용한다. 검색은 terminal의
-`rg`를 사용하며, owner 경로에는 `run_task_check`나 EasyDep 전용 편집 도구를 노출하지 않는다.
-OpenHands가 source 조사, 편집 순서, build와 test 명령을 선택하고, 대화 종료 뒤 EasyDep이 같은
-workspace를 독립적으로 다시 검증한 후 허용된 owner source만 정식 run에 승격한다.
+구현 owner의 기본 도구는 범위가 제한된 `file_editor`, `grep`, `run_task_check`, `finish`다.
+OpenHands는 task context에 명시된 파일만 읽고 owner source만 수정하며, 정해진 관련 테스트를
+`run_task_check`로 통과시켜야 한다. 대화 종료 뒤 EasyDep이 같은 workspace를 독립적으로 다시
+검증한 후 허용된 owner source만 정식 run에 승격한다. 표준 terminal은 통제된 비교 실행에서만
+명시적으로 선택한다. 기본 제한 도구 모드는 coordinator가 경로를 검사하므로 별도 OS 사용자를
+만들지 않는다. 실패한 slice는 순차 fail-fast 동안 canonical source가 바뀌지 않으므로 보존한
+후보를 그대로 재개한다. UID/GID 권한 handoff는 실제 terminal을 제공할 때만 수행한다.
 
 표준 terminal은 고정 Linux toolchain runner에서만 활성화한다. 컨테이너에는 다음 경계만 보인다.
 
@@ -49,10 +62,15 @@ job 상태·대화 checkpoint·설계 원본은 후보 밖의 root 전용 영역
 
 ## 대화와 수리
 
-owner마다 안정적인 conversation ID와 persistence directory를 사용한다. 최초 task message는 한
+slice마다 안정적인 conversation ID와 persistence directory를 사용한다. 최초 task message는 한
 번만 보내며, 같은 prompt digest의 provider 오류나 iteration 중단은 마지막 OpenHands event에서
-그대로 재개한다. 새 검증 증거가 생겨 prompt digest가 바뀔 때만 짧은 repair message를 같은 대화에
-추가한다. 실제 실패 기준선에서 유효한 구현은 초기 약 28개 tool action에 만들어졌지만 플랫폼 탐색이
+그대로 재개한다. HTTP 제한과 별도로 streaming·내부 재시도 전체를 하나의 LLM turn 제한으로
+감싸므로 응답 조각만 계속 오는 경우에도 작업이 무기한 멈추지 않는다. 이 경우 source 결함으로
+분류하거나 자동 수리하지 않고 `INTERRUPTED`로 멈춘다. 사용자가 재개하면 같은 checkpoint에서
+이어간다. 설계 의미가 부족할 때만 `NEEDS_INPUT`, 실제 source·검증 결함일 때만 `FAILED`다.
+
+새 검증 증거가 생겨 prompt digest가 바뀔 때만 짧은 repair message를 같은 대화에 추가한다.
+실제 실패 기준선에서 유효한 구현은 초기 약 28개 tool action에 만들어졌지만 플랫폼 탐색이
 238개 action까지 이어졌고 새 backend 구현은 61번째 action 부근에서 완성되었으므로, 한 owner 실행은
 96 iteration으로 제한한다. 한도 도달 뒤에는 같은
 checkpoint에서 재개할 수 있으며 OpenHands의 500 iteration 기본값을 그대로 사용하지 않는다. SDK가
@@ -60,7 +78,7 @@ typed event로 분류한 무동작 응답이 SDK 기본 monologue 임계치만�
 종료한다.
 
 Testing finding에는 `repair_owner`와 별도로 `implementation_owner`가 기록된다. HTTP/Arazzo가 찾은
-애플리케이션 결함은 backend owner가 소유한다. Testing이 이 결함을 찾으면 새 source snapshot job을
+애플리케이션 결함은 관련 backend slice가 소유한다. Testing이 이 결함을 찾으면 새 source snapshot job을
 만들지 않고 원래 implementation job의 repair plan에 증거를 추가한다. 실제 OpenHands `base_state`가
 없으면 새 대화로 조용히 바꾸지 않고 재개를 거부한다. 해당 owner task만 다시 실행하고, 성공했던
 다른 owner는 재생성하지 않는다. 수정 뒤 같은 implementation job에 새 artifact version을 저장하고

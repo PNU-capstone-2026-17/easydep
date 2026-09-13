@@ -201,6 +201,8 @@ def test_structured_output_is_a_standard_arazzo_workflow_subset() -> None:
     assert "Arazzo v1.1 Workflow Object" in prompt
     assert "trace-linked" in prompt
     assert "FunctionalTestCase" not in prompt
+    assert "Testing-stage workflow-planning subtask" in dynamic.PLAN_ROLE_PROMPT
+    assert "immutable" in dynamic.PLAN_ROLE_PROMPT
 
 
 @pytest.mark.parametrize(
@@ -614,7 +616,10 @@ def test_strict_equality_criteria_are_normalized_for_the_executor() -> None:
             {
                 "stepId": "register",
                 "operationId": "registerForCourseOffering",
-                "successCriteria": [{"condition": "$statusCode === 201"}],
+                "successCriteria": [
+                    {"condition": "$statusCode === 201"},
+                    {"condition": "'literal===value' !== 'other!==value'"},
+                ],
             }
         ],
     }
@@ -626,7 +631,10 @@ def test_strict_equality_criteria_are_normalized_for_the_executor() -> None:
 
     normalized = dynamic._normalize_authored_workflow(workflow, candidate)
 
-    assert normalized["steps"][0]["successCriteria"] == [{"condition": "$statusCode == 201"}]
+    assert normalized["steps"][0]["successCriteria"] == [
+        {"condition": "$statusCode == 201"},
+        {"condition": "'literal===value' != 'other!==value'"},
+    ]
     dynamic._validate_authored_workflow(normalized)
 
 
@@ -727,7 +735,7 @@ def test_ambiguous_output_list_remains_invalid() -> None:
         dynamic._validate_authored_workflow(normalized)
 
 
-def test_missing_schema_valid_workflow_output_is_classified_as_sut_defect() -> None:
+def test_optional_workflow_output_pointer_is_not_classified_as_sut_defect() -> None:
     openapi = {
         "openapi": "3.1.0",
         "info": {"title": "API", "version": "1.0.0"},
@@ -762,6 +770,14 @@ def test_missing_schema_valid_workflow_output_is_classified_as_sut_defect() -> N
                         "status": "200",
                         "schema": {
                             "type": "array",
+                            "minItems": 1,
+                            "items": {"$ref": "#/components/schemas/Offering"},
+                        },
+                    },
+                    {
+                        "status": "206",
+                        "schema": {
+                            "type": "array",
                             "items": {"$ref": "#/components/schemas/Offering"},
                         },
                     }
@@ -781,6 +797,7 @@ def test_missing_schema_valid_workflow_output_is_classified_as_sut_defect() -> N
         "steps": [
             {
                 "stepId": "search",
+                "statusCode": 206,
                 "finding": {"code": "RUNTIME_EXPRESSION_UNRESOLVED"},
             }
         ],
@@ -788,9 +805,8 @@ def test_missing_schema_valid_workflow_output_is_classified_as_sut_defect() -> N
 
     dynamic._classify_missing_workflow_data(result, workflow, candidate, openapi)
 
-    assert result["defectClass"] == "SUT_DEFECT"
-    assert result["finding"]["code"] == "REQUIRED_WORKFLOW_DATA_MISSING"
-    assert result["finding"]["operationId"] == "searchOfferings"
+    assert result["defectClass"] == "TEST_DEFECT"
+    assert result["finding"]["code"] == "RUNTIME_EXPRESSION_UNRESOLVED"
 
 
 def test_invented_workflow_output_pointer_remains_test_defect() -> None:
@@ -843,14 +859,15 @@ def test_invented_workflow_output_pointer_remains_test_defect() -> None:
     assert result["finding"]["code"] == "RUNTIME_EXPRESSION_UNRESOLVED"
 
 
-def test_empty_schema_valid_prior_step_output_is_classified_as_sut_defect() -> None:
+@pytest.mark.parametrize("source_value", [None, []])
+def test_empty_required_nested_output_is_classified_as_sut_defect(source_value) -> None:
     workflow = {
         "workflowId": "workflow-UC1",
         "steps": [
             {
                 "stepId": "search",
                 "operationId": "searchOfferings",
-                "outputs": {"offeringsList": "$response.body"},
+                "outputs": {"offeringsList": "$response.body#/items"},
             },
             {
                 "stepId": "details",
@@ -876,7 +893,11 @@ def test_empty_schema_valid_prior_step_output_is_classified_as_sut_defect() -> N
             "stepId": "details",
         },
         "steps": [
-            {"stepId": "search", "outputs": {"offeringsList": []}},
+            {
+                "stepId": "search",
+                "statusCode": 200,
+                "outputs": {"offeringsList": source_value},
+            },
             {"stepId": "details", "status": "failed"},
         ],
     }
@@ -889,10 +910,18 @@ def test_empty_schema_valid_prior_step_output_is_classified_as_sut_defect() -> N
                     {
                         "status": "200",
                         "schema": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "properties": {"id": {"type": "string"}},
+                            "type": "object",
+                            "required": ["items"],
+                            "properties": {
+                                "items": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "items": {
+                                        "type": "object",
+                                        "required": ["id"],
+                                        "properties": {"id": {"type": "string"}},
+                                    },
+                                }
                             },
                         },
                     }
@@ -914,6 +943,22 @@ def test_empty_schema_valid_prior_step_output_is_classified_as_sut_defect() -> N
     assert result["defectClass"] == "SUT_DEFECT"
     assert result["finding"]["code"] == "REQUIRED_WORKFLOW_DATA_MISSING"
     assert result["finding"]["operationId"] == "searchOfferings"
+
+
+def test_optional_empty_collection_does_not_imply_a_sut_defect() -> None:
+    schema = {
+        "type": "array",
+        "items": {
+            "type": "object",
+            "properties": {"id": {"type": "string"}},
+        },
+    }
+
+    assert not dynamic._schema_guarantees_pointer(
+        schema,
+        "#/0/id",
+        {"openapi": "3.0.3", "info": {"title": "API", "version": "1.0.0"}, "paths": {}},
+    )
 
 
 def test_plan_progress_identifies_completed_retrying_and_failed_use_cases(monkeypatch):
@@ -1139,7 +1184,11 @@ def test_generation_repairs_rejected_candidate_without_executing_it(
     assert len(requests) == 2
     assert requests[0]["reasoning_effort"] == "medium"
     assert requests[1]["reasoning_effort"] == ("low" if failure == "length" else "medium")
-    correction = requests[1]["messages"][0]["content"]
+    assert requests[1]["messages"][0] == {
+        "role": "system",
+        "content": dynamic.PLAN_ROLE_PROMPT,
+    }
+    correction = requests[1]["messages"][-1]["content"]
     if failure != "length":
         assert json.dumps(rejected, separators=(",", ":")) in correction
         assert "The first step has no previous step" in correction
@@ -1157,7 +1206,7 @@ def test_unrepaired_unknown_step_remains_a_test_defect(monkeypatch: pytest.Monke
     def unexpected_execution(*_args, **_kwargs):
         pytest.fail("Invalid plan must not execute against the generated application")
 
-    monkeypatch.setattr(dynamic, "_client", lambda: object())
+    monkeypatch.setattr(dynamic, "_client", object)
     monkeypatch.setattr(dynamic, "_generate", generate)
     monkeypatch.setattr(dynamic, "execute_arazzo_workflow", unexpected_execution)
     state = _state(fixed_arazzo_document=None)
@@ -1195,7 +1244,7 @@ def test_execution_error_log_is_used_for_local_plan_repair(monkeypatch, weaken_o
             revised["steps"][0].pop("successCriteria")
         return revised
 
-    monkeypatch.setattr(dynamic, "_client", lambda: object())
+    monkeypatch.setattr(dynamic, "_client", object)
     monkeypatch.setattr(dynamic, "_generate", generate)
     monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
     report = dynamic.dynamic_functional_node(_state())["dynamic_functional_report"]

@@ -330,6 +330,24 @@ validation finding이 남으면
   실패하며 임의 문자열 보정이나 빈 placeholder를 만들지 않는다.
 - 기본 긴 호출 병렬도는 2이며 설정을 통해서만 조정한다.
 
+### 생성 결함과 명세 공백
+
+클래스 단계가 직접 수리하는 것은 schema, 타입, operation·call 참조, 부모 순서와 binding처럼
+현재 입력만으로 판정 가능한 생성 결함이다. `validate_class_model`의 결정론 finding이 이
+경계를 정의한다. 수리는 해당 use case의 operation 또는 collaboration만 다시 만들며 다른
+단계의 산출물은 수정하지 않는다.
+
+요구사항에 없는 정책이나 사용자의 선택이 필요한 경우에는 값을 추측해 채우지 않는다. 사용자나
+별도 review가 그런 명세 공백을 발견하면 기존 Workspace의 `specification_gap` Question으로
+보내고, 사용자 Decision이 Requirements command를 완료한 뒤 새 입력으로 class 단계를 다시
+실행한다. 현재 class validator가 의미 공백을 자동 추론하거나 Question을 생성하지는 않는다.
+클래스 생성 안에 별도 obligation/effect ontology, review ledger 또는 execution witness를 두지
+않는다.
+
+간단한 리뷰는 `BCEModel`과 `validate_class_model`을 한 번 통과시키는 것으로 끝난다. 통과한
+동일 모델에서 `project_sequence_model`이 sequence를 순수 투영하고 class diagram hash를
+기록하므로 sequence 단계가 operation이나 call을 다시 판단하지 않는다.
+
 ## 최적화 cache와 관측 계약
 
 `cache.py`의 `AcceptedUnitCache`는 이미 Pydantic·결정론 검사를 통과한 단위만 재사용하는

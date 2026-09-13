@@ -12,7 +12,7 @@ from app.artifact_trace_projection import project_artifact_trace
 from app.config import settings
 from app.design.schemas.class_model import BCEModel
 from app.design.schemas.sequence_model import SequenceCollection
-from app.llm_connection import build_llm_connection
+from app.llm_connection import build_openhands_llm_connection
 
 from ..domain.implementation_ir import (
     ApiPortIR,
@@ -81,7 +81,7 @@ class _UseCaseBundle:
 
 
 def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
-    """전체 backend 구현을 맡는 단일 owner 작업을 만든다."""
+    """Materialize backend evidence, then plan bounded observable behaviors."""
     package_path = spec.base_package.replace(".", "/")
     java_root = run_root / "application" / "src" / "main" / "java" / package_path
     ir = build_implementation_ir(spec, run_root)
@@ -105,30 +105,16 @@ def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec
         path.relative_to(run_root).as_posix()
         for path in sorted((java_root / "bce").rglob("*.java"))
     ]
-    task = _build_backend_owner_task(
-        spec, run_root, ir, output, package_path, bce_paths, bundle
+    owner_task = _build_backend_owner_task(
+        spec, run_root, ir, output, package_path, bce_paths, bundle, persist=False
     )
-    if settings.implementation_backend_task_strategy == "marker":
-        marker_tasks = _build_backend_marker_tasks(
-            spec,
-            run_root,
-            output,
-            package_path,
-            bundle,
-            task,
-        )
-        if marker_tasks:
-            for marker_task in marker_tasks:
-                (output / f"{marker_task.task_id}.task.json").write_text(
-                    json.dumps(marker_task.to_dict(), ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-            return marker_tasks
-    (output / f"{task.task_id}.task.json").write_text(
-        json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    tasks = _build_backend_behavior_tasks(
+        spec, run_root, output, package_path, bundle, owner_task
     )
-    return [task]
+    _validate_backend_behavior_plan(
+        run_root, output, package_path, bundle, tasks
+    )
+    return tasks
 
 
 def _is_work_component(component: ComponentIR) -> bool:
@@ -148,6 +134,8 @@ def _build_backend_owner_task(
     package_path: str,
     bce_paths: list[str],
     bundle: _UseCaseBundle,
+    *,
+    persist: bool = True,
 ) -> TaskSpec:
     """전체 backend 계약과 owner 범위를 하나의 작업으로 만든다."""
     label = ", ".join(bundle.use_case_ids) or "common"
@@ -350,7 +338,6 @@ def _build_backend_owner_task(
     if deployment_context:
         context["deployment"] = deployment_context
     context_path = output / f"{task_id}.context.json"
-    context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
     prompt = (
         f"""# Backend application owner: {spec.name}
 
@@ -381,7 +368,11 @@ Control service and test shells; their typed calls are already projected from th
         + render_allowed_output_rules(required)
     )
     prompt_path = output / f"{task_id}.prompt.md"
-    prompt_path.write_text(prompt, encoding="utf-8")
+    if persist:
+        context_path.write_text(
+            json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        prompt_path.write_text(prompt, encoding="utf-8")
     task = TaskSpec(
         task_id=task_id,
         control=f"use cases {label}",
@@ -405,13 +396,10 @@ Control service and test shells; their typed calls are already projected from th
         ],
         allowed_write_roots=owner_roots,
     )
-    (output / f"{task_id}.task.json").write_text(
-        json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
     return task
 
 
-def _build_backend_marker_tasks(
+def _build_backend_behavior_tasks(
     spec: JobSpec,
     run_root: Path,
     output: Path,
@@ -419,341 +407,676 @@ def _build_backend_marker_tasks(
     bundle: _UseCaseBundle,
     owner_task: TaskSpec,
 ) -> list[TaskSpec]:
-    """Split backend discovery into sequential, evidence-backed marker tasks.
+    """Build bounded work units from exact UC/API connectivity."""
 
-    This is intentionally an experimental planning path. Each conversation owns
-    one concrete skeleton marker, may make supporting main-source edits, and
-    stops after a compile check. Test authoring is a later checkpoint once the
-    model/task contract is confirmed.
-    """
+    source_index = _read_json(
+        output / "implement-backend-application.source-index.json"
+    )
+    raw_entries = source_index.get("methodContexts", [])
+    method_entries = [
+        (entry, _read_json(run_root / str(entry["path"])))
+        for entry in raw_entries
+        if isinstance(entry, dict) and isinstance(entry.get("path"), str)
+    ] if isinstance(raw_entries, list) else []
+    requirements, use_cases, _sources = _all_requirement_artifacts(spec)
+    use_cases_by_id = {
+        str(value.get("use_case_id") or value.get("id")): value
+        for value in use_cases
+        if value.get("use_case_id") or value.get("id")
+    }
+    controller_paths = [
+        path
+        for path in source_index.get("startingSourcePaths", [])
+        if isinstance(path, str)
+        if "/adapter/in/web/" in path and (run_root / path).is_file()
+    ]
+    if not controller_paths and (run_root / owner_task.context_file).is_file():
+        owner_context = _read_json(run_root / owner_task.context_file)
+        controller_paths = [
+            path
+            for path in owner_context.get("controllerPaths", [])
+            if isinstance(path, str) and (run_root / path).is_file()
+        ]
+    entity_names = {
+        item.name
+        for item in bundle.components
+        if item.stereotype.casefold() == "entity"
+    }
+    bce_model = _read_json(spec.inputs.get("bceModel"))
+    components = _backend_behavior_components(
+        bundle.use_case_ids,
+        list(bundle.endpoints),
+    )
+    tasks: list[TaskSpec] = []
 
-    source_index_path = output / "implement-backend-application.source-index.json"
-    source_index = _read_json(source_index_path)
-    entries = source_index.get("methodContexts", [])
-    units: list[dict[str, object]] = []
-    if isinstance(entries, list):
-        for entry in entries:
-            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
-                continue
-            method_context_path = run_root / str(entry["path"])
-            context = _read_json(method_context_path)
-            method = context.get("method")
-            if not isinstance(method, dict):
-                continue
-            stable_id = str(method.get("stable_id") or entry.get("stableId") or "")
-            if not stable_id:
-                continue
-            stereotype = str(method.get("stereotype") or "")
-            class_name = str(method.get("class_name") or "")
-            target = (
-                "application/src/main/java/"
-                f"{package_path}/application/impl/{class_name}Service.java"
-                if stereotype.casefold() == "control"
-                else f"application/src/main/java/{package_path}/bce/{class_name}.java"
+    for use_case_ids, api_operation_ids in components:
+        identity = json.dumps(
+            [use_case_ids, api_operation_ids],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+        task_id = f"implement-backend-behavior-{digest}"
+        test_path = (
+            f"application/src/test/java/{package_path}/"
+            f"application/impl/Behavior{digest}Test.java"
+        )
+        selected_endpoints = [
+            endpoint
+            for endpoint in bundle.endpoints
+            if str(endpoint.get("operation_id") or endpoint.get("operationId") or "")
+            in api_operation_ids
+        ]
+        selected_methods = [
+            (entry, context)
+            for entry, context in method_entries
+            if {
+                str(value)
+                for value in entry.get("refs", [])
+                if isinstance(value, str)
+            }
+            & {
+                *(f"use_case:{value}" for value in use_case_ids),
+                *(f"api:{value}" for value in api_operation_ids),
+            }
+        ]
+        source_paths: set[str] = set()
+        read_dependency_paths: set[str] = set()
+        completion_markers: list[dict[str, object]] = []
+        endpoint_contracts: list[dict[str, object]] = []
+        for endpoint in selected_endpoints:
+            endpoint_contracts.append(
+                {
+                    key: endpoint[key]
+                    for key in (
+                        "operation_id",
+                        "operationId",
+                        "method",
+                        "path",
+                        "path_params",
+                        "query_params",
+                        "request_schema",
+                        "responses",
+                        "control_binding",
+                        "scenario_step_refs",
+                        "use_case_ids",
+                    )
+                    if key in endpoint
+                }
             )
-            target_path = run_root / target
-            completion_markers = [
+            marker = controller_body_marker(
+                str(endpoint.get("method") or ""),
+                str(endpoint.get("path") or ""),
+            )
+            for controller_path in controller_paths:
+                controller_source = (run_root / controller_path).read_text(
+                    encoding="utf-8"
+                )
+                if marker in controller_source:
+                    read_dependency_paths.update(
+                        _controller_contract_paths(
+                            run_root, package_path, controller_path, endpoint
+                        )
+                    )
+                if marker in controller_source:
+                    completion_markers.append(
+                        {"path": controller_path, "markers": [marker]}
+                    )
+
+        direct_methods: list[dict[str, object]] = []
+        typed_method_metadata: list[dict[str, object]] = []
+        for entry, method_context in selected_methods:
+            paths = [
+                str(value)
+                for value in method_context.get(
+                    "sourcePaths", entry.get("sourcePaths", [])
+                )
+                if isinstance(value, str) and (run_root / value).is_file()
+            ]
+            method = method_context.get("method")
+            stable_id = str(
+                method.get("stable_id") if isinstance(method, dict) else ""
+            )
+            candidates = [
                 f"EASYDEP-IMPLEMENT: complete {stable_id}",
                 f"EASYDEP-IMPLEMENT:{stable_id}",
             ]
-            if not target_path.is_file() or not any(
-                marker in target_path.read_text(encoding="utf-8")
-                for marker in completion_markers
-            ):
+            method_markers: list[dict[str, object]] = []
+            if stable_id:
+                for path in paths:
+                    source = (run_root / path).read_text(encoding="utf-8")
+                    present = [marker for marker in candidates if marker in source]
+                    if present:
+                        method_markers.append({"path": path, "markers": present})
+            if not method_markers:
                 continue
-            refs = [
-                str(value)
-                for value in context.get("refs", [])
-                if isinstance(value, str)
+
+            source_paths.update(paths)
+            completion_markers.extend(method_markers)
+            slices = [
+                method_slice
+                for method_slice in method_context.get("slices", [])
+                if isinstance(method_slice, dict)
+                and {
+                    str(value) for value in method_slice.get("use_case_ids", [])
+                }
+                & set(use_case_ids)
             ]
-            use_case_ids = sorted(
+            if isinstance(method, dict):
+                typed_method_metadata.append(method)
+            for method_slice in slices:
+                if not isinstance(method_slice, dict):
+                    continue
+                for call in method_slice.get("outgoing", []):
+                    if not isinstance(call, dict):
+                        continue
+                    target = call.get("target")
+                    if isinstance(target, dict):
+                        typed_method_metadata.append(target)
+            direct_methods.append(
                 {
-                    value.removeprefix("use_case:")
-                    for value in refs
-                    if value.startswith("use_case:")
-                },
-                key=_use_case_sort_key,
-            )
-            stage = (
-                "DOMAIN_READY"
-                if stereotype.casefold() == "entity"
-                else "APPLICATION_READY"
-            )
-            units.append(
-                {
-                    "key": stable_id,
-                    "kind": "method",
-                    "stage": stage,
-                    "stageOrder": 0 if stage == "DOMAIN_READY" else 1,
-                    "target": target,
-                    "completionMarkers": completion_markers,
-                    "methodContextPath": str(entry["path"]),
-                    "context": context,
-                    "refs": refs,
-                    "useCaseIds": use_case_ids,
-                    "requirementIds": sorted(
-                        value.removeprefix("requirement:")
-                        for value in refs
-                        if value.startswith("requirement:")
+                    "method": method_context.get("method", {}),
+                    "stepRefs": sorted(
+                        {
+                            str(value)
+                            for method_slice in slices
+                            if isinstance(method_slice, dict)
+                            for value in method_slice.get("step_refs", [])
+                            if isinstance(value, str)
+                        }
                     ),
-                    "sourcePaths": [
-                        str(value)
-                        for value in context.get("sourcePaths", [])
-                        if isinstance(value, str)
+                    "directCalls": [
+                        call
+                        for method_slice in slices
+                        if isinstance(method_slice, dict)
+                        for call in method_slice.get("outgoing", [])
+                        if isinstance(call, dict)
                     ],
+                    "sourcePaths": paths,
                 }
             )
 
-    owner_context = _read_json(run_root / owner_task.context_file)
-    endpoints = list(bundle.endpoints)
-    for raw_path in owner_context.get("controllerPaths", []):
-        if not isinstance(raw_path, str) or not (run_root / raw_path).is_file():
-            continue
-        source = (run_root / raw_path).read_text(encoding="utf-8")
-        for marker in sorted(set(re.findall(r"EASYDEP_CONTROLLER_BODY_REQUIRED:[^\"\s]+", source))):
-            _prefix, _separator, route = marker.partition(":")
-            method, _separator, path = route.partition(":")
-            endpoint = next(
-                (
-                    value
-                    for value in endpoints
-                    if str(value.get("method") or "").casefold() == method.casefold()
-                    and str(value.get("path") or "") == path
-                ),
-                {},
-            )
-            use_case_ids = sorted(_use_case_ids(endpoint), key=_use_case_sort_key)
-            operation_id = str(
-                endpoint.get("operation_id") or endpoint.get("operationId") or marker
-            )
-            matching_contexts = [
-                str(entry["path"])
-                for entry in entries
-                if isinstance(entry, dict)
-                and isinstance(entry.get("path"), str)
-                and f"api:{operation_id}" in entry.get("refs", [])
-            ]
-            contract_paths = _controller_contract_paths(
-                run_root,
-                package_path,
-                raw_path,
-                endpoint,
-            )
-            binding = endpoint.get("control_binding") or endpoint.get("controlBinding")
-            units.append(
+        selected_use_cases = [
+            {
+                key: use_cases_by_id[use_case_id][key]
+                for key in (
+                    "use_case_id",
+                    "id",
+                    "name",
+                    "requirement_ids",
+                    "nfr_ids",
+                    "preconditions",
+                    "trigger",
+                    "main_scenario",
+                    "extensions",
+                    "success_guarantee",
+                    "minimal_guarantee",
+                )
+                if key in use_cases_by_id[use_case_id]
+            }
+            for use_case_id in use_case_ids
+            if use_case_id in use_cases_by_id
+        ]
+        requirements_by_id = {
+            str(requirement.get("id")): requirement
+            for requirement in requirements
+            if isinstance(requirement.get("id"), str) and requirement.get("id")
+        }
+        requirement_ids = sorted(
+            {
+                value
+                for use_case in selected_use_cases
+                for field in ("requirement_ids", "nfr_ids")
+                for value in use_case.get(field, [])
+                if isinstance(value, str) and value
+            }
+        )
+        selected_requirements = [
+            {
+                key: requirements_by_id[requirement_id][key]
+                for key in ("id", "type", "text")
+                if requirements_by_id[requirement_id].get(key) is not None
+            }
+            for requirement_id in requirement_ids
+            if requirement_id in requirements_by_id
+        ]
+        design_evidence, design_class_refs = _backend_behavior_design_evidence(
+            bce_model,
+            use_case_ids=set(use_case_ids),
+            endpoints=selected_endpoints,
+            method_metadata=typed_method_metadata,
+        )
+        typed_dependency_paths = _backend_behavior_typed_dependency_paths(
+            run_root,
+            package_path,
+            entity_names,
+            bce_model,
+            typed_method_metadata,
+        )
+        read_paths = sorted(
+            {
+                *source_paths,
+                *read_dependency_paths,
+                *typed_dependency_paths,
+            }
+        )
+        editable_paths = _without_immutable_paths(
+            sorted(
                 {
-                    "key": "controller-"
-                    + hashlib.sha256(marker.encode("utf-8")).hexdigest()[:16],
-                    "kind": "controller",
-                    "stage": "ADAPTER_READY",
-                    "stageOrder": 2,
-                    "target": raw_path,
-                    "completionMarkers": [marker],
-                    "context": {"apiOperation": endpoint},
-                    "refs": [f"api:{operation_id}"],
-                    "useCaseIds": use_case_ids,
-                    "requirementIds": [],
-                    "sourcePaths": [
-                        *contract_paths,
-                        *([] if isinstance(binding, dict) else matching_contexts),
-                    ],
-                }
-            )
-
-    if not units:
-        return []
-    units.sort(
-        key=lambda value: (
-            _use_case_sort_key(str((value["useCaseIds"] or ["common"])[0])),
-            int(value["stageOrder"]),
-            str(value["key"]),
-        )
-    )
-    writable_root = f"application/src/main/java/{package_path}"
-    tasks: list[TaskSpec] = []
-    previous_task_id: str | None = None
-    for index, unit in enumerate(units, start=1):
-        final = index == len(units)
-        task_id = (
-            "implement-backend-application"
-            if final
-            else f"implement-backend-operation-{index:04d}-{unit['key']}"
-        )
-        target = str(unit["target"])
-        use_case_ids = [str(value) for value in unit["useCaseIds"]]
-        source_paths = list(
-            dict.fromkeys(
-                [
+                    test_path,
                     *(
-                        [str(unit["methodContextPath"])]
-                        if unit.get("methodContextPath")
-                        else []
+                        path
+                        for path in source_paths
+                        if path in owner_task.allowed_write_paths
                     ),
-                    target,
-                    *(str(value) for value in unit["sourcePaths"]),
-                ]
-            )
+                    *(
+                        path
+                        for path in typed_dependency_paths
+                        if "/bce/" in path and Path(path).stem in entity_names
+                    ),
+                    *(
+                        str(item["path"])
+                        for item in completion_markers
+                        if isinstance(item.get("path"), str)
+                    ),
+                }
+            ),
+            owner_task.immutable_paths,
         )
         context = {
-            "schemaVersion": "backend-operation-context/v1alpha1",
+            "schemaVersion": "implementation-context/v1alpha3",
             "taskId": task_id,
-            "taskType": "backend-operation",
-            "parallelImplementation": False,
-            "dependsOn": [previous_task_id] if previous_task_id else [],
-            "useCaseCheckpoint": {
-                "useCaseIds": use_case_ids,
-                "stage": unit["stage"],
-                "operationOrdinal": index,
-                "operationCount": len(units),
+            "taskType": "backend-implementation",
+            "dependsOn": [],
+            "useCaseIds": use_case_ids,
+            "apiOperationIds": api_operation_ids,
+            "behaviorCapsule": {
+                "useCases": selected_use_cases,
+                "requirements": selected_requirements,
+                "endpoints": endpoint_contracts,
+                "directMethods": direct_methods,
+                "designEvidence": design_evidence,
             },
-            "primarySourcePath": target,
-            "completionMarkers": list(unit["completionMarkers"]),
-            "readSourcePaths": source_paths,
-            "operationEvidence": unit["context"],
+            "readSourcePaths": read_paths,
+            "completionMarkers": completion_markers,
+            "requiredTestPath": test_path,
         }
         context_path = output / f"{task_id}.context.json"
         context_path.write_text(
             json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        prompt = _render_backend_marker_prompt(
-            spec,
-            unit=unit,
-            target=target,
-            source_paths=source_paths,
-        )
+        prompt = f"""# Backend observable behavior: {", ".join(use_case_ids)}
+
+Implement this one API-to-result behavior using { _relative(run_root, context_path) }.
+
+- Preserve generated public BCE/API and persistence declarations: never change or delete an existing public signature. The runtime lists the authoritative writable files separately from `completionMarkers`; within those files, adding only the smallest constructor, accessor, or helper declaration needed is permitted. If a legal implementation requires changing an existing public signature or editing outside that runtime list, call `report_upstream_gap`.
+- Implement only the listed scenarios, endpoint bindings, direct calls, and markers.
+- A direct call with `generation: "hint"` is advisory, not a mandatory architecture. Satisfy the observable capsule/API through the simplest conventional path; do not add a static/global/service-locator solely to realize a hint.
+- Choose one legal conventional implementation and edit it; do not enumerate alternatives or delay the edit for theoretical choices.
+- Read this context first. Its behavior capsule and linked design evidence already passed this
+  Implementation subtask's semantic preflight; do not re-decide product meaning.
+- Treat read-only dependencies as ready integration contracts and compose their existing APIs.
+  Do not spend turns designing nicer repository, API, or framework abstractions. After reading
+  the writable files and directly referenced dependencies once, make the first edit and use
+  verification failures to discover any missing mechanics instead of rereading or browsing.
+- If reading the generated source reveals a concrete contradiction with the frozen capsule that
+  makes the listed behavior impossible without changing an immutable declaration, call
+  `report_upstream_gap` with one supplied `source_ref`. Otherwise choose ordinary private wiring
+  and framework mechanics yourself.
+- Otherwise start from the writable implementation files. Use `readSourcePaths` as starting
+  points, then inspect application source only as needed for existing types, wiring, or test
+  conventions. Read access does not expand the behavior or write scope.
+- Group `completionMarkers` by unique path and read each path once before editing. These markers
+  identify required bodies, not the complete writable-file list. Resolve
+  each assigned marker only from the behavior capsule:
+  - `EASYDEP_CONTROLLER_BODY_REQUIRED:<METHOD>:<PATH>` maps to the endpoint with the same
+    HTTP method and path; implement that endpoint's `control_binding`.
+  - `EASYDEP-IMPLEMENT...<stable_id>` maps to the direct method whose
+    `method.stable_id` is the same; implement only that generated operation body.
+- Replace only those assigned main-source markers in one edit batch. You may add private
+  wiring or helpers needed to use existing application contracts, but preserve completed
+  behavior and every unassigned generated body or marker, including in shared files.
+- Then create the focused test at `requiredTestPath` for the resulting source and run
+  `run_task_check` once. Finish when it passes.
+- Do not infer behavior from names or unrelated features.
+- Use English for source comments, tests, validation messages, and user-visible text.
+
+API operations: {", ".join(api_operation_ids)}
+Application: {spec.name}
+"""
         prompt_path = output / f"{task_id}.prompt.md"
         prompt_path.write_text(prompt, encoding="utf-8")
-        verification_profile = {
-            "requiredAbsentMarkers": [
-                {
-                    "path": target,
-                    "markers": list(unit["completionMarkers"]),
-                }
-            ]
-        }
-        tasks.append(
-            TaskSpec(
-                task_id=task_id,
-                control=(
-                    f"{', '.join(use_case_ids) or 'common'} "
-                    f"{unit['stage']} {unit['key']}"
-                ),
-                prompt_file=_relative(run_root, prompt_path),
-                context_file=_relative(run_root, context_path),
-                allowed_write_paths=[target],
-                required_output_paths=[target],
-                immutable_paths=list(owner_task.immutable_paths),
-                source_artifacts=dict(owner_task.source_artifacts),
-                prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-                llm=llm_config(spec),
-                owner="backend",
-                task_type="backend-operation",
-                depends_on=[previous_task_id] if previous_task_id else [],
-                requirement_ids=[str(value) for value in unit["requirementIds"]],
-                use_case_ids=use_case_ids,
-                required_test_paths=[],
-                source_refs=[str(value) for value in unit["refs"]],
-                allowed_write_roots=[writable_root],
-                verification_profile=verification_profile,
-            )
+
+        source_refs = sorted(
+            {
+                *(f"use_case:{value}" for value in use_case_ids),
+                *(f"use_case_spec:{value}" for value in use_case_ids),
+                *(f"api:{value}" for value in api_operation_ids),
+                *_operation_source_refs(spec, set(use_case_ids)),
+                *design_class_refs,
+            }
         )
-        previous_task_id = task_id
+        current_main_sources = {
+            path
+            for path in editable_paths
+            if path.startswith("application/src/main/java/")
+        }
+        focused_test_paths = {test_path}
+        for previous_task in tasks:
+            previous_main_sources = {
+                path
+                for path in previous_task.allowed_write_paths
+                if path.startswith("application/src/main/java/")
+            }
+            if current_main_sources.intersection(previous_main_sources):
+                focused_test_paths.update(previous_task.required_test_paths)
+
+        task = TaskSpec(
+            task_id=task_id,
+            control="observable behavior " + ", ".join(use_case_ids),
+            prompt_file=_relative(run_root, prompt_path),
+            context_file=_relative(run_root, context_path),
+            allowed_write_paths=editable_paths,
+            required_output_paths=editable_paths,
+            immutable_paths=list(owner_task.immutable_paths),
+            source_artifacts=dict(owner_task.source_artifacts),
+            prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            llm=llm_config(spec),
+            owner="backend",
+            task_type="backend-implementation",
+            depends_on=[],
+            requirement_ids=requirement_ids,
+            use_case_ids=use_case_ids,
+            required_test_paths=[test_path],
+            source_refs=source_refs,
+            allowed_write_roots=[],
+            verification_profile={
+                "requiredAbsentMarkers": completion_markers,
+                # Shared source is edited sequentially. A later slice must also
+                # preserve every earlier slice that touched the same source.
+                "focusedTestPaths": sorted(focused_test_paths),
+            },
+        )
+        (output / f"{task_id}.task.json").write_text(
+            json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tasks.append(task)
     return tasks
 
 
-def _render_backend_marker_prompt(
-    spec: JobSpec,
-    *,
-    unit: dict[str, object],
-    target: str,
-    source_paths: list[str],
-) -> str:
-    """Render a compact behavior capsule without inferring new requirements."""
+def _backend_behavior_components(
+    use_case_ids: tuple[str, ...], endpoints: list[dict[str, object]]
+) -> list[tuple[list[str], list[str]]]:
+    """Connected components of the exact use-case/API-operation graph."""
 
-    evidence = unit["context"] if isinstance(unit.get("context"), dict) else {}
-    lines = [
-        f"# Backend operation marker: {unit['key']}",
-        "",
-        f"Complete the single `{unit['stage']}` marker in `{target}`.",
-        "The paths below are starting hints, not read or edit limits. You may inspect nearby source and",
-        "make supporting changes under the assigned main-source root when the operation requires them.",
-        "Do not inventory the repository and do not reopen raw design inputs unless this capsule exposes",
-        "a concrete contract gap.",
-        "",
-        "- Preserve generated public BCE/API and persistence declarations.",
-        "- Treat names only as exact identifiers. Never infer validation, persistence, CRUD, error,",
-        "  or response behavior from class, method, parameter, or outcome-name wording.",
-        "- Implement only behavior expressible by this method and its direct calls. Cross-cutting",
-        "  requirements without matching inputs or calls belong to a later adapter/integration marker.",
-        "- Remove this marker's placeholder and implement production behavior; do not replace it with demo data.",
-        "- This discovery checkpoint does not own test authoring. Do not create or modify test files.",
-        "- Do not inspect test sources or search unrelated implementations for style examples before the first edit.",
-        "  The listed contracts and conventions below are sufficient; read each needed hint once, then edit.",
-        "- After the edit batch, call `run_task_check` once. It runs the assigned compile check.",
-        "- When that check passes, call `finish` immediately.",
-        "- Use English for source comments, validation messages, and user-visible text.",
-        "",
-        "## Behavior capsule",
-    ]
-    method = evidence.get("method")
-    if isinstance(method, dict):
-        lines.append(f"- Operation: `{method.get('operation_id') or unit['key']}`")
-        lines.append(f"- Return type: `{method.get('return_type') or 'void'}`")
-    for requirement in evidence.get("requirements", []):
-        if isinstance(requirement, dict) and requirement.get("text"):
-            lines.append(
-                f"- Requirement {requirement.get('id') or ''}: {requirement['text']}"
-            )
-    for step in evidence.get("scenarioSteps", []):
-        if isinstance(step, dict) and step.get("sentence"):
-            lines.append(f"- Scenario {step.get('ref') or ''}: {step['sentence']}")
-    for api in evidence.get("apiOperations", []):
-        if isinstance(api, dict):
-            lines.append(
-                "- API evidence: "
-                + json.dumps(api, ensure_ascii=False, separators=(",", ":"))
-            )
-    if unit.get("kind") == "controller":
-        api = evidence.get("apiOperation")
-        if isinstance(api, dict):
-            lines.extend(_render_adapter_contract(api))
-    outgoing = [
-        call
-        for method_slice in evidence.get("slices", [])
-        if isinstance(method_slice, dict)
-        for call in method_slice.get("outgoing", [])
-        if isinstance(call, dict)
-    ]
-    for call in outgoing:
-        target_call = call.get("target")
-        if not isinstance(target_call, dict):
-            continue
-        arguments = [
-            str(value.get("parameter"))
-            for value in call.get("arguments", [])
-            if isinstance(value, dict) and value.get("parameter")
-        ]
-        lines.append(
-            "- Direct call: `"
-            f"{target_call.get('class_name')}.{target_call.get('name')}"
-            f"({', '.join(arguments)})`"
+    known_use_cases = set(use_case_ids)
+    graph: dict[str, set[str]] = {}
+    operation_use_cases: dict[str, set[str]] = {}
+    for endpoint in endpoints:
+        operation_id = str(
+            endpoint.get("operation_id") or endpoint.get("operationId") or ""
         )
-        conditions = [
-            str(value.get("condition"))
-            for value in call.get("fragments", [])
-            if isinstance(value, dict) and value.get("condition")
-        ]
-        lines.extend(f"- Call condition: {condition}" for condition in conditions)
-    lines.extend(
-        [
-            "",
-            "## Starting source hints",
-            *(f"- `{path}`" for path in source_paths),
-            "",
-            f"Application: `{spec.name}`",
-        ]
+        if not operation_id:
+            continue
+        for use_case_id in _use_case_ids(endpoint) & known_use_cases:
+            graph.setdefault(use_case_id, set()).add(operation_id)
+            operation_use_cases.setdefault(operation_id, set()).add(use_case_id)
+
+    result: list[tuple[list[str], list[str]]] = []
+    visited: set[str] = set()
+    for start in sorted(graph, key=_use_case_sort_key):
+        if start in visited:
+            continue
+        current_use_cases: set[str] = set()
+        current_operations: set[str] = set()
+        pending = [start]
+        while pending:
+            use_case_id = pending.pop()
+            if use_case_id in current_use_cases:
+                continue
+            current_use_cases.add(use_case_id)
+            for operation_id in graph[use_case_id]:
+                current_operations.add(operation_id)
+                pending.extend(operation_use_cases[operation_id] - current_use_cases)
+        visited.update(current_use_cases)
+        result.append(
+            (
+                sorted(current_use_cases, key=_use_case_sort_key),
+                sorted(current_operations),
+            )
+        )
+    return result
+
+
+def _validate_backend_behavior_plan(
+    run_root: Path,
+    output: Path,
+    package_path: str,
+    bundle: _UseCaseBundle,
+    tasks: list[TaskSpec],
+) -> None:
+    """Reject an incomplete behavior plan instead of silently omitting evidence."""
+
+    planned_use_cases = {value for task in tasks for value in task.use_case_ids}
+    planned_refs = {value for task in tasks for value in task.source_refs}
+    expected_operations = {
+        str(endpoint.get("operation_id") or endpoint.get("operationId") or "")
+        for endpoint in bundle.endpoints
+    } - {""}
+    missing_use_cases = set(bundle.use_case_ids) - planned_use_cases
+    missing_operations = {
+        f"api:{operation_id}"
+        for operation_id in expected_operations
+        if f"api:{operation_id}" not in planned_refs
+    }
+    if missing_use_cases or missing_operations:
+        raise ValueError(
+            "Backend observable-behavior plan omitted design evidence: "
+            + ", ".join(
+                [
+                    *(f"use_case:{value}" for value in sorted(missing_use_cases)),
+                    *sorted(missing_operations),
+                ]
+            )
+        )
+
+    source_index = _read_json(
+        output / "implement-backend-application.source-index.json"
     )
-    return "\n".join(lines) + "\n"
+    entries = source_index.get("methodContexts", [])
+    remaining_markers: list[tuple[str, set[str]]] = []
+    if isinstance(entries, list):
+        for entry in entries:
+            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+                continue
+            context = _read_json(run_root / str(entry["path"]))
+            method = context.get("method")
+            if not isinstance(method, dict):
+                continue
+            stable_id = str(method.get("stable_id") or entry.get("stableId") or "")
+            class_name = str(method.get("class_name") or "")
+            stereotype = str(method.get("stereotype") or "")
+            target = (
+                f"application/src/main/java/{package_path}/application/impl/"
+                f"{class_name}Service.java"
+                if stereotype.casefold() == "control"
+                else f"application/src/main/java/{package_path}/bce/{class_name}.java"
+            )
+            target_path = run_root / target
+            markers = (
+                f"EASYDEP-IMPLEMENT: complete {stable_id}",
+                f"EASYDEP-IMPLEMENT:{stable_id}",
+            )
+            if not stable_id or not target_path.is_file() or not any(
+                marker in target_path.read_text(encoding="utf-8") for marker in markers
+            ):
+                continue
+            refs = {
+                str(value)
+                for value in context.get("refs", [])
+                if isinstance(value, str)
+                and (value.startswith("use_case:") or value.startswith("api:"))
+            }
+            remaining_markers.append((stable_id, refs))
+            if not refs or refs.isdisjoint(planned_refs):
+                raise ValueError(
+                    "Backend implementation marker has no planned behavior evidence: "
+                    f"{stable_id} ({', '.join(sorted(refs)) or 'no use_case/api refs'})"
+                )
+    if not tasks and (expected_operations or remaining_markers):
+        raise ValueError(
+            "Backend behavior planning found implementation evidence but no behavior tasks"
+        )
+
+
+def _backend_behavior_typed_dependency_paths(
+    run_root: Path,
+    package_path: str,
+    entity_names: set[str],
+    bce_model: dict[str, object],
+    methods: list[dict[str, object]],
+) -> list[str]:
+    """Return one-hop generated declarations named by direct typed contracts."""
+
+    classes = [
+        item
+        for item in bce_model.get("Classes", [])
+        if isinstance(item, dict) and isinstance(item.get("className"), str)
+    ]
+    data_types = [
+        item
+        for item in bce_model.get("DataTypes", [])
+        if isinstance(item, dict) and isinstance(item.get("name"), str)
+    ]
+    declared_names = {
+        str(item["className"]) for item in classes
+    } | {str(item["name"]) for item in data_types}
+    selected_names = _typed_component_names(methods, declared_names)
+    entity_fields = {
+        str(item["className"]): item.get("fields", []) for item in classes
+    }
+    direct_selected_entities = selected_names & entity_names
+    selected_names.update(
+        _typed_component_names(
+            [
+                {"fields": entity_fields.get(name, [])}
+                for name in direct_selected_entities
+            ],
+            declared_names,
+        )
+    )
+
+    java_root = f"application/src/main/java/{package_path}"
+    candidates = [f"{java_root}/bce/{name}.java" for name in selected_names]
+    selected_entities = selected_names & entity_names
+    candidates.extend(
+        f"{java_root}/persistence/{kind}/{name}{suffix}.java"
+        for name in selected_entities
+        for kind, suffix in (("entity", "Entity"), ("repository", "Repository"))
+    )
+    return sorted({path for path in candidates if (run_root / path).is_file()})
+
+
+def _backend_behavior_design_evidence(
+    bce_model: dict[str, object],
+    *,
+    use_case_ids: set[str],
+    endpoints: list[dict[str, object]],
+    method_metadata: list[dict[str, object]],
+) -> tuple[dict[str, object], list[str]]:
+    """Project already-selected class and one-hop records without semantic inference."""
+
+    def records(model: dict[str, object], key: str) -> list[dict[str, object]]:
+        values = model.get(key)
+        return [item for item in values if isinstance(item, dict)] if isinstance(values, list) else []
+
+    classes = [item for item in records(bce_model, "Classes") if item.get("className")]
+    classes_by_name = {str(item["className"]): item for item in classes}
+    selected_names = {
+        str(item["className"])
+        for item in classes
+        if _use_case_ids(item) & use_case_ids
+    }
+    selected_names.update(
+        str(binding["control"])
+        for endpoint in endpoints
+        if isinstance(binding := endpoint.get("control_binding"), dict)
+        and isinstance(binding.get("control"), str)
+        and binding["control"]
+    )
+    selected_names.update(
+        name
+        for endpoint in endpoints
+        for name in (
+            endpoint.get("source_classes")
+            if isinstance(endpoint.get("source_classes"), list)
+            else []
+        )
+        if isinstance(name, str) and name
+    )
+    selected_names.update(
+        _typed_component_names(method_metadata, set(classes_by_name))
+    )
+    selected_names.intersection_update(classes_by_name)
+
+    relationships = records(bce_model, "Relationships")
+    selected_relationships = [
+        item
+        for item in relationships
+        if {str(item.get("source") or ""), str(item.get("target") or "")}
+        & selected_names
+        and {str(item.get("source") or ""), str(item.get("target") or "")}
+        <= classes_by_name.keys()
+    ]
+    selected_names.update(
+        name
+        for item in selected_relationships
+        for name in (str(item["source"]), str(item["target"]))
+    )
+
+    return (
+        {
+            "Classes": [
+                item for name, item in classes_by_name.items() if name in selected_names
+            ],
+            "Relationships": selected_relationships,
+        },
+        [f"class_diagram:{name}" for name in sorted(selected_names)],
+    )
+
+
+def _typed_component_names(
+    metadata: list[dict[str, object]], known_names: set[str]
+) -> set[str]:
+    """Match only exact generated type identifiers; do not infer from prose."""
+
+    values: list[str] = []
+    for item in metadata:
+        for key in ("class_name", "return_type"):
+            value = item.get(key)
+            if isinstance(value, str):
+                values.append(value)
+        parameters = item.get("parameters", [])
+        if isinstance(parameters, list):
+            for parameter in parameters:
+                if isinstance(parameter, dict) and isinstance(parameter.get("type"), str):
+                    values.append(str(parameter["type"]))
+                elif (
+                    isinstance(parameter, (list, tuple))
+                    and len(parameter) > 1
+                    and isinstance(parameter[1], str)
+                ):
+                    values.append(parameter[1])
+        fields = item.get("fields", [])
+        if isinstance(fields, list):
+            values.extend(value for value in fields if isinstance(value, str))
+    return {
+        token
+        for value in values
+        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", value)
+        if token in known_names
+    }
 
 
 def _controller_contract_paths(
@@ -825,94 +1148,6 @@ def _implemented_interface_paths(run_root: Path, source: str) -> list[str]:
         if (run_root / relative).is_file():
             paths.append(relative)
     return paths
-
-
-def _render_adapter_contract(api: dict[str, object]) -> list[str]:
-    """Render an executable adapter binding instead of making the model decode raw API JSON."""
-
-    method = str(api.get("method") or "").upper()
-    path = str(api.get("path") or "")
-    operation_id = str(api.get("operation_id") or api.get("operationId") or "")
-    lines = [f"- Endpoint: `{method} {path}` (`{operation_id}`)."]
-    request_schema = api.get("request_schema") or api.get("requestSchema")
-    if isinstance(request_schema, str) and request_schema:
-        lines.append(f"- Request body contract: generated `{request_schema}`.")
-    lines.append(
-        "- Read the target controller first. The binding below is complete; inspect an optional "
-        "contract hint only if the target scaffold contradicts it."
-    )
-
-    binding = api.get("control_binding") or api.get("controlBinding")
-    if not isinstance(binding, dict):
-        return lines
-    control = str(binding.get("control") or "")
-    bound_method = str(binding.get("method") or "")
-    arguments = binding.get("arguments", [])
-    argument_text = ", ".join(
-        f"{argument.get('name')} <- {argument.get('source')}"
-        for argument in arguments
-        if isinstance(argument, dict) and argument.get("name") and argument.get("source")
-    )
-    lines.append(
-        f"- Bound Control operation: `{control}::{bound_method}`"
-        + (f" with explicit sources `{argument_text}`." if argument_text else ".")
-    )
-
-    raw_outcomes = binding.get("outcomes", [])
-    outcomes = [value for value in raw_outcomes if isinstance(value, dict)]
-    successes = [
-        outcome
-        for outcome in outcomes
-        if (status := _http_status(outcome.get("status"))) is not None
-        and 200 <= status < 300
-    ]
-    success = successes[0] if len(successes) == 1 else None
-    if success is not None:
-        status = _http_status(success.get("status"))
-        lines.append(
-            f"- Bound success response: return HTTP `{status}` after `{bound_method}` succeeds."
-        )
-        responses = api.get("responses", [])
-        response = next(
-            (
-                value
-                for value in responses
-                if isinstance(value, dict) and _http_status(value.get("status")) == status
-            ),
-            None,
-        ) if isinstance(responses, list) else None
-        schema_name = (
-            response.get("schema_name") or response.get("schemaName")
-            if isinstance(response, dict)
-            else None
-        )
-        if isinstance(schema_name, str) and schema_name:
-            lines.append(
-                f"- Map the returned domain value to generated `{schema_name}`; use the injected "
-                "`ObjectMapper` when the controller already has it."
-            )
-
-    if len(successes) > 1:
-        lines.append(
-            "- Contract gap: multiple success statuses "
-            f"({', '.join(str(_http_status(value.get('status'))) for value in successes)}) "
-            "have no explicit selector or result discriminator. Do not choose one from the method "
-            "or outcome names; leave this adapter marker for design repair."
-        )
-    errors = [
-        outcome
-        for outcome in outcomes
-        if (status := _http_status(outcome.get("status"))) is not None
-        and status >= 400
-    ]
-    for error in errors:
-        lines.append(
-            "- Documented error outcome: HTTP "
-            f"`{_http_status(error.get('status'))}` is labeled "
-            f"`{error.get('outcome')}`. No exception or result binding is declared; do not infer one "
-            "from this label."
-        )
-    return lines
 
 
 def _http_status(value: object) -> int | None:
@@ -1027,7 +1262,10 @@ def _artifact_ids(items: list[dict[str, object]]) -> list[str]:
     return sorted({str(item["id"]) for item in items if item.get("id")})
 
 
-def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
+def generate_frontend_tasks(
+    spec: JobSpec,
+    run_root: Path,
+) -> list[TaskSpec]:
     """typed 화면 흐름과 생성된 API client를 한 frontend 구현 작업으로 만든다."""
     frontend = run_root / "application" / "frontend"
     generated = frontend / "src" / "generated"
@@ -1094,7 +1332,9 @@ def generate_frontend_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
         "taskId": task_id,
         "taskType": "frontend-implementation",
         "owner": "frontend",
-        "dependsOn": ["implement-backend-application"],
+        # The workflow phase boundary already requires every backend slice to
+        # succeed. A dependency on one arbitrary backend task is misleading.
+        "dependsOn": [],
         "operationIds": operations,
         "generatedImportRoot": client_contracts.import_root,
         "callSkeletonPath": _relative(run_root, call_skeleton_path),
@@ -1165,7 +1405,7 @@ Complete the React application using the exact generated-client calls already wi
         llm=llm_config(spec),
         owner="frontend",
         task_type="frontend-implementation",
-        depends_on=["implement-backend-application"],
+        depends_on=[],
         source_refs=[
             *(f"api:{operation_id}" for operation_id in operations),
             *_workload_source_refs(deployment_context),
@@ -1176,6 +1416,208 @@ Complete the React application using the exact generated-client calls already wi
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return [task]
+
+
+def generate_vertical_integration_task(
+    spec: JobSpec,
+    run_root: Path,
+    prior_tasks: list[dict[str, object]],
+) -> TaskSpec:
+    """Plan one bounded Implementation pass across the completed owner slices."""
+
+    backend_tasks = [
+        task
+        for task in prior_tasks
+        if task.get("task_type") in {"backend-implementation", "backend-operation"}
+    ]
+    frontend_tasks = [
+        task for task in prior_tasks if task.get("task_type") == "frontend-implementation"
+    ]
+    if not backend_tasks or len(frontend_tasks) != 1:
+        raise ValueError("Vertical integration requires backend tasks and one frontend task")
+
+    def task_use_cases(task: dict[str, object]) -> list[str]:
+        values = task.get("use_case_ids", task.get("useCaseIds", []))
+        return [str(value) for value in values if str(value)] if isinstance(values, list) else []
+
+    frontend_task = frontend_tasks[0]
+    owner_tasks = [*backend_tasks, frontend_task]
+    owner_context_paths = [str(task["context_file"]) for task in owner_tasks]
+    owner_contexts = [_read_json(run_root / path) for path in owner_context_paths]
+    batch_use_cases = sorted(
+        {
+            use_case_id
+            for task in backend_tasks
+            for use_case_id in task_use_cases(task)
+        },
+        key=_use_case_sort_key,
+    )
+    source_refs = sorted(
+        {
+            str(value)
+            for task in owner_tasks
+            for value in task.get("source_refs", [])
+            if isinstance(value, str) and value
+        }
+    )
+    dependencies = [
+        str(task["task_id"]) for task in owner_tasks if task.get("task_id")
+    ]
+    writable_config_candidates = [
+        "application/frontend/src/api.ts",
+        "application/frontend/src/config.ts",
+    ]
+    runtime_evidence_candidates = [
+        "application/src/main/resources/application.yml",
+        "application/frontend/.env.example",
+        "application/deployment/runtime/compose.yaml",
+        "application/deployment/runtime/.env.example",
+        "application/deployment/tofu/cloud-init.yaml.tftpl",
+    ]
+    writable_config = [
+        path for path in writable_config_candidates if (run_root / path).is_file()
+    ]
+    runtime_evidence = [
+        path for path in runtime_evidence_candidates if (run_root / path).is_file()
+    ]
+    immutable = sorted(
+        {
+            str(path)
+            for task in owner_tasks
+            for path in task.get("immutable_paths", [])
+            if isinstance(path, str)
+        }
+        | {"application/frontend/src/generated"}
+    )
+    writable = _without_immutable_paths(writable_config, immutable)
+    frontend_context = owner_contexts[-1]
+    frontend_contract_paths = [
+        str(frontend_context[key])
+        for key in ("clientIndexPath", "callSkeletonPath")
+        if isinstance(frontend_context.get(key), str)
+    ]
+    operation_context_paths = [
+        str(path)
+        for path in frontend_context.get("operationContextPaths", [])
+        if isinstance(path, str)
+    ]
+    generated_method_paths: list[str] = []
+    for operation_context_path in operation_context_paths:
+        operation_context = _read_json(run_root / operation_context_path)
+        generated_client = operation_context.get("generatedClient")
+        generated_method_path = (
+            generated_client.get("generatedMethodPath")
+            if isinstance(generated_client, dict)
+            else None
+        )
+        if isinstance(generated_method_path, str):
+            generated_method_paths.append(generated_method_path)
+    owner_outputs = {
+        str(path)
+        for task in owner_tasks
+        for path in task.get("required_output_paths", [])
+        if isinstance(path, str)
+    }
+    read_paths = sorted(
+        {
+            *frontend_contract_paths,
+            *operation_context_paths,
+            *generated_method_paths,
+            *owner_outputs,
+            *runtime_evidence,
+            *writable_config,
+        }
+    )
+    task_id = "implement-vertical-integration"
+    context = {
+        "schemaVersion": "vertical-integration-context/v1alpha1",
+        "taskId": task_id,
+        "taskType": "integration-implementation",
+        "owner": "implementation",
+        "dependsOn": dependencies,
+        "batchUseCaseIds": batch_use_cases,
+        "traceEvidence": {
+            "sourceRefs": source_refs,
+            "ownerTaskIds": dependencies,
+        },
+        "runtimeConfigPaths": sorted({*runtime_evidence, *writable_config}),
+        "readSourcePaths": read_paths,
+    }
+    deployment_context = next(
+        (
+            owner_context["deployment"]
+            for owner_context in reversed(owner_contexts)
+            if isinstance(owner_context.get("deployment"), dict)
+        ),
+        None,
+    )
+    if isinstance(deployment_context, dict):
+        context["deployment"] = deployment_context
+    output = run_root / "reports" / "implementation-tasks"
+    context_path = output / f"{task_id}.context.json"
+    context_path.write_text(
+        json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    prompt = f"""# Thin vertical integration: {spec.name}
+
+Semantic integration admission has already accepted the complete evidence boundary in
+`{_relative(run_root, context_path)}`. Review and, only when needed, minimally repair connector
+mechanics for one representative happy path after the backend and frontend owners have succeeded.
+
+- Trace one call through the existing frontend `apiCalls` binding, immutable generated API client,
+  HTTP endpoint, backend response, and rendered UI success state. Do not reopen or invent admitted
+  product and runtime meaning; resolve only concrete connector mechanics in the listed write scope.
+- Treat prior owner verification results as accepted evidence. Feature services, entities, and UI
+  bodies are read-only here. If the trace finds a defect in any read-only owner, generated-client,
+  or deployment file, call `report_upstream_gap` with one supplied source reference so the workflow
+  stops with `NEEDS_INPUT` for review or replanning. This is not a repository review.
+- Keep Requirements, Design, OpenAPI, generated clients, public BCE/API declarations, and database
+  schema unchanged. Edit only the listed durable API/runtime configuration connectors, and make the
+  smallest coherent change. Deployment output such as compose, cloud-init, and tofu is read-only.
+- Run the supplied integration check once after an edit, or immediately when no edit is needed. It
+  runs the backend test suite and frontend production build; call finish when it passes.
+"""
+    prompt_path = output / f"{task_id}.prompt.md"
+    prompt_path.write_text(prompt, encoding="utf-8")
+    source_artifacts = {
+        str(name): str(path)
+        for task in owner_tasks
+        for name, path in (
+            task.get("source_artifacts", {}).items()
+            if isinstance(task.get("source_artifacts"), dict)
+            else []
+        )
+    }
+    task = TaskSpec(
+        task_id=task_id,
+        control=f"{spec.name} thin vertical integration",
+        prompt_file=_relative(run_root, prompt_path),
+        context_file=_relative(run_root, context_path),
+        allowed_write_paths=writable,
+        required_output_paths=[],
+        immutable_paths=immutable,
+        source_artifacts=source_artifacts,
+        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        llm=llm_config(spec),
+        owner="implementation",
+        task_type="integration-implementation",
+        depends_on=dependencies,
+        requirement_ids=sorted(
+            {
+                str(value)
+                for task in backend_tasks
+                for value in task.get("requirement_ids", [])
+                if isinstance(value, str)
+            }
+        ),
+        use_case_ids=batch_use_cases,
+        source_refs=source_refs,
+        allowed_write_roots=[],
+    )
+    (output / f"{task_id}.task.json").write_text(
+        json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return task
 
 
 def render_source_contracts(run_root: Path, paths: list[Path]) -> str:
@@ -1192,7 +1634,7 @@ def render_source_contracts(run_root: Path, paths: list[Path]) -> str:
 def llm_config(spec: JobSpec) -> dict[str, object]:
     """모든 구현 작업이 공유하는 OpenHands LLM 설정을 만든다."""
 
-    connection = build_llm_connection()
+    connection = build_openhands_llm_connection()
     return {
         "provider": connection.provider,
         # Stored as execution evidence. Runtime selection still reads the same

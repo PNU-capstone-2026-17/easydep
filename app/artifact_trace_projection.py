@@ -363,6 +363,17 @@ def _api(
         operation = operations.get((control, method_name)) if control and method_name else None
         if operation:
             sources.append(operation)
+        interaction_id = _id(item, "interaction_id") or ""
+        boundary_signature, separator, _control_signature = interaction_id.partition(" -> ")
+        boundary_owner, owner_separator, boundary_call = boundary_signature.partition("::")
+        boundary_method = boundary_call.partition("(")[0].strip()
+        boundary_operation = (
+            operations.get((boundary_owner, boundary_method))
+            if separator and owner_separator and boundary_method
+            else None
+        )
+        if boundary_operation:
+            sources.append(boundary_operation)
         _add(nodes, TraceRef("api", endpoint_id), sources)
 
     for item in _records(model.get("Schemas")):

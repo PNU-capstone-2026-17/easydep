@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     api_key: str
     base_url: str
     model: str
+    # OpenHands can use a coding-oriented model without changing the model that
+    # produces the typed Requirements/Design artifacts. Blank keeps MODEL.
+    openhands_model: str | None = None
+    # Semantic admission is a small structured judgment. It may use a separate
+    # model without changing either Design MODEL or the OpenHands model.
+    admission_model: str | None = None
     # Cloudflare AI Gateway를 쓰는 경우 URL 안에 계정 ID가 들어가고, 인증 토큰도
     # 기존 provider 키와 다르다. 세 값을 루트 .env에 따로 두면 아래 연결 함수가
     # OpenAI 호환 클라이언트에 필요한 URL과 헤더를 한 번만 조립한다.
@@ -38,6 +44,12 @@ class Settings(BaseSettings):
         if not configured:
             raise ValueError("LLM configuration values must not be blank")
         return configured
+
+    @field_validator("openhands_model", "admission_model", mode="before")
+    @classmethod
+    def normalize_optional_model(cls, value: str | None) -> str | None:
+        configured = str(value or "").strip()
+        return configured or None
 
     # LLM Options
     # Structured design models can exceed provider defaults once reasoning
@@ -91,8 +103,7 @@ class Settings(BaseSettings):
     easydep_llm_stall_probe_after_seconds: float | None = None
     easydep_llm_stall_probe_timeout_seconds: float = 60.0
 
-    # Implementation and design execution config. Semantic repair attempts are
-    # governed by progress/history, not numeric settings.
+    # Implementation and design execution config.
     design_sequence_parallelism: int = 2
     # E1에서 8개 동시 요청에도 429, 연결 오류, timeout이 없었다. 한 번의 전체 시간은
     # LLM 수리 편차가 크므로 이후 여러 실행의 중앙값과 완주율로 다시 조정한다.
@@ -110,19 +121,15 @@ class Settings(BaseSettings):
     design_class_structure_max_completion_tokens: int = 16384
     design_class_collaboration_max_completion_tokens: int = 8192
     implementation_max_workers: int = 1
-    implementation_task_parallelism: int = 2
     implementation_agent_temperature: float = 0.2
     implementation_agent_max_output_tokens: int = 16384
     implementation_reasoning_effort: str = "medium"
-    # ``marker`` is an opt-in discovery path until a representative use case
-    # has completed. It decomposes backend work into sequential operation
-    # markers and deliberately leaves test authoring for a later checkpoint.
-    implementation_backend_task_strategy: Literal["owner", "marker"] = "owner"
     # Restricted owners use scoped file/search/check tools. ``terminal`` remains
     # available as an explicit baseline for controlled comparison and rollback.
     implementation_owner_tool_mode: Literal["restricted", "terminal"] = "restricted"
     implementation_openhands_canary: bool = True
-    implementation_openhands_canary_repetitions: int = 3
+    # One protocol probe is enough; the transport already retries each request.
+    implementation_openhands_canary_repetitions: int = 1
     # OpenHands names this value ``num_retries``, but SDK 1.36 applies it as
     # the total number of physical attempts. Keep the EasyDep setting explicit
     # so a provider upgrade cannot silently multiply a long agent run.
@@ -132,11 +139,9 @@ class Settings(BaseSettings):
     # Tenacity/OpenHands uses this as the coefficient of a base-2 exponential
     # wait, so 1.0 produces approximately 1, 2, 4 seconds before the cap.
     implementation_openhands_retry_multiplier: float = 1.0
-    # A canary needs three successful tool round trips, but transient endpoint
-    # failures may consume two additional attempts. A failed transient batch is
-    # cached only briefly and acts as a small per-run circuit breaker.
-    implementation_openhands_canary_max_attempts: int = 5
-    implementation_openhands_canary_transient_ttl_seconds: int = 600
+    # Canary policy is deliberately a single probe with no delayed circuit break.
+    implementation_openhands_canary_max_attempts: int = 1
+    implementation_openhands_canary_transient_ttl_seconds: int = 0
 
     @field_validator(
         "implementation_openhands_request_attempts",

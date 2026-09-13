@@ -8,12 +8,14 @@ import time
 import uuid
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any, cast
 
 from fastapi import HTTPException
 
+from app.db.models import TYPE_CLASS, TYPE_USECASE_SPEC
 from app.design import progress as design_progress
 from app.design.graphs.design_graph import has_active_session, session_status
 from app.design.graphs.subgraphs import DESIGN_STAGES
@@ -70,7 +72,7 @@ from .checkpoints import (
     create_checkpoint_branch,
     create_restart_branch,
 )
-from .contracts import RestartStage, WorkspaceAction
+from .contracts import RestartStage
 from .conversation.agent import conversation_agent
 from .conversation.context import build_conversation_context
 from .conversation.contracts import (
@@ -89,6 +91,16 @@ from .conversation.delivery import (
     repair_payload_from_testing_evidence,
     requirements_feedback_edit,
 )
+from .conversation.feedback_envelope import (
+    BaseRevision,
+    Decision,
+    DecisionPayload,
+    DecisionPolicy,
+    Question,
+    QuestionOption,
+    answer_option,
+    free_text_decision,
+)
 from .conversation.project_tools import ProjectTools
 from .conversation.revision_planner import plan_revision, validate_plan
 from .live_preview import live_previews
@@ -98,6 +110,7 @@ _log = logging.getLogger(__name__)
 TERMINAL_JOB_STATUSES = {
     "COMPLETED",
     "FAILED",
+    "INTERRUPTED",
     "CANCELLED",
     "REJECTED",
     "NEEDS_INPUT",
@@ -108,7 +121,13 @@ TERMINAL_JOB_STATUSES = {
 # 응답과 reasoning을 별도 ``responseContent``·``reasoningContent`` field로 기록하므로,
 # Workspace event에서도 같은 실행의 원문을 확인할 수 있다.
 _PRIVATE_DESIGN_TIMING_FIELDS = frozenset({"failureContentPrefix", "failureContentSuffix"})
-_REPEATED_REPAIR_OUTCOME = "repeated_candidate"
+_DESIGN_DELIVERY_CONTEXT_FIELDS = frozenset(
+    {
+        "validated_target_feedbacks",
+        "approved_authority_targets",
+        "approved_downstream_targets",
+    }
+)
 _NUMBERED_REQUIREMENT_LINE = re.compile(
     r"^\s*[-*]\s*\[REQ[-_ ]?\d+\]\s*(?P<text>.+?)\s*$",
     re.IGNORECASE,
@@ -136,47 +155,6 @@ def _initial_requirement_lines(text: str) -> list[str]:
 def _public_design_timing_event(event: Mapping[str, Any]) -> dict[str, Any]:
     """설계 timing 한 건을 Workspace event로 옮기고 예전 중복 표본만 제거한다."""
     return {key: value for key, value in event.items() if key not in _PRIVATE_DESIGN_TIMING_FIELDS}
-
-
-def _latest_testing_repair_outcome(result: Mapping[str, Any]) -> str:
-    """Testing 공개 이력에서 방금 후보의 판정만 읽는다."""
-
-    repair_state = result.get("repair_state")
-    attempts = repair_state.get("recent_attempts") if isinstance(repair_state, dict) else None
-    latest = attempts[-1] if isinstance(attempts, list) and attempts else None
-    return str(latest.get("outcome") or "") if isinstance(latest, dict) else ""
-
-
-def _stop_repeated_testing_repair(result: dict[str, Any]) -> dict[str, Any]:
-    """파일까지 같은 수리 후보가 다시 나온 경우에만 시스템 오류로 끝낸다.
-
-    오류 목록이 그대로여도 파일 내용이 달라졌다면 다른 해결책일 수 있으므로 다음 수리를
-    허용한다. 반면 입력과 생성 파일까지 같은 후보가 재등장하면 같은 검사를 반복해도 새로
-    알 수 있는 것이 없다. 횟수 상한 없이 이 정확한 중복 조건만 사용한다.
-    """
-
-    repair_state = result.get("repair_state")
-    if not isinstance(repair_state, dict):
-        return result
-    if _latest_testing_repair_outcome(result) != _REPEATED_REPAIR_OUTCOME:
-        return result
-
-    reason = (
-        "Automatic repair did not reduce the same blocking findings. EasyDep stopped "
-        "starting new implementation jobs until the failing check or repair route is fixed."
-    )
-    return {
-        **result,
-        "kind": "system_error",
-        "message": reason,
-        "requires_revision": False,
-        "can_delegate_repair": False,
-        "repair_state": {
-            **repair_state,
-            "status": "STALLED",
-            "stall_reason": reason,
-        },
-    }
 
 
 def _implementation_agent_results(run_path: Path) -> list[dict[str, Any]]:
@@ -299,12 +277,12 @@ class WorkspaceService:
             "FAILED",
         }:
             return command
-        # 같은 ``retry_implementation`` 이름을 Testing의 자동 수리도 사용한다. 이 메서드는
-        # 구현 화면을 새로 열었을 때 끊긴 구현 명령만 맞추는 용도이므로, Testing 명령을
-        # 구현 작업 완료와 동시에 끝내면 안 된다. Testing은 이어서 동적 기능 검사를 해야 한다.
+        # Testing이 위임한 수리도 독립된 Implementation command다. 구현 화면을 다시 열 때
+        # 해당 owner checkpoint의 상태만 맞추고, 후속 Testing은 별도 START_TESTING으로 둔다.
         if command.get("stage") != "implementation":
             return command
         if command.get("action") not in {
+            "delegate_repair",
             "start_implementation",
             "retry_implementation",
             "rerun_implementation",
@@ -319,25 +297,86 @@ class WorkspaceService:
         except Exception:
             return command
         job_status = str(job.get("status") or "")
+        if command.get("action") == "delegate_repair" and job_status == "COMPLETED":
+            owner_repair = job.get("owner_repair")
+            requested_at = (
+                str(owner_repair.get("requested_at") or "")
+                if isinstance(owner_repair, dict)
+                else ""
+            )
+            started_at = str(command.get("started_at") or "")
+            try:
+                request_belongs_to_command = bool(
+                    requested_at
+                    and started_at
+                    and datetime.fromisoformat(requested_at)
+                    >= datetime.fromisoformat(started_at)
+                )
+            except (TypeError, ValueError):
+                request_belongs_to_command = False
+            if not request_belongs_to_command:
+                if command.get("status") == "RUNNING":
+                    return command
+                retry_payload = dict(payload)
+                retry_payload.pop("job_id", None)
+                failed = {**command, "status": "FAILED", "payload": retry_payload}
+                message = (
+                    "The Implementation repair was interrupted before its worker request "
+                    "could be confirmed. Retry the same repair request."
+                )
+                result = result_with_contract(
+                    failed,
+                    {"kind": "outcome_unknown", "message": message},
+                )
+                return repository.update_command(
+                    str(command["command_id"]),
+                    status="FAILED",
+                    payload=retry_payload,
+                    result=result,
+                    error=message,
+                    completed_at=repository.now(),
+                )
         # READY workflow의 완료 여부는 구현 작업 서비스가 판정하여 공개 상태를
         # COMPLETED로 바꾼다. Workspace가 그 내부 규칙을 다시 구현하지 않는다.
         if job_status != "COMPLETED":
             self._sync_implementation_progress(app_id, str(command["command_id"]), job)
             if job_status in TERMINAL_JOB_STATUSES:
+                if job_status == "NEEDS_INPUT":
+                    pending = self._implementation_needs_input_result(job, job_id)
+                    pending.pop("awaiting_input", None)
+                    result = result_with_contract(
+                        {**command, "status": "AWAITING_INPUT"}, pending
+                    )
+                    return repository.update_command(
+                        command["command_id"],
+                        status="AWAITING_INPUT",
+                        result=result,
+                        error=None,
+                    )
                 result = {
                     **dict(command.get("result") or {}),
                     "job_id": job_id,
                     "job": job,
                     "checkpoint_retryable": bool(job.get("checkpoint_retryable")),
                 }
+                command_status = (
+                    "INTERRUPTED" if job_status == "INTERRUPTED" else "FAILED"
+                )
                 result = result_with_contract(
-                    {**command, "status": "FAILED"}, result
+                    {**command, "status": command_status}, result
                 )
                 return repository.update_command(
                     command["command_id"],
-                    status="FAILED",
+                    status=command_status,
                     result=result,
                     error=str(job.get("error") or "Implementation needs checkpoint repair."),
+                )
+            if job_status in {"QUEUED", "RUNNING"} and command.get("status") != "RUNNING":
+                return repository.update_command(
+                    str(command["command_id"]),
+                    status="RUNNING",
+                    error=None,
+                    completed_at=None,
                 )
             return command
         result = {
@@ -479,6 +518,99 @@ class WorkspaceService:
         # before any individual revision can run.
         return BatchReviseRequest(revisions=revisions).revisions
 
+    def _fixed_class_resource_choice(
+        self,
+        app_id: str,
+        payload: dict[str, Any],
+        latest: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Validate one server-pinned class choice without interpreting it again.
+
+        A resource question normally represents ordinary prose input.  The narrow
+        exception is a Design class-gate question whose server-provided context
+        pins one catalog target and version.  Its fixed choices are already typed
+        UI input; only free text continues to ConversationAgent.
+        """
+
+        action_id = str(payload.get("action_id") or "")
+        context = payload.get("context")
+        if not action_id or not isinstance(context, dict):
+            return None
+        offered_context = {
+            key: value
+            for key, value in context.items()
+            if key not in _DESIGN_DELIVERY_CONTEXT_FIELDS
+        }
+        raw_target = offered_context.get("validated_target")
+        if raw_target is None:
+            return None
+        pending = repository.get_command(action_id)
+        if (
+            pending is None
+            or pending.get("app_id") != app_id
+            or pending.get("command_id") != latest.get("command_id")
+            or pending.get("status") != "AWAITING_INPUT"
+            or pending.get("stage") != "design"
+        ):
+            raise ValueError("This class question is no longer the current design question.")
+        status = session_status(app_id)
+        if not status.get("active") or status.get("stage") != "class_diagram":
+            raise ValueError("The pinned class question is no longer at the class review gate.")
+        text = str(payload.get("text") or "").strip()
+        offers = offered_actions(pending)
+        fixed_choice = any(
+            str(offer.action) == "message"
+            and "text" in offer.payload
+            and offer.payload.get("text") == text
+            and offer.payload.get("context") == offered_context
+            for offer in offers
+        )
+        try:
+            target = RevisionTarget.model_validate(raw_target)
+        except (TypeError, ValueError) as error:
+            raise ValueError("The class question target is invalid.") from error
+        if (
+            target.owner != "design"
+            or target.artifact_type != TYPE_CLASS
+            or target.kind not in {"class", "operation"}
+            or target.ref != str(offered_context.get("element_ref") or "").strip()
+            or target.artifact_version_id is None
+        ):
+            raise ValueError("The question must pin one editable design class target.")
+        current = ProjectTools(app_id).current_revision_target(target)
+        if (
+            current is None
+            or current.ref != target.ref
+            or current.artifact_version_id != target.artifact_version_id
+            or current.owner != "design"
+            or current.artifact_type != TYPE_CLASS
+            or current.kind not in {"class", "operation"}
+        ):
+            raise ValueError("The pinned class target version is stale.")
+        if not fixed_choice:
+            # A matching pinned context with different prose is the explicitly
+            # offered free-text path, so leave it for normal interpretation.
+            if any(
+                str(offer.action) == "message"
+                and "text" not in offer.payload
+                and offer.payload.get("context") == offered_context
+                for offer in offers
+            ):
+                return None
+            raise ValueError("The submitted class answer does not match a fixed choice.")
+        return {
+            "validated_target_feedbacks": [
+                ReviseRequest(
+                    target=target.ref,
+                    feedback=text,
+                    approved_authority_targets=[target.ref],
+                    approved_downstream_targets=None,
+                ).model_dump(mode="json")
+            ],
+            "approved_authority_targets": [target.ref],
+            "approved_downstream_targets": [],
+        }
+
     def submit(
         self,
         app_id: str,
@@ -547,6 +679,10 @@ class WorkspaceService:
 
         if action != "message":
             return action, payload, stage
+        # This marker is created only below, after matching a stored server offer.
+        # Never accept a client-provided copy as evidence that an action was offered.
+        payload = dict(payload)
+        payload.pop("_resource_answer_context", None)
         text = str(payload.get("text") or "").strip()
         latest = repository.latest_command(app_id)
         if latest is None:
@@ -557,6 +693,32 @@ class WorkspaceService:
         if latest.get("status") in repository.ACTIVE_STATUSES:
             raise RuntimeError(
                 f"An active workspace command already exists: {latest['command_id']}"
+            )
+        pending = repository.get_command(str(payload.get("action_id") or ""))
+        if pending is not None and pending.get("status") == "AWAITING_INPUT":
+            pending_result = pending.get("result") or {}
+            pending_question = pending_result.get("feedback_question")
+            if pending_question is None and isinstance(pending_result.get("validation"), dict):
+                pending_question = pending_result["validation"].get("feedback_question")
+            if isinstance(pending_question, dict):
+                return self._route_feedback_question_answer(
+                    app_id, payload, stage, latest, pending, pending_question
+                )
+        fixed_class_context = self._fixed_class_resource_choice(app_id, payload, latest)
+        if fixed_class_context is not None:
+            offered_context = {
+                key: value
+                for key, value in selected.items()
+                if key not in _DESIGN_DELIVERY_CONTEXT_FIELDS
+            }
+            return (
+                "message",
+                {
+                    **payload,
+                    "_resource_answer_context": offered_context,
+                    "context": {**selected, **fixed_class_context},
+                },
+                "design",
             )
         explicit_instructions: dict[str, str] = {}
         element_ref = str(selected.get("element_ref") or "").strip()
@@ -605,6 +767,14 @@ class WorkspaceService:
             if len(explicit_instructions) == 1:
                 target = next(iter(explicit_instructions))
                 explicit_payload["revision_instructions"] = {target: outcome.instruction}
+                pinned_revision = (
+                    outcome.revision.model_copy(update={"targets": [target]})
+                    if outcome.revision is not None
+                    else None
+                )
+                outcome = outcome.model_copy(
+                    update={"targets": [target], "revision": pinned_revision}
+                )
             return self._route_conversation_intent(
                 app_id, explicit_payload, outcome, latest
             )
@@ -635,39 +805,6 @@ class WorkspaceService:
             if referenced is None or referenced.get("app_id") != app_id:
                 break
             actionable = referenced
-        retry_text = " ".join(text.casefold().strip(" .!?").split())
-        testing_retry_phrases = {
-            "test",
-            "retry",
-            "retry test",
-            "retry testing",
-            "rerun test",
-            "rerun testing",
-            "run test",
-            "run testing",
-            "테스트",
-            "테스팅",
-            "테스트 재시도",
-            "테스팅 재시도",
-            "테스트 다시 실행",
-            "테스팅 다시 실행",
-            "다시 테스트",
-        }
-        if actionable.get("stage") == "testing" and retry_text in testing_retry_phrases:
-            retry_offer = next(
-                (
-                    offer
-                    for offer in offered_actions(actionable)
-                    if offer.action == WorkspaceAction.START_TESTING
-                ),
-                None,
-            )
-            if retry_offer is not None:
-                return (
-                    str(retry_offer.action),
-                    {**payload, **dict(retry_offer.payload)},
-                    None,
-                )
         try:
             conversation_context = build_conversation_context(app_id)
             conversation_context.workspace["selection"] = dict(selected)
@@ -927,12 +1064,27 @@ class WorkspaceService:
                     if isinstance(revision_instructions, dict)
                     else {}
                 )
+                pinned_context = payload.get("context")
+                pinned_context = (
+                    dict(pinned_context)
+                    if isinstance(pinned_context, dict)
+                    and isinstance(pinned_context.get("validated_target"), dict)
+                    else {}
+                )
+                offered_context = {
+                    key: value
+                    for key, value in pinned_context.items()
+                    if key not in _DESIGN_DELIVERY_CONTEXT_FIELDS
+                }
+                if offered_context:
+                    routed_payload["_resource_answer_context"] = offered_context
                 delivery = design_revision_payload(
                     plan,
                     intent.instruction,
                     instructions_by_ref=revision_instructions,
                 )
                 routed_payload["context"] = {
+                    **offered_context,
                     "validated_target_feedbacks": [
                         revision.model_dump(mode="json")
                         for revision in delivery.revisions
@@ -1061,15 +1213,6 @@ class WorkspaceService:
         presented = dict(command)
         payload = command.get("payload")
         payload = payload if isinstance(payload, dict) else {}
-        # Testing이 만든 구현 feedback job이 실행되는 동안만 화면을 Implementation으로
-        # 표시한다. 구현이 끝나 Testing checkpoint가 생기면 같은 command가 다시 Testing을
-        # 나타낸다. 별도 상태나 DB migration 없이 이미 저장된 handoff 정보만 사용한다.
-        if (
-            command.get("action") == "delegate_repair"
-            and payload.get("job_id")
-            and not isinstance(payload.get("testing_checkpoint"), dict)
-        ):
-            presented["stage"] = "implementation"
         result = command.get("result")
         shaped_result = dict(result) if isinstance(result, dict) else {}
         conversation = shaped_result.get("conversation")
@@ -1123,6 +1266,11 @@ class WorkspaceService:
         prior = repository.get_command(action_id)
         if prior is None or prior["app_id"] != app_id:
             raise ValueError("The command to answer could not be found.")
+        offered_context = payload.get("_resource_answer_context")
+        if action == "message" and isinstance(offered_context, dict):
+            offered_payload = {**payload, "context": offered_context}
+            if action_is_offered(action, offered_payload, prior):
+                return
         # 저장된 배포 선택은 내부 재개 trigger다. 같은 질문에 답하지만 choice text 대신
         # 구조화된 값을 전달한다.
         if action == "apply_deployment_preferences":
@@ -1149,21 +1297,11 @@ class WorkspaceService:
             StagePolicy.TESTING,
         }:
             return policy.value
-        if policy == StagePolicy.RETRY_IMPLEMENTATION:
-            # Testing이 자동으로 만든 구현 수리도 같은 구현 checkpoint다. 이 경우 재개
-            # 명령을 Testing 단계에 두면 구현 수리가 끝난 뒤 보존한 기능 계획을 바로 다시
-            # 실행할 수 있고, 서버가 중간에 재시작돼도 아래 Testing checkpoint로 이어진다.
-            prior = repository.get_command(str(payload.get("action_id") or ""))
-            if (
-                prior is not None
-                and prior.get("action") == "delegate_repair"
-                and prior.get("stage") == "testing"
-            ):
-                return "testing"
-            return "implementation"
         if policy == StagePolicy.REFERENCE:
             prior = repository.get_command(str(payload.get("action_id") or ""))
             if prior is not None:
+                if action == "delegate_repair" and prior.get("stage") == "testing":
+                    return "implementation"
                 return str(
                     (prior.get("result") or {}).get("routing_stage")
                     or prior.get("stage")
@@ -1238,67 +1376,15 @@ class WorkspaceService:
             metadata={"status": "RUNNING", "action": command["action"]},
         )
         try:
-            result = self._dispatch_automatic_testing_episode(command)
-            self._complete_referenced_action(command)
+            result = self._dispatch(command)
+            feedback_command = self._feedback_question_command(command)
+            if feedback_command is not None:
+                if not result.get("stale_revision_plan"):
+                    self._complete_feedback_question_source(feedback_command)
+            else:
+                self._complete_referenced_action(command)
             awaiting_input = result.pop("awaiting_input", False) is True
             if awaiting_input:
-                # 최초 Testing 실패는 자동 수리를 시작한다. 이미 한 번 수리한 뒤에도 같은
-                # finding이 줄지 않았다면 새 작업을 계속 만들지 않고 시스템 경계를 고친다.
-                # 실제로 개선된 결과에는 적용하지 않으므로 숫자 기반 재시도 상한은 없다.
-                if result.get("kind") == "system_error":
-                    # 새 사용자 입력으로 풀 수 없는 EasyDep 내부 문제는 대화 대기 상태로
-                    # 남기지 않는다. 실패 이유와 수리 이력은 보존하되 명령을 끝내야 화면도
-                    # 의미 없는 수리 버튼을 내놓지 않고 서버 재시작 시 재개하지 않는다.
-                    testing_job = result.get("job")
-                    candidate_job_id = (
-                        str(testing_job.get("implementation_job_id") or "")
-                        if isinstance(testing_job, dict)
-                        else ""
-                    )
-                    if candidate_job_id:
-                        try:
-                            discarded = implementation_worker.discard_feedback_candidate(
-                                candidate_job_id,
-                                reason=str(
-                                    result.get("message")
-                                    or "The Testing candidate did not improve its blockers."
-                                ),
-                            )
-                        except (KeyError, RuntimeError) as error:
-                            # 최초 구현이나 이미 정리된 후보는 폐기 대상이 아니다. 수리
-                            # 종료 자체를 실패시키지 않고 진단만 서버 로그에 남긴다.
-                            _log.info(
-                                "Testing candidate %s was not discarded: %s",
-                                candidate_job_id,
-                                error,
-                            )
-                        else:
-                            result["discarded_candidate"] = {
-                                "job_id": candidate_job_id,
-                                "artifact_types": list(
-                                    discarded.get("discarded_artifact_types") or []
-                                ),
-                            }
-                    result = result_with_contract(
-                        {**command, "status": "FAILED"}, result
-                    )
-                    repository.update_command(
-                        command_id,
-                        status="FAILED",
-                        result=result,
-                        error=str(result.get("message") or "Testing repair stalled."),
-                        completed_at=repository.now(),
-                    )
-                    repository.append_event(
-                        app_id,
-                        command_id=command_id,
-                        stage=stage,
-                        kind="system_error",
-                        actor="assistant",
-                        text=str(result.get("message") or "Testing repair stalled."),
-                        metadata={"status": "FAILED", **result},
-                    )
-                    return
                 result = result_with_contract(
                     {**command, "status": "AWAITING_INPUT"}, result
                 )
@@ -1365,171 +1451,6 @@ class WorkspaceService:
             )
             raise
 
-    def _dispatch_automatic_testing_episode(
-        self,
-        command: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Testing 수리를 새 command 없이 같은 실행 안에서 이어 간다.
-
-        화면에는 하나의 작업만 남기되 매 반복의 정확한 실패와 재검사 결과는 event로
-        누적한다. 횟수 제한은 사용하지 않는다. 실제 파일과 finding이 같아진 경우에는
-        ``_stop_repeated_testing_repair``가 시스템 결함으로 끝내므로 같은 LLM 작업을
-        무한히 만들지 않는다.
-        """
-
-        result = self._dispatch(command)
-        while result.get("awaiting_input") is True:
-            if command.get("action") == "delegate_repair" and command.get("stage") == "testing":
-                result = _stop_repeated_testing_repair(result)
-                # 파일은 달라졌지만 blocking finding이 줄지 않은 후보는 다음 수리의
-                # 출발점으로 채택하지 않는다. Job 이력은 남겨 에이전트가 이미 바꾼
-                # 파일을 볼 수 있게 하고, 실제 snapshot만 직전 수용본으로 되돌린다.
-                if (
-                    result.get("kind") != "system_error"
-                    and _latest_testing_repair_outcome(result) == "no_improvement"
-                ):
-                    testing_job = result.get("job")
-                    candidate_job_id = (
-                        str(testing_job.get("implementation_job_id") or "")
-                        if isinstance(testing_job, dict)
-                        else ""
-                    )
-                    if candidate_job_id:
-                        try:
-                            discarded = implementation_worker.discard_feedback_candidate(
-                                candidate_job_id,
-                                reason=(
-                                    "The candidate changed files but did not reduce the "
-                                    "blocking Testing findings."
-                                ),
-                            )
-                        except (KeyError, RuntimeError) as error:
-                            _log.info(
-                                "Testing candidate %s was not discarded: %s",
-                                candidate_job_id,
-                                error,
-                            )
-                        else:
-                            result["discarded_candidate"] = {
-                                "job_id": candidate_job_id,
-                                "artifact_types": list(
-                                    discarded.get("discarded_artifact_types") or []
-                                ),
-                            }
-            should_repair = (
-                command.get("stage") == "testing"
-                and result.get("requires_revision") is True
-                and result.get("can_delegate_repair") is True
-                and result.get("kind") != "system_error"
-                and not result.get("resource_question")
-                and not result.get("resource_questions")
-            )
-            if not should_repair:
-                return result
-
-            app_id = str(command["app_id"])
-            command_id = str(command["command_id"])
-            stage = str(command["stage"])
-            # 처음 Testing을 시작하게 한 이전 단계 command는 여기서 완료한다. 이후
-            # 반복은 현재 command 자신을 수리 근거로 참조하므로 새 DB 행이 필요 없다.
-            self._complete_referenced_action(command)
-            visible_result = result_with_contract(
-                {**command, "status": "RUNNING"},
-                {key: value for key, value in result.items() if key != "awaiting_input"},
-            )
-            repository.append_event(
-                app_id,
-                command_id=command_id,
-                stage=stage,
-                kind=str(result.get("kind") or "action_required"),
-                actor="assistant",
-                text=str(result.get("message") or "Testing found a repairable failure."),
-                metadata={
-                    "status": "REPAIR_ITERATION_FAILED",
-                    "progress_event": "testingProgressUpdated",
-                    "phase": "repair",
-                    "scope": "phase",
-                    "progress_status": "fail",
-                    "progress_card_label": "Testing progress",
-                    "progress_step_label": "Repair iteration needs another candidate",
-                    **visible_result,
-                },
-            )
-
-            # 이전 Testing checkpoint를 남겨 두면 dispatch가 구현 수리 대신 같은 검사를
-            # 즉시 재개한다. 실패 결과 자체는 command.result에 보존하고, 다음 구현 후보가
-            # 만든 checkpoint는 _run_testing_command가 다시 저장하게 한다.
-            payload = {
-                key: value
-                for key, value in dict(command.get("payload") or {}).items()
-                if key not in {"testing_checkpoint", "job_id"}
-            }
-            if "initial_testing_failure" not in payload:
-                initial_report = (
-                    (visible_result.get("job") or {}).get("result")
-                    if isinstance(visible_result.get("job"), dict)
-                    else {}
-                )
-                initial_report = initial_report if isinstance(initial_report, dict) else {}
-                dynamic_report = (
-                    (((initial_report.get("verification") or {}).get("reports") or {}).get(
-                        "dynamicFunctional"
-                    ))
-                    if isinstance(initial_report.get("verification"), dict)
-                    else {}
-                )
-                dynamic_report = dynamic_report if isinstance(dynamic_report, dict) else {}
-                payload["initial_testing_failure"] = {
-                    "gateStatus": initial_report.get("gateStatus"),
-                    "gateCounts": initial_report.get("gateCounts"),
-                    "blockingReason": (
-                        (initial_report.get("verification") or {}).get("blockingReason")
-                        if isinstance(initial_report.get("verification"), dict)
-                        else None
-                    ),
-                    "blocking_findings": list(
-                        initial_report.get("blocking_findings") or []
-                    ),
-                    "failedWorkflowId": dynamic_report.get("failedWorkflowId"),
-                    "failedStepId": dynamic_report.get("failedStepId"),
-                    "candidateDigest": dynamic_report.get("candidateDigest"),
-                }
-            payload.setdefault("repair_episode_started_by", command.get("action"))
-            payload["action_id"] = command_id
-            command["action"] = "delegate_repair"
-            command["payload"] = payload
-            repository.update_command(
-                command_id,
-                action="delegate_repair",
-                stage=stage,
-                status="RUNNING",
-                result=visible_result,
-                payload=payload,
-            )
-            repository.append_event(
-                app_id,
-                command_id=command_id,
-                stage=stage,
-                kind="status",
-                actor="system",
-                text="Continuing automatic repair with the accumulated history.",
-                metadata={
-                    "status": "AUTO_REPAIR_RUNNING",
-                    "progress_event": "testingProgressUpdated",
-                    "phase": "repair",
-                    "scope": "phase",
-                    "progress_status": "running",
-                    "progress_card_label": "Testing progress",
-                    "progress_step_label": "Repairing the failed implementation",
-                    "progress_detail": (
-                        "The next implementation candidate will be checked against "
-                        "the preserved test evidence."
-                    ),
-                },
-            )
-            result = self._dispatch(command)
-        return result
-
     def _complete_referenced_action(self, command: dict[str, Any]) -> None:
         if command["payload"].get("_conversation_outcome"):
             return
@@ -1539,6 +1460,297 @@ class WorkspaceService:
         prior = repository.get_command(action_id)
         if prior is not None and prior["status"] == "AWAITING_INPUT":
             repository.update_command(action_id, status="COMPLETED", completed_at=repository.now())
+
+    def _route_feedback_question_answer(
+        self,
+        app_id: str,
+        payload: dict[str, Any],
+        stage: str | None,
+        latest: dict[str, Any],
+        prior: dict[str, Any],
+        raw_question: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], str | None]:
+        try:
+            question = Question.model_validate(raw_question)
+            design_gap = (
+                prior.get("stage") == "design"
+                and question.detected_at.stage == "design"
+                and question.trigger.category == "specification_gap"
+            )
+            implementation_gap = (
+                prior.get("stage") == "implementation"
+                and question.detected_at.stage == "implementation"
+                and question.trigger.category == "upstream_contract_gap"
+            )
+            if question.app_id != app_id or not (design_gap or implementation_gap):
+                raise ValueError("This feedback question is not an executable workspace gap.")
+            targets = question.authority_candidates
+            if len(targets) != 1:
+                raise ValueError("The feedback question must name one authority target.")
+            if design_gap and (
+                targets[0].owner != "requirements"
+                or targets[0].kind != "use_case_spec"
+                or targets[0].artifact_type != TYPE_USECASE_SPEC
+            ):
+                raise ValueError("The feedback question must name one requirements use-case specification.")
+            if implementation_gap and targets[0].owner not in {"requirements", "design"}:
+                raise ValueError("The implementation gap must name a requirements or design authority.")
+            option_id = str(payload.get("feedback_option_id") or "")
+            if option_id:
+                decision = answer_option(
+                    question,
+                    option_id=option_id,
+                    decision_id=str(uuid.uuid4()),
+                    source_user_message_id=str(prior["command_id"]),
+                )
+            else:
+                interpretation = conversation_agent.interpret_revision(
+                    str(payload.get("text") or ""),
+                    [target.ref for target in targets],
+                    tools=ProjectTools(app_id),
+                    context=build_conversation_context(app_id),
+                )
+                if isinstance(interpretation, Clarification):
+                    return self._feedback_question_clarification(
+                        payload, interpretation, stage, latest, prior
+                    )
+                if (
+                    not isinstance(interpretation, CommandIntent)
+                    or str(interpretation.intent) != ConversationIntent.REVISE.value
+                ):
+                    raise ValueError("Free-text answer needs clarification.")
+                revision = interpretation.revision
+                if revision is None:
+                    raise ValueError("Free-text answer needs a revision meaning.")
+                decision = free_text_decision(
+                    question,
+                    raw_answer=str(payload.get("text") or ""),
+                    decision_id=str(uuid.uuid4()),
+                    source_user_message_id=str(prior["command_id"]),
+                    normalization={
+                        "normalized_meaning": {
+                            "semantic_scope": revision.semantic_scope,
+                            "requested_effect": revision.requested_effect,
+                            "change_type": revision.change_type,
+                        },
+                        "authoritative_target_refs": revision.targets,
+                        "preserved_constraints": (
+                            question.decision_policy.required_preserved_constraints
+                        ),
+                    },
+                )
+            if decision.status != "NORMALIZED" or decision.normalized_meaning is None:
+                return self._feedback_question_clarification(
+                    payload,
+                    Clarification(
+                        question="The answer is outside the question authority or policy."
+                    ),
+                    stage,
+                    latest,
+                    prior,
+                )
+            interpretation = RevisionInterpretation(
+                targets=[target.ref for target in decision.authoritative_targets],
+                semantic_scope=decision.normalized_meaning.semantic_scope,
+                requested_effect=decision.normalized_meaning.requested_effect,
+                change_type=decision.normalized_meaning.change_type,
+            )
+            tools = ProjectTools(app_id)
+            selected = tools.validate_targets(
+                [target.model_dump(mode="json") for target in decision.authoritative_targets]
+            )
+            if not selected.get("valid"):
+                raise ValueError("The feedback question is stale.")
+            if implementation_gap:
+                plan = plan_revision(
+                    tools,
+                    interpretation,
+                    origin_stage="implementation",
+                )
+            else:
+                plan = plan_revision(tools, interpretation)
+            decision_refs = [target.ref for target in decision.authoritative_targets]
+            plan_is_valid = (
+                validate_plan(
+                    tools,
+                    plan,
+                    interpretation,
+                    origin_stage="implementation",
+                )
+                if implementation_gap
+                else validate_plan(tools, plan, interpretation)
+            )
+            if (
+                plan.status != "needs_confirmation"
+                or [target.ref for target in plan.requested_targets] != decision_refs
+                or [target.ref for target in plan.authority_targets] != decision_refs
+                or not plan_is_valid
+            ):
+                raise ValueError("The feedback question is stale.")
+        except (TypeError, ValueError) as error:
+            return self._clarification_message(
+                payload,
+                Clarification(question=str(error), candidates=[]),
+                stage,
+                latest,
+            )
+        routed_owner = (
+            "requirements"
+            if design_gap
+            else plan.authority_targets[0].owner
+            if plan.authority_targets
+            else targets[0].owner
+        )
+        return (
+            "message",
+            {
+                **payload,
+                "text": "\n".join(
+                    [
+                        interpretation.requested_effect,
+                        *(
+                            f"Preserve constraint: {constraint}"
+                            for constraint in decision.preserved_constraints
+                        ),
+                    ]
+                ),
+                "action_id": str(prior["command_id"]),
+                "feedback_decision": decision.model_dump(mode="json"),
+                "revision_interpretation": interpretation.model_dump(mode="json"),
+                "revision_plan": plan.model_dump(mode="json"),
+                **(
+                    {"revision_origin_stage": "implementation"}
+                    if implementation_gap
+                    else {}
+                ),
+                "conversation_intent": {
+                    "intent": "revise",
+                    "targets": interpretation.targets,
+                    "instruction": interpretation.requested_effect,
+                },
+                "validated_targets": [target.model_dump(mode="json") for target in decision.authoritative_targets],
+                "_conversation_outcome": {"kind": "revision_plan"},
+            },
+            routed_owner,
+        )
+
+    @staticmethod
+    def _feedback_question_clarification(
+        payload: dict[str, Any],
+        outcome: Clarification,
+        stage: str | None,
+        latest: dict[str, Any],
+        source: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], str | None]:
+        action, routed_payload, routed_stage = WorkspaceService._clarification_message(
+            payload, outcome, stage, latest
+        )
+        routed_payload["_conversation_actions"] = [
+            offer.model_dump(mode="json", exclude_none=True)
+            for offer in offered_actions(source)
+        ]
+        return action, routed_payload, routed_stage
+
+    @staticmethod
+    def _feedback_question_command(command: dict[str, Any]) -> dict[str, Any] | None:
+        current = command
+        visited: set[str] = set()
+        while len(visited) < 12:
+            payload = current.get("payload") or {}
+            if payload.get("feedback_decision") is not None:
+                return current
+            if current.get("action") != "retry_requirements":
+                return None
+            previous_id = str(payload.get("action_id") or "")
+            if not previous_id:
+                return None
+            if previous_id in visited:
+                raise ValueError("The Requirements retry chain contains a cycle.")
+            visited.add(previous_id)
+            previous = repository.get_command(previous_id)
+            if (
+                previous is None
+                or previous.get("app_id") != command.get("app_id")
+                or previous.get("stage") != "requirements"
+                or previous.get("status") not in {"FAILED", "INTERRUPTED"}
+            ):
+                return None
+            current = previous
+        raise ValueError("The Requirements feedback retry chain is too deep.")
+
+    @staticmethod
+    def _complete_feedback_question_source(command: dict[str, Any]) -> None:
+        """Close only the exact typed question represented by this Decision."""
+
+        payload = command.get("payload") or {}
+        try:
+            decision = Decision.model_validate(payload.get("feedback_decision"))
+        except (TypeError, ValueError) as error:
+            raise ValueError("The feedback Decision is invalid.") from error
+        if (
+            command.get("action") != "message"
+            or command.get("stage") not in {"requirements", "design", "implementation"}
+            or decision.status != "NORMALIZED"
+            or decision.app_id != command.get("app_id")
+        ):
+            raise ValueError("The feedback Decision does not belong to this command.")
+        source_id = str(payload.get("action_id") or "")
+        source = repository.get_command(source_id) if source_id else None
+        raw_question = (
+            (source.get("result") or {}).get("feedback_question")
+            if source is not None
+            else None
+        )
+        try:
+            question = Question.model_validate(raw_question)
+        except (TypeError, ValueError) as error:
+            raise ValueError("The source feedback Question is missing or invalid.") from error
+        answered_by = (source.get("result") or {}).get("feedback_question_answered_by")
+        if source.get("status") == "COMPLETED" and answered_by == command.get("command_id"):
+            return
+        if (
+            source.get("status") != "AWAITING_INPUT"
+            or source.get("app_id") != command.get("app_id")
+            or decision.source_user_message_id != source_id
+            or question.question_id != decision.question_id
+            or question.question_version != decision.question_version
+            or {target.ref for target in decision.authoritative_targets}
+            - {target.ref for target in question.authority_candidates}
+        ):
+            raise ValueError("The feedback Decision does not match the open Question.")
+        repository.update_command(
+            source_id,
+            status="COMPLETED",
+            result={
+                **dict(source.get("result") or {}),
+                "feedback_question_answered_by": str(command["command_id"]),
+            },
+            completed_at=repository.now(),
+        )
+
+    @staticmethod
+    def _source_testing_command(command: dict[str, Any]) -> dict[str, Any] | None:
+        """Follow an Implementation repair/retry chain back to its failed Testing command."""
+
+        app_id = str(command["app_id"])
+        command_id = str((command.get("payload") or {}).get("action_id") or "")
+        visited: set[str] = set()
+        while command_id and command_id not in visited:
+            visited.add(command_id)
+            referenced = repository.get_command(command_id)
+            if referenced is None:
+                return None
+            if str(referenced.get("app_id") or "") != app_id:
+                raise ValueError("The Testing repair chain belongs to another app.")
+            if referenced.get("stage") == "testing":
+                return referenced
+            if (
+                referenced.get("stage") != "implementation"
+                or referenced.get("action") not in {"delegate_repair", "retry_implementation"}
+            ):
+                return None
+            command_id = str((referenced.get("payload") or {}).get("action_id") or "")
+        return None
 
     def _dispatch(self, command: dict[str, Any]) -> dict[str, Any]:
         action = str(command["action"])
@@ -1559,40 +1771,23 @@ class WorkspaceService:
                 clarification = Clarification.model_validate(
                     {key: value for key, value in conversation_outcome.items() if key != "kind"}
                 )
-                return {
-                    "awaiting_input": True,
+                result = {
                     "kind": "question",
                     "message": clarification.question,
                     "conversation": {
                         "clarification": clarification.model_dump(mode="json")
                     },
                 }
+                if not command["payload"].get("_conversation_actions"):
+                    result["awaiting_input"] = True
+                return result
             if kind == "revision_plan":
                 plan = RevisionPlan.model_validate(
                     command["payload"].get("revision_plan") or {}
                 )
                 if plan.status != "needs_confirmation":
                     raise ValueError("Only a confirmation plan can wait for approval.")
-                return {
-                    "awaiting_input": True,
-                    "kind": "action_required",
-                    "action": "confirm_change",
-                    "action_id": str(command["command_id"]),
-                    "message": plan.explanation,
-                    "revision_plan": plan.model_dump(mode="json"),
-                    "requested_targets": [
-                        target.model_dump(mode="json")
-                        for target in plan.requested_targets
-                    ],
-                    "authority_targets": [
-                        target.model_dump(mode="json")
-                        for target in plan.authority_targets
-                    ],
-                    "downstream_targets": [
-                        target.model_dump(mode="json")
-                        for target in plan.downstream_targets
-                    ],
-                }
+                return self._revision_plan_result(str(command["command_id"]), plan)
             raise ValueError("Unknown conversation outcome.")
         # 파일 복원이나 검사 도중 서버가 재시작되었다면 구현 수리부터 반복하지 않는다.
         # 현재 command에 저장한 Testing 체크포인트를 그대로 실행 서비스에 돌려준다.
@@ -1618,11 +1813,16 @@ class WorkspaceService:
             result = self._stage_message(
                 command, advance=action in {"advance", "start_design"}
             )
-            return (
-                self._attach_revision_execution(str(command["app_id"]), plan, result)
-                if plan is not None
-                else result
+            if plan is None:
+                return result
+            response = self._attach_revision_execution(
+                str(command["app_id"]), plan, result
             )
+            return self._attach_downstream_revision_handoff(
+                command, plan, interpretation, response
+            )
+        if handler == "plan_downstream_revision":
+            return self._plan_downstream_revision(command)
         if handler == "delegate_repair":
             action_id = str(command["payload"].get("action_id") or "")
             prior = repository.get_command(action_id) or {}
@@ -1642,14 +1842,8 @@ class WorkspaceService:
                     or prior.get("payload", {}).get("implementation_job_id")
                     or ""
                 )
-                previous_run_id = str(result.get("job_id") or previous_job.get("job_id") or "")
-                if not implementation_job_id or not previous_run_id:
-                    raise ValueError("The failing testing run cannot be resumed.")
-                defect_classes = {
-                    str(blocker.get("defect_class") or "SUT_DEFECT")
-                    for blocker in blockers
-                    if isinstance(blocker, dict)
-                }
+                if not implementation_job_id:
+                    raise ValueError("The failing Testing run has no implementation job ID.")
                 implementation_blockers = [
                     blocker
                     for blocker in blockers
@@ -1660,142 +1854,69 @@ class WorkspaceService:
                         or blocker.get("defect_class") == "SUT_DEFECT"
                     )
                 ]
-                # 실행 환경 오류와 제품 오류가 함께 발견될 수 있다. 이때 환경 오류가
-                # 고칠 수 있는 Trivy/코드 오류까지 가리지 않게 하고, 환경 오류만 남은
-                # 경우에만 외부 복구를 기다린다.
-                if not implementation_blockers and defect_classes <= {
-                    "ENVIRONMENT_DEFECT"
-                }:
-                    return {
-                        "awaiting_input": True,
-                        "kind": "external_action",
-                        "message": (
-                            "Testing could not reach a conclusion because its runtime or "
-                            "required tool is unavailable. Restore that environment and run "
-                            "the same Testing job again; EasyDep will not change product code "
-                            "to hide an environment failure."
-                        ),
-                        "requires_revision": False,
-                        "can_delegate_repair": False,
-                        "blocking_findings": blockers,
-                        "repair_state": {
-                            **dict(result.get("repair_state") or {}),
-                            "status": "WAITING_EXTERNAL",
-                        },
-                        "job_id": previous_run_id,
-                        "job": previous_job,
-                    }
-                if not implementation_blockers and "UPSTREAM_AMBIGUITY" in defect_classes:
-                    # Testing can identify missing upstream evidence, but it must not edit or
-                    # rewind an earlier stage.  Keep the exact failed run available and let the
-                    # normal conversational revision flow ask the user before changing design.
-                    return {
-                        **result,
-                        "awaiting_input": True,
-                        "kind": "action_required",
-                        "message": (
-                            "Testing found an ambiguity in the frozen requirements or design. "
-                            "Review the affected design before starting a revision."
-                        ),
-                        "requires_revision": True,
-                        "can_delegate_repair": False,
-                        "blocking_route": "design",
-                        "job_id": previous_run_id,
-                        "job": previous_job,
-                    }
-                if implementation_blockers:
-                    (
-                        selected_blockers,
-                        repair_owner,
-                        repair_task_type,
-                        repair_file_hints,
-                        verification_profile,
-                    ) = self._testing_repair_request(
-                        str(command["app_id"]),
-                        result,
-                        implementation_blockers,
-                    )
-                    # 동적 테스트까지 실행된 실패라면 그 계획을 그대로 보존한다. 반대로
-                    # 앱 실행처럼 계획이 생기기 전에 실패한 경우에는 보존할
-                    # 대상이 없으므로, 고친 구현을 새 Testing 작업으로 검사해야 한다.
-                    has_preserved_candidate = any(
-                        isinstance(blocker.get("candidate_plan"), dict)
-                        and bool(blocker.get("candidate_plan"))
-                        for blocker in selected_blockers
-                    )
-                    original_implementation = implementation_worker.get(implementation_job_id)
-                    # Testing 이력에는 HTTP 실패가 남고 최신 source에는 이전 수정 결과가
-                    # 반영돼 있다. 다음 수리에는 자유형 agent 답변을 반복하지 않고, 이전
-                    # 작업의 변경 파일만 알려 현재 source와 정확한 실패 증거를 읽게 한다.
-                    previous_repair_results, older_repair_summaries = (
-                        self._implementation_repair_outcomes(original_implementation)
-                    )
-                    feedback = self._testing_implementation_feedback(
-                        result,
-                        selected_blockers,
-                        previous_repair_results=previous_repair_results,
-                        older_repair_summaries=older_repair_summaries,
-                    )
-                    (
-                        confirmed_target_refs,
-                        repair_file_hints,
-                    ) = self._testing_implementation_repair_targets(
-                        str(command["app_id"]),
-                        selected_blockers,
-                        repair_file_hints,
-                    )
-                    repair_job = implementation_worker.request_owner_repair(
-                        implementation_job_id,
-                        owner=repair_owner,
-                        evidence={
-                            "command": ["testing", repair_task_type],
-                            "stderr": feedback,
-                            "testResults": json.dumps(
-                                {
-                                    "confirmedTargetRefs": confirmed_target_refs,
-                                    "fileHints": repair_file_hints,
-                                    "verificationProfile": verification_profile,
-                                },
-                                ensure_ascii=False,
-                                sort_keys=True,
-                            ),
-                        },
-                    )
-                    repair_job_id = str(repair_job.get("job_id") or "")
-                    if not repair_job_id:
-                        raise RuntimeError("Automatic owner repair returned no job ID.")
-                    # 서버가 재시작돼도 같은 owner checkpoint를 다시 찾을 수 있도록 LLM
-                    # 실행 전에 원래 implementation job ID를 command에 저장한다.
-                    repair_payload = {
-                        **dict(command.get("payload") or {}),
-                        "job_id": repair_job_id,
-                    }
-                    command["payload"] = repair_payload
-                    repository.update_command(
-                        str(command["command_id"]),
-                        payload=repair_payload,
-                    )
-                    repaired = self._monitor_implementation(
-                        repair_job,
-                        command_id=str(command["command_id"]),
-                    )
-                    repaired_job = repaired.get("job") or {}
-                    repaired_job_id = str(
-                        repaired.get("job_id") or repaired_job.get("job_id") or ""
-                    )
-                    if not repaired_job_id:
-                        raise RuntimeError("Automatic owner repair returned no job ID.")
-                    return self._run_testing_command(
-                        command,
-                        repaired_job_id,
-                        previous_job=previous_job,
-                        preserve_test=has_preserved_candidate,
-                        repair_task_type=repair_task_type,
-                    )
-                return self._run_testing_command(
-                    command,
+                if not implementation_blockers:
+                    raise ValueError("The selected Testing finding does not belong to Implementation.")
+                (
+                    selected_blockers,
+                    repair_owner,
+                    repair_task_type,
+                    repair_file_hints,
+                    verification_profile,
+                ) = self._testing_repair_request(
+                    str(command["app_id"]),
+                    result,
+                    implementation_blockers,
+                )
+                original_implementation = implementation_worker.get(implementation_job_id)
+                previous_repair_results, older_repair_summaries = (
+                    self._implementation_repair_outcomes(original_implementation)
+                )
+                feedback = self._testing_implementation_feedback(
+                    result,
+                    selected_blockers,
+                    previous_repair_results=previous_repair_results,
+                    older_repair_summaries=older_repair_summaries,
+                )
+                (
+                    confirmed_target_refs,
+                    repair_file_hints,
+                ) = self._testing_implementation_repair_targets(
+                    str(command["app_id"]),
+                    selected_blockers,
+                    repair_file_hints,
+                )
+                repair_payload = {
+                    **dict(command.get("payload") or {}),
+                    "job_id": implementation_job_id,
+                }
+                command["payload"] = repair_payload
+                repository.update_command(
+                    str(command["command_id"]),
+                    payload=repair_payload,
+                )
+                repair_job = implementation_worker.request_owner_repair(
                     implementation_job_id,
-                    previous_job=previous_job,
+                    owner=repair_owner,
+                    evidence={
+                        "command": ["testing", repair_task_type],
+                        "stderr": feedback,
+                        "testResults": json.dumps(
+                            {
+                                "confirmedTargetRefs": confirmed_target_refs,
+                                "fileHints": repair_file_hints,
+                                "verificationProfile": verification_profile,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
+                    },
+                )
+                repair_job_id = str(repair_job.get("job_id") or "")
+                if repair_job_id != implementation_job_id:
+                    raise RuntimeError("Implementation repair returned an unexpected job ID.")
+                return self._monitor_implementation(
+                    repair_job,
+                    command_id=str(command["command_id"]),
                 )
             history = dict(result.get("repair_state") or {})
             repair_stage = str(
@@ -1821,6 +1942,13 @@ class WorkspaceService:
             return self._stage_message(delegated, advance=False)
         if handler == "retry_requirements":
             app_id = str(command["app_id"])
+            feedback_command = self._feedback_question_command(command)
+            if feedback_command is not None:
+                replay = {
+                    **command,
+                    "payload": dict(feedback_command.get("payload") or {}),
+                }
+                return self._stage_message(replay, advance=False)
             progress = self._requirements_progress_reporter(app_id, str(command["command_id"]))
             with requirements_telemetry.progress_scope(progress):
                 result = retry_requirements_analysis(
@@ -1880,14 +2008,6 @@ class WorkspaceService:
             current_job = implementation_worker.get(str(payload["job_id"]))
             if str(current_job.get("app_id") or "") != str(command["app_id"]):
                 raise ValueError("The implementation checkpoint does not belong to this app.")
-            # 일반 구현 재시도는 이미 job ID만으로 충분하다. Testing이 만든 구현 수리만
-            # 이전 Testing 결과와 고정 기능 계획을 찾아야 하므로 그때만 명령을 조회한다.
-            testing_repair = command.get("stage") == "testing"
-            prior = (
-                repository.get_command(str(payload.get("action_id") or "")) or {}
-                if testing_repair
-                else {}
-            )
             repository.append_event(
                 str(command["app_id"]),
                 command_id=str(command["command_id"]),
@@ -1900,49 +2020,39 @@ class WorkspaceService:
                     "job_id": str(payload["job_id"]),
                 },
             )
-            if current_job.get("status") == "COMPLETED" and testing_repair:
-                # 구현 저장까지 끝난 직후 Workspace 명령만 끊긴 경우에는 이미 통과한 구현
-                # 테스트를 다시 돌리지 않고 아래 기능 회귀 검사부터 이어 간다.
-                repaired = {"job_id": str(payload["job_id"]), "job": current_job}
-            else:
-                job = implementation_worker.retry_failed(str(payload["job_id"]))
-                repaired = self._monitor_implementation(
-                    job,
-                    command_id=str(command["command_id"]),
-                )
-            if not testing_repair:
-                return repaired
-
-            original = repository.get_command(
-                str((prior.get("payload") or {}).get("action_id") or "")
-            ) or {}
-            original_result = original.get("result") or {}
-            previous_job = original_result.get("job") or {}
-            blockers = original_result.get("blocking_findings") or []
-            preserve_test = any(
-                isinstance(blocker, dict)
-                and isinstance(blocker.get("candidate_plan"), dict)
-                and bool(blocker.get("candidate_plan"))
-                for blocker in blockers
-            )
-            repaired_job = repaired.get("job") or {}
-            repaired_job_id = str(
-                repaired.get("job_id") or repaired_job.get("job_id") or payload["job_id"]
-            )
-            resumed_repair_task_type: str | None = (
-                str(current_job.get("repair_task_type") or "") or None
-            )
-            return self._run_testing_command(
-                command,
-                repaired_job_id,
-                previous_job=previous_job,
-                preserve_test=preserve_test,
-                repair_task_type=resumed_repair_task_type,
+            job = implementation_worker.retry_failed(str(payload["job_id"]))
+            return self._monitor_implementation(
+                job,
+                command_id=str(command["command_id"]),
             )
         if handler == "start_testing":
+            implementation_job_id = str(command["payload"]["implementation_job_id"])
+            source_testing = self._source_testing_command(command)
+            if source_testing is not None:
+                source_result = source_testing.get("result") or {}
+                previous_job = source_result.get("job")
+                blockers = source_result.get("blocking_findings") or []
+                preserve_test = any(
+                    isinstance(blocker, dict)
+                    and isinstance(blocker.get("candidate_plan"), dict)
+                    and bool(blocker.get("candidate_plan"))
+                    for blocker in blockers
+                )
+                implementation_job = implementation_worker.get(implementation_job_id)
+                return self._run_testing_command(
+                    command,
+                    implementation_job_id,
+                    previous_job=(
+                        previous_job if isinstance(previous_job, dict) else None
+                    ),
+                    preserve_test=preserve_test,
+                    repair_task_type=(
+                        str(implementation_job.get("repair_task_type") or "") or None
+                    ),
+                )
             return self._run_testing_command(
                 command,
-                str(command["payload"]["implementation_job_id"]),
+                implementation_job_id,
             )
         if handler == "branch_checkpoint":
             branch = create_checkpoint_branch(
@@ -2021,6 +2131,27 @@ class WorkspaceService:
         if stage == "requirements":
             action_id = str(payload.get("action_id") or "")
             previous = repository.get_command(action_id) if action_id else None
+            conversation_intent = payload.get("conversation_intent")
+            if (
+                isinstance(conversation_intent, dict)
+                and conversation_intent.get("intent") == "revise"
+                and payload.get("validated_targets")
+            ):
+                targets = [
+                    RevisionTarget.model_validate(target)
+                    for target in payload.get("validated_targets") or []
+                ]
+                if payload.get("feedback_decision") is not None:
+                    current = ProjectTools(app_id).validate_targets(
+                        [target.model_dump(mode="json") for target in targets]
+                    )
+                    if not current.get("valid"):
+                        raise ValueError("The feedback question is stale.")
+                edit = requirements_feedback_edit(targets, text)
+                progress = self._requirements_progress_reporter(app_id, str(command["command_id"]))
+                with requirements_telemetry.progress_scope(progress):
+                    result = revise_requirements_analysis(edit, app_id, app_id=app_id)
+                return self._requirements_result(result)
             continuation = bool(
                 action_id and previous is not None and previous["stage"] == "requirements"
             )
@@ -2173,8 +2304,13 @@ class WorkspaceService:
                         else None
                     ),
                     approved_downstream_targets=(
-                        # RTM downstream entries are impact hints, not a write deny-list.
-                        None
+                        {
+                            str(ref)
+                            for ref in context.get("approved_downstream_targets") or []
+                            if str(ref)
+                        }
+                        if "approved_downstream_targets" in context
+                        else None
                     ),
                 )
                 return {
@@ -2281,6 +2417,17 @@ class WorkspaceService:
 
                 def operation():
                     return resume_design_session(app_id, text)
+            elif command.get("action") == "advance":
+                # A targeted revision can validate and persist design artifacts
+                # without opening a full design-generation checkpoint.  The
+                # action reference was already checked against a server offer,
+                # so advancing from that review finishes Design; it must not
+                # restart the whole pipeline merely because no session exists.
+                operation_stage = "design_complete"
+                verb = "Completing"
+
+                def operation():
+                    return {"status": "completed", "app_id": app_id}
             else:
                 operation_stage = DESIGN_STAGES[0]
                 verb = "Generating"
@@ -2775,6 +2922,41 @@ class WorkspaceService:
 
     def _design_result(self, result: dict[str, Any]) -> dict[str, Any]:
         session = result.get("session") or {}
+        stage_hint = (
+            session.get("current_stage")
+            or result.get("current_stage")
+            or result.get("stage")
+        )
+        raw_question = result.get("feedback_question")
+        stage_validation = (result.get("validation") or {}).get(stage_hint)
+        if raw_question is None and isinstance(stage_validation, dict):
+            raw_question = stage_validation.get("feedback_question")
+        if raw_question is not None:
+            try:
+                question = Question.model_validate(raw_question)
+                target = (
+                    question.authority_candidates[0]
+                    if len(question.authority_candidates) == 1
+                    else None
+                )
+                if (
+                    question.app_id != result.get("app_id")
+                    or question.detected_at.stage != "design"
+                    or question.trigger.category != "specification_gap"
+                    or target is None
+                    or target.owner != "requirements"
+                    or target.artifact_type != TYPE_USECASE_SPEC
+                ):
+                    raise ValueError("unsupported feedback question")
+            except (TypeError, ValueError) as error:
+                raise ValueError("Design produced an unsupported feedback question.") from error
+            return {
+                "awaiting_input": True,
+                "kind": "question",
+                "message": question.prompt,
+                "feedback_question": question.model_dump(mode="json"),
+                "design": result,
+            }
         # The design service reports completion as ``status: completed``.
         # Older stored command results can still contain the two flags below.
         finished = bool(
@@ -2939,9 +3121,22 @@ class WorkspaceService:
                 if isinstance(raw_interpretation, dict)
                 else None
             )
-            if interpretation is None or not validate_plan(
-                ProjectTools(app_id), plan, interpretation
-            ):
+            origin_stage = original["payload"].get("revision_origin_stage")
+            if origin_stage not in {"requirements", "design", "implementation", "testing"}:
+                origin_stage = None
+            if interpretation is None:
+                return self._stale_revision_result(plan)
+            tools = ProjectTools(app_id)
+            if origin_stage is None:
+                plan_is_valid = validate_plan(tools, plan, interpretation)
+            else:
+                plan_is_valid = validate_plan(
+                    tools,
+                    plan,
+                    interpretation,
+                    origin_stage=origin_stage,
+                )
+            if not plan_is_valid:
                 return self._stale_revision_result(plan)
             authority_targets = plan.authority_targets or plan.requested_targets
             owners = {target.owner for target in authority_targets}
@@ -3012,7 +3207,16 @@ class WorkspaceService:
                 "payload": delegated_payload,
             }
             result = self._stage_message(delegated, advance=False)
-            return self._attach_revision_execution(app_id, plan, result)
+            response = self._attach_revision_execution(app_id, plan, result)
+            if (
+                origin_stage == "implementation"
+                and owner == "design"
+                and response.get("awaiting_input") is True
+            ):
+                response["resume_implementation"] = True
+            return self._attach_downstream_revision_handoff(
+                delegated, plan, interpretation, response
+            )
         context = original["payload"].get("context") or {}
         feedback = str(original["payload"].get("text") or "").strip()
         app_id = str(command["app_id"])
@@ -3046,6 +3250,157 @@ class WorkspaceService:
         return {
             "message": "Returned to the selected design stage and applied the feedback.",
             "design": result,
+        }
+
+    def _plan_downstream_revision(self, command: dict[str, Any]) -> dict[str, Any]:
+        """Build a fresh Design plan after a reviewed local UC-spec revision."""
+
+        source_id = str(command["payload"].get("action_id") or "")
+        source = repository.get_command(source_id)
+        if (
+            source is None
+            or source.get("status") != "AWAITING_INPUT"
+            or str(source.get("app_id") or "") != str(command["app_id"])
+        ):
+            raise ValueError("The requirements revision review is missing or already handled.")
+        handoff = (source.get("result") or {}).get("downstream_revision_handoff")
+        if not isinstance(handoff, dict):
+            raise TypeError("This review does not offer downstream revision planning.")
+        source_targets = [
+            dict(target)
+            for target in handoff.get("source_targets") or []
+            if isinstance(target, dict)
+        ]
+        if not source_targets or any(
+            not isinstance(target.get("artifact_version_id"), int)
+            for target in source_targets
+        ):
+            raise ValueError("The requirements revision has no exact source reference.")
+
+        app_id = str(command["app_id"])
+        tools = ProjectTools(app_id)
+        entries = tools.design_entry_targets_for_requirements(source_targets)
+        if entries is None:
+            clarification = Clarification(
+                question=(
+                    "The revised use-case specification changed after this review. "
+                    "Submit the feedback again from the current artifact."
+                )
+            )
+            return {
+                "awaiting_input": True,
+                "kind": "question",
+                "message": clarification.question,
+                "conversation": {
+                    "clarification": clarification.model_dump(mode="json")
+                },
+            }
+        requested_effect = str(handoff.get("requested_effect") or "").strip()
+        if not requested_effect:
+            raise ValueError("The requirements revision has no accepted instruction.")
+        target_refs = (
+            [target.ref for target in entries]
+            if entries
+            else ["design_stage:class_diagram"]
+        )
+        scope_label = "RTM-linked design" if entries else "full class design"
+        instruction = f"Reflect the accepted requirements revision in the {scope_label}: {requested_effect}"
+        interpretation = RevisionInterpretation(
+            targets=target_refs,
+            semantic_scope=str(handoff.get("semantic_scope") or "unknown"),
+            requested_effect=instruction,
+            change_type=str(handoff.get("change_type") or "unknown"),
+        )
+        plan = plan_revision(tools, interpretation)
+        if plan.status != "needs_confirmation":
+            clarification = Clarification(
+                question=(
+                    plan.explanation
+                    if plan.status in {"needs_clarification", "unsupported"}
+                    else "The Design scope could not be held for explicit confirmation."
+                ),
+                candidates=[target.display_label for target in plan.authority_targets],
+            )
+            return {
+                "awaiting_input": True,
+                "kind": "question",
+                "message": clarification.question,
+                "conversation": {
+                    "clarification": clarification.model_dump(mode="json")
+                },
+            }
+
+        payload = {
+            **dict(command["payload"]),
+            "text": instruction,
+            "revision_interpretation": interpretation.model_dump(mode="json"),
+            "revision_plan": plan.model_dump(mode="json"),
+            "validated_targets": [
+                target.model_dump(mode="json")
+                for target in (plan.authority_targets or plan.requested_targets)
+            ],
+        }
+        command["payload"] = payload
+        repository.update_command(str(command["command_id"]), payload=payload)
+        return self._revision_plan_result(str(command["command_id"]), plan)
+
+    @staticmethod
+    def _revision_plan_result(
+        command_id: str,
+        plan: RevisionPlan,
+    ) -> dict[str, Any]:
+        return {
+            "awaiting_input": True,
+            "kind": "action_required",
+            "action": "confirm_change",
+            "action_id": command_id,
+            "message": plan.explanation,
+            "revision_plan": plan.model_dump(mode="json"),
+            "requested_targets": [
+                target.model_dump(mode="json") for target in plan.requested_targets
+            ],
+            "authority_targets": [
+                target.model_dump(mode="json") for target in plan.authority_targets
+            ],
+            "downstream_targets": [
+                target.model_dump(mode="json") for target in plan.downstream_targets
+            ],
+        }
+
+    @staticmethod
+    def _attach_downstream_revision_handoff(
+        command: dict[str, Any],
+        plan: RevisionPlan,
+        interpretation: RevisionInterpretation | None,
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Replace generic Requirements advance with a fresh-plan handoff marker."""
+
+        authority = plan.authority_targets or plan.requested_targets
+        if (
+            command.get("stage") != "requirements"
+            or interpretation is None
+            or not authority
+            or any(target.kind != "use_case_spec" for target in authority)
+            or result.get("awaiting_input") is not True
+        ):
+            return result
+        versions = (result.get("revision_execution") or {}).get("artifact_versions") or {}
+        return {
+            **result,
+            "downstream_revision_handoff": {
+                "source_targets": [
+                    {
+                        "ref": target.ref,
+                        "artifact_version_id": versions.get(target.artifact_type),
+                    }
+                    for target in authority
+                ],
+                "semantic_scope": interpretation.semantic_scope,
+                "requested_effect": str(command["payload"].get("text") or "").strip()
+                or interpretation.requested_effect,
+                "change_type": interpretation.change_type,
+            },
         }
 
     @staticmethod
@@ -3190,7 +3545,10 @@ class WorkspaceService:
             )
 
         job_status = str(job.get("status") or private_job.get("status") or "")
-        terminal_failure = job_status in TERMINAL_JOB_STATUSES - {"COMPLETED"}
+        terminal_failure = job_status in TERMINAL_JOB_STATUSES - {
+            "COMPLETED",
+            "NEEDS_INPUT",
+        }
         failure_error = str(private_job.get("error") or job.get("error") or "").strip()
         failure_lines = [line.strip() for line in failure_error.splitlines() if line.strip()]
         meaningful_failure_lines = [
@@ -3218,7 +3576,14 @@ class WorkspaceService:
             status = str(value or "").upper()
             if status in {"SUCCEEDED", "COMPLETED", "COMPLETE"}:
                 return "completed"
-            if status in {"FAILED", "TIMEOUT", "CANCELLED", "REJECTED", "NEEDS_REVIEW"}:
+            if status in {
+                "FAILED",
+                "INTERRUPTED",
+                "TIMEOUT",
+                "CANCELLED",
+                "REJECTED",
+                "NEEDS_REVIEW",
+            }:
                 return "failed"
             if status in {"RUNNING", "FINALIZING", "VERIFYING"}:
                 return "running"
@@ -3891,6 +4256,197 @@ class WorkspaceService:
             )
         return "\n\n".join(parts)
 
+    def _implementation_needs_input_result(
+        self, current: dict[str, Any], job_id: str
+    ) -> dict[str, Any]:
+        """Expose one catalog-backed upstream decision as a typed question."""
+
+        workflow = current.get("workflow")
+        workflow = workflow if isinstance(workflow, Mapping) else {}
+        raw_details = workflow.get("blockingDetails")
+        if not isinstance(raw_details, list):
+            raw_details = workflow.get("blocking_details")
+        details = [item for item in raw_details or [] if isinstance(item, Mapping)]
+        gaps = [
+            item
+            for item in details
+            if str(item.get("kind") or "") == "upstream_contract_gap"
+            and str(item.get("taskId") or item.get("task_id") or "").strip()
+            and str(item.get("summary") or "").strip()
+            and str(item.get("sourceRef") or item.get("source_ref") or "").strip()
+        ]
+        base_result = {
+            "job_id": job_id,
+            "job": current,
+            "implementation_blocking_details": details,
+        }
+        if len(gaps) != 1:
+            return {
+                **base_result,
+                "awaiting_input": True,
+                "kind": "question",
+                "message": (
+                    "Implementation needs input before it can continue. "
+                    "Provide one exact upstream contract sourceRef from the current RTM."
+                ),
+            }
+
+        gap = gaps[0]
+        task_id = str(gap.get("taskId") or gap.get("task_id") or "").strip()
+        summary = str(gap.get("summary") or "").strip()
+        source_ref = str(gap.get("sourceRef") or gap.get("source_ref") or "").strip()
+        app_id = str(current.get("app_id") or "")
+        try:
+            tools = ProjectTools(app_id)
+            validation = tools.validate_revision_selections([source_ref])
+            if not validation.get("valid") or len(validation.get("valid_refs") or []) != 1:
+                raise ValueError("sourceRef is not an exact current catalog target")
+            source_targets = tools.normalize_revision_targets(
+                [source_ref], require_editable=False
+            )
+            if len(source_targets) != 1:
+                raise ValueError("sourceRef did not resolve to one catalog target")
+            source_target = source_targets[0]
+            planned: list[tuple[str, RevisionPlan]] = []
+            preferred_scope = (
+                "contract"
+                if source_ref.startswith(("api:", "operation:"))
+                else "behavior"
+            )
+            for semantic_scope in (preferred_scope, "behavior", "contract"):
+                if any(scope == semantic_scope for scope, _candidate in planned):
+                    continue
+                candidate = plan_revision(
+                    tools,
+                    RevisionInterpretation(
+                        targets=[source_target.ref],
+                        semantic_scope=semantic_scope,
+                        requested_effect=summary,
+                        change_type="modify",
+                    ),
+                    origin_stage="implementation",
+                )
+                if (
+                    candidate.status == "needs_confirmation"
+                    and len(candidate.requested_targets) == 1
+                    and candidate.requested_targets[0].ref == source_target.ref
+                    and len(candidate.authority_targets) == 1
+                    and candidate.authority_targets[0].owner in {"requirements", "design"}
+                ):
+                    planned.append((semantic_scope, candidate))
+            if not planned:
+                raise ValueError("no exact upstream revision path is available")
+            semantic_scope, plan = planned[0]
+            authority = plan.authority_targets[0]
+            allowed_semantic_scopes = tuple(
+                semantic_scope
+                for semantic_scope, candidate in planned
+                if candidate.authority_targets == plan.authority_targets
+            )
+            snapshot = tools.revision_snapshot()
+            versions = snapshot.get("artifact_versions")
+            if not isinstance(versions, Mapping):
+                raise TypeError("the current artifact versions are unavailable")
+            version_id = versions.get(authority.artifact_type)
+            if not isinstance(version_id, int) or isinstance(version_id, bool) or version_id < 1:
+                version_id = authority.artifact_version_id
+            if not isinstance(version_id, int) or version_id < 1:
+                raise ValueError(
+                    f"no current version is available for {authority.artifact_type}"
+                )
+            question_options: list[QuestionOption] = []
+            raw_options = gap.get("options")
+            if isinstance(raw_options, list) and 2 <= len(raw_options) <= 3:
+                option_ids: set[str] = set()
+                for raw_option in raw_options:
+                    if not isinstance(raw_option, Mapping):
+                        question_options = []
+                        break
+                    option_id = str(raw_option.get("id") or "").strip()
+                    label = str(raw_option.get("label") or "").strip()
+                    description = str(raw_option.get("description") or "").strip()
+                    requested_effect = str(
+                        raw_option.get("requestedEffect")
+                        or raw_option.get("requested_effect")
+                        or ""
+                    ).strip()
+                    if (
+                        not option_id
+                        or option_id in option_ids
+                        or not label
+                        or not description
+                        or not requested_effect
+                    ):
+                        question_options = []
+                        break
+                    option_ids.add(option_id)
+                    question_options.append(
+                        QuestionOption(
+                            option_id=option_id,
+                            label=label,
+                            description=description,
+                            decision_payload=DecisionPayload(
+                                normalized_meaning={
+                                    "semantic_scope": semantic_scope,
+                                    "requested_effect": requested_effect,
+                                    "change_type": "modify",
+                                },
+                                authoritative_target_refs=(authority.ref,),
+                            ),
+                        )
+                    )
+            question = Question(
+                question_id=f"{job_id}:upstream-contract-gap:{task_id}",
+                question_version=1,
+                app_id=app_id,
+                source_execution_id=task_id,
+                detected_at={
+                    "stage": "implementation",
+                    "artifact_ref": source_target.ref,
+                    "element_ref": source_target.ref,
+                },
+                base_revisions=[
+                    BaseRevision(
+                        artifact_type=authority.artifact_type,
+                        version_id=version_id,
+                    )
+                ],
+                trigger={
+                    "category": "upstream_contract_gap",
+                    "evidence_refs": [source_target.ref],
+                },
+                authority_candidates=[authority],
+                prompt=(
+                    "Implementation needs an upstream requirements or design decision: "
+                    f"{summary} Choose an option or provide another answer before retrying "
+                    "implementation."
+                ),
+                options=question_options,
+                allow_free_text=True,
+                decision_policy=DecisionPolicy(
+                    allowed_semantic_scopes=allowed_semantic_scopes,
+                    allowed_change_types=("modify", "add"),
+                ),
+            )
+            return {
+                **base_result,
+                "awaiting_input": True,
+                "kind": "question",
+                "message": question.prompt,
+                "feedback_question": question.model_dump(mode="json"),
+            }
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            return {
+                **base_result,
+                "awaiting_input": True,
+                "kind": "question",
+                "message": (
+                    "Implementation is blocked by an upstream contract gap, but its exact "
+                    f"authority could not be planned ({error}). Verify sourceRef "
+                    f"{source_ref!r} against the current catalog/RTM and retry."
+                ),
+            }
+
     def _monitor_implementation(
         self,
         job: dict[str, Any],
@@ -3999,6 +4555,8 @@ class WorkspaceService:
                     last_agent_results[task_id] = fingerprint
             if status in TERMINAL_JOB_STATUSES:
                 if status != "COMPLETED":
+                    if status == "NEEDS_INPUT":
+                        return self._implementation_needs_input_result(current, job_id)
                     raise RuntimeError(str(current.get("error") or f"Implementation job {status}"))
                 return {
                     "message": "Review the generated implementation artifacts below.",

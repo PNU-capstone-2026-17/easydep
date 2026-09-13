@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from app.design.contracts.api_spec import ApiSpecModel, ApiSpecProposal
 from app.design.graphs import subgraphs as design_subgraphs
 from app.design.knowledge.detectors import (
+    api_control_arguments,
     api_executable_schema_fields,
     api_spec_findings,
 )
@@ -395,13 +396,92 @@ def test_control_arguments_do_not_fall_back_to_matching_names_or_types() -> None
     assert endpoint.control_binding.arguments == []
 
 
+def test_string_precondition_stays_internal_as_trusted_control_context() -> None:
+    payload = _bce_model().model_dump(by_alias=True)
+    control = payload["Classes"][1]["operations"][0]
+    control["parameters"].append({"name": "authenticatedPrincipal", "type": "String"})
+    payload["Collaborations"][0]["calls"][1]["receiverOperationId"] = (
+        "CatalogControl::searchCatalog(filter:CourseFilter,authenticatedPrincipal:String)"
+    )
+    payload["Collaborations"][0]["calls"][1]["argumentBindings"].append(
+        {
+            "parameter": "authenticatedPrincipal",
+            "sourceRef": "UC1:precondition:1#authenticatedPrincipal",
+        }
+    )
+    bce_model = BCEModel.model_validate(payload)
+
+    proposal = _proposal().model_dump()
+    proposal["Endpoints"][0]["interaction_id"] = (
+        "CatalogBoundary::browseCatalog(filter:CourseFilter) -> "
+        "CatalogControl::searchCatalog(filter:CourseFilter,authenticatedPrincipal:String)"
+    )
+    normalized = normalize_api_spec_model(ApiSpecProposal.model_validate(proposal), bce_model)
+    endpoint = normalized.Endpoints[0]
+
+    assert endpoint.control_binding is not None
+    assert [item.model_dump() for item in endpoint.control_binding.arguments] == [
+        {"name": "filter", "source": "$query.filter"},
+        {"name": "authenticatedPrincipal", "source": "$context.authenticatedPrincipal"},
+    ]
+    assert api_control_arguments(
+        normalized.model_dump(by_alias=True),
+        {"extracted_bce_classes": bce_model.model_dump(by_alias=True)},
+    ) == []
+
+
+@pytest.mark.parametrize(
+    ("parameter_type", "source"),
+    [
+        ("String", "$context.otherPrincipal"),
+        ("UUID", "$context.authenticatedPrincipal"),
+    ],
+)
+def test_control_context_rejects_arbitrary_or_non_string_values(
+    parameter_type: str, source: str
+) -> None:
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [
+                {
+                    "className": "CatalogControl",
+                    "stereotype": "Control",
+                    "methods": [
+                        f"search(authenticatedPrincipal: {parameter_type}): void"
+                    ],
+                }
+            ]
+        }
+    }
+    model = {
+        "Endpoints": [
+            {
+                "path": "/catalog",
+                "method": "get",
+                "control_binding": {
+                    "control": "CatalogControl",
+                    "method": "search",
+                    "arguments": [
+                        {"name": "authenticatedPrincipal", "source": source}
+                    ],
+                },
+            }
+        ],
+        "Schemas": [],
+    }
+
+    findings = api_control_arguments(model, state)
+
+    assert [finding.rule_id for finding in findings] == ["api.control-arguments-match"]
+
+
 def test_path_placeholder_does_not_assume_a_nested_field_role_from_its_name() -> None:
     proposal = _proposal().model_dump()
     proposal["Endpoints"][0]["path"] = "/courses/{keyword}"
 
     with pytest.raises(
         ValueError,
-        match="must exactly identify a Boundary parameter",
+        match="must identify an allowed scalar Boundary parameter",
     ):
         normalize_api_spec_model(
             ApiSpecProposal.model_validate(proposal),
@@ -409,11 +489,21 @@ def test_path_placeholder_does_not_assume_a_nested_field_role_from_its_name() ->
         )
 
 
+def test_finite_proposal_schema_rejects_nested_field_placeholder() -> None:
+    proposal = _proposal().model_dump()
+    proposal["Endpoints"][0]["path"] = "/courses/{keyword}"
+
+    with pytest.raises(ValidationError, match="top-level Boundary parameters"):
+        service._finite_proposal_schema(_bce_model()).model_validate(proposal)
+
+
 def test_generation_service_accepts_typed_inputs_and_returns_normalized_model() -> None:
     calls: list[type[ApiSpecProposal]] = []
 
-    def propose(_messages, schema):
+    def propose(messages, schema):
         calls.append(schema)
+        prompt_input = json.loads(messages[1]["content"])
+        assert prompt_input["interactionCandidates"][0]["allowedPathParameters"] == []
         return _proposal().model_dump()
 
     result = service.generate_api_spec_model(
@@ -446,6 +536,26 @@ def test_empty_feedback_preserves_model_without_an_llm_call() -> None:
     assert revised is current
 
 
+def test_schema_target_is_reprojected_from_bce_without_an_llm_call() -> None:
+    bce_model = _bce_model()
+    current = normalize_api_spec_model(_proposal(), bce_model)
+    payload = bce_model.model_dump(by_alias=True)
+    course = next(item for item in payload["Classes"] if item["className"] == "Course")
+    course["fields"].append("credits : Integer")
+
+    revised = service.revise_api_spec_model(
+        current,
+        "Reflect the accepted class field.",
+        "UC1: A student browses the catalog.",
+        BCEModel.model_validate(payload),
+        {"Course"},
+        proposal_call=lambda *_args, **_kwargs: pytest.fail("schema projection is local"),
+    )
+
+    schema = next(item for item in revised.Schemas if item.name == "Course")
+    assert [field.name for field in schema.fields] == ["courseId", "title", "credits"]
+
+
 def test_revision_service_uses_one_structured_call_and_returns_typed_model() -> None:
     current = normalize_api_spec_model(_proposal(), _bce_model())
     calls: list[type[ApiSpecProposal]] = []
@@ -470,6 +580,111 @@ def test_revision_service_uses_one_structured_call_and_returns_typed_model() -> 
     assert isinstance(revised, ApiSpecModel)
     assert revised.Endpoints[0].summary == "Browse the current catalog"
     assert revised.Endpoints[0].query_params[0].type == "CourseFilter"
+
+
+def test_targeted_revision_sends_and_returns_only_the_selected_interaction() -> None:
+    bce_payload = _bce_model().model_dump(by_alias=True)
+    bce_payload["Classes"].extend(
+        [
+            {
+                "className": "AdminBoundary",
+                "stereotype": "Boundary",
+                "use_case_ids": ["UC2"],
+                "operations": [
+                    {
+                        "operationId": "AdminBoundary::refreshCatalog()",
+                        "name": "refreshCatalog",
+                        "parameters": [],
+                        "returnType": "void",
+                        "stepRefs": ["UC2:main:1"],
+                    }
+                ],
+            },
+            {
+                "className": "AdminControl",
+                "stereotype": "Control",
+                "use_case_ids": ["UC2"],
+                "operations": [
+                    {
+                        "operationId": "AdminControl::refreshCatalog()",
+                        "name": "refreshCatalog",
+                        "parameters": [],
+                        "returnType": "void",
+                        "stepRefs": ["UC2:main:2"],
+                    }
+                ],
+            },
+        ]
+    )
+    bce_payload["Collaborations"].append(
+        {
+            "collaborationId": "UC2",
+            "useCaseIds": ["UC2"],
+            "entryActor": "Admin",
+            "calls": [
+                {
+                    "callId": "UC2::call:1",
+                    "receiverOperationId": "AdminBoundary::refreshCatalog()",
+                    "stepRefs": ["UC2:main:1"],
+                },
+                {
+                    "callId": "UC2::call:2",
+                    "parentCallId": "UC2::call:1",
+                    "receiverOperationId": "AdminControl::refreshCatalog()",
+                    "stepRefs": ["UC2:main:2"],
+                },
+            ],
+        }
+    )
+    bce_model = BCEModel.model_validate(bce_payload)
+    proposal = _proposal().model_dump()
+    proposal["Endpoints"].append(
+        {
+            "interaction_id": (
+                "AdminBoundary::refreshCatalog() -> AdminControl::refreshCatalog()"
+            ),
+            "path": "/admin/catalog/refresh",
+            "method": "post",
+            "summary": "Refresh the catalog",
+            "responses": [{"status": 204, "description": "Catalog refreshed"}],
+        }
+    )
+    current = normalize_api_spec_model(
+        ApiSpecProposal.model_validate(proposal), bce_model
+    )
+
+    def revise(messages, _schema):
+        content = "\n".join(message["content"] for message in messages)
+        assert "AdminBoundary::refreshCatalog" not in content
+        assert '"path":"/admin/catalog/refresh"' in content
+        selected = _proposal().model_dump()
+        selected["Endpoints"][0]["summary"] = "Browse the current catalog"
+        return selected
+
+    revised = service.revise_api_spec_model(
+        current,
+        "Clarify only the browse endpoint summary.",
+        json.dumps(
+            {
+                "use_cases": [
+                    {"id": "UC1", "name": "Browse"},
+                    {"id": "UC2", "name": "Refresh"},
+                ],
+                "use_case_specs": [
+                    {"use_case_id": "UC1", "main_scenario": []},
+                    {"use_case_id": "UC2", "main_scenario": []},
+                ],
+            }
+        ),
+        bce_model,
+        {"browseCatalog"},
+        proposal_call=revise,
+    )
+
+    assert [endpoint.operation_id for endpoint in revised.Endpoints] == [
+        "browseCatalog"
+    ]
+    assert revised.Endpoints[0].summary == "Browse the current catalog"
 
 
 def test_accepted_model_round_trips_existing_json_and_openapi_contract() -> None:

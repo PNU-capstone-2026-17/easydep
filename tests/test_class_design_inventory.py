@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from app.config import settings
 from app.design.services.class_diagram import collaboration, inventory, operations
+from app.design.services.class_diagram.models import GenerationStalled
 from app.design.services.class_diagram.proposals import InventoryProposal
 from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.class_diagram.validation.inventory import validate_inventory
@@ -209,6 +210,17 @@ def test_inventory_repair_continues_past_one_replacement(monkeypatch):
     }
 
 
+def test_invalid_inventory_repairs_stop_as_generation_stalled(monkeypatch):
+    candidate = inventory_proposal()
+    candidate["items"] = [candidate["items"][0]]
+    monkeypatch.setattr(inventory, "parse_structured", lambda *_args, **_kwargs: candidate)
+
+    with pytest.raises(GenerationStalled) as caught:
+        inventory.inventory_proposal(build_scenario_index(single_use_case()))
+
+    assert caught.value.unit_id == "inventory"
+
+
 def _entity_inventory_proposal(field_type: str) -> dict:
     proposal = inventory_proposal()
     proposal["items"].append({
@@ -224,6 +236,29 @@ def _entity_inventory_proposal(field_type: str) -> dict:
         "useCaseIds": ["UC1"],
     })
     return proposal
+
+
+@pytest.mark.parametrize(
+    ("raw_type", "expected"),
+    [
+        ("list Operation", "List<Operation>"),
+        ("optional byte[]", "Optional<byte[]>"),
+        ("array CourseOffering", "List<CourseOffering>"),
+    ],
+)
+def test_unambiguous_loose_container_notation_is_canonicalized(
+    raw_type: str, expected: str
+) -> None:
+    proposal = InventoryProposal.model_validate(
+        _entity_inventory_proposal(raw_type)
+    )
+
+    candidate = inventory._normalize_inventory(proposal)
+    entity = next(
+        item for item in candidate["Classes"] if item["className"] == "RequestRecord"
+    )
+
+    assert entity["fields"] == ["id : UUID", f"value : {expected}"]
 
 
 def test_malformed_inventory_type_reaches_semantic_repair(monkeypatch):

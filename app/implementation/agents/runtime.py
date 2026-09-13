@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import ast
+import asyncio
+import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -24,6 +27,11 @@ from ..runtime.linux_runner_transport import (
     OWNER_TERMINAL_SHELL_ENV,
 )
 from ..workflows.repair import active_repair_for_task
+from .admission import (
+    integration_evidence_paths,
+    preflight_semantic_behavior,
+    preflight_semantic_integration,
+)
 from .canary import (
     TRANSIENT_CANARY_FAILURES,
     classify_canary_exception,
@@ -52,6 +60,11 @@ from .task_check import (
     has_successful_task_check,
     register_task_check_tool,
 )
+from .upstream_gap_tool import (
+    UpstreamGap,
+    register_upstream_gap_tool,
+    reported_upstream_gap,
+)
 from .verification.build import (
     WorkspaceVerificationError,
     verify_agent_workspace,
@@ -79,7 +92,78 @@ MAX_AGENT_TURN_ITERATIONS = 32
 # build-and-repair pass without inheriting OpenHands' 500 iteration default.  A
 # retry resumes the same persisted conversation.
 OWNER_TURN_ITERATIONS = 96
-OWNER_TASK_TYPES = frozenset({"backend-implementation", "frontend-implementation"})
+OWNER_TASK_TYPES = frozenset(
+    {"backend-implementation", "frontend-implementation", "integration-implementation"}
+)
+
+
+def effective_task_prompt_sha256(
+    task: dict[str, object],
+    tasks: list[dict[str, object]],
+    run_root: Path | None = None,
+) -> str:
+    """Bind the integration checkpoint to the admitted owner executions."""
+
+    base = str(task.get("prompt_sha256", ""))
+    if task.get("task_type") != "integration-implementation":
+        return base
+    by_id = {str(item.get("task_id")): item for item in tasks}
+    dependencies = [
+        {
+            "taskId": str(task_id),
+            "promptSha256": str(by_id.get(str(task_id), {}).get("prompt_sha256", "")),
+            "resultSha256": (
+                hashlib.sha256(result_path.read_bytes()).hexdigest()
+                if run_root is not None
+                and (
+                    result_path := run_root
+                    / "reports"
+                    / "agent-executions"
+                    / f"{task_id}.result.json"
+                ).is_file()
+                else None
+            ),
+        }
+        for task_id in task.get("depends_on", [])
+    ]
+    evidence_sha256 = None
+    if run_root is not None:
+        context = json.loads(
+            (run_root / str(task["context_file"])).read_text(encoding="utf-8")
+        )
+        evidence_identity = []
+        for path in integration_evidence_paths(run_root, task, context):
+            source = run_root / path
+            evidence_identity.append(
+                {
+                    "path": path,
+                    "contentSha256": (
+                        hashlib.sha256(source.read_bytes()).hexdigest()
+                        if source.is_file()
+                        else None
+                    ),
+                    "missing": not source.is_file(),
+                }
+            )
+        evidence_sha256 = hashlib.sha256(
+            json.dumps(
+                evidence_identity,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+    identity = json.dumps(
+        {
+            "promptSha256": base,
+            "dependencies": dependencies,
+            "integrationEvidenceSha256": evidence_sha256,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
 # Operation-marker conversations use the same verified tool harness but do not
 # persist the old conversation. A retry starts a fresh, short conversation over
 # the preserved candidate source instead of nudging a read-only loop forever.
@@ -91,9 +175,21 @@ OWNER_CONTINUATION_MESSAGE = (
     "fix them, rerun verification, and call finish when it passes."
 )
 OWNER_STUCK_RECOVERY_MESSAGE = (
-    "OpenHands detected a repeated-action loop. Continue in this same conversation with a "
-    "different action. Use an absolute path rooted at the assigned /work task directory, run the "
-    "canonical verification command, and fix only its concrete failures."
+    "Your last response made no observable progress. Do not reread an inspected file, run a "
+    "broad grep, restart analysis, or enumerate alternatives. If a listed writable file has not "
+    "been inspected, read only that file once; otherwise apply the simplest legal edit from the "
+    "analysis within the listed writable files now. For an existing file call file_editor with "
+    'command="str_replace", old_str, and new_str; never use command="edit" or old_string/'
+    "new_string. Then run canonical verification."
+)
+OWNER_GAP_RECOVERY_MESSAGE = (
+    "Your last response made no observable progress. Do not reread an inspected file, run a "
+    "broad grep, restart analysis, or enumerate alternatives. If the legal implementation "
+    "requires changing an existing public signature or editing outside the listed writable "
+    "files, call report_upstream_gap now with one supplied source_ref. If a listed writable file "
+    "has not been inspected, read only that file once; otherwise apply the simplest legal edit "
+    'from the analysis now using command="str_replace", old_str, and new_str for an existing '
+    'file; never use command="edit" or old_string/new_string. Then run canonical verification.'
 )
 OWNER_FINISH_RECOVERY_MESSAGE = (
     "The verification command has already been run, but this conversation was not completed. "
@@ -106,6 +202,16 @@ _SANDBOX_TOOLS_REGISTRATION_LOCK = threading.Lock()
 
 class OwnerConversationIncomplete(WorkspaceVerificationError):
     """An owner stopped at an SDK execution boundary, not a source-code gate."""
+
+
+def run_openhands_conversation(conversation: object) -> None:
+    """Use the cancellable SDK loop while retaining older test/SDK compatibility."""
+
+    async_run = getattr(conversation, "arun", None)
+    if callable(async_run):
+        asyncio.run(async_run())
+        return
+    conversation.run()  # type: ignore[attr-defined]
 
 
 def _is_owner_task(task_type: str) -> bool:
@@ -248,17 +354,17 @@ class EventJournal:
 
 
 class NoActionResponseGuard:
-    """Close the SDK gap where corrective nudges hide repeated empty responses.
+    """Turn a reasoning-only completion into one explicit action-recovery turn.
 
-    OpenHands already classifies model responses and supplies the canonical stuck
-    threshold.  EasyDep observes those typed events only; it does not inspect model
-    text or provider error strings.
+    EasyDep observes OpenHands' typed response classification only; it does not inspect
+    model text or provider error strings. A response with neither visible content nor a
+    tool call has made no task progress, so waiting for an arbitrary repeat count only
+    multiplies the same expensive defect. The runtime still grants one bounded recovery
+    turn with a concrete edit-or-gap instruction.
     """
 
     def __init__(self) -> None:
-        from openhands.sdk.conversation.types import StuckDetectionThresholds
-
-        self.threshold = StuckDetectionThresholds().monologue
+        self.threshold = 1
         self.consecutive_count = 0
         self.max_consecutive_count = 0
         self.triggered = False
@@ -307,6 +413,9 @@ def _owner_workspace_guidance(
     workspace: Path | str,
     owner_roots: list[str],
     owner_tool_mode: str = "terminal",
+    *,
+    owner_files: list[str] | None = None,
+    bounded_evidence: bool = False,
 ) -> str:
     """Return stable runner facts, not implementation instructions."""
 
@@ -314,16 +423,36 @@ def _owner_workspace_guidance(
     common = [
         "## EasyDep implementation workspace",
         "",
+        "- Agent: Implementation. Upstream Requirements and Design are admitted and frozen for this task; broad validation belongs to the Testing agent.",
+        "- Current state: EXECUTE. Implement the admitted behavior in the declared write scope; do not reopen product or architecture decisions.",
         f"- Complete workspace: `{logical_workspace}`. For file_editor, use absolute paths rooted at this directory.",
-        "- Source locations and RTM references are investigation hints, not a required edit list.",
-        "- Preserve generated public declarations. Only task-authorized implementation bodies may change; immutable API and persistence contracts remain protected.",
-        "- Start from generated skeletons and their local context; open raw design inputs only for a concrete contract gap.",
-        "- Batch related source reads into as few terminal calls as practical, and use build/test results rather than file counts as completion evidence.",
+        '- For an existing file, file_editor uses command="str_replace" with old_str and new_str. For a new file, it uses command="create" with file_text. command="edit" and old_string/new_string are invalid.',
+        "- Preserve generated public declarations: never change or delete an existing public signature. Within the assigned write scope (files or roots), adding only the smallest constructor, accessor, or helper declaration needed is permitted.",
+        "- Choose one legal conventional implementation and edit it; do not enumerate alternatives or delay the edit for theoretical choices.",
+        "- Batch related source reads into as few tool calls as practical, and use build/test results rather than file counts as completion evidence.",
         "- After an edit batch, run the canonical verification once. If it fails, inspect that output and its existing diagnostic files before rerunning; do not rerun only to obtain more detail.",
         "- When canonical verification passes, call the FinishTool immediately. A plain-text summary does not complete the task. Do not disable tests or alter test reporting to hide a failure.",
         "- Prefer the lowest-cost test level that proves the behavior; avoid restarting a full application context for every assertion.",
         "- Use English for source comments and user-visible text.",
     ]
+    if bounded_evidence:
+        common.extend(
+            [
+                "- Read the task context before source code and treat its declared behavior as authoritative.",
+                "- Do not invent missing behavior or search for a workaround to an unresolved contract; call report_upstream_gap when no legal implementation is declared.",
+                "- A direct call with generation: hint is advisory, not a mandatory architecture. Satisfy observable behavior and API through the simplest conventional path; do not add a static/global/service-locator solely to realize a hint.",
+                "- Treat read-only dependency declarations as ready integration contracts. Compose their existing APIs from writable code; do not spend turns designing better dependency APIs or seek ownership merely to refactor them.",
+                "- Once the task context, writable files, and directly referenced dependency declarations have been read, edit before any broader search. Do not reread unchanged files; let canonical verification identify any remaining mechanics.",
+                "- Preserve shared work and every generated body or implementation marker not assigned to this task.",
+            ]
+        )
+    else:
+        common.extend(
+            [
+                "- Source locations and RTM references are investigation hints, not a required edit list.",
+                "- Start from generated skeletons and their local context; open raw design inputs only for a concrete contract gap.",
+            ]
+        )
     if owner_tool_mode == "terminal":
         common.extend(
             [
@@ -348,7 +477,11 @@ def _owner_workspace_guidance(
                     if owner_tool_mode == "terminal"
                     else "- Canonical backend verification is the argument-free `run_task_check` tool."
                 ),
-                "- The terminal exports `SPRING_PROFILES_ACTIVE=test` and Gradle uses the shared `GRADLE_USER_HOME` cache.",
+                (
+                    "- The terminal exports `SPRING_PROFILES_ACTIVE=test` and Gradle uses the shared `GRADLE_USER_HOME` cache."
+                    if owner_tool_mode == "terminal"
+                    else "- `run_task_check` uses the configured test profile and shared Gradle cache."
+                ),
             ]
         )
     elif task_type == "frontend-implementation":
@@ -364,10 +497,29 @@ def _owner_workspace_guidance(
                 f"- npm uses the shared cache at `{OWNER_NPM_CACHE}`.",
             ]
         )
-    common.extend(["", "Owner source roots:"])
-    common.extend(f"- `{root}`" for root in owner_roots)
+    def logical_owner_path(value: str) -> str:
+        path = Path(value)
+        return str(path if path.is_absolute() else logical_workspace / path)
+
+    logical_owner_files = [logical_owner_path(value) for value in owner_files or []]
+    logical_owner_roots = [logical_owner_path(value) for value in owner_roots]
+    common.extend(
+        [
+            "",
+            "Writable task files (authoritative exact-file scope):",
+            "- Completion markers identify required bodies; they are not the write-scope definition.",
+        ]
+    )
+    common.extend(f"- `{path}`" for path in logical_owner_files)
+    if not owner_files:
+        common.append("- none")
+    common.extend(["", "Additional writable roots:"])
+    common.extend(f"- `{root}`" for root in logical_owner_roots)
     if not owner_roots:
         common.append("- none")
+    common.append(
+        "- Every path not listed above and not contained by an additional writable root is read-only."
+    )
     return "\n".join(common)
 
 
@@ -447,6 +599,171 @@ def _candidate_application_changes(sandbox: Path, run_root: Path) -> set[str]:
             snapshot_files(sandbox / "application"),
         )
     }
+
+
+def _explicit_projection_gap(
+    context: dict[str, object], source_refs: list[str]
+) -> UpstreamGap | None:
+    """Find one explicitly unresolved direct-call argument in bounded evidence."""
+
+    capsule = context.get("behaviorCapsule")
+    if not isinstance(capsule, dict) or not isinstance(
+        direct_methods := capsule.get("directMethods"), list
+    ):
+        return None
+    allowed_refs = set(source_refs)
+    for method_entry in direct_methods:
+        if not isinstance(method_entry, dict):
+            continue
+        method = method_entry.get("method")
+        operation_ref = (
+            f"operation:{method.get('operation_id')}"
+            if isinstance(method, dict) and method.get("operation_id")
+            else None
+        )
+        direct_calls = method_entry.get("directCalls")
+        if not isinstance(direct_calls, list):
+            continue
+        for direct_call in direct_calls:
+            if not isinstance(direct_call, dict):
+                continue
+            arguments = direct_call.get("arguments")
+            if not isinstance(arguments, list):
+                continue
+            for argument in arguments:
+                if not isinstance(argument, dict):
+                    continue
+                expression = argument.get("expression")
+                reason = argument.get("reason")
+                if expression is not None or not isinstance(reason, str) or not reason.strip():
+                    continue
+                call_id = direct_call.get("call_id")
+                use_case_ref = (
+                    f"use_case:{call_id.split('::', 1)[0]}"
+                    if isinstance(call_id, str) and "::" in call_id
+                    else None
+                )
+                source_ref = next(
+                    (
+                        ref
+                        for ref in (operation_ref, use_case_ref)
+                        if ref is not None and ref in allowed_refs
+                    ),
+                    None,
+                )
+                if source_ref is None:
+                    continue
+                parameter = argument.get("parameter")
+                label = str(parameter).strip() if parameter else "argument"
+                return UpstreamGap(
+                    summary=(
+                        f"Direct-call argument '{label}' is unresolved "
+                        f"({reason.strip()})."
+                    )[:500],
+                    source_ref=source_ref,
+                )
+    return None
+
+
+def preflight_behavior_task(
+    run_root: Path,
+    task: dict[str, object],
+    context: dict[str, object],
+    source_refs: list[str],
+) -> UpstreamGap | None:
+    """Run deterministic and cached semantic readiness checks once."""
+
+    projection_gap = _explicit_projection_gap(context, source_refs)
+    if projection_gap is None:
+        return preflight_semantic_behavior(run_root, task, context, source_refs)
+    capsule = context.get("behaviorCapsule")
+    if not isinstance(capsule, dict):
+        return projection_gap
+    admission_context = {
+        **context,
+        "behaviorCapsule": {
+            **capsule,
+            "preflightFindings": [projection_gap.as_result()],
+        },
+    }
+    return preflight_semantic_behavior(
+        run_root, task, admission_context, source_refs
+    )
+
+
+def _with_preserved_implementation_markers(
+    run_root: Path,
+    editable_paths: list[str],
+    verification_profile: dict[str, object] | None,
+) -> dict[str, object]:
+    """Protect shared-file markers that belong to later behavior slices."""
+
+    profile = dict(verification_profile or {})
+    assigned = {
+        marker
+        for contract in profile.get("requiredAbsentMarkers", [])
+        if isinstance(contract, dict)
+        for marker in contract.get("markers", [])
+        if isinstance(marker, str) and marker
+    }
+    preserved: list[dict[str, object]] = []
+    for relative in editable_paths:
+        normalized = relative.replace("\\", "/")
+        source = run_root / normalized
+        if "/src/main/java/" not in f"/{normalized}" or not source.is_file():
+            continue
+        markers = sorted(
+            set(
+                re.findall(
+                    r"EASYDEP-IMPLEMENT(?:: complete |:)[A-Za-z0-9_.:-]+",
+                    source.read_text(encoding="utf-8"),
+                )
+            )
+            - assigned
+        )
+        if markers:
+            preserved.append({"path": normalized, "markers": markers})
+    if preserved:
+        profile["requiredPreservedMarkers"] = preserved
+    return profile
+
+
+def _persist_admission_gap(
+    run_root: Path,
+    task: dict[str, object],
+    task_id: str,
+    gap: UpstreamGap,
+    attempt: int,
+    started: float,
+) -> dict[str, object]:
+    """Persist the existing NEEDS_INPUT contract without preparing an agent."""
+
+    execution_dir = run_root / "reports" / "agent-executions"
+    execution_dir.mkdir(parents=True, exist_ok=True)
+    journal = execution_dir / f"{task_id}.attempt-{attempt:03d}.events.jsonl"
+    journal.write_text("", encoding="utf-8")
+    result = {
+        "taskId": task_id,
+        "taskType": str(task.get("task_type") or ""),
+        "owner": str(task.get("owner") or ""),
+        "promptSha256": task.get("prompt_sha256"),
+        "effectiveModel": (
+            task.get("llm", {}).get("model")
+            if isinstance(task.get("llm"), dict)
+            else None
+        ),
+        "status": "NEEDS_INPUT",
+        "upstreamGap": gap.as_result(),
+        "candidateEvidence": {"changedFiles": []},
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "eventCount": 0,
+        "toolCounts": {},
+        "eventJournal": str(journal.relative_to(run_root)).replace("\\", "/"),
+        "terminationReason": "UPSTREAM_GAP",
+    }
+    write_execution_result(execution_dir, task_id, attempt, result)
+    shutil.copyfile(journal, execution_dir / f"{task_id}.events.jsonl")
+    return result
 
 
 def _owned_directory_roots(paths: list[str]) -> list[str]:
@@ -546,6 +863,21 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     """Run one OpenHands conversation and keep EasyDep at the safety boundary."""
 
     task = load_task(run_root, task_id)
+    if task.get("task_type") == "integration-implementation":
+        manifest = json.loads(
+            (run_root / "reports" / "run-manifest.json").read_text(encoding="utf-8")
+        )
+        manifest_tasks = [
+            item
+            for item in manifest.get("implementation_tasks", [])
+            if isinstance(item, dict)
+        ]
+        task = {
+            **task,
+            "prompt_sha256": effective_task_prompt_sha256(
+                task, manifest_tasks, run_root
+            ),
+        }
     task_type = str(task.get("task_type", ""))
     owner_task = _is_owner_task(task_type)
     harness_task = _is_harness_task(task_type)
@@ -562,6 +894,38 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         "allowed_write_roots": editable_roots,
         "immutable_paths": immutable,
     }
+    owner_tool_mode = (
+        str(task.get("owner_tool_mode") or settings.implementation_owner_tool_mode)
+        if owner_task
+        else "restricted"
+    )
+    context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
+    bounded_evidence = task_type == "integration-implementation" or isinstance(
+        context.get("behaviorCapsule"), dict
+    )
+    if owner_task and bounded_evidence:
+        source_refs = [
+            value
+            for value in task.get("source_refs", task.get("sourceRefs", []))
+            if isinstance(value, str) and value
+        ]
+        admission_started = time.monotonic()
+        admission_gap = (
+            preflight_semantic_integration(run_root, task, context, source_refs)
+            if task_type == "integration-implementation"
+            else preflight_behavior_task(run_root, task, context, source_refs)
+        )
+        if admission_gap is not None:
+            return _persist_admission_gap(
+                run_root,
+                task,
+                task_id,
+                admission_gap,
+                execution_attempt(run_root, task_id),
+                admission_started,
+            )
+    if bounded_evidence:
+        owner_tool_mode = "restricted"
     connection = openhands_connection()
     compatibility = openhands_compatibility(connection)
     missing = [
@@ -572,16 +936,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     if missing:
         raise RuntimeError("OpenHands live mode prerequisites are missing: " + ", ".join(missing))
 
+    requires_owner_terminal = owner_task and owner_tool_mode == "terminal"
     sandbox = prepare_agent_workspace(
         run_root,
         task,
         preserve_failed_edits=True,
         persistent=owner_task,
-    )
-    owner_tool_mode = (
-        str(task.get("owner_tool_mode") or settings.implementation_owner_tool_mode)
-        if owner_task
-        else "restricted"
+        requires_owner_terminal=requires_owner_terminal,
     )
     logical_workspace = (
         prepare_owner_workspace_alias(sandbox, task_id) if owner_task else sandbox
@@ -591,17 +952,36 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     if not isinstance(prompt_file, str) or not (run_root / prompt_file).is_file():
         prompt_file = str(task["prompt_file"])
     prompt = (run_root / prompt_file).read_text(encoding="utf-8")
-    context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
+    upstream_gap_source_refs = (
+        [
+            value
+            for value in task.get("source_refs", task.get("sourceRefs", []))
+            if isinstance(value, str) and value
+        ]
+        if owner_task and bounded_evidence and owner_tool_mode == "restricted"
+        else None
+    )
     verification_profile = task.get("verification_profile")
     verification_profile = (
         dict(verification_profile)
         if isinstance(verification_profile, dict) and verification_profile
         else None
     )
+    if owner_task and bounded_evidence:
+        verification_profile = _with_preserved_implementation_markers(
+            run_root,
+            editable_paths,
+            verification_profile,
+        )
+    evidence_paths = (
+        integration_evidence_paths(run_root, task, context)
+        if task_type == "integration-implementation"
+        else context.get("readSourcePaths", [])
+    )
     sandbox_root = sandbox.resolve()
     read_hints = [
         str((sandbox / value).resolve())
-        for value in context.get("readSourcePaths", [])
+        for value in evidence_paths
         if isinstance(value, str)
         and (sandbox / value).resolve().is_relative_to(sandbox_root)
         and (sandbox / value).exists()
@@ -609,6 +989,21 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     writable_files = [str((sandbox / path).resolve()) for path in editable_paths]
     writable_roots = [str((sandbox / root).resolve()) for root in editable_roots]
     immutable_absolute = [str((sandbox / path).resolve()) for path in immutable]
+    # The owner works in an isolated task workspace and still has a strict write
+    # scope.  Let it inspect that workspace like a normal coding agent: the RTM-
+    # derived paths are starting hints, while existing source and wiring provide
+    # implementation mechanics that cannot be usefully duplicated in the capsule.
+    readable_files = (
+        sorted(
+            {
+                str((sandbox / str(task["context_file"])).resolve()),
+                *read_hints,
+                *writable_files,
+            }
+        )
+        if task_type == "integration-implementation"
+        else None
+    )
     owner_system_context = ""
     if harness_task:
         owner_system_context = _owner_workspace_guidance(
@@ -616,6 +1011,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             logical_workspace,
             editable_roots,
             owner_tool_mode,
+            owner_files=editable_paths,
+            bounded_evidence=bounded_evidence,
         )
     else:
         prompt += (
@@ -674,6 +1071,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 immutable_paths=immutable_absolute,
                 logical_workspace=logical_workspace,
                 enforce_write_scope=owner_tool_mode != "terminal",
+                requires_owner_terminal=requires_owner_terminal,
             )
             expected_canary_id = (
                 model_tool_canary_id(
@@ -690,6 +1088,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 owner_tool_mode=owner_tool_mode,
                 reasoning_effort=reasoning_effort,
                 canary_result_id=expected_canary_id,
+                include_upstream_gap=upstream_gap_source_refs is not None,
             )
             verify_or_store_harness_manifest(
                 run_root / "reports" / "openhands-harness" / f"{task_id}.manifest.json",
@@ -704,6 +1103,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             verification_profile=verification_profile,
             editable_files=writable_files,
             editable_roots=writable_roots,
+            readable_files=readable_files,
             immutable_paths=immutable_absolute,
             callbacks=[
                 journal,
@@ -713,7 +1113,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             ],
             retry_listener=endpoint_retry_recorder,
             max_iterations=(
-                OWNER_TURN_ITERATIONS
+                MAX_AGENT_TURN_ITERATIONS
+                if owner_task and bounded_evidence
+                else OWNER_TURN_ITERATIONS
                 if owner_task
                 else (
                     MARKER_TURN_ITERATIONS
@@ -725,6 +1127,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             native_owner_tools=harness_task,
             enable_native_terminal=harness_task and owner_tool_mode == "terminal",
             owner_tool_mode=owner_tool_mode,
+            upstream_gap_source_refs=upstream_gap_source_refs,
             workspace=logical_workspace,
             owner_system_context=owner_system_context,
             persistence_dir=persistence_dir,
@@ -786,15 +1189,66 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             prompt=prompt,
         ):
             conversation.send_message(OWNER_CONTINUATION_MESSAGE)
-        conversation.run()
+        run_openhands_conversation(conversation)
         if owner_task and _conversation_is_stuck(conversation):
-            stuck_recovery_used = True
             if no_action_guard is not None:
                 no_action_guard.reset()
-            conversation.send_message(OWNER_STUCK_RECOVERY_MESSAGE)
-            conversation.run()
+            if (
+                harness_task
+                and has_successful_task_check(
+                    sandbox,
+                    task_type,
+                    editable_paths,
+                    verification_profile,
+                )
+            ):
+                finish_recovery_used = True
+                conversation.send_message(OWNER_FINISH_RECOVERY_MESSAGE)
+            else:
+                stuck_recovery_used = True
+                conversation.send_message(
+                    OWNER_GAP_RECOVERY_MESSAGE
+                    if upstream_gap_source_refs is not None
+                    else OWNER_STUCK_RECOVERY_MESSAGE
+                )
+            run_openhands_conversation(conversation)
+        upstream_gap = reported_upstream_gap(agent)
+        if upstream_gap is not None:
+            candidate_changes = _candidate_application_changes(sandbox, run_root)
+            result = {
+                "taskId": task_id,
+                "taskType": task_type,
+                "owner": str(task.get("owner") or ""),
+                "promptSha256": task.get("prompt_sha256"),
+                "effectiveModel": connection.litellm_model(),
+                "status": "NEEDS_INPUT",
+                "upstreamGap": upstream_gap.as_result(),
+                "candidateEvidence": {"changedFiles": sorted(candidate_changes)},
+                "durationMs": int((time.monotonic() - started) * 1000),
+                "eventCount": journal.event_count,
+                "toolCounts": journal.tool_counts,
+                "eventJournal": str(journal.path.relative_to(run_root)).replace("\\", "/"),
+                "rawResponse": journal.latest_agent_message,
+                "conversationId": str(conversation_id) if conversation_id else None,
+                "conversationCheckpoint": (
+                    str(persistence_dir.relative_to(run_root)).replace("\\", "/")
+                    if persistence_dir is not None
+                    else None
+                ),
+                "resumedConversation": resumed_conversation,
+                "executionStatus": _conversation_execution_status(conversation),
+                "terminationReason": "UPSTREAM_GAP",
+                "workspacePreflight": workspace_preflight,
+                "harnessManifest": harness_manifest,
+                "conversationStats": _conversation_stats_snapshot(conversation),
+            }
+            conversation.close()
+            write_execution_result(execution_dir, task_id, attempt, result)
+            shutil.copyfile(journal.path, execution_dir / f"{task_id}.events.jsonl")
+            return result
         if (
             harness_task
+            and not finish_recovery_used
             and _conversation_needs_finish_recovery(conversation)
             and has_successful_task_check(
                 sandbox,
@@ -809,7 +1263,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             if no_action_guard is not None:
                 no_action_guard.reset()
             conversation.send_message(OWNER_FINISH_RECOVERY_MESSAGE)
-            conversation.run()
+            run_openhands_conversation(conversation)
         if _conversation_terminal_failure(conversation):
             raise OwnerConversationIncomplete(
                 {
@@ -922,12 +1376,20 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             and provider_failure_reason in TRANSIENT_CANARY_FAILURES
         ):
             deterministic_termination = provider_failure_reason
+        interrupted = owner_task and (
+            isinstance(error, OwnerConversationIncomplete)
+            or (
+                not isinstance(error, WorkspaceVerificationError)
+                and deterministic_termination
+                in {*TRANSIENT_CANARY_FAILURES, "ENDPOINT_DEGRADED"}
+            )
+        )
         failure = {
             "taskId": task_id,
             "taskType": task_type,
             "owner": str(task.get("owner") or ""),
             "promptSha256": task.get("prompt_sha256"),
-            "status": "FAILED",
+            "status": "INTERRUPTED" if interrupted else "FAILED",
             "effectiveModel": connection.litellm_model(),
             "errorType": error.__class__.__name__,
             "error": str(error),
@@ -982,6 +1444,17 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         failure["conversationStats"] = _conversation_stats_snapshot(conversation)
         write_execution_result(execution_dir, task_id, attempt, failure)
         shutil.copyfile(journal.path, execution_dir / f"{task_id}.events.jsonl")
+        if interrupted and not isinstance(error, OwnerConversationIncomplete):
+            raise OwnerConversationIncomplete(
+                {
+                    "command": ["openhands", "conversation"],
+                    "exitCode": 1,
+                    "stdout": "",
+                    "stderr": str(error),
+                    "testResults": "",
+                    "terminationReason": deterministic_termination,
+                }
+            ) from error
         raise
     conversation.close()
     changed = candidate_changes
@@ -1218,6 +1691,7 @@ def create_openhands_conversation(
     verification_profile: dict[str, object] | None = None,
     editable_files: list[str] | None = None,
     editable_roots: list[str] | None = None,
+    readable_files: list[str] | None = None,
     immutable_paths: list[str] | None = None,
     callbacks: list[object] | None = None,
     retry_listener: object | None = None,
@@ -1226,6 +1700,7 @@ def create_openhands_conversation(
     native_owner_tools: bool = False,
     enable_native_terminal: bool = False,
     owner_tool_mode: str | None = None,
+    upstream_gap_source_refs: list[str] | None = None,
     workspace: Path | None = None,
     owner_system_context: str = "",
     canary_tools: bool = False,
@@ -1282,6 +1757,30 @@ def create_openhands_conversation(
     class ProviderToolValidationLLM(LLM):
         """Route narrow provider 400s into the matching safe SDK recovery."""
 
+        async def acompletion(self, *args, **kwargs):
+            try:
+                return await asyncio.wait_for(
+                    super().acompletion(*args, **kwargs),
+                    timeout=float(settings.llm_wall_timeout_seconds),
+                )
+            except TimeoutError as error:
+                raise TimeoutError(
+                    "PROVIDER_TIMEOUT: OpenHands LLM completion exceeded the "
+                    f"{settings.llm_wall_timeout_seconds:g}s wall timeout"
+                ) from error
+
+        async def aresponses(self, *args, **kwargs):
+            try:
+                return await asyncio.wait_for(
+                    super().aresponses(*args, **kwargs),
+                    timeout=float(settings.llm_wall_timeout_seconds),
+                )
+            except TimeoutError as error:
+                raise TimeoutError(
+                    "PROVIDER_TIMEOUT: OpenHands LLM response exceeded the "
+                    f"{settings.llm_wall_timeout_seconds:g}s wall timeout"
+                ) from error
+
         def _transport_call(self, **kwargs):
             try:
                 return super()._transport_call(**kwargs)
@@ -1328,6 +1827,7 @@ def create_openhands_conversation(
             writable_roots: list[str],
             immutable: list[str],
             enforce_write_scope: bool,
+            readable_files: list[str] | None,
         ):
             super().__init__(workspace_root=workspace_root)
             self.logical_workspace = Path(workspace_root)
@@ -1336,6 +1836,11 @@ def create_openhands_conversation(
             self.writable_roots = {Path(path).resolve() for path in writable_roots}
             self.immutable = {Path(path).resolve() for path in immutable}
             self.enforce_write_scope = enforce_write_scope
+            self.readable_files = (
+                {Path(path).resolve() for path in readable_files}
+                if readable_files is not None
+                else None
+            )
 
         def __call__(self, action, conversation=None):
             supplied = Path(action.path)
@@ -1353,6 +1858,22 @@ def create_openhands_conversation(
                         "The path is outside the assigned workspace. Use an absolute path rooted at the assigned /work task directory.",
                         retryable=True,
                         workspace=str(self.logical_workspace),
+                    ),
+                    command=action.command,
+                    is_error=True,
+                )
+            if (
+                action.command == "view"
+                and self.readable_files is not None
+                and target not in self.readable_files
+            ):
+                return FileEditorObservation.from_text(
+                    text=render_harness_error(
+                        "READ_OUTSIDE_TASK_EVIDENCE",
+                        "The path is not part of this behavior task's implementation context. Report the missing context instead of reading more files.",
+                        retryable=False,
+                        workspace=str(self.logical_workspace),
+                        requestedPath=str(target),
                     ),
                     command=action.command,
                     is_error=True,
@@ -1398,6 +1919,7 @@ def create_openhands_conversation(
             writable_roots,
             immutable_paths,
             enforce_write_scope,
+            readable_files,
         ):
             return [
                 instance.model_copy(
@@ -1406,8 +1928,11 @@ def create_openhands_conversation(
                             "Read or edit plain-text files inside the assigned workspace. "
                             "The canonical FileEditor requires an absolute path rooted at that "
                             "workspace, for example /work/application/src/main/java/example/App.java. "
-                            "Paths resolving outside the workspace are rejected. Use view before "
-                            "an edit and preserve generated public declarations."
+                            'For an existing file use command="str_replace" with old_str and '
+                            'new_str; for a new file use command="create" with file_text. '
+                            'command="edit" and old_string/new_string are invalid. Paths resolving '
+                            "outside the workspace are rejected. Use view before an edit and "
+                            "preserve generated public declarations."
                         ),
                         "executor": SandboxFileEditorExecutor(
                             conv_state.workspace.working_dir,
@@ -1415,6 +1940,7 @@ def create_openhands_conversation(
                             writable_roots,
                             immutable_paths,
                             enforce_write_scope,
+                            readable_files,
                         )
                     }
                 )
@@ -1422,9 +1948,14 @@ def create_openhands_conversation(
             ]
 
     class SandboxGrepExecutor(GrepExecutor):
-        def __init__(self, working_dir: str):
+        def __init__(self, working_dir: str, readable_files: list[str] | None):
             self.logical_workspace = Path(working_dir)
             super().__init__(working_dir)
+            self.readable_files = (
+                {Path(path).resolve() for path in readable_files}
+                if readable_files is not None
+                else None
+            )
 
         def __call__(self, action, conversation=None):
             supplied = Path(action.path) if action.path else None
@@ -1451,13 +1982,58 @@ def create_openhands_conversation(
                     include_pattern=action.include,
                     is_error=True,
                 )
+            if self.readable_files is not None and target not in self.readable_files:
+                return GrepObservation.from_text(
+                    text=render_harness_error(
+                        "READ_OUTSIDE_TASK_EVIDENCE",
+                        "Search only one explicitly listed evidence file. Report the missing implementation context instead of broadening discovery.",
+                        retryable=False,
+                        workspace=str(self.logical_workspace),
+                        requestedPath=str(target),
+                    ),
+                    matches=[],
+                    pattern=action.pattern,
+                    search_path=str(target),
+                    include_pattern=action.include,
+                    is_error=True,
+                )
+            if self.readable_files is not None:
+                try:
+                    pattern = re.compile(action.pattern, re.IGNORECASE)
+                except re.error as error:
+                    return GrepObservation.from_text(
+                        text=f"Invalid regex pattern: {error}",
+                        matches=[],
+                        pattern=action.pattern,
+                        search_path=str(target),
+                        include_pattern=action.include,
+                        is_error=True,
+                    )
+                try:
+                    matched = pattern.search(
+                        target.read_text(encoding="utf-8", errors="ignore")
+                    )
+                except OSError as error:
+                    return GrepObservation.from_text(
+                        text=str(error),
+                        matches=[],
+                        pattern=action.pattern,
+                        search_path=str(target),
+                        include_pattern=action.include,
+                        is_error=True,
+                    )
+                return self._build_observation(
+                    action,
+                    target.parent,
+                    [target] if matched else [],
+                )
             return super().__call__(action, conversation)
 
     class SandboxGrepTool(GrepTool):
         name = "grep"
 
         @classmethod
-        def create(cls, conv_state):
+        def create(cls, conv_state, readable_files):
             return [
                 instance.model_copy(
                     update={
@@ -1465,7 +2041,9 @@ def create_openhands_conversation(
                             "Search text files inside /work. Use a path relative to /work and "
                             "do not search parent directories."
                         ),
-                        "executor": SandboxGrepExecutor(conv_state.workspace.working_dir),
+                        "executor": SandboxGrepExecutor(
+                            conv_state.workspace.working_dir, readable_files
+                        ),
                     }
                 )
                 for instance in super().create(conv_state)
@@ -1506,6 +2084,7 @@ def create_openhands_conversation(
         "max_output_tokens": profile.completion_limit(
             requested_max_output
         ),
+        "timeout": max(1, int(settings.llm_timeout_seconds)),
         "num_retries": settings.implementation_openhands_request_attempts,
         "retry_min_wait": settings.implementation_openhands_retry_min_wait_seconds,
         "retry_max_wait": settings.implementation_openhands_retry_max_wait_seconds,
@@ -1546,6 +2125,7 @@ def create_openhands_conversation(
                     "writable_roots": editable_roots or [],
                     "immutable_paths": immutable_paths or [],
                     "enforce_write_scope": effective_owner_tool_mode != "terminal",
+                    "readable_files": readable_files,
                 },
             ),
         ]
@@ -1553,7 +2133,10 @@ def create_openhands_conversation(
             task_check_tool_name = register_task_check_tool()
             tools.extend(
                 [
-                    Tool(name=grep_registry_name, params={}),
+                    Tool(
+                        name=grep_registry_name,
+                        params={"readable_files": readable_files},
+                    ),
                     Tool(
                         name=task_check_tool_name,
                         params={
@@ -1564,6 +2147,14 @@ def create_openhands_conversation(
                     ),
                 ]
             )
+            if upstream_gap_source_refs is not None:
+                upstream_gap_tool_name = register_upstream_gap_tool()
+                tools.append(
+                    Tool(
+                        name=upstream_gap_tool_name,
+                        params={"source_refs": upstream_gap_source_refs},
+                    )
+                )
         elif effective_owner_tool_mode != "terminal":
             raise ValueError(
                 f"Unsupported OpenHands owner tool mode: {effective_owner_tool_mode}"
@@ -1592,9 +2183,13 @@ def create_openhands_conversation(
                     "writable_roots": editable_roots or [],
                     "immutable_paths": immutable_paths or [],
                     "enforce_write_scope": True,
+                    "readable_files": readable_files,
                 },
             ),
-            Tool(name=grep_registry_name, params={}),
+            Tool(
+                name=grep_registry_name,
+                params={"readable_files": readable_files},
+            ),
             Tool(
                 name=task_check_tool_name,
                 params={

@@ -19,6 +19,8 @@ from app.design.services.class_diagram.models import (
     AcceptedInventory,
     Collision,
     DataTypeCollision,
+    GenerationStalled,
+    RepairBudget,
 )
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
@@ -136,6 +138,7 @@ def _propose_unit(
     *,
     reserved: list[dict[str, Any]],
     reserved_types: list[dict[str, Any]],
+    budget: RepairBudget,
     previous: dict[str, Any] | None = None,
     initial_issue: str = "",
     repair_history: list[dict[str, str]] | None = None,
@@ -144,11 +147,13 @@ def _propose_unit(
 
     issue = initial_issue
     # 바깥의 call-plan 검사에서 다시 결합 수리로 돌아온 경우에도 이전 후보와
-    # 실패 이유를 이어받는다. 숫자 상한 없이 반복하더라도 같은 실패를 잊지 않는다.
+    # 실패 이유를 이어받는다.
     history = repair_history if repair_history is not None else []
     seen_states: set[str] = set()
     prior = previous
     while True:
+        if issue:
+            budget.consume(issue)
         prompt_payload = _payload(
             index,
             inventory,
@@ -278,22 +283,48 @@ def _materialize_use_case(
     skeleton: BCEModel,
     use_case: UseCase,
     raw: dict[str, Any],
+    budget: RepairBudget,
 ) -> Collaboration:
     """임시 calls를 쓰고, 실패하면 operation을 보존한 call-plan 수리를 시작한다."""
 
+    previous: CallPlanProposal | None = None
     try:
+        previous = _resolved_plan(raw, skeleton)
         return collaboration.materialize(
-            index, skeleton, use_case, _resolved_plan(raw, skeleton),
+            index, skeleton, use_case, previous,
         )
     except ValueError as error:
+        finding = f"{type(error).__name__}: {error}"
+        allowed_parents = (
+            error.repair_context.get("allowedParentCallIndexes") or []
+            if isinstance(error, collaboration.CallPlanViolation)
+            else []
+        )
+        if previous is not None and allowed_parents:
+            budget.consume(finding)
+            repaired = collaboration.repair_communication_parent(
+                index, skeleton, use_case, previous, error,
+            )
+            if repaired is not None:
+                try:
+                    return collaboration.materialize(
+                        index, skeleton, use_case, repaired,
+                    )
+                except ValueError as repaired_error:
+                    previous = repaired
+                    finding = f"{type(repaired_error).__name__}: {repaired_error}"
+            budget.consume(finding)
+        else:
+            budget.consume(finding)
         return collaboration.process_use_case(
             index,
             skeleton,
             use_case,
             directive=(
                 "Preserve every operation and replace only the call plan. "
-                f"Resolve this exact issue: {type(error).__name__}: {error}"
+                f"Resolve this exact issue: {finding}"
             ),
+            previous=previous,
         )
 
 
@@ -313,6 +344,7 @@ def _collaboration_valid(
 
 def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEModel:
     use_cases = sorted(index.use_cases, key=lambda item: id_key(item.id))
+    budgets = {use_case.id: RepairBudget(use_case.id) for use_case in use_cases}
     inventory_model = operations.compose_operation_units(inventory, [])
     reserved: list[dict[str, Any]] = []
     reserved_types = [item.model_dump(by_alias=True) for item in inventory_model.DataTypes]
@@ -330,6 +362,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                 use_case,
                 reserved=reserved,
                 reserved_types=reserved_types,
+                budget=budgets[use_case.id],
             )
             for use_case in use_cases
         ]
@@ -364,6 +397,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                     reserved_types=[
                         item.model_dump(by_alias=True) for item in snapshot.DataTypes
                     ],
+                    budget=budgets[use_case.id],
                     previous=raw,
                     initial_issue=issue,
                     repair_history=collision_history,
@@ -389,7 +423,11 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                 continue
             try:
                 value = _materialize_use_case(
-                    index, skeleton, use_case, raw_by_use_case[use_case.id],
+                    index,
+                    skeleton,
+                    use_case,
+                    raw_by_use_case[use_case.id],
+                    budgets[use_case.id],
                 )
             except collaboration.CombinedReplacementRequired as signal:
                 # 같은 call-plan 상태가 반복되면 현재 유스케이스의 operation+calls만
@@ -412,6 +450,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                         reserved_types=[
                             item.model_dump(by_alias=True) for item in snapshot.DataTypes
                         ],
+                        budget=budgets[use_case.id],
                         previous=previous,
                         initial_issue=issue,
                         repair_history=repair_history,
@@ -432,7 +471,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                         # 여기서 검사하지 않으면 바깥 루프가 새 수리 이력을 만들며 같은
                         # call-plan 실패로 되돌아간다.
                         value = _materialize_use_case(
-                            index, skeleton, use_case, raw,
+                            index, skeleton, use_case, raw, budgets[use_case.id],
                         )
                     except collaboration.CombinedReplacementRequired as repeated:
                         previous = raw
@@ -518,6 +557,7 @@ def replace_use_case_unit(
     snapshot = operations.compose_fragments(inventory, others)
     previous = _previous_combined_unit(fragment, current, signal.previous_plan)
     issue = signal.issue
+    budget = RepairBudget(use_case.id)
     collision_states: set[str] = set()
     repair_history = [_repair_history_item(previous, issue)]
     while True:
@@ -529,6 +569,7 @@ def replace_use_case_unit(
             reserved_types=[
                 item.model_dump(by_alias=True) for item in snapshot.DataTypes
             ],
+            budget=budget,
             previous=previous,
             initial_issue=issue,
             repair_history=repair_history,
@@ -556,7 +597,7 @@ def replace_use_case_unit(
             len(index.use_cases) + 1,
         )
         try:
-            accepted = _materialize_use_case(index, skeleton, use_case, raw)
+            accepted = _materialize_use_case(index, skeleton, use_case, raw, budget)
         except collaboration.CombinedReplacementRequired as repeated:
             previous = raw
             issue = repeated.issue
@@ -584,8 +625,9 @@ def _model_cache_key(index: ScenarioIndex, inventory: AcceptedInventory) -> str:
             "operationFragmentSchema": OperationFragment.model_json_schema(),
             "callPlanPrompt": collaboration.CALL_PLAN_PROMPT,
             "callPlanCap": collaboration.call_plan_max_completion_tokens(),
+            "parentSelectionPrompt": collaboration.PARENT_SELECTION_PROMPT,
             "bindingPrompt": collaboration.BINDING_PROMPT,
-            "version": 3,
+            "version": 5,
         },
     )
 
@@ -639,4 +681,4 @@ def build_model(
     return model
 
 
-__all__ = ["build_model", "replace_use_case_unit"]
+__all__ = ["GenerationStalled", "build_model", "replace_use_case_unit"]

@@ -54,6 +54,54 @@ def test_every_awaiting_result_gets_a_reason_and_real_actions() -> None:
     ]
 
 
+def test_reviewed_local_requirements_revision_offers_fresh_plan_not_advance() -> None:
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT"),
+        {
+            "kind": "action_required",
+            "downstream_revision_handoff": {
+                "source_targets": [
+                    {"ref": "use_case_spec:UC1", "artifact_version_id": 8}
+                ],
+                "semantic_scope": "behavior",
+                "requested_effect": "Add the accepted exception.",
+                "change_type": "modify",
+            },
+        },
+    )
+
+    assert [item["action"] for item in shaped["actions"]] == [
+        "message",
+        "plan_downstream_revision",
+    ]
+    assert [item["auto_selectable"] for item in shaped["actions"]] == [False, False]
+    assert "advance" not in {item["action"] for item in shaped["actions"]}
+
+
+def test_reviewed_implementation_gap_revision_returns_to_implementation() -> None:
+    resumed = result_with_contract(
+        command(status="AWAITING_INPUT", stage="design"),
+        {
+            "kind": "action_required",
+            "resume_implementation": True,
+        },
+    )
+    active_design_review = result_with_contract(
+        command(status="AWAITING_INPUT", stage="design"),
+        {"kind": "action_required"},
+    )
+
+    assert [item["action"] for item in resumed["actions"]] == [
+        "message",
+        "start_implementation",
+    ]
+    assert resumed["actions"][1]["label"] == "Resume implementation"
+    assert [item["action"] for item in active_design_review["actions"]] == [
+        "message",
+        "advance",
+    ]
+
+
 def test_choice_actions_carry_the_answer_in_their_payload() -> None:
     shaped = result_with_contract(
         command(status="AWAITING_INPUT"),
@@ -76,6 +124,53 @@ def test_choice_actions_carry_the_answer_in_their_payload() -> None:
         "text": "ap-northeast-2",
     }
     assert shaped["actions"][0]["description"] == "AWS Seoul region"
+
+
+def test_class_choice_copies_pinned_context_and_offers_free_text() -> None:
+    context = {
+        "element_ref": "class_diagram:Registration",
+        "validated_target": {
+            "ref": "class_diagram:Registration",
+            "kind": "class",
+            "element_id": "Registration",
+            "owner": "design",
+            "artifact_type": "CLASS",
+            "artifact_version_id": 7,
+            "display_label": "Registration",
+        },
+    }
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT", stage="design"),
+        {
+            "resource_question": {
+                "choices": [{"value": "Add swap operation", "label": "Add operation"}],
+                "allowFreeText": True,
+                "context": context,
+            }
+        },
+    )
+
+    assert shaped["actions"][0]["payload"] == {
+        "action_id": "command-1",
+        "text": "Add swap operation",
+        "context": context,
+    }
+    assert shaped["actions"][1]["label"] == "Provide another answer"
+    assert shaped["actions"][1]["payload"] == {
+        "action_id": "command-1",
+        "context": context,
+    }
+
+    with pytest.raises(ValueError, match="must pin one validated target"):
+        result_with_contract(
+            command(status="AWAITING_INPUT", stage="design"),
+            {
+                "current_stage": "class_diagram",
+                "resource_question": {
+                    "choices": [{"value": "Regenerate the class diagram"}]
+                },
+            },
+        )
 
 
 def test_deployment_configuration_wait_does_not_offer_early_advance() -> None:
@@ -237,12 +332,8 @@ def test_upstream_testing_ambiguity_offers_review_without_automatic_repair() -> 
     )
 
     assert shaped["wait_reason"] == "repair"
-    assert [item["action"] for item in shaped["actions"]] == ["message", "start_testing"]
+    assert [item["action"] for item in shaped["actions"]] == ["message"]
     assert shaped["actions"][0]["label"] == "Send design revision feedback"
-    assert shaped["actions"][1]["payload"] == {
-        "action_id": "command-1",
-        "implementation_job_id": "implementation-1",
-    }
 
 
 def test_exhausted_testing_plan_defect_is_an_easydep_platform_issue() -> None:
@@ -326,6 +417,25 @@ def test_status_not_a_stale_result_flag_controls_terminal_actions() -> None:
     ]
 
 
+def test_failed_change_confirmation_retries_the_confirmation_not_design_graph() -> None:
+    shaped = result_with_contract(
+        command(
+            status="FAILED",
+            stage="design",
+            action="confirm_change",
+            payload={"action_id": "pending-plan"},
+        ),
+        {},
+    )
+
+    assert shaped["actions"][1] == {
+        "action": "confirm_change",
+        "label": "Retry approved change",
+        "payload": {"action_id": "pending-plan"},
+        "auto_selectable": True,
+    }
+
+
 def test_reference_validation_accepts_only_a_published_payload() -> None:
     prior = command(
         status="AWAITING_INPUT",
@@ -384,6 +494,7 @@ def test_validated_conversation_scope_does_not_expand_a_message_offer() -> None:
                 "targets": ["class_diagram:OrderService"],
                 "instruction": "OrderService를 수정해줘",
             },
+            "revision_origin_stage": "implementation",
             "validated_targets": [{"ref": "class_diagram:OrderService"}],
             "validated_impact": {"refs": ["api_spec:createOrder"]},
         },

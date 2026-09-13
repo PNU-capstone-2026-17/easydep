@@ -153,14 +153,16 @@ materialize는 자유 literal을 발명하지 않으므로 새 projection에서 
 
 ```text
 sequence feedback
-  → 대상 execution group/use case 판정
-  → revise_class_model로 BCE operation 또는 collaboration 수정
-  → 클래스 PlantUML 재생성·검증
+  → Workspace revision planner가 exact contract link로 class authority 판정
+  → 필요하면 사용자 확인 후 class target 수정 단계로 전달
+  → class reviser가 BCE operation 또는 collaboration 수정·검증
   → project_sequence_model 재실행
 ```
 
-따라서 피드백 때문에 새 LLM 호출이 필요하다면 클래스의 inventory/operation/collaboration
-operation 이름으로 기록된다. `SequenceRepair` 같은 별도 자유형 호출은 없다.
+따라서 시퀀스 단계가 클래스 모델을 직접 역수정하지 않는다. 피드백 때문에 새 LLM 호출이
+필요하면 class authority를 대상으로 실행하며, 시퀀스에는 결정론적 projection만 적용한다.
+planner를 거치지 않은 직접 sequence revision은 class 단계로 재라우팅하도록 거부한다.
+`SequenceRepair` 같은 별도 자유형 호출은 없다.
 
 ## 모듈 지도
 

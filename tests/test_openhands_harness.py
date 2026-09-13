@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,6 +31,11 @@ from app.implementation.agents.harness import (
     verify_or_store_harness_manifest,
 )
 from app.implementation.agents.runtime import create_openhands_conversation
+from app.implementation.agents.upstream_gap_tool import (
+    UPSTREAM_GAP_TOOL_NAME,
+    UpstreamGapAction,
+    reported_upstream_gap,
+)
 from app.implementation.agents.workspace import preflight_owner_workspace
 from app.llm_connection import LlmConnection
 
@@ -86,7 +92,7 @@ def test_harness_error_has_a_machine_readable_first_line() -> None:
     payload = json.loads(prefix.removeprefix("EASYDEP_HARNESS_ERROR "))
     assert payload == {
         "errorCode": "PATH_OUTSIDE_WORKSPACE",
-        "nextAction": "Use a path relative to the logical workspace.",
+        "nextAction": "Use an absolute path rooted at the logical workspace.",
         "retryable": True,
         "workspace": "/work",
     }
@@ -336,10 +342,180 @@ def test_restricted_owner_uses_the_minimal_tools_and_custom_prompt(tmp_path: Pat
         prompt = conversation.state.events[0].system_prompt.text
         assert "a short path below `/work`" in prompt
         assert "PULL_REQUESTS" not in prompt
+        assert agent.llm.timeout == 300
         assert agent.llm.num_retries == 3
         assert agent.llm.retry_min_wait == 1
         assert agent.llm.retry_max_wait == 8
         assert agent.llm.retry_multiplier == 1.0
+    finally:
+        conversation.close()
+
+
+def test_openhands_completion_has_one_wall_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from openhands.sdk import LLM
+
+    async def never_finishes(*_args, **_kwargs):
+        await asyncio.sleep(1)
+
+    monkeypatch.setattr(LLM, "acompletion", never_finishes)
+    monkeypatch.setattr(
+        "app.implementation.agents.runtime.settings.llm_wall_timeout_seconds",
+        0.01,
+    )
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        LlmConnection(
+            provider="openrouter",
+            api_key="validation-only-key",
+            base_url="https://example.invalid/v1",
+            model="openai/gpt-oss-20b",
+            litellm_provider="openrouter",
+        ),
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+    )
+    try:
+        with pytest.raises(TimeoutError, match="PROVIDER_TIMEOUT"):
+            asyncio.run(agent.llm.acompletion([]))
+    finally:
+        conversation.close()
+
+
+def test_bounded_restricted_owner_exposes_and_records_upstream_gap_only(tmp_path: Path) -> None:
+    source_root = tmp_path / "application/src/main/java/example"
+    source_root.mkdir(parents=True)
+    connection = LlmConnection(
+        provider="openrouter",
+        api_key="validation-only-key",
+        base_url="https://example.invalid/v1",
+        model="openai/gpt-oss-20b",
+        litellm_provider="openrouter",
+    )
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        connection,
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        task_type="backend-implementation",
+        editable_roots=[str(source_root.resolve())],
+        native_owner_tools=True,
+        owner_tool_mode="restricted",
+        upstream_gap_source_refs=["UC-12"],
+    )
+    try:
+        conversation.send_message("Initialize tools without calling the model.")
+        assert UPSTREAM_GAP_TOOL_NAME in agent._tools
+        assert "UC-12" in agent._tools[UPSTREAM_GAP_TOOL_NAME].description
+        assert "omits or ambiguously defines required" in agent._tools[
+            UPSTREAM_GAP_TOOL_NAME
+        ].description
+        executor = agent._tools[UPSTREAM_GAP_TOOL_NAME].executor
+        invalid = executor(
+            UpstreamGapAction(summary="Missing behavior", source_ref="UC-unknown"),
+            conversation,
+        )
+        assert invalid.is_error is True
+        assert reported_upstream_gap(agent) is None
+
+        accepted = executor(
+            UpstreamGapAction(summary="The response rule is not specified.", source_ref="UC-12"),
+            conversation,
+        )
+        assert accepted.is_error is False
+        assert reported_upstream_gap(agent).as_result() == {
+            "summary": "The response rule is not specified.",
+            "sourceRef": "UC-12",
+        }
+    finally:
+        conversation.close()
+
+
+def test_restricted_owner_applies_only_an_explicit_read_evidence_boundary(
+    tmp_path: Path,
+) -> None:
+    evidence = tmp_path / "application/evidence/Allowed.java"
+    unrelated = tmp_path / "application/unrelated/Other.java"
+    evidence.parent.mkdir(parents=True)
+    unrelated.parent.mkdir(parents=True)
+    evidence.write_text("class Allowed { String needle; }\n", encoding="utf-8")
+    unrelated.write_text("class Other { String needle; }\n", encoding="utf-8")
+    connection = LlmConnection(
+        provider="openrouter",
+        api_key="validation-only-key",
+        base_url="https://example.invalid/v1",
+        model="openai/gpt-oss-20b",
+        litellm_provider="openrouter",
+    )
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        connection,
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        native_owner_tools=True,
+        owner_tool_mode="restricted",
+        editable_roots=[str((tmp_path / "application").resolve())],
+        readable_files=[str(evidence.resolve())],
+    )
+    try:
+        from openhands.tools.file_editor import FileEditorAction
+        from openhands.tools.grep import GrepAction
+
+        conversation.send_message("Initialize tools without calling the model.")
+        allowed_view = agent._tools["file_editor"].executor(
+            FileEditorAction(command="view", path=str(evidence.resolve()))
+        )
+        allowed_grep = agent._tools["grep"].executor(
+            GrepAction(pattern="needle", path=str(evidence.resolve()))
+        )
+        assert allowed_view.is_error is False
+        assert allowed_grep.is_error is False
+
+        rejected = [
+            agent._tools["file_editor"].executor(
+                FileEditorAction(command="view", path=str(unrelated.resolve()))
+            ),
+            agent._tools["grep"].executor(
+                GrepAction(pattern="needle", path=str(unrelated.resolve()))
+            ),
+            agent._tools["grep"].executor(
+                GrepAction(pattern="needle", path=str(evidence.parent.resolve()))
+            ),
+            agent._tools["grep"].executor(GrepAction(pattern="needle")),
+        ]
+        assert all(observation.is_error is True for observation in rejected)
+        assert all(
+            "READ_OUTSIDE_TASK_EVIDENCE" in observation.text
+            for observation in rejected
+        )
+        classified = classify_harness_error_text(rejected[0].text)
+        assert classified is not None
+        assert classified.retryable is False
+    finally:
+        conversation.close()
+
+    # Existing restricted owners do not receive an evidence allowlist and keep
+    # their established workspace-wide read/search behavior.
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        connection,
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        native_owner_tools=True,
+        owner_tool_mode="restricted",
+        editable_roots=[str((tmp_path / "application").resolve())],
+        readable_files=None,
+    )
+    try:
+        from openhands.tools.file_editor import FileEditorAction
+        from openhands.tools.grep import GrepAction
+
+        conversation.send_message("Initialize tools without calling the model.")
+        unbounded_view = agent._tools["file_editor"].executor(
+            FileEditorAction(command="view", path=str(unrelated.resolve()))
+        )
+        unbounded_grep = agent._tools["grep"].executor(
+            GrepAction(pattern="needle")
+        )
+        assert unbounded_view.is_error is False
+        assert unbounded_grep.is_error is False
     finally:
         conversation.close()
 
@@ -518,6 +694,10 @@ def test_model_tool_canary_persists_a_failed_attempt(
     ("error", "expected"),
     [
         (TimeoutError("provider timed out"), "PROVIDER_TIMEOUT"),
+        (
+            RuntimeError("ConversationRunError: PROVIDER_TIMEOUT: provider wall timeout exceeded"),
+            "PROVIDER_TIMEOUT",
+        ),
         (ConnectionError("DNS blocked"), "NETWORK_CONNECTION_ERROR"),
         (RuntimeError("HTTP 429 rate limit"), "PROVIDER_RATE_LIMIT"),
         (

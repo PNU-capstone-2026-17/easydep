@@ -137,9 +137,16 @@ class OwnershipRegistry:
 class RevisionPlanner:
     """Plan revision authority and impact from one frozen ProjectTools view."""
 
-    def __init__(self, tools: ProjectTools, *, registry: OwnershipRegistry | None = None):
+    def __init__(
+        self,
+        tools: ProjectTools,
+        *,
+        registry: OwnershipRegistry | None = None,
+        origin_stage: Literal["requirements", "design", "implementation", "testing"] | None = None,
+    ):
         self.tools = tools
         self.registry = registry or OwnershipRegistry()
+        self.origin_stage = origin_stage
 
     def plan(self, interpretation: RevisionInterpretation | Mapping[str, object]) -> RevisionPlan:
         intent = (
@@ -307,6 +314,44 @@ class RevisionPlanner:
         relations = self.tools.revision_relations(requested)
         downstream = self._downstream_targets(relations, requested)
 
+        api_path_scope = self._api_path_change_scope(intent, requested)
+        if api_path_scope is not None:
+            authority = tuple(api_path_scope.get("authority_targets") or ())
+            unsupported = ", ".join(api_path_scope.get("unsupported") or ())
+            if len(authority) != 1:
+                return self._result(
+                    intent,
+                    snapshot,
+                    status="needs_clarification",
+                    requested=requested,
+                    downstream=downstream,
+                    reasons=("api_path_missing_boundary_authority",),
+                    explanation=(
+                        f"The requested path value ({unsupported}) is not exposed by the "
+                        "current Boundary contract, and no exact editable Boundary operation "
+                        "could be resolved."
+                    ),
+                )
+            authority_relations = self.tools.revision_relations(authority)
+            return self._result(
+                intent,
+                snapshot,
+                status="needs_confirmation",
+                requested=requested,
+                authority=authority,
+                upstream=authority,
+                downstream=self._downstream_targets(authority_relations, authority),
+                reasons=(
+                    "api_path_requires_upstream_contract",
+                    "target_outside_request",
+                ),
+                explanation=(
+                    f"The requested path value ({unsupported}) is not exposed by the current "
+                    f"Boundary contract. Confirm revising {authority[0].display_label} and "
+                    "regenerating its linked downstream artifacts."
+                ),
+            )
+
         if not rule.local and intent.change_type == "unknown":
             return self._result(
                 intent,
@@ -319,14 +364,16 @@ class RevisionPlanner:
             )
 
         if rule.local:
-            crosses_stage = self._crosses_delivery_stage(requested)
+            stage_transition_reason = self._delivery_stage_confirmation_reason(requested)
             identity_change = intent.change_type in {"rename", "remove"}
-            needs_confirmation = rule.confirmation or identity_change or crosses_stage
+            needs_confirmation = (
+                rule.confirmation or identity_change or stage_transition_reason is not None
+            )
             reasons = []
             if identity_change:
                 reasons.append("identity_change_requires_confirmation")
-            if crosses_stage:
-                reasons.append("earlier_delivery_stage_requires_confirmation")
+            if stage_transition_reason is not None:
+                reasons.append(stage_transition_reason)
             if not reasons:
                 reasons.append("local_authority")
             return self._result(
@@ -338,7 +385,7 @@ class RevisionPlanner:
                 downstream=downstream,
                 reasons=reasons,
                 explanation=(
-                    "This revision changes an earlier delivery stage or target identity. "
+                    "This revision changes another delivery stage or target identity. "
                     "Confirm the displayed downstream scope before continuing."
                     if needs_confirmation
                     else "The selected editable target can be revised in its owning delivery stage."
@@ -390,6 +437,23 @@ class RevisionPlanner:
             ),
         )
 
+    def _api_path_change_scope(
+        self,
+        intent: RevisionInterpretation,
+        requested: tuple[RevisionTarget, ...],
+    ) -> Mapping[str, object] | None:
+        if (
+            intent.semantic_scope != "contract"
+            or len(requested) != 1
+            or requested[0].kind != "api"
+        ):
+            return None
+        resolve = getattr(self.tools, "api_path_change_scope", None)
+        if not callable(resolve):
+            return None
+        scope = resolve(requested[0].ref, intent.requested_effect)
+        return scope if isinstance(scope, Mapping) else None
+
     def validate_plan(
         self,
         plan: RevisionPlan,
@@ -406,29 +470,44 @@ class RevisionPlanner:
             return False
         if interpretation is None:
             return True
-        return RevisionPlanner(fresh, registry=self.registry).plan(interpretation).plan_digest == (
-            plan.plan_digest
-        )
+        return RevisionPlanner(
+            fresh,
+            registry=self.registry,
+            origin_stage=self.origin_stage,
+        ).plan(interpretation).plan_digest == plan.plan_digest
 
     def plan_is_stale(self, plan: RevisionPlan) -> bool:
         return not self.validate_plan(plan)
 
-    def _crosses_delivery_stage(
+    def _delivery_stage_confirmation_reason(
         self,
         targets: tuple[RevisionTarget, ...],
-    ) -> bool:
-        """Return whether execution moves behind the current delivery stage."""
+    ) -> str | None:
+        """Require confirmation whenever a revision moves to another owner stage."""
 
-        try:
-            workspace = self.tools.read_workspace()
-        except AttributeError:
-            return False
-        current = str(workspace.get("stage") or "")
+        current = self.origin_stage
+        if current is None:
+            try:
+                workspace = self.tools.read_workspace()
+            except AttributeError:
+                return None
+            # ProjectTools exposes the public workspace field as ``current_stage``.
+            # Keep ``stage`` only as a compatibility fallback for small test doubles.
+            current = str(workspace.get("current_stage") or workspace.get("stage") or "")
         order = {"requirements": 0, "design": 1, "implementation": 2, "testing": 3}
         current_index = order.get(current)
         if current_index is None:
-            return False
-        return any(order.get(target.owner, current_index) < current_index for target in targets)
+            return None
+        owner_indexes = {
+            order[target.owner]
+            for target in targets
+            if target.owner in order and target.owner != current
+        }
+        if not owner_indexes:
+            return None
+        if any(owner_index < current_index for owner_index in owner_indexes):
+            return "earlier_delivery_stage_requires_confirmation"
+        return "delivery_stage_transition_requires_confirmation"
 
     def _upstream_candidates(
         self,
@@ -585,19 +664,24 @@ class RevisionPlanner:
 
 
 def plan_revision(
-    tools: ProjectTools, interpretation: RevisionInterpretation | Mapping[str, object]
+    tools: ProjectTools,
+    interpretation: RevisionInterpretation | Mapping[str, object],
+    *,
+    origin_stage: Literal["requirements", "design", "implementation", "testing"] | None = None,
 ) -> RevisionPlan:
     """Function-form API for callers that do not need to retain a planner."""
-    return RevisionPlanner(tools).plan(interpretation)
+    return RevisionPlanner(tools, origin_stage=origin_stage).plan(interpretation)
 
 
 def validate_plan(
     tools: ProjectTools,
     plan: RevisionPlan,
     interpretation: RevisionInterpretation | Mapping[str, object] | None = None,
+    *,
+    origin_stage: Literal["requirements", "design", "implementation", "testing"] | None = None,
 ) -> bool:
     """Validate artifact versions and trace digest from a newly-read snapshot."""
-    return RevisionPlanner(tools).validate_plan(plan, interpretation)
+    return RevisionPlanner(tools, origin_stage=origin_stage).validate_plan(plan, interpretation)
 
 
 def _pipeline_target_key(target: RevisionTarget) -> tuple[int, str]:

@@ -25,8 +25,12 @@ from app.testing.utils.arazzo_planner import (
     build_deterministic_workflow,
     build_workflow_candidates,
 )
-from app.testing.utils.functional_executor import InputValueRequest, UpstreamAmbiguity
-from app.testing.utils.functional_executor import resolve_schema, schema_errors
+from app.testing.utils.functional_executor import (
+    InputValueRequest,
+    UpstreamAmbiguity,
+    resolve_schema,
+    schema_errors,
+)
 from app.validation import stable_digest
 
 PLAN_SYSTEM_PROMPT = """Return exactly one Arazzo v1.1 Workflow Object as JSON.
@@ -61,12 +65,17 @@ If an OpenAPI parameter expects an object, omit that parameter item; the executo
 schema-valid object. Never flatten an object parameter into an arbitrary string.
 Do not return an Arazzo document envelope, Markdown, comments, or prose outside the JSON object."""
 
+PLAN_ROLE_PROMPT = (
+    "This is only the Testing-stage workflow-planning subtask. Treat the supplied "
+    "requirements, use cases, OpenAPI contract, and trace evidence as immutable."
+)
+
 # The larger-context planning model normally benefits from medium reasoning.
 # If the provider reports a completion-length failure, retry at low so hidden
 # reasoning consumes less of the completion allowance and leaves room for JSON.
 # Both paths remain behind the same schema and document validation boundaries.
 _FUNCTIONAL_PLAN_REASONING_EFFORT = "medium"
-_FUNCTIONAL_PLAN_TOKEN_LIMIT_REASONING_EFFORT = "low"
+_FUNCTIONAL_PLAN_LENGTH_RETRY_REASONING_EFFORT = "low"
 
 
 class AuthoredWorkflowError(ArazzoValidationError):
@@ -350,6 +359,42 @@ def _normalize_authored_workflow(
             return any(contains_runtime_expression(child) for child in item)
         return isinstance(item, str) and item.startswith("$")
 
+    def normalize_equality(condition: str) -> str:
+        """Normalize operators without changing quoted expected values."""
+
+        parts: list[str] = []
+        quote = ""
+        escaped = False
+        index = 0
+        while index < len(condition):
+            char = condition[index]
+            if quote:
+                parts.append(char)
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = ""
+                index += 1
+                continue
+            if char in {"'", '"'}:
+                quote = char
+                parts.append(char)
+                index += 1
+                continue
+            if condition.startswith("!==", index):
+                parts.append("!=")
+                index += 3
+                continue
+            if condition.startswith("===", index):
+                parts.append("==")
+                index += 3
+                continue
+            parts.append(char)
+            index += 1
+        return "".join(parts)
+
     normalized = normalize_runtime_selector(deepcopy(value))
     # The local Arazzo executor uses the standard equality tokens.  Several
     # OpenAI-compatible models emit JavaScript strict equality in criteria;
@@ -359,17 +404,13 @@ def _normalize_authored_workflow(
             continue
         for criterion in step.get("successCriteria") or []:
             if isinstance(criterion, dict) and isinstance(criterion.get("condition"), str):
-                criterion["condition"] = (
-                    criterion["condition"].replace("!==", "!=").replace("===", "==")
-                )
+                criterion["condition"] = normalize_equality(criterion["condition"])
         for action in step.get("onFailure") or []:
             if not isinstance(action, dict):
                 continue
             for criterion in action.get("criteria") or []:
                 if isinstance(criterion, dict) and isinstance(criterion.get("condition"), str):
-                    criterion["condition"] = (
-                        criterion["condition"].replace("!==", "!=").replace("===", "==")
-                    )
+                    criterion["condition"] = normalize_equality(criterion["condition"])
     operations = {
         str(operation.get("operationId")): operation
         for operation in candidate.get("operations") or []
@@ -530,6 +571,56 @@ def _schema_supports_pointer(
     return walk(current, parts)
 
 
+def _schema_guarantees_pointer(
+    schema: Any, pointer: str, openapi: dict[str, Any]
+) -> bool:
+    """Return whether every valid response must contain the pointer path."""
+
+    if pointer in {"", "#"}:
+        return True
+    raw = pointer.removeprefix("#")
+    if not raw.startswith("/"):
+        return False
+    parts = raw[1:].split("/")
+
+    def walk(value: Any, remaining: list[str]) -> bool:
+        try:
+            resolved = resolve_schema(openapi, value)
+        except (TypeError, ValueError):
+            return False
+        if not remaining:
+            return True
+        all_of = [item for item in resolved.get("allOf") or [] if isinstance(item, dict)]
+        if any(walk(item, remaining) for item in all_of):
+            return True
+        alternatives = [
+            item
+            for key in ("anyOf", "oneOf")
+            for item in resolved.get(key) or []
+            if isinstance(item, dict)
+        ]
+        if alternatives and all(walk(item, remaining) for item in alternatives):
+            return True
+        part = remaining[0].replace("~1", "/").replace("~0", "~")
+        if (resolved.get("type") == "array" or "items" in resolved) and part.isdigit():
+            minimum = resolved.get("minItems")
+            if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum <= int(part):
+                return False
+            return walk(resolved.get("items"), remaining[1:])
+        properties = resolved.get("properties")
+        required = resolved.get("required")
+        if (
+            isinstance(properties, dict)
+            and part in properties
+            and isinstance(required, list)
+            and part in required
+        ):
+            return walk(properties[part], remaining[1:])
+        return False
+
+    return walk(schema, parts)
+
+
 def _classify_missing_workflow_data(
     result: dict[str, Any],
     workflow: dict[str, Any],
@@ -602,13 +693,15 @@ def _classify_missing_workflow_data(
             ),
             None,
         )
-        source_value = (
-            (source_report.get("outputs") or {}).get(output_name)
+        source_outputs = (
+            source_report.get("outputs")
             if isinstance(source_report, dict)
             and isinstance(source_report.get("outputs"), dict)
-            else None
+            else {}
         )
-        if source_value in ([], {}):
+        has_source_output = output_name in source_outputs
+        source_value = source_outputs.get(output_name)
+        if has_source_output and source_value in (None, [], {}):
             source_step = next(
                 (
                     item
@@ -637,15 +730,27 @@ def _classify_missing_workflow_data(
                 if isinstance(source_expression, str)
                 else ""
             )
+            schema_pointer = pointer
+            if source_pointer not in {"", "#"}:
+                schema_pointer = (
+                    "#"
+                    + source_pointer.removeprefix("#").rstrip("/")
+                    + pointer.removeprefix("#")
+                )
             source_schemas = [
                 response.get("schema")
                 for response in source_operation.get("responses") or []
                 if isinstance(response, dict)
                 and str(response.get("status") or "").startswith("2")
+                and (
+                    not isinstance(source_report.get("statusCode"), int)
+                    or str(response.get("status")) == str(source_report["statusCode"])
+                )
                 and isinstance(response.get("schema"), dict)
             ]
             if source_schemas and any(
-                _schema_supports_pointer(schema, pointer, openapi) for schema in source_schemas
+                _schema_guarantees_pointer(schema, schema_pointer, openapi)
+                for schema in source_schemas
             ):
                 reason = (
                     f"The application response for {source_operation_id} did not contain the "
@@ -695,14 +800,26 @@ def _classify_missing_workflow_data(
     )
     if not matching_expression:
         return
+    failed_report = next(
+        (
+            item
+            for item in result.get("steps") or []
+            if isinstance(item, dict) and item.get("stepId") == failed_step_id
+        ),
+        {},
+    )
     success_schemas = [
         response.get("schema")
         for response in operation.get("responses") or []
         if isinstance(response, dict)
         and str(response.get("status") or "").startswith("2")
+        and (
+            not isinstance(failed_report.get("statusCode"), int)
+            or str(response.get("status")) == str(failed_report["statusCode"])
+        )
         and isinstance(response.get("schema"), dict)
     ]
-    if not any(_schema_supports_pointer(schema, pointer, openapi) for schema in success_schemas):
+    if not any(_schema_guarantees_pointer(schema, pointer, openapi) for schema in success_schemas):
         return
     reason = (
         f"The application response for {operation_id} did not contain the data required by "
@@ -804,7 +921,10 @@ def _generate(
     request: dict[str, Any] = {
         "model": connection.model,
         "temperature": profile.temperature,
-        "messages": [{"role": "user", "content": _prompt(candidate, validation_error)}],
+        "messages": [
+            {"role": "system", "content": PLAN_ROLE_PROMPT},
+            {"role": "user", "content": _prompt(candidate, validation_error)},
+        ],
         "response_format": _response_format(),
         "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens),
     }
@@ -812,7 +932,7 @@ def _generate(
         request["top_p"] = profile.top_p
     supported = profile.supported_reasoning
     desired = (
-        _FUNCTIONAL_PLAN_TOKEN_LIMIT_REASONING_EFFORT
+        _FUNCTIONAL_PLAN_LENGTH_RETRY_REASONING_EFFORT
         if validation_error and "completion token limit" in validation_error
         else _FUNCTIONAL_PLAN_REASONING_EFFORT
     )

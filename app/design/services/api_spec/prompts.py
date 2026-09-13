@@ -18,7 +18,9 @@ and useful response status descriptions.
 - Choose a concrete resource path such as /registrations or /offerings/{offeringId};
   never use the API root path by itself.
 - Every method and path pair must be unique because duplicate pairs overwrite each other.
-- Include identifiers in path placeholders when they make a resource path clearer.
+- Each candidate supplies allowedPathParameters. Use path placeholders only from that
+  candidate's exact list. Never use a nested field or invent another placeholder; when
+  the list is empty, use no path placeholder.
 - Include the successful status and failures stated by the use-case extensions.
 - Do not return operation IDs, parameters, schemas, Control bindings, argument sources,
   result names, class traces, or use-case traces. The application derives all of them
@@ -34,6 +36,8 @@ grounded in the supplied candidates and return the full minimal API proposal.
 Return only path, method, summary, and response statuses in addition to interactionId.
 The application derives operation IDs, parameters, schemas, Control bindings, argument
 mappings, outcomes, and trace fields from the accepted class collaboration.
+Each candidate supplies allowedPathParameters. Use path placeholders only from that
+candidate's exact list; an empty list means that no path placeholder is allowed.
 """.strip()
 
 
@@ -104,14 +108,39 @@ def proposal_messages(
     ]
 
 
-def revision_context(scenario_text: str, bce_model: BCEModel) -> str:
-    """수정에도 최초 제안과 같은 작은 입력만 제공한다."""
+def revision_context(
+    scenario_text: str,
+    bce_model: BCEModel,
+    *,
+    interaction_ids: set[str] | None = None,
+    reserved_routes: set[tuple[str, str]] | None = None,
+) -> str:
+    """수정 대상 interaction과 그 UC만 LLM 입력에 포함한다."""
 
-    return json.dumps(
-        {
-            "useCases": _api_use_case_context(scenario_text),
-            "interactionCandidates": interaction_context(bce_model),
-        },
-        ensure_ascii=False,
-        separators=(",", ":"),
-    )
+    candidates = interaction_context(bce_model)
+    if interaction_ids is not None:
+        candidates = [
+            item for item in candidates if item["interactionId"] in interaction_ids
+        ]
+    use_case_ids = {
+        str(use_case_id)
+        for candidate in candidates
+        for use_case_id in candidate.get("useCaseIds") or []
+    }
+    use_cases = _api_use_case_context(scenario_text)
+    if interaction_ids is not None and isinstance(use_cases, list):
+        use_cases = [
+            item
+            for item in use_cases
+            if isinstance(item, dict) and str(item.get("id") or "") in use_case_ids
+        ]
+    payload = {
+        "useCases": use_cases,
+        "interactionCandidates": candidates,
+    }
+    if reserved_routes:
+        payload["reservedRoutes"] = [
+            {"method": method, "path": path}
+            for method, path in sorted(reserved_routes)
+        ]
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))

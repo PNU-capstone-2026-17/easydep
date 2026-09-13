@@ -42,27 +42,6 @@ def render_backend_method_skeletons(
     return result
 
 
-def render_backend_test_shell(base_package: str) -> tuple[str, str]:
-    package_path = base_package.replace(".", "/")
-    relative = (
-        f"src/test/java/{package_path}/application/impl/BackendApplicationTest.java"
-    )
-    source = f"""package {base_package}.application.impl;
-
-import org.junit.jupiter.api.Test;
-
-import static org.junit.jupiter.api.Assertions.fail;
-
-final class BackendApplicationTest {{
-    @Test
-    void implementsTheContractedScenarios() {{
-        fail("{IMPLEMENTATION_MARKER}: read reports/implementation-tasks/implement-backend-application.source-index.json and replace this shell with contracted assertions");
-    }}
-}}
-"""
-    return relative, source
-
-
 def _dependencies(
     methods: list[MethodProjection | None],
 ) -> tuple[str, ...]:
@@ -161,14 +140,9 @@ def _render_method(
             if projection is not None
             else operation.stable_id or operation.operation_id
         )
-        context_path = (
-            "reports/implementation-tasks/method-context/"
-            f"{stable_id}.json"
-        )
         lines.extend(
             [
                 f"        // {IMPLEMENTATION_MARKER}: complete {stable_id}",
-                f"        // Context: {context_path}",
                 "        throw new UnsupportedOperationException("
                 f'"{IMPLEMENTATION_MARKER}:{stable_id}");',
             ]

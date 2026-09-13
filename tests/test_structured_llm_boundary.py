@@ -147,7 +147,10 @@ def test_schema_repair_keeps_or_explicitly_overrides_call_reasoning_effort(monke
 
     efforts: list[str] = []
 
-    def stream(_client, _messages, schema, _observation, *, reasoning_effort):
+    def stream(
+        _client, _messages, schema, _observation, *, reasoning_effort, connection
+    ):
+        assert connection is not None
         efforts.append(reasoning_effort)
         if len(efforts) == 1:
             return schema.model_validate({})
@@ -380,6 +383,46 @@ def test_cloudflare_structured_json_uses_complete_response_transport(monkeypatch
     assert observation["finishReasons"] == ["stop"]
     assert observation["inputTokens"] == 3
     assert observation["outputTokens"] == 2
+
+
+def test_structured_json_accepts_only_redundant_trailing_closers(monkeypatch):
+    class Result(BaseModel):
+        answer: str
+
+    responses = iter(('{' + '"answer":"ok"}}', '{"answer":"bad"}{"extra":1}'))
+
+    class Completions:
+        def create(self, **_kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content=next(responses), reasoning_content=""
+                        ),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=None,
+            )
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    monkeypatch.setattr(
+        structured,
+        "build_llm_connection",
+        lambda: SimpleNamespace(provider="cloudflare", model="openai/gpt-oss-120b"),
+    )
+    observation: dict[str, Any] = {}
+
+    parsed = stream_structured_response(
+        client, [{"role": "user", "content": "x"}], Result, observation
+    )
+
+    assert parsed.answer == "ok"
+    assert observation["jsonTrailingDelimiterTrimmed"] is True
+    with pytest.raises(Exception):
+        stream_structured_response(
+            client, [{"role": "user", "content": "x"}], Result, {}
+        )
 
 
 def test_streaming_whitespace_abort_uses_existing_schema_repair(monkeypatch):

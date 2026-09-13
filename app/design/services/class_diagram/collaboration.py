@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
@@ -73,6 +74,15 @@ Select one sourceRef for each supplied finite choice. Prefer the source whose
 name and role match the receiver parameter. Return no explanation.
 """.strip()
 
+PARENT_SELECTION_PROMPT = """
+Choose whether one supplied earlier call should become the parent of the rejected
+target call. Select parent:N only when the scenario and operation meanings show
+that call N should invoke the target. Select fallback when the target call should
+instead be omitted, the operation selection or ordering is wrong, or none of the
+offered parents is semantically justified. Return only selection. Do not redesign
+the call plan.
+""".strip()
+
 
 def call_plan_reasoning_effort() -> str:
     return str(getattr(
@@ -97,6 +107,45 @@ def _finding_text(findings: tuple[Finding, ...]) -> list[str]:
         f"{finding.location}: {finding.message}" if finding.location else finding.message
         for finding in findings
     ]
+
+
+class CallPlanViolation(ValueError):
+    """A rejected call edge with machine-readable repair alternatives."""
+
+    def __init__(self, source: str, target: str, repair_context: dict[str, Any]) -> None:
+        self.repair_context = repair_context
+        super().__init__(
+            f"BCE communication is invalid: {source} -> {target}; repairContext="
+            + json.dumps(repair_context, ensure_ascii=False, separators=(",", ":"))
+        )
+
+
+class BindingSourceViolation(ValueError):
+    """A parameter whose finite source search returned no candidate."""
+
+    def __init__(self, repair_context: dict[str, Any]) -> None:
+        self.repair_context = repair_context
+        super().__init__(
+            f"no finite source for {repair_context['location']}; repairContext="
+            + json.dumps(repair_context, ensure_ascii=False, separators=(",", ":"))
+        )
+
+
+def _communication_allowed(
+    source: str,
+    target: str,
+    target_class: str,
+    root_boundary_class: str,
+) -> bool:
+    return not (
+        (source == "boundary" and target != "control")
+        or (source == "entity" and target != "entity")
+        or (
+            source == "control"
+            and target == "boundary"
+            and target_class == root_boundary_class
+        )
+    )
 
 
 def _groups(index: ScenarioIndex, use_case: UseCase) -> tuple[ExecutionGroup, ...]:
@@ -216,6 +265,88 @@ def propose_call_plan(
     )
 
 
+def repair_communication_parent(
+    index: ScenarioIndex,
+    model: BCEModel,
+    use_case: UseCase,
+    previous: CallPlanProposal,
+    violation: CallPlanViolation,
+) -> CallPlanProposal | None:
+    """Select one admissible parent and patch only the rejected edge.
+
+    ``None`` explicitly hands the candidate to the existing full-plan repair.
+    Local BCE compatibility is not treated as proof of semantic correctness.
+    """
+
+    context = violation.repair_context
+    allowed = tuple(dict.fromkeys(
+        int(value) for value in context.get("allowedParentCallIndexes") or []
+    ))
+    if not allowed:
+        return None
+    location = str(context.get("location") or "")
+    prefix = "calls["
+    suffix = "].parentCallIndex"
+    if not location.startswith(prefix) or not location.endswith(suffix):
+        raise ValueError(f"invalid call-plan repair location: {location}")
+    offset = int(location[len(prefix):-len(suffix)])
+    if offset < 0 or offset >= len(previous.calls):
+        raise ValueError(f"call-plan repair location is out of range: {location}")
+    if any(position < 1 or position > len(previous.calls) for position in allowed):
+        raise ValueError("allowed parent call index is out of range")
+
+    selections = (*(f"parent:{position}" for position in allowed), "fallback")
+    finite_selection = cast(type[BaseModel], create_model(
+        "FiniteParentRepairSelection",
+        __config__=ConfigDict(extra="forbid", populate_by_name=True),
+        selection=(Literal.__getitem__(selections), Field()),
+    ))
+    use_case_payload = _use_case_payload(
+        index, model.model_dump(by_alias=True), use_case,
+    )
+    payload = {
+        "actorEntries": use_case_payload["actorEntries"],
+        "steps": use_case_payload["steps"],
+        "previousPlan": previous.model_dump(by_alias=True),
+        "target": context.get("observed") or {},
+        "alternatives": [
+            {
+                "selection": f"parent:{position}",
+                "sourceOperationId": previous.calls[
+                    position - 1
+                ].receiver_operation_id,
+            }
+            for position in allowed
+        ],
+        "fallback": {
+            "selection": "fallback",
+            "meaning": "Use the existing full-plan repair path.",
+        },
+    }
+    parsed = parse_structured(
+        [
+            {"role": "system", "content": PARENT_SELECTION_PROMPT},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ],
+        finite_selection,
+        reasoning_effort=call_plan_reasoning_effort(),
+        max_completion_tokens=min(call_plan_max_completion_tokens(), 1024),
+        operation="InteractionParentSelectionRepair",
+        metadata={
+            "useCaseId": use_case.id,
+            "executionSlice": use_case.id,
+            "candidateCount": len(selections),
+        },
+    )
+    selection = str(finite_selection.model_validate(parsed).selection)
+    if selection == "fallback":
+        return None
+    selected_parent = int(selection.partition(":")[2])
+    repaired = previous.model_dump(by_alias=True)
+    repaired["calls"][offset]["parentCallIndex"] = selected_parent
+    return CallPlanProposal.model_validate(repaired)
+
+
 def _root_assignments(
     plan: CallPlanProposal, root_count: int,
 ) -> tuple[list[int], dict[int, int]]:
@@ -273,6 +404,54 @@ def _field_matches_parameter(parameter: str, owner_type: str, field: str) -> boo
     return expected in {normalize(field), normalize(owner_type + field)}
 
 
+def _matching_precondition_sources(use_case: UseCase, parameter: str) -> list[str]:
+    """Offer a precondition only when it names this otherwise-unsourced value."""
+
+    parameter_tokens = {
+        token.casefold()
+        for token in re.findall(r"[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+", parameter)
+        if token.casefold() != "id"
+    }
+    if not parameter_tokens:
+        return []
+    preconditions = use_case.specification.get("preconditions") or []
+    return [
+        f"{source_ref}#{parameter}"
+        for source_ref, precondition in zip(use_case.precondition_refs, preconditions)
+        if parameter_tokens.intersection(
+            token.casefold()
+            for token in re.findall(
+                r"[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+", text(precondition)
+            )
+        )
+    ]
+
+
+def _is_boundary_control_handoff(
+    calls: list[dict[str, Any]],
+    call_index: int,
+    operations: dict[str, dict[str, Any]],
+) -> bool:
+    """Trusted context crosses only the entry Boundary→Control handoff."""
+
+    call = calls[call_index]
+    parent_call_id = text(call.get("parentCallId"))
+    parent = next(
+        (item for item in calls if text(item.get("callId")) == parent_call_id), None
+    )
+    parent_operation = (
+        operations.get(text(parent.get("receiverOperationId"))) if parent else None
+    )
+    target_operation = operations.get(text(call.get("receiverOperationId")))
+    return bool(
+        parent_operation
+        and target_operation
+        and not text(parent.get("parentCallId"))
+        and parent_operation.get("stereotype") == "boundary"
+        and target_operation.get("stereotype") == "control"
+    )
+
+
 def _binding_candidates(
     model: dict[str, Any],
     use_case: UseCase,
@@ -294,10 +473,7 @@ def _binding_candidates(
 
     if is_root and actor_step:
         candidates.append(f"{actor_step}#{name}")
-    if is_root:
-        candidates.extend(f"{ref}#{name}" for ref in use_case.precondition_refs)
     ancestors = _ancestors(calls, call_index)
-    ancestor_ids = {text(item.get("callId")) for item in ancestors}
     for ancestor in ancestors:
         operation = operations[text(ancestor.get("receiverOperationId"))]
         for source in operation.get("parameters") or []:
@@ -307,7 +483,9 @@ def _binding_candidates(
             source_type = text(source.get("type"))
             source_ref = f"{ancestor['callId']}#{source_name}"
             add_named(source_name, source_type, source_ref)
-            if types_compatible(source_type, target_type):
+            if _field_matches_parameter(name, "", source_name) and types_compatible(
+                source_type, target_type
+            ):
                 candidates.append(source_ref)
             for field_path in fields_by_type.get(source_type, {}):
                 projected = projected_field_type(source_type, field_path, fields_by_type)
@@ -365,10 +543,7 @@ def _binding_candidates(
             )
             field_ref = f"{projection_ref}.{field_path}"
             add_named(field_path, projected, field_ref)
-            if (
-                text(earlier.get("callId")) in ancestor_ids
-                or _field_matches_parameter(name, projection_type, field_path)
-            ):
+            if _field_matches_parameter(name, projection_type, field_path):
                 if types_compatible(projected, target_type):
                     candidates.append(field_ref)
                 elif types_compatible(optional_inner_type(projected), target_type):
@@ -391,7 +566,35 @@ def _binding_candidates(
             candidates.append(derived_value_source(target_type, mappings))
     if not candidates and runtime_value_source(target_type):
         candidates.append(runtime_value_source(target_type))
+    if (
+        not candidates
+        and target_type.casefold() == "string"
+        and _is_boundary_control_handoff(calls, call_index, operations)
+    ):
+        candidates.extend(_matching_precondition_sources(use_case, name))
     return list(dict.fromkeys(candidates))
+
+
+def _binding_search_scopes(
+    use_case: UseCase,
+    actor_step: str | None,
+    is_root: bool,
+) -> list[str]:
+    """Describe the source categories actually considered by the finite search."""
+
+    scopes: list[str] = []
+    if is_root and actor_step:
+        scopes.append("actor-entry-input")
+    if use_case.precondition_refs:
+        scopes.append("use-case-precondition")
+    scopes.extend([
+        "ancestor-call-parameter",
+        "earlier-root-input",
+        "previous-call-result",
+        "derived-structured-value",
+        "runtime-value",
+    ])
+    return scopes
 
 
 def select_ambiguous_bindings(
@@ -486,16 +689,43 @@ def materialize(
             parent_operation = operations[parent["receiverOperationId"]]
             source = text(parent_operation.get("stereotype"))
             target_class = text(operation.get("className"))
-            if (
-                (source == "boundary" and stereotype != "control")
-                or (source == "entity" and stereotype != "entity")
-                or (
-                    source == "control"
-                    and stereotype == "boundary"
-                    and target_class == root_boundary_classes[assignments[position]]
-                )
+            root_boundary_class = root_boundary_classes[assignments[position]]
+            if not _communication_allowed(
+                source, stereotype, target_class, root_boundary_class,
             ):
-                raise ValueError(f"BCE communication is invalid: {source} -> {stereotype}")
+                allowed_parents = [
+                    candidate_position
+                    for candidate_position in range(position - 1, 0, -1)
+                    if assignments.get(candidate_position) == assignments[position]
+                    and _communication_allowed(
+                        text(operations[
+                            calls[candidate_position - 1]["receiverOperationId"]
+                        ].get("stereotype")),
+                        stereotype,
+                        target_class,
+                        root_boundary_class,
+                    )
+                ]
+                raise CallPlanViolation(
+                    source,
+                    stereotype,
+                    {
+                        "code": "BCE_COMMUNICATION_INVALID",
+                        "location": f"calls[{position - 1}].parentCallIndex",
+                        "observed": {
+                            "parentCallIndex": plan.calls[position - 1].parent_call_index,
+                            "sourceOperationId": parent["receiverOperationId"],
+                            "sourceStereotype": source,
+                            "receiverOperationId": call["receiverOperationId"],
+                            "receiverStereotype": stereotype,
+                        },
+                        "allowedParentCallIndexes": allowed_parents,
+                        "instruction": (
+                            "Choose a listed parent index, or omit this call only if it "
+                            "represents a return through the existing call chain."
+                        ),
+                    },
+                )
         if stereotype == "control":
             control_roots.add(assignments[position])
     if control_roots != set(range(len(groups))):
@@ -513,7 +743,21 @@ def materialize(
             )
             location = f"{call['callId']}#{text(parameter.get('name'))}"
             if not candidates:
-                raise ValueError(f"no finite source for {location}")
+                raise BindingSourceViolation({
+                    "code": "BINDING_SOURCE_UNAVAILABLE",
+                    "useCaseId": use_case.id,
+                    "location": location,
+                    "receiverOperationId": call["receiverOperationId"],
+                    "parameter": {
+                        "name": text(parameter.get("name")),
+                        "type": text(parameter.get("type")),
+                    },
+                    "searchedSourceScopes": _binding_search_scopes(
+                        use_case,
+                        group.actor_step,
+                        call_index + 1 in root_set,
+                    ),
+                })
             if len(candidates) == 1:
                 call["argumentBindings"].append({
                     "parameter": text(parameter.get("name")), "sourceRef": candidates[0],
@@ -569,6 +813,7 @@ def _accepted_payload(
     model: BCEModel,
     use_case: UseCase,
     directive: str,
+    previous: CallPlanProposal | None = None,
 ) -> dict[str, Any]:
     """call plan을 한 번 교체하고, 실패하면 operation까지 고치도록 알린다.
 
@@ -578,10 +823,28 @@ def _accepted_payload(
     """
 
     # Provider/schema 예외는 semantic finding으로 바꾸지 않는다.
-    candidate = propose_call_plan(index, model, use_case, finding=directive)
+    candidate = propose_call_plan(
+        index,
+        model,
+        use_case,
+        previous=previous,
+        finding=directive,
+    )
     try:
         return materialize(index, model, use_case, candidate).model_dump(by_alias=True)
     except ValueError as error:
+        if isinstance(error, CallPlanViolation):
+            repaired = repair_communication_parent(
+                index, model, use_case, candidate, error,
+            )
+            if repaired is not None:
+                candidate = repaired
+                try:
+                    return materialize(
+                        index, model, use_case, candidate,
+                    ).model_dump(by_alias=True)
+                except ValueError as repaired_error:
+                    error = repaired_error
         error_text = f"{type(error).__name__}: {error}"
         raise CombinedReplacementRequired(
             use_case.id,
@@ -591,11 +854,18 @@ def _accepted_payload(
 
 
 def _cache_key(
-    index: ScenarioIndex, model: BCEModel, use_case: UseCase, directive: str,
+    index: ScenarioIndex,
+    model: BCEModel,
+    use_case: UseCase,
+    directive: str,
+    previous: CallPlanProposal | None = None,
 ) -> str:
+    unit_slice = _use_case_payload(index, model.model_dump(by_alias=True), use_case)
+    if previous is not None:
+        unit_slice["previousPlan"] = previous.model_dump(by_alias=True)
     return accepted_unit_key(
         "use-case-collaboration",
-        unit_slice=_use_case_payload(index, model.model_dump(by_alias=True), use_case),
+        unit_slice=unit_slice,
         inventory=model.model_dump(by_alias=True),
         feedback=" ".join(directive.split()),
         prompt=CALL_PLAN_PROMPT,
@@ -612,6 +882,7 @@ def _cache_key(
             "bindingMaxCompletionTokens": min(
                 settings.design_class_collaboration_max_completion_tokens, 2048,
             ),
+            "bindingCandidateVersion": 2,
         },
     )
 
@@ -622,6 +893,7 @@ def process_use_case(
     use_case: UseCase,
     directive: str = "",
     *,
+    previous: CallPlanProposal | None = None,
     cache: AcceptedUnitCache | None = None,
 ) -> Collaboration:
     """call plan을 국소 교체하고 필요하면 상위 결합 수리로 범위를 넓힌다."""
@@ -630,11 +902,11 @@ def process_use_case(
         raise ValueError("use case has no actor entry")
     if cache is None:
         record_cache_outcome(None, operation="InteractionCallPlan", unit=use_case.id)
-        payload = _accepted_payload(index, model, use_case, directive)
+        payload = _accepted_payload(index, model, use_case, directive, previous)
     else:
         result = cache.get_or_compute(
-            _cache_key(index, model, use_case, directive),
-            lambda: _accepted_payload(index, model, use_case, directive),
+            _cache_key(index, model, use_case, directive, previous),
+            lambda: _accepted_payload(index, model, use_case, directive, previous),
         )
         record_cache_outcome(result, operation="InteractionCallPlan", unit=use_case.id)
         payload = result.value
@@ -650,9 +922,12 @@ def process_use_case(
 
 
 __all__ = [
+    "BindingSourceViolation",
+    "CallPlanViolation",
     "CombinedReplacementRequired",
     "materialize",
     "process_use_case",
     "propose_call_plan",
+    "repair_communication_parent",
     "select_ambiguous_bindings",
 ]

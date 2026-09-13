@@ -131,6 +131,19 @@ def normalize_java_field_candidate(raw: str) -> str:
     ``normalize_java_field`` function.
     """
 
+    name, raw_type = split_field(raw)
+    # Structured models occasionally render the unambiguous one-argument container
+    # ``List<Student>`` as ``list Student``. The strict parser removes whitespace,
+    # so detect this shape before it can be mistaken for a named ``listStudent``
+    # type. This is notation, not a storage or domain decision.
+    loose_container = re.fullmatch(
+        r"(?i)(list|set|collection|iterable|optional|array)\s+"
+        r"(byte\[\]|[A-Za-z_][A-Za-z0-9_.]*)",
+        raw_type or "",
+    )
+    if loose_container:
+        container, item_type = loose_container.groups()
+        return f"{name} : {canonical_design_type(f'{container}<{item_type}>')}"
     try:
         return normalize_java_field(raw)
     except DesignTypeError:

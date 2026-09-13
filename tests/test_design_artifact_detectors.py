@@ -1099,6 +1099,44 @@ def test_argument_data_flow_rejects_result_returned_to_another_participant():
     assert any("'Boundary'가 사용할 수 없음" in finding.message for finding in findings)
 
 
+def test_argument_data_flow_accepts_precondition_with_matching_parameter_suffix():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC9",
+                "preconditions": ["The professor is authenticated."],
+            }]
+        },
+        "extracted_bce_classes": {
+            "Classes": [
+                {"className": "OrderBoundary", "stereotype": "Boundary", "methods": []},
+                {
+                    "className": "OrderControl",
+                    "stereotype": "Control",
+                    "methods": ["listCourses(professorId: String): void"],
+                },
+            ]
+        },
+    }
+    model = _sequence_contract_model([
+        {
+            "source": "User", "target": "Boundary", "type": "sync",
+            "label": "open()", "call_id": "entry", "reply_to": "", "arguments": [],
+        },
+        {
+            "source": "Boundary", "target": "Control", "type": "sync",
+            "label": "listCourses(professorId: String)", "call_id": "list", "reply_to": "",
+            "arguments": [{
+                "parameter": "professorId", "type": "String",
+                "source_kind": "precondition",
+                "source_ref": "UC9:precondition:1#professorId",
+            }],
+        },
+    ])
+
+    assert sequence_validation.sequence_argument_data_flow(model, state) == []
+
+
 def test_actor_led_step_requires_an_actor_originated_call():
     state = {
         "usecase_spec": {

@@ -1,6 +1,8 @@
 """클래스 호출 관계와 실제 값의 출처를 검사한다."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.design.schemas.class_model import BCEModel
@@ -169,7 +171,7 @@ def test_structured_parameter_is_derived_from_upstream_fields(monkeypatch):
     }
 
 
-def test_optional_results_use_explicit_unwrap_sources():
+def test_optional_results_use_explicit_unwrap_sources(monkeypatch):
     model = {
         "Classes": [
             {
@@ -321,6 +323,38 @@ def test_optional_results_use_explicit_unwrap_sources():
         "sourceRef": "UC1::call:2#result.unwrap.id",
     }]
 
+    missing_source_model = json.loads(json.dumps(model))
+    registration = missing_source_model["Classes"][3]["operations"][0]
+    registration["parameters"].append({"name": "instructorId", "type": "String"})
+    registration["operationId"] = (
+        "Registration::create(student:Student,"
+        "failureCode:ValidationFailureCode,instructorId:String)"
+    )
+    missing_source_plan = plan.model_copy(deep=True)
+    missing_source_plan.calls[3].receiver_operation_id = registration["operationId"]
+
+    with pytest.raises(collaboration.BindingSourceViolation) as source_error:
+        collaboration.materialize(
+            build_scenario_index(single_use_case()),
+            BCEModel.model_validate(missing_source_model),
+            build_scenario_index(single_use_case()).use_case("UC1"),
+            missing_source_plan,
+        )
+    assert source_error.value.repair_context == {
+        "code": "BINDING_SOURCE_UNAVAILABLE",
+        "useCaseId": "UC1",
+        "location": "UC1::call:4#instructorId",
+        "receiverOperationId": registration["operationId"],
+        "parameter": {"name": "instructorId", "type": "String"},
+        "searchedSourceScopes": [
+            "ancestor-call-parameter",
+            "earlier-root-input",
+            "previous-call-result",
+            "derived-structured-value",
+            "runtime-value",
+        ],
+    }
+
     entity_to_control = CallPlanProposal.model_validate({
         "calls": [
             {"receiverOperationId": "RequestBoundary::start()", "parentCallIndex": None},
@@ -332,13 +366,65 @@ def test_optional_results_use_explicit_unwrap_sources():
             {"receiverOperationId": "StudentLookup::find()", "parentCallIndex": 3},
         ],
     })
-    with pytest.raises(ValueError, match="entity -> control"):
+    with pytest.raises(collaboration.CallPlanViolation, match="entity -> control") as caught:
         collaboration.materialize(
             build_scenario_index(single_use_case()),
             BCEModel.model_validate(model),
             build_scenario_index(single_use_case()).use_case("UC1"),
             entity_to_control,
         )
+    assert caught.value.repair_context["location"] == "calls[3].parentCallIndex"
+    assert caught.value.repair_context["allowedParentCallIndexes"] == [2, 1]
+
+    def select_control_parent(messages, _schema, **_kwargs):
+        payload = json.loads(messages[-1]["content"])
+        assert [item["selection"] for item in payload["alternatives"]] == [
+            "parent:2",
+            "parent:1",
+        ]
+        return {"selection": "parent:2"}
+
+    monkeypatch.setattr(collaboration, "parse_structured", select_control_parent)
+    repaired = collaboration.repair_communication_parent(
+        build_scenario_index(single_use_case()),
+        BCEModel.model_validate(model),
+        build_scenario_index(single_use_case()).use_case("UC1"),
+        entity_to_control,
+        caught.value,
+    )
+    assert repaired is not None
+    expected = entity_to_control.model_dump(by_alias=True)
+    expected["calls"][3]["parentCallIndex"] = 2
+    assert repaired.model_dump(by_alias=True) == expected
+    collaboration.materialize(
+        build_scenario_index(single_use_case()),
+        BCEModel.model_validate(model),
+        build_scenario_index(single_use_case()).use_case("UC1"),
+        repaired,
+    )
+
+    unique_parent_plan = CallPlanProposal.model_validate({
+        "calls": [
+            {"receiverOperationId": "RequestBoundary::start()", "parentCallIndex": None},
+            {"receiverOperationId": "StudentLookup::find()", "parentCallIndex": 1},
+            {
+                "receiverOperationId": "RegistrationPolicy::validate()",
+                "parentCallIndex": 1,
+            },
+        ],
+    })
+    monkeypatch.setattr(
+        collaboration, "propose_call_plan", lambda *_args, **_kwargs: unique_parent_plan
+    )
+    monkeypatch.setattr(
+        collaboration, "parse_structured", lambda *_args, **_kwargs: {"selection": "parent:2"}
+    )
+    automatically_repaired = collaboration.process_use_case(
+        build_scenario_index(single_use_case()),
+        BCEModel.model_validate(model),
+        build_scenario_index(single_use_case()).use_case("UC1"),
+    )
+    assert automatically_repaired.calls[2].parent_call_id == "UC1::call:2"
 
     same_boundary_response = CallPlanProposal.model_validate({
         "calls": [
@@ -485,3 +571,118 @@ def test_scalar_parameter_can_use_same_typed_request_fields_with_different_names
     )
 
     assert result.calls[1].argument_bindings[0].source_ref == expected_candidates[0]
+
+
+def test_binding_candidates_require_matching_names_for_ancestor_uuid_values():
+    specification = single_use_case()
+    specification["use_case_specs"][0]["preconditions"] = [
+        "The student is authenticated."
+    ]
+    index = build_scenario_index(specification)
+    target = {"name": "studentId", "type": "UUID"}
+    calls = [
+        {
+            "callId": "UC1::call:1",
+            "parentCallId": None,
+            "receiverOperationId": "RegistrationControl::swap()",
+        },
+        {
+            "callId": "UC1::call:2",
+            "parentCallId": "UC1::call:1",
+            "receiverOperationId": "Registration::find(studentId:UUID)",
+        },
+    ]
+    operations = {
+        "RegistrationControl::swap()": {
+            "parameters": [
+                {"name": "offeringId", "type": "UUID"},
+                {"name": "studentId", "type": "UUID"},
+            ],
+            "returnType": "SwapResult",
+        },
+        "Registration::find(studentId:UUID)": {
+            "parameters": [target],
+            "returnType": "void",
+        },
+    }
+    candidates = collaboration._binding_candidates(
+        {
+            "Classes": [],
+            "DataTypes": [
+                {
+                    "name": "SwapResult",
+                    "kind": "valueObject",
+                    "fields": ["registrationId : UUID", "studentId : UUID"],
+                }
+            ],
+        },
+        index.use_case("UC1"),
+        actor_step=None,
+        is_root=False,
+        calls=calls,
+        call_index=1,
+        parameter=target,
+        operations=operations,
+    )
+
+    assert "UC1::call:1#offeringId" not in candidates
+    assert "UC1::call:1#result.registrationId" not in candidates
+    assert "UC1::call:1#studentId" in candidates
+    assert "UC1::call:1#result.studentId" in candidates
+    assert "UC1:precondition:1#studentId" not in candidates
+
+    no_value_model = {"Classes": [], "DataTypes": []}
+    uuid_handoff = [
+        {
+            "callId": "UC1::call:root",
+            "parentCallId": None,
+            "receiverOperationId": "RegistrationBoundary::submit()",
+        },
+        {
+            "callId": "UC1::call:handoff",
+            "parentCallId": "UC1::call:root",
+            "receiverOperationId": "RegistrationControl::register(studentId:UUID)",
+        },
+    ]
+    handoff_operations = {
+        "RegistrationBoundary::submit()": {"stereotype": "boundary", "parameters": []},
+        "RegistrationControl::register(studentId:UUID)": {
+            "stereotype": "control", "parameters": [target]
+        },
+    }
+    assert collaboration._binding_candidates(
+        no_value_model, index.use_case("UC1"), None, False, uuid_handoff, 1, target,
+        handoff_operations,
+    ) == []
+
+    nested_calls = [
+        *uuid_handoff[:1],
+        {
+            "callId": "UC1::call:handoff",
+            "parentCallId": "UC1::call:root",
+            "receiverOperationId": "RegistrationControl::register()",
+        },
+        {
+            "callId": "UC1::call:outbound",
+            "parentCallId": "UC1::call:handoff",
+            "receiverOperationId": "NotificationBoundary::notify()",
+        },
+        {
+            "callId": "UC1::call:second-handoff",
+            "parentCallId": "UC1::call:outbound",
+            "receiverOperationId": "RegistrationControl::continueWith(studentContext:String)",
+        },
+    ]
+    nested_target = {"name": "studentContext", "type": "String"}
+    nested_operations = {
+        "RegistrationBoundary::submit()": {"stereotype": "boundary", "parameters": []},
+        "RegistrationControl::register()": {"stereotype": "control", "parameters": []},
+        "NotificationBoundary::notify()": {"stereotype": "boundary", "parameters": []},
+        "RegistrationControl::continueWith(studentContext:String)": {
+            "stereotype": "control", "parameters": [nested_target]
+        },
+    }
+    assert collaboration._binding_candidates(
+        no_value_model, index.use_case("UC1"), None, False, nested_calls, 3,
+        nested_target, nested_operations,
+    ) == []

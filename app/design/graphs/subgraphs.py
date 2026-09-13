@@ -364,50 +364,6 @@ def _sequence_model_findings(
     ]
 
 
-def _revise_sequence_state(
-    _current: dict[str, Any],
-    feedback: str,
-    state: ArchitectureState,
-    targets: set[str],
-) -> dict[str, Any]:
-    """상호작용 원본인 클래스 모델을 국소 수정한 뒤 시퀀스를 다시 투영한다.
-
-    시퀀스에는 독립 LLM 편집 경로가 없다. feedback은 class inventory/operation/collaboration
-    수정 대상에 적용되고 class validation과 PlantUML 검증을 통과한 뒤 코드로 새
-    ``SequenceCollection``을 만든다.
-    """
-
-    revised_class = revise_class_model(
-        _stored_class_model(state.get("extracted_bce_classes") or {}),
-        _class_index(state),
-        feedback,
-        targets,
-        cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
-    )
-    revised_payload = revised_class.model_dump(by_alias=True)
-    class_puml = generate_plantuml_from_bce_json(revised_payload)
-    class_validation = validate_puml_artifact(class_puml)
-    class_findings = _class_model_findings(revised_payload, state)
-    if class_findings:
-        raise ValueError(
-            "sequence feedback produced an invalid class interaction contract: "
-            + "; ".join(finding.message for finding in class_findings)
-        )
-    return {
-        "extracted_bce_classes": revised_payload,
-        "class_diagram_puml": class_puml,
-        "class_diagram_syntax_valid": class_validation["syntax_valid"],
-        "class_diagram_syntax_errors": class_validation["syntax_errors"],
-        "class_diagram_check": {
-            "findings": [], "repair_iters": 0, "stopped": "clean",
-        },
-        "sequence_diagram_model": project_sequence_model(
-            _class_index(state), revised_class, class_puml,
-        ).model_dump(),
-        "revised_upstream_stages": ["class_diagram"],
-    }
-
-
 def _project_sequence_state(state: ArchitectureState) -> dict[str, Any]:
     """graph의 use-case/class JSON과 PlantUML 버전을 typed 시퀀스 투영에 연결한다.
 
@@ -419,6 +375,21 @@ def _project_sequence_state(state: ArchitectureState) -> dict[str, Any]:
         _stored_class_model(state.get("extracted_bce_classes") or {}),
         state.get("class_diagram_puml", ""),
     ).model_dump()
+
+
+def _reject_sequence_feedback(
+    _current: dict[str, Any],
+    feedback: str,
+    state: ArchitectureState,
+    _targets: set[str],
+) -> dict[str, Any]:
+    """Keep sequence feedback from becoming an implicit class-model edit."""
+    if feedback.strip():
+        raise ValueError(
+            "Sequence feedback must be routed to its exact linked class authority; "
+            "sequence diagrams are deterministic projections."
+        )
+    return _project_sequence_state(state)
 
 
 def _state_check(
@@ -545,7 +516,7 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
     feedback_key="sequence_diagram_feedback",
     empty="",
     extract=_project_sequence_state,
-    revise=lambda _current, _feedback, state, _targets: _project_sequence_state(state),
+    revise=_reject_sequence_feedback,
     render=generate_sequence_from_model,
     validate=validate_puml_artifact,
     elements={
@@ -556,7 +527,6 @@ SEQUENCE_DIAGRAM_SPEC = DesignArtifactSpec(
     },
     check=_sequence_model_findings,
     check_key="sequence_diagram_check",
-    revise_state=_revise_sequence_state,
 )
 
 API_SPEC_SPEC = DesignArtifactSpec(

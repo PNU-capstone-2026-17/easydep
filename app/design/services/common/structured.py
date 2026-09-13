@@ -175,19 +175,20 @@ def run_with_wall_timeout(
     *,
     operation: str = "structured-output",
     observation: dict[str, Any] | None = None,
+    connection: LlmConnection | None = None,
 ):
     """Trace one design-model call while retaining the existing timeout contract."""
 
     recorded_observation = observation if observation is not None else {}
-    connection = build_llm_connection()
+    active_connection = connection or build_llm_connection()
     with langsmith_metrics.trace_scope(
         f"easydep.design.llm.{operation}",
         run_type="llm",
         metadata={
             "agent": "design",
             "operation": operation,
-            "ls_provider": connection.provider,
-            "ls_model_name": connection.model,
+            "ls_provider": active_connection.provider,
+            "ls_model_name": active_connection.model,
         },
     ) as trace:
         try:
@@ -293,12 +294,12 @@ def _response_format(schema: type[BaseModel]) -> dict[str, Any]:
     }
 
 
-def _reasoning_effort(reasoning_effort: str | None) -> str | None:
+def _reasoning_effort(reasoning_effort: str | None, *, model: str | None = None) -> str | None:
     """단계별 reasoning 설정을 현재 NIM 모델이 받는 값으로 바꾼다."""
 
     configured = reasoning_effort or settings.design_reasoning_effort
     return profile_for(
-        settings.model,
+        model or settings.model,
         fallback_temperature=settings.temperature,
         fallback_max_tokens=settings.llm_max_completion_tokens or 16384,
     ).resolve_reasoning(configured)
@@ -351,6 +352,7 @@ def stream_structured_response(
     *,
     reasoning_effort: str | None = None,
     max_completion_tokens: int | None = None,
+    connection: LlmConnection | None = None,
 ) -> BaseModel:
     """구조화 응답을 스트리밍으로 받아 진행 시간과 최종 스키마를 함께 검증한다."""
     started = perf_counter()
@@ -371,7 +373,7 @@ def stream_structured_response(
     json_escape_pending = False
     outside_whitespace_run = 0
     whitespace_limit_reached = False
-    connection = build_llm_connection()
+    connection = connection or build_llm_connection()
     profile = profile_for(
         connection.model,
         fallback_temperature=settings.temperature,
@@ -424,7 +426,7 @@ def stream_structured_response(
     request["max_tokens"] = completion_limit
     if profile.top_p is not None:
         request["top_p"] = profile.top_p
-    provider_reasoning_effort = _reasoning_effort(reasoning_effort)
+    provider_reasoning_effort = _reasoning_effort(reasoning_effort, model=connection.model)
     if provider_reasoning_effort:
         request["reasoning_effort"] = provider_reasoning_effort
     if extra_body := profile.extra_body(connection.provider):
@@ -578,12 +580,21 @@ def stream_structured_response(
         raise _IncompleteStructuredStream(
             "Structured stream ended without a finish reason."
         )
+    validation_text, trimmed_closers = _trim_redundant_json_closers(content_text)
+    if trimmed_closers:
+        observation.update(
+            jsonTrailingDelimiterTrimmed=True,
+            jsonTrailingDelimiterCount=trimmed_closers,
+            normalizedResponseSha256=hashlib.sha256(
+                validation_text.encode("utf-8")
+            ).hexdigest(),
+        )
     try:
-        parsed_input = json.loads(content_text)
+        parsed_input = json.loads(validation_text)
     except json.JSONDecodeError:
         parsed_input = None
     try:
-        return schema.model_validate_json(content_text)
+        return schema.model_validate_json(validation_text)
     except ValidationError as error:
         observation["schemaValidationErrors"] = [
             dict(item)
@@ -638,6 +649,21 @@ def _observe_stream_usage(observation: dict[str, Any], usage: Any) -> None:
         observation["totalTokens"] = int(total_tokens)
 
 
+def _trim_redundant_json_closers(content: str) -> tuple[str, int]:
+    """Remove only unmatched trailing ``}``/``]`` after one complete JSON value."""
+    try:
+        _, end = json.JSONDecoder().raw_decode(content.lstrip())
+    except json.JSONDecodeError:
+        return content, 0
+    leading = len(content) - len(content.lstrip())
+    absolute_end = leading + end
+    suffix = content[absolute_end:]
+    non_whitespace = "".join(character for character in suffix if not character.isspace())
+    if not non_whitespace or any(character not in "}]" for character in non_whitespace):
+        return content, 0
+    return content[:absolute_end], len(non_whitespace)
+
+
 def parse_structured(
     messages: list[dict[str, str]],
     schema: type[BaseModel],
@@ -647,13 +673,14 @@ def parse_structured(
     max_completion_tokens: int | None = None,
     operation: str | None = None,
     metadata: dict[str, Any] | None = None,
+    connection: LlmConnection | None = None,
 ) -> dict[str, Any]:
     """LLM에게 schema를 강제해 구조화 결과를 받고 dict로 돌려준다.
 
     temperature/seed를 고정하는 것은 같은 입력이 같은 모델을 내도록 하기 위해서다 —
     산출물이 재현되지 않으면 피드백이 무엇을 고쳤는지 알 수 없다.
     """
-    connection = build_llm_connection()
+    connection = connection or build_llm_connection()
     parsed = parse_with_schema_repair(
         _structured_client(
             connection,
@@ -667,6 +694,7 @@ def parse_structured(
         max_completion_tokens=max_completion_tokens,
         operation=operation,
         metadata=metadata,
+        connection=connection,
     )
     return parsed.model_dump()
 
@@ -735,6 +763,7 @@ def parse_with_schema_repair(
     max_completion_tokens: int | None = None,
     operation: str | None = None,
     metadata: dict[str, Any] | None = None,
+    connection: LlmConnection | None = None,
 ) -> BaseModel:
     """Retry incomplete streams, then repair one locally invalid response.
 
@@ -742,6 +771,7 @@ def parse_with_schema_repair(
     reasoning effort unless the caller explicitly supplies a different repair effort.
     """
     operation_name = operation or schema.__name__
+    connection = connection or build_llm_connection()
     semantic_repair = operation_name.casefold().endswith("repair")
     logical_request_digest = _stable_digest(
         {
@@ -770,6 +800,7 @@ def parse_with_schema_repair(
                 schema,
                 observation,
                 reasoning_effort=reasoning_effort,
+                connection=connection,
                 **(
                     {"max_completion_tokens": max_completion_tokens}
                     if max_completion_tokens is not None
@@ -778,6 +809,7 @@ def parse_with_schema_repair(
             ),
             operation=operation_name,
             observation=observation,
+            connection=connection,
         )
     except StructuredLlmError as first_error:
         error = first_error
@@ -808,6 +840,7 @@ def parse_with_schema_repair(
                     schema,
                     retry_observation,
                     reasoning_effort=reasoning_effort,
+                    connection=connection,
                     **(
                         {"max_completion_tokens": max_completion_tokens}
                         if max_completion_tokens is not None
@@ -816,6 +849,7 @@ def parse_with_schema_repair(
                 ),
                 operation=f"{operation_name}:stream-retry-{retry_attempt}",
                 observation=retry_observation,
+                connection=connection,
             )
         except StructuredLlmError as retry_error:
             error = retry_error
@@ -873,6 +907,7 @@ def parse_with_schema_repair(
             schema,
             repair_observation,
             reasoning_effort=repair_reasoning_effort or reasoning_effort,
+            connection=connection,
             **(
                 {"max_completion_tokens": max_completion_tokens}
                 if max_completion_tokens is not None
@@ -881,6 +916,7 @@ def parse_with_schema_repair(
         ),
         operation=f"{operation_name}:schema-repair",
         observation=repair_observation,
+        connection=connection,
     )
 
 

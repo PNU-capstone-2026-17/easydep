@@ -541,7 +541,7 @@ def test_literal_request_body_is_validated_against_openapi_before_execution() ->
         },
     }
 
-    with pytest.raises(ArazzoValidationError, match="requestBody.payload.*'id' is a required"):
+    with pytest.raises(ArazzoValidationError, match=r"requestBody\.payload.*'id' is a required"):
         validate_arazzo_document(document, openapi=openapi)
 
 

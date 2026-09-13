@@ -521,6 +521,7 @@ def test_simple_criteria_support_case_insensitive_strings_and_logical_operators(
             {
                 "condition": (
                     "$statusCode == 200 && "
+                    "('literal===value' == 'literal===value') && "
                     "($response.body#/name == 'book' || $response.body#/name == 'magazine')"
                 )
             }
@@ -530,6 +531,38 @@ def test_simple_criteria_support_case_insensitive_strings_and_logical_operators(
     result = _run(monkeypatch, _document([_workflow("main", step)]), recorder)
 
     _assert_result(result, gate="PASS")
+
+
+def test_output_resolution_failure_preserves_response_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = _HttpRecorder([_response(200, {"ok": True})])
+    step = {
+        "stepId": "health",
+        "operationId": "health",
+        "outputs": {"missing": "$response.body#/missing"},
+    }
+
+    result = _run(monkeypatch, _document([_workflow("main", step)]), recorder)
+
+    _assert_result(result, gate="FAIL", defect="TEST_DEFECT")
+    assert result["steps"][0]["statusCode"] == 200
+
+
+def test_parenthesized_comparison_ignores_parentheses_inside_strings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = _HttpRecorder([_response(200, {"id": "item-1", "name": "a)b"})])
+    step = {
+        "stepId": "read",
+        "operationId": "getItem",
+        "parameters": [{"name": "id", "in": "path", "value": "item-1"}],
+        "successCriteria": [{"condition": '($response.body#/name != "a)b")'}],
+    }
+
+    result = _run(monkeypatch, _document([_workflow("main", step)]), recorder)
+
+    _assert_result(result, gate="FAIL", defect="SUT_DEFECT")
 
 
 def test_simple_numeric_operator_coerces_a_numeric_string(

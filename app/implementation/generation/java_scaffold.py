@@ -898,8 +898,6 @@ def _render_component(
         lines.extend(
             [
                 f"        // {IMPLEMENTATION_MARKER}: complete {stable_id}",
-                "        // Context: reports/implementation-tasks/method-context/"
-                f"{stable_id}.json",
                 "        throw new UnsupportedOperationException("
                 f'"{IMPLEMENTATION_MARKER}:{stable_id}");',
             ]

@@ -671,9 +671,9 @@ class ImplementationWorker:
     def retry_failed(self, job_id: str) -> dict[str, Any]:
         """저장된 checkpoint에서 실패했거나 감사에 멈춘 단계만 다시 시작한다."""
         record = self._read(job_id)
-        if record.get("status") not in {"FAILED", "NEEDS_PLANNER"}:
+        if record.get("status") not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER"}:
             raise InvalidJobState(
-                "Only a failed or audit-blocked implementation job can be retried: "
+                "Only a failed, interrupted, or audit-blocked implementation job can be retried: "
                 f"{record.get('status')}"
             )
         if not self._checkpoint_retryable(record):
@@ -705,11 +705,11 @@ class ImplementationWorker:
         owner: str,
         evidence: dict[str, object],
     ) -> dict[str, Any]:
-        """Resume a completed implementation with its existing owner conversation.
+        """Resume a completed implementation task from its stored source and checkpoint.
 
         Testing has already classified the failing gate and declares its implementation
-        owner. The evidence is appended to that owner's repair history in the original
-        run, so neither a source-snapshot job nor a new OpenHands conversation is created.
+        owner. Current owner tasks reuse their OpenHands conversation. Legacy operation
+        tasks had no persisted conversation and rerun briefly over the preserved source.
         """
         if owner not in {"backend", "frontend"}:
             raise ValueError(f"Unknown implementation repair owner: {owner}")
@@ -725,32 +725,34 @@ class ImplementationWorker:
             )
 
         run_root = Path(str(record["run_root"]))
-        manifest_path = run_root / "reports" / "run-manifest.json"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        owner_tasks = [
-            task
-            for task in manifest.get("implementation_tasks", [])
-            if isinstance(task, dict) and task.get("owner") == owner
-        ]
-        if len(owner_tasks) != 1:
-            raise InvalidJobState(
-                f"Implementation owner {owner} does not have exactly one resumable task."
+        from ..workflows.repair import RepairRoutingError, select_repair_task
+
+        failed_task_id = str(
+            evidence.get("failed_task_id") or evidence.get("failedTaskId") or ""
+        )
+        try:
+            owner_task = select_repair_task(
+                run_root,
+                owner=owner,
+                failed_task_id=failed_task_id,
+                evidence=evidence,
             )
+        except RepairRoutingError as error:
+            raise InvalidJobState(str(error)) from error
 
         # Reuse the runtime's stable identity calculation instead of reconstructing the
         # OpenHands storage layout here. A manifest/workflow checkpoint is not enough:
         # without the SDK base state the runtime would silently create a new conversation.
         from ..agents.runtime import _owner_conversation_identity
 
-        owner_task_id = str(owner_tasks[0]["task_id"])
+        owner_task_id = str(owner_task["task_id"])
         persistence_dir, conversation_id = _owner_conversation_identity(
             run_root,
             owner_task_id,
         )
-        conversation_checkpoint = (
-            persistence_dir / conversation_id.hex / "base_state.json"
-        )
-        if not conversation_checkpoint.is_file():
+        conversation_checkpoint = persistence_dir / conversation_id.hex / "base_state.json"
+        legacy_operation = owner_task.get("task_type") == "backend-operation"
+        if not legacy_operation and not conversation_checkpoint.is_file():
             raise InvalidJobState(
                 f"Implementation owner {owner} has no reusable OpenHands conversation "
                 "checkpoint; start a new implementation run instead."
@@ -762,7 +764,7 @@ class ImplementationWorker:
         repair_evidence["owner"] = owner
         repair = schedule_cross_phase_repair(
             run_root,
-            owner_task_id,
+            failed_task_id or owner_task_id,
             repair_evidence,
         )
         if repair is None:
@@ -774,6 +776,7 @@ class ImplementationWorker:
         record["updated_at"] = _now()
         record["owner_repair"] = {
             "owner": owner,
+            "task_id": owner_task_id,
             "repair_plan": "reports/repair-plan.json",
             "requested_at": record["updated_at"],
         }
@@ -803,7 +806,7 @@ class ImplementationWorker:
     @staticmethod
     def _checkpoint_retryable(record: dict[str, Any]) -> bool:
         """실행 checkpoint를 같은 Job에서 안전하게 재사용할 수 있는지 확인한다."""
-        if record.get("status") not in {"FAILED", "NEEDS_PLANNER"}:
+        if record.get("status") not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER"}:
             return False
         return ImplementationWorker._execution_checkpoint_exists(record)
 
@@ -910,7 +913,7 @@ class ImplementationWorker:
     def cancel(self, job_id: str) -> dict[str, Any]:
         """종료되지 않은 작업을 취소하고 실행 중인 하위 프로세스도 중지한다."""
         record = self._read(job_id)
-        if record["status"] in {"COMPLETED", "FAILED", "CANCELLED"}:
+        if record["status"] in {"COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"}:
             raise InvalidJobState(f"Job is already in a terminal state: {record['status']}")
         record["status"] = "CANCELLED"
         record["error"] = "Job execution was cancelled by user request."
@@ -1025,7 +1028,7 @@ class ImplementationWorker:
             record["status"] = "COMPLETED"
         elif status in {"READY", "READY_TO_FINALIZE"}:
             record["status"] = "QUEUED"
-        elif status in {"NEEDS_INPUT", "NEEDS_PLANNER", "FAILED"}:
+        elif status in {"NEEDS_INPUT", "NEEDS_PLANNER", "INTERRUPTED", "FAILED"}:
             record["status"] = status
             record["error"] = str(
                 workflow.get("blockingReason")

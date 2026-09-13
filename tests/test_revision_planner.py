@@ -30,6 +30,9 @@ class _Tools:
             "class_diagram:Order": _target("class_diagram:Order", "class", "design", 21),
             "file:src/order.py": _target("file:src/order.py", "file", "implementation", 31),
             "requirement:REQ-1": _target("requirement:REQ-1", "requirement", "requirements", 11),
+            "use_case_spec:UC-1": _target(
+                "use_case_spec:UC-1", "use_case_spec", "requirements", 12
+            ),
             "api_spec:createOrder": _target("api_spec:createOrder", "api", "design", 23),
         }
         self.versions = {"CLASS": 21, "SOURCE_CODE": 31, "REQUIREMENTS": 11, "API": 23}
@@ -39,13 +42,18 @@ class _Tools:
             "class_diagram:Order": {"upstream": [], "downstream": ["api_spec:createOrder"]},
             "file:src/order.py": {"upstream": [], "downstream": []},
             "requirement:REQ-1": {"upstream": [], "downstream": ["class_diagram:Order"]},
+            "use_case_spec:UC-1": {
+                "upstream": [],
+                "downstream": ["class_diagram:Order"],
+            },
             "api_spec:createOrder": {"upstream": ["class_diagram:Order"], "downstream": []},
         }
         self.write_calls = 0
         self.current_stage = "design"
+        self.api_path_scope = None
 
     def read_workspace(self):
-        return {"stage": self.current_stage}
+        return {"current_stage": self.current_stage}
 
     def normalize_revision_targets(self, refs):
         result = []
@@ -68,6 +76,9 @@ class _Tools:
             "design_links": deepcopy(self.links),
             "relations": {ref: deepcopy(self.relations.get(ref, {"upstream": [], "downstream": []})) for ref in refs},
         }
+
+    def api_path_change_scope(self, _ref, _requested_effect):
+        return self.api_path_scope
 
 
 def test_same_snapshot_and_interpretation_produce_identical_read_only_plan() -> None:
@@ -163,18 +174,91 @@ def test_stage_order_does_not_invent_missing_upstream_authority() -> None:
 
 def test_local_revision_of_an_earlier_delivery_stage_requires_confirmation() -> None:
     tools = _Tools()
-    tools.current_stage = "implementation"
+    planner = RevisionPlanner(tools, origin_stage="implementation")  # type: ignore[arg-type]
+    intent = RevisionInterpretation(
+        targets=["class_diagram:Order"],
+        semantic_scope="contract",
+        requested_effect="Add an operation.",
+    )
+
+    plan = planner.plan(intent)
+
+    assert plan.status == "needs_confirmation"
+    assert "earlier_delivery_stage_requires_confirmation" in plan.reason_codes
+    assert planner.validate_plan(plan, intent) is True
+
+
+def test_local_revision_of_a_later_owner_stage_requires_confirmation() -> None:
+    tools = _Tools()
+    tools.current_stage = "requirements"
 
     plan = RevisionPlanner(tools).plan(  # type: ignore[arg-type]
         RevisionInterpretation(
             targets=["class_diagram:Order"],
             semantic_scope="contract",
-            requested_effect="Add an operation.",
+            requested_effect="Reflect the accepted use-case revision.",
         )
     )
 
     assert plan.status == "needs_confirmation"
-    assert "earlier_delivery_stage_requires_confirmation" in plan.reason_codes
+    assert "delivery_stage_transition_requires_confirmation" in plan.reason_codes
+
+
+def test_design_feedback_routes_exact_spec_edit_back_to_requirements_confirmation() -> None:
+    tools = _Tools()
+    tools.current_stage = "design"
+
+    plan = RevisionPlanner(tools).plan(  # type: ignore[arg-type]
+        RevisionInterpretation(
+            targets=["use_case_spec:UC-1"],
+            semantic_scope="behavior",
+            requested_effect="Clarify the success scenario.",
+        )
+    )
+
+    assert plan.status == "needs_confirmation"
+    assert [target.ref for target in plan.authority_targets] == ["use_case_spec:UC-1"]
+    assert [target.ref for target in plan.downstream_targets] == [
+        "class_diagram:Order"
+    ]
+    assert plan.reason_codes == ["earlier_delivery_stage_requires_confirmation"]
+
+
+def test_explicit_api_path_value_outside_contract_routes_to_boundary_confirmation() -> None:
+    tools = _Tools()
+    boundary = _target(
+        "class_diagram:OrderBoundary::createOrder(orderId:UUID)",
+        "operation",
+        "design",
+        21,
+    )
+    tools.targets[boundary.ref] = boundary
+    tools.relations[boundary.ref] = {
+        "upstream": [],
+        "downstream": ["api_spec:createOrder"],
+    }
+    tools.api_path_scope = {
+        "unsupported": ("orderId",),
+        "authority_targets": [boundary],
+    }
+
+    plan = RevisionPlanner(tools).plan(  # type: ignore[arg-type]
+        RevisionInterpretation(
+            targets=["api_spec:createOrder"],
+            semantic_scope="contract",
+            requested_effect="Use DELETE /orders/{orderId}.",
+        )
+    )
+
+    assert plan.status == "needs_confirmation"
+    assert [target.ref for target in plan.requested_targets] == [
+        "api_spec:createOrder"
+    ]
+    assert [target.ref for target in plan.authority_targets] == [boundary.ref]
+    assert [target.ref for target in plan.downstream_targets] == [
+        "api_spec:createOrder"
+    ]
+    assert "api_path_requires_upstream_contract" in plan.reason_codes
 
 
 def test_version_or_trace_change_makes_approved_plan_stale() -> None:

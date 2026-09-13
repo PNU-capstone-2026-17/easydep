@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import json
-import re
 import time
 from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
@@ -36,9 +35,6 @@ from app.testing.utils.functional_executor import (
 )
 
 _MAX_CALL_DEPTH = 8
-_COMPARISON = re.compile(r"^\s*(.+?)\s*(==|!=|>=|<=|>|<)\s*(.+?)\s*$")
-
-
 class _ExecutionError(ValueError):
     def __init__(self, code: str, message: str, *, defect_class: str = "TEST_DEFECT") -> None:
         super().__init__(message)
@@ -180,30 +176,38 @@ def _criterion_results(criteria: Any, context: Mapping[str, Any]) -> list[dict[s
     ]
 
 
-def _split_boolean(value: str, token: str) -> list[str]:
+def _split_top_level(value: str, token: str) -> list[str]:
     """Split a simple condition at top-level operators, without parsing code."""
     parts: list[str] = []
     start = depth = 0
-    quoted = False
+    quote = ""
+    escaped = False
     index = 0
     while index < len(value):
         char = value[index]
-        if char == "'":
-            quoted = not quoted
-        elif not quoted and char == "(":
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "(":
             depth += 1
-        elif not quoted and char == ")":
+        elif char == ")":
             depth -= 1
             if depth < 0:
                 raise _ExecutionError(
                     "INVALID_CRITERION", "Simple criterion has unbalanced parentheses."
                 )
-        elif not quoted and depth == 0 and value.startswith(token, index):
+        elif depth == 0 and value.startswith(token, index):
             parts.append(value[start:index].strip())
             start = index + len(token)
             index += len(token) - 1
         index += 1
-    if quoted or depth != 0:
+    if quote or depth != 0:
         raise _ExecutionError(
             "INVALID_CRITERION", "Simple criterion has unbalanced quotes or parentheses."
         )
@@ -216,8 +220,19 @@ def _simple_criterion(condition: str, context: Mapping[str, Any]) -> bool:
     while value.startswith("(") and value.endswith(")"):
         depth = 0
         closing = -1
+        quote = ""
+        escaped = False
         for index, char in enumerate(value):
-            if char == "(":
+            if quote:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = ""
+            elif char in {"'", '"'}:
+                quote = char
+            elif char == "(":
                 depth += 1
             elif char == ")":
                 depth -= 1
@@ -227,18 +242,27 @@ def _simple_criterion(condition: str, context: Mapping[str, Any]) -> bool:
         if closing != len(value) - 1:
             break
         value = value[1:-1].strip()
-    alternatives = _split_boolean(value, "||")
+    alternatives = _split_top_level(value, "||")
     if len(alternatives) > 1:
         return any(_simple_criterion(item, context) for item in alternatives)
-    conjunctions = _split_boolean(value, "&&")
+    conjunctions = _split_top_level(value, "&&")
     if len(conjunctions) > 1:
         return all(_simple_criterion(item, context) for item in conjunctions)
     if value.startswith("!") and not value.startswith("!="):
         return not _simple_criterion(value[1:].strip(), context)
-    comparison = _COMPARISON.match(value)
+    comparison: tuple[str, str, str] | None = None
+    for operator in ("==", "!=", ">=", "<=", ">", "<"):
+        operands = _split_top_level(value, operator)
+        if len(operands) == 2:
+            comparison = (operands[0], operator, operands[1])
+            break
+        if len(operands) > 2:
+            raise _ExecutionError(
+                "INVALID_CRITERION", "Simple criterion contains a chained comparison."
+            )
     if comparison is None:
         return bool(_literal_or_expression(value, context))
-    left, operator, right = comparison.groups()
+    left, operator, right = comparison
     left_value = _literal_or_expression(left.strip(), context)
     right_value = _literal_or_expression(right.strip(), context)
     if isinstance(left_value, str) and isinstance(right_value, str):
@@ -1094,14 +1118,15 @@ def execute_arazzo_workflow(
                 return False, local_outputs, inputs
             except _ExecutionError as exc:
                 last_error = exc
-                append_step_report(
-                    {
-                        "workflowId": current_id,
-                        "stepId": step_id,
-                        "status": "failed",
-                        "finding": {"code": exc.code, "message": str(exc)},
-                    }
-                )
+                failure_report = {
+                    "workflowId": current_id,
+                    "stepId": step_id,
+                    "status": "failed",
+                    "finding": {"code": exc.code, "message": str(exc)},
+                }
+                if isinstance(context.get("statusCode"), int):
+                    failure_report["statusCode"] = context["statusCode"]
+                append_step_report(failure_report)
                 if primary_failure is not None:
                     cleanup_evidence.append(
                         {

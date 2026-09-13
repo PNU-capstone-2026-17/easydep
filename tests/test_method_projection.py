@@ -6,7 +6,6 @@ from app.design.schemas.class_model import BCEModel
 from app.design.services.sequence_diagram.projection import SequenceCollection
 from app.implementation.generation.method_skeleton import (
     render_backend_method_skeletons,
-    render_backend_test_shell,
 )
 from app.implementation.planning.method_projection import project_method_calls
 
@@ -382,7 +381,7 @@ def test_recursive_call_is_a_hint() -> None:
     assert "cyclic_method_call" in call.reasons
 
 
-def test_renders_compile_safe_service_calls_and_an_explicit_test_shell() -> None:
+def test_renders_compile_safe_service_calls() -> None:
     bce = _bce()
     projection = project_method_calls(
         bce_model=bce,
@@ -401,7 +400,4 @@ def test_renders_compile_safe_service_calls_and_an_explicit_test_shell() -> None
     assert "EASYDEP-IMPLEMENT" not in root
     leaf = files["com/example/app/application/impl/LookupControlService.java"]
     assert "EASYDEP-IMPLEMENT:" in leaf
-    assert "reports/implementation-tasks/method-context/" in leaf
-    path, test_source = render_backend_test_shell("com.example.app")
-    assert path.endswith("application/impl/BackendApplicationTest.java")
-    assert 'fail("EASYDEP-IMPLEMENT:' in test_source
+    assert "method-context/" not in leaf

@@ -4,7 +4,7 @@ import importlib.util
 import sys
 
 from app.config import settings
-from app.llm_connection import LlmConnection, build_llm_connection
+from app.llm_connection import LlmConnection, build_openhands_llm_connection
 
 
 def openhands_connection() -> LlmConnection:
@@ -14,7 +14,7 @@ def openhands_connection() -> LlmConnection:
     모델 접두사, header 규칙은 ``app.llm_connection`` 밖으로 복사하지 않는다.
     """
 
-    return build_llm_connection()
+    return build_openhands_llm_connection()
 
 
 def configured_max_output_tokens(default: int) -> int:

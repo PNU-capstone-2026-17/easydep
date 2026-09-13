@@ -15,6 +15,7 @@ from typing import Any
 
 from app.config import settings
 from app.design import progress as design_progress
+from app.design.contracts.type_system import DesignTypeError, canonical_design_type
 from app.design.schemas.class_model import BCEModel, canonical_operation_id
 from app.design.services.class_diagram.cache import (
     AcceptedUnitCache,
@@ -35,7 +36,6 @@ from app.design.services.class_diagram.proposals import OperationFragment
 from app.design.services.class_diagram.scenario import ScenarioIndex, UseCase, id_key, text
 from app.design.services.class_diagram.type_system import (
     field_type,
-    reachable_data_type_names,
     referenced_type_names,
     structure_type_contract,
     structured_field_types,
@@ -51,9 +51,23 @@ from app.design.services.common import fields
 from app.design.services.common.structured import parse_structured
 from app.llm_connection import build_llm_connection
 from app.llm_profiles import effective_temperature
-from app.validation import RepairAttempt, RepairLedger, run_checks, stable_digest
+from app.validation import Finding, RepairAttempt, RepairLedger, run_checks, stable_digest
 
 logger = logging.getLogger(__name__)
+
+
+class OperationValidationError(ValueError):
+    """Accepted-fragment validation failure retaining structured findings."""
+
+    def __init__(
+        self,
+        message: str,
+        findings: tuple[Finding, ...] = (),
+        errors: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.findings = findings
+        self.errors = errors
 
 
 _OPERATION_PROMPT = (
@@ -71,27 +85,43 @@ has the required behavior; otherwise add a distinct operation for this use case.
 Never edit an existing reserved signature.
 
 Follow the standard BCE roles: Boundary receives actor-facing input, Control
-coordinates the use-case flow, and Entity owns persistent state behavior. Close
+coordinates the use-case flow, and Entity may own explicitly selected persistent
+state behavior. An Entity listed for this use case is a candidate, not proof that
+the scenario needs an Entity operation. Close
 an ordinary request-response flow through return values: the root Boundary
 operation may cover both the actor input and the resulting actor-visible output.
-When a fixed Entity candidate owns durable domain information that this use case
-reads or changes, put at least one such operation on an Entity and let Control
-coordinate it. Read-only retrieval of stored domain information counts. Do not
-replace that Entity responsibility with a Control helper named save, record,
-find, get, or update. A use case that only calculates, formats, or calls an
-external system does not need an Entity operation. Do not invent dummy or no-op
-operations merely to keep a structural class in the diagram.
+Add an Entity operation only when the supplied scenario explicitly requires a
+durable read or state change and that behavior targets or sources state declared
+by a supplied Entity. A Boundary-to-Control flow is valid when it completely
+expresses the supplied behavior. Do not infer an Entity call from use-case
+membership alone, and do not invent dummy or no-op operations merely to keep a
+structural class in the diagram.
 Do not add present/show/confirm/notify Boundary operations merely to deliver the
 result of the current request. Add a separate outbound Boundary operation only
 when the scenario explicitly requires an out-of-band push, callback, or later
 notification. Choose concrete operations supported by the supplied steps. Every
 parameter and return type must resolve to a fixed class/type, a primitive, or a
 local DataType.
+Write collection types with explicit generic syntax, such as
+List<CourseOffering>; never join a container and item name into an undeclared
+token such as listCourseOffering.
+Before returning, audit every named parameter and return type: reuse an exact
+fixed or reserved type when it has the required shape, and otherwise declare a
+concrete local DataType in this fragment; never leave a referenced name undeclared.
 
 Keep signatures as a closed value flow. A delegated parameter must be available
 from an entry input, an earlier operation result, an explicit precondition, or a
 supported runtime value. Declare a result type when later work needs several
 values produced earlier. Do not invent caller input merely to satisfy a signature.
+An actorEntry names the caller role; it does not itself supply that actor's identifier.
+When the steps refer to the current actor without explicitly providing an identifier,
+model that actor-scoped responsibility without an identity parameter. Do not move an
+unsourced internal identity parameter to the root Boundary merely to create a source.
+Only a subject explicitly selected or provided by the scenario is caller input.
+An explicit use-case precondition may instead provide trusted server context to a
+Control operation. Keep that parameter internal to the Control call; never add it to
+the actor-facing Boundary operation or expose it as an HTTP caller input. Do not infer
+trusted context from an actor name alone.
 
 When this use case reuses a reserved operation, include that operation in the
 fragment with its exact supplied name, parameters, and returnType, plus this use
@@ -604,6 +634,50 @@ def operation_payload(
     return _operation_payload(index, inventory.as_payload(), use_case, **kwargs)
 
 
+def _canonicalize_loose_collection_types(
+    candidate: dict[str, Any],
+    inventory: dict[str, Any],
+    reserved: list[dict[str, Any]] | None,
+    reserved_types: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    """Repair a concatenated container only when its item is an exact known type."""
+
+    known_names = {
+        class_name(item)
+        for source in (inventory.get("Classes") or [], candidate.get("Classes") or [], reserved or [])
+        for item in source
+        if isinstance(item, dict) and class_name(item)
+    } | {
+        text(item.get("name"))
+        for source in (
+            inventory.get("DataTypes") or [],
+            candidate.get("DataTypes") or [],
+            reserved_types or [],
+        )
+        for item in source
+        if isinstance(item, dict) and text(item.get("name"))
+    }
+
+    def canonical(raw: object) -> str:
+        value = text(raw)
+        for prefix in ("list", "array", "set", "collection", "iterable", "optional"):
+            if value.startswith(prefix) and value[len(prefix) :] in known_names:
+                return canonical_design_type(f"{prefix}<{value[len(prefix):]}>")
+        return value
+
+    for owner in candidate.get("Classes") or []:
+        if not isinstance(owner, dict):
+            continue
+        for operation in owner.get("operations") or []:
+            if not isinstance(operation, dict):
+                continue
+            operation["returnType"] = canonical(operation.get("returnType"))
+            for parameter in operation.get("parameters") or []:
+                if isinstance(parameter, dict):
+                    parameter["type"] = canonical(parameter.get("type"))
+    return candidate
+
+
 def normalize_operation_fragment(
     proposal: OperationFragment | Mapping[str, Any],
     index: ScenarioIndex,
@@ -619,6 +693,9 @@ def normalize_operation_fragment(
 
     inventory_payload = inventory.as_payload()
     candidate = OperationFragment.model_validate(proposal).model_dump(by_alias=True)
+    candidate = _canonicalize_loose_collection_types(
+        candidate, inventory_payload, reserved, reserved_types
+    )
     fixed_names = (
         {
             class_name(item)
@@ -725,6 +802,9 @@ def _propose_fragment(
     )
     # 2. 설명문이나 임의 필드를 거부하고 일시적 proposal schema만 수락한다.
     candidate = OperationFragment.model_validate(parsed).model_dump(by_alias=True)
+    candidate = _canonicalize_loose_collection_types(
+        candidate, inventory, reserved, reserved_types
+    )
     fixed_names = (
         {class_name(item) for item in inventory.get("Classes") or [] if isinstance(item, dict)}
         | {
@@ -1000,9 +1080,11 @@ def _validate_accepted_fragment(
         ),
     )
     if report.errors or report.findings:
-        raise ValueError(
+        raise OperationValidationError(
             f"cached operation fragment {use_case.id} is invalid: "
-            + "; ".join([*report.errors, *finding_text(report.findings)])
+            + "; ".join([*report.errors, *finding_text(report.findings)]),
+            tuple(report.findings),
+            tuple(report.errors),
         )
     return normalized
 
@@ -1115,12 +1197,22 @@ def _checked_fragment(
 def _operation_signature(operation: dict[str, Any]) -> tuple[Any, ...]:
     return (
         tuple(
-            (text(parameter.get("name")), text(parameter.get("type")))
+            (text(parameter.get("name")), _canonical_signature_type(parameter.get("type")))
             for parameter in operation.get("parameters") or []
             if isinstance(parameter, dict)
         ),
-        text(operation.get("returnType")),
+        _canonical_signature_type(operation.get("returnType")),
     )
+
+
+def _canonical_signature_type(value: object) -> str:
+    """Use the shared type vocabulary when comparing reserved contracts."""
+
+    raw = text(value)
+    try:
+        return canonical_design_type(raw)
+    except DesignTypeError:
+        return raw
 
 
 def _data_type_signature(item: dict[str, Any]) -> tuple[Any, ...]:
@@ -1232,22 +1324,41 @@ def _compose(
         # 타입 계약의 일부다. 이를 지우면 `RegistrationPeriod.term : AcademicTerm`처럼
         # 검증을 통과했던 선언이 최종 조립 과정에서 갑자기 미해소 타입이 된다.
         class_index = {class_name(item): item for item in result_classes}
-        pending = list(retained)
+        data_type_definitions = {
+            text(item.get("name")): item
+            for item in data_types
+            if isinstance(item, dict)
+        }
+        reachable_data_types: set[str] = set()
+        pending = [("class", name) for name in retained]
         while pending:
-            item = class_index[pending.pop()]
+            kind, current_name = pending.pop()
+            item = (
+                class_index[current_name]
+                if kind == "class"
+                else data_type_definitions[current_name]
+            )
             referenced: set[str] = set()
             for raw_field in item.get("fields") or []:
                 referenced.update(referenced_type_names(field_type(raw_field)))
-            for operation in item.get("operations") or []:
-                if not isinstance(operation, dict):
-                    continue
-                referenced.update(referenced_type_names(text(operation.get("returnType"))))
-                for parameter in operation.get("parameters") or []:
-                    if isinstance(parameter, dict):
-                        referenced.update(referenced_type_names(text(parameter.get("type"))))
+            if kind == "class":
+                for operation in item.get("operations") or []:
+                    if not isinstance(operation, dict):
+                        continue
+                    referenced.update(
+                        referenced_type_names(text(operation.get("returnType")))
+                    )
+                    for parameter in operation.get("parameters") or []:
+                        if isinstance(parameter, dict):
+                            referenced.update(
+                                referenced_type_names(text(parameter.get("type")))
+                            )
             for name in referenced & class_index.keys() - retained:
                 retained.add(name)
-                pending.append(name)
+                pending.append(("class", name))
+            for name in referenced & data_type_definitions.keys() - reachable_data_types:
+                reachable_data_types.add(name)
+                pending.append(("dataType", name))
         result_classes = [item for item in result_classes if class_name(item) in retained]
         relationships = [
             item
@@ -1256,11 +1367,11 @@ def _compose(
             and text(item.get("source")) in retained
             and text(item.get("target")) in retained
         ]
-        reachable = reachable_data_type_names(result_classes, data_types)
         data_types = [
             item
             for item in data_types
-            if isinstance(item, dict) and text(item.get("name")) in reachable
+            if isinstance(item, dict)
+            and text(item.get("name")) in reachable_data_types
         ]
     return BCEModel.model_validate(
         {

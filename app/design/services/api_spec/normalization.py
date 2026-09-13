@@ -12,6 +12,7 @@ from app.design.contracts.api_spec import (
     ApiSpecProposal,
 )
 from app.design.contracts.type_system import (
+    DesignTypeError,
     api_type_for_design,
     parse_type_expression,
     render_design_type,
@@ -35,6 +36,36 @@ class InteractionContract:
     return_type: str
     use_case_ids: tuple[str, ...]
     scenario_step_refs: tuple[str, ...]
+
+
+def allowed_path_parameter_names(
+    contract: InteractionContract,
+    bce_model: BCEModel,
+) -> tuple[str, ...]:
+    """Expose top-level Boundary values that fit one HTTP path segment."""
+
+    enum_names = {
+        item.name for item in bce_model.DataTypes if item.kind == "enumeration"
+    }
+
+    def path_scalar(type_name: str) -> bool:
+        try:
+            expression = parse_type_expression(type_name)
+        except DesignTypeError:
+            return False
+        if expression.kind == "named":
+            return expression.name in enum_names
+        return expression.kind == "scalar" and expression.name not in {
+            "binary",
+            "object",
+            "void",
+        }
+
+    return tuple(
+        name
+        for name, type_name in contract.boundary_parameters
+        if path_scalar(type_name)
+    )
 
 
 def interaction_contracts(bce_model: BCEModel) -> tuple[InteractionContract, ...]:
@@ -113,16 +144,20 @@ def interaction_contracts(bce_model: BCEModel) -> tuple[InteractionContract, ...
 
 
 def interaction_context(bce_model: BCEModel) -> list[dict[str, Any]]:
-    """LLM에 선택할 상호작용 ID와 관련 유스케이스만 제공한다.
+    """LLM에 상호작용 ID와 그 후보에서 유효한 HTTP path 입력을 제공한다.
 
     ``interaction_id`` 자체에 Boundary·Control 연산과 서명이 들어 있다. 같은 정보를
-    별도 객체로 다시 풀어 보내면 입력만 길어지고 서로 다른 값을 답할 여지도 생긴다.
+    별도 객체로 다시 풀어 보내지 않고, path placeholder로 쓸 수 있는 최상위 Boundary
+    이름만 기계적으로 명시한다.
     """
 
     return [
         {
             "interactionId": item.interaction_id,
             "useCaseIds": list(item.use_case_ids),
+            "allowedPathParameters": list(
+                allowed_path_parameter_names(item, bce_model)
+            ),
         }
         for item in interaction_contracts(bce_model)
     ]
@@ -187,7 +222,7 @@ def normalize_api_spec_model(
         if contract is None:
             continue
         payload = endpoint.model_dump()
-        payload.update(_http_inputs(payload, contract, schemas))
+        payload.update(_http_inputs(payload, contract, schemas, bce_model))
         payload["operation_id"] = _unique_operation_id(
             contract.boundary_method,
             contract.boundary_class,
@@ -369,30 +404,39 @@ def _unique_operation_id(base: str, owner: str, used: set[str]) -> str:
 def _field_type_for_placeholder(
     name: str,
     expected: dict[str, str],
+    allowed: set[str],
 ) -> str:
     """Resolve a path placeholder only as an exact Boundary parameter reference."""
 
-    if name not in expected:
+    if name not in allowed:
         raise ValueError(
-            f"path placeholder {{{name}}} must exactly identify a Boundary parameter; "
-            "nested fields require an explicit HTTP input binding"
+            f"path placeholder {{{name}}} must identify an allowed scalar Boundary "
+            "parameter; structured and nested values require another HTTP binding"
         )
     return _api_contract_type_for_control(expected[name])
+
+
+def path_placeholders(path: str) -> tuple[str, ...]:
+    """Return unique placeholder names using the accepted HTTP path grammar."""
+
+    return tuple(dict.fromkeys(re.findall(r"\{([^{}]+)\}", path)))
 
 
 def _http_inputs(
     endpoint: dict[str, Any],
     contract: InteractionContract,
     schemas: dict[str, dict[str, Any]],
+    bce_model: BCEModel,
 ) -> dict[str, Any]:
     """Control 서명과 HTTP 방식에서 path/query/body 입력을 결정한다."""
 
     expected = dict(contract.boundary_parameters)
-    placeholders = list(dict.fromkeys(re.findall(r"\{([^{}]+)\}", str(endpoint.get("path") or ""))))
+    allowed = set(allowed_path_parameter_names(contract, bce_model))
+    placeholders = path_placeholders(str(endpoint.get("path") or ""))
     path_params = [
         {
             "name": name,
-            "type": _field_type_for_placeholder(name, expected),
+            "type": _field_type_for_placeholder(name, expected, allowed),
             "required": True,
             "description": "",
         }
@@ -508,6 +552,9 @@ def _control_arguments(
         if parameter not in expected_parameters:
             continue
         source_call, separator, source_path = source_ref.partition("#")
+        if separator and ":precondition:" in source_call:
+            arguments.append({"name": parameter, "source": f"$context.{parameter}"})
+            continue
         if not separator or source_call != contract.boundary_call_id:
             continue
         boundary_parameter, dot, nested_path = source_path.partition(".")
@@ -586,10 +633,11 @@ def api_spec_proposal_from_model(
     """저장 모델에서 코드 생성 필드를 제외한 수정용 proposal을 만든다."""
 
     contracts = interaction_contracts(bce_model)
+    valid_interaction_ids = {item.interaction_id for item in contracts}
     endpoints = []
     for endpoint in model.Endpoints:
         interaction_id = endpoint.interaction_id
-        if not interaction_id and endpoint.control_binding is not None:
+        if interaction_id not in valid_interaction_ids and endpoint.control_binding is not None:
             interaction_id = next(
                 (
                     item.interaction_id

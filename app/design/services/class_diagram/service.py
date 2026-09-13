@@ -11,6 +11,7 @@ from app.design.services.class_diagram import collaboration, generation, invento
 from app.design.services.class_diagram import feedback as feedback_stage
 from app.design.services.class_diagram.cache import AcceptedUnitCache
 from app.design.services.class_diagram.identity import reconcile_stable_ids
+from app.design.services.class_diagram.proposals import CallPlanProposal
 from app.design.services.class_diagram.scenario import ScenarioIndex, UseCase, id_key
 from app.design.services.class_diagram.validation.collaboration import (
     COLLABORATION_CHECKS,
@@ -104,6 +105,97 @@ def _collaboration_valid(
         CollaborationContext(index, _payload(model), use_case),
     )
     return not report.errors and not report.findings
+
+
+def _preserved_call_plan(
+    previous_model: BCEModel,
+    revised_model: BCEModel,
+    value: Collaboration,
+) -> CallPlanProposal | None:
+    """Keep an accepted call topology while operation signatures are revised."""
+
+    revised_ids = {
+        operation.operation_id
+        for item in revised_model.Classes
+        for operation in item.operations
+    }
+    revised_by_identity: dict[tuple[str, str], list[str]] = {}
+    revised_by_steps: dict[tuple[str, tuple[str, ...]], list[str]] = {}
+    for item in revised_model.Classes:
+        for operation in item.operations:
+            revised_by_identity.setdefault(
+                (item.class_name, operation.name), []
+            ).append(operation.operation_id)
+            revised_by_steps.setdefault(
+                (item.class_name, tuple(sorted(operation.step_refs))), []
+            ).append(operation.operation_id)
+
+    replacements: dict[str, str] = {}
+    for item in previous_model.Classes:
+        for operation in item.operations:
+            if operation.operation_id in revised_ids:
+                replacements[operation.operation_id] = operation.operation_id
+                continue
+            candidates = revised_by_identity.get(
+                (item.class_name, operation.name), []
+            )
+            if len(candidates) != 1:
+                candidates = revised_by_steps.get(
+                    (item.class_name, tuple(sorted(operation.step_refs))), []
+                )
+            replacements[operation.operation_id] = (
+                candidates[0] if len(candidates) == 1 else ""
+            )
+    positions = {
+        call.call_id: position
+        for position, call in enumerate(value.calls, start=1)
+    }
+    calls = []
+    for call in value.calls:
+        receiver = replacements.get(call.receiver_operation_id, "")
+        parent = positions.get(call.parent_call_id) if call.parent_call_id else None
+        if not receiver or (call.parent_call_id and parent is None):
+            return None
+        calls.append(
+            {
+                "receiverOperationId": receiver,
+                "parentCallIndex": parent,
+            }
+        )
+    return CallPlanProposal.model_validate({"calls": calls})
+
+
+def _rematerialize_preserved_collaborations(
+    index: ScenarioIndex,
+    previous_model: BCEModel,
+    revised_model: BCEModel,
+    existing: dict[str, Collaboration],
+    selected: list[UseCase],
+) -> tuple[dict[str, Collaboration], list[UseCase]]:
+    """Rebind changed parameters without asking an LLM to redesign valid topology."""
+
+    rebound = dict(existing)
+    unresolved: list[UseCase] = []
+    for use_case in selected:
+        value = existing.get(use_case.id)
+        plan = (
+            _preserved_call_plan(previous_model, revised_model, value)
+            if value is not None
+            else None
+        )
+        if plan is None:
+            unresolved.append(use_case)
+            continue
+        try:
+            rebound[use_case.id] = collaboration.materialize(
+                index,
+                revised_model,
+                use_case,
+                plan,
+            )
+        except ValueError:
+            unresolved.append(use_case)
+    return rebound, unresolved
 
 
 def _emit_preview(
@@ -275,10 +367,56 @@ def revise_class_model(
         revised_inventory = feedback_stage.propose_inventory_revision(
             index, accepted_inventory, feedback, set(scope.ids), cache=cache,
         )
+        def behavior_shape(
+            value: feedback_stage.AcceptedInventory,
+        ) -> tuple[dict[str, tuple[str, tuple[str, ...]]], tuple[str, ...]]:
+            payload = value.as_payload()
+            classes = {
+                str(item.get("className") or ""): (
+                    str(item.get("stereotype") or ""),
+                    tuple(sorted(
+                        str(use_case_id)
+                        for use_case_id in item.get("useCaseIds") or []
+                    )),
+                )
+                for item in payload.get("Classes") or []
+            }
+            data_types = tuple(sorted(
+                str(item.get("name") or "") for item in payload.get("DataTypes") or []
+            ))
+            return classes, data_types
+
+        if behavior_shape(accepted_inventory) != behavior_shape(revised_inventory):
+            return _validated(
+                _accepted_model(
+                    current,
+                    generation.build_model(index, revised_inventory, cache=cache),
+                    targeted_refs=targets,
+                ),
+                index,
+                "revised",
+            )
+        # Structural edits do not imply new behavior.  Reuse the accepted
+        # operation fragments and call topology first; only collaborations
+        # made invalid by the new inventory enter the existing repair path.
+        fragments = feedback_stage.fragments_from_model(index, current)
+        skeleton = operations.compose_fragments(revised_inventory, fragments)
+        existing = {item.collaboration_id: item for item in current.Collaborations}
+        existing, unresolved = _rematerialize_preserved_collaborations(
+            index, current, skeleton, existing, _standalone(index),
+        )
+        revised = _complete_collaborations(
+            index,
+            skeleton,
+            existing,
+            unresolved,
+            feedback=feedback,
+            cache=cache,
+        )
         return _validated(
             _accepted_model(
                 current,
-                generation.build_model(index, revised_inventory, cache=cache),
+                revised,
                 targeted_refs=targets,
             ),
             index,
@@ -313,6 +451,13 @@ def revise_class_model(
                 for group in index.groups if group.use_case_id == use_case.id
             )
         ]
+        existing, selected_use_cases = _rematerialize_preserved_collaborations(
+            index,
+            current,
+            skeleton,
+            existing,
+            selected_use_cases,
+        )
         directive = ""
     else:
         skeleton = BCEModel.model_validate({**_payload(current), "Collaborations": []})

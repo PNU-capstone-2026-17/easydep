@@ -68,7 +68,7 @@ def classify_canary_exception(error: Exception) -> str:
         return "PROVIDER_OUTPUT_PARSE_TRANSIENT"
     if status_code == 429 or "ratelimit" in name or "rate limit" in message:
         return "PROVIDER_RATE_LIMIT"
-    if "timeout" in name or "timed out" in message:
+    if "provider_timeout" in message or "timeout" in name or "timed out" in message:
         return "PROVIDER_TIMEOUT"
     if "stream" in name and any(
         marker in message for marker in ("closed", "ended", "incomplete", "terminated")
@@ -149,7 +149,7 @@ def _canary_attempt(
     llm_config: dict[str, object],
     reasoning_effort: str,
 ) -> dict[str, object]:
-    from .runtime import create_openhands_conversation
+    from .runtime import create_openhands_conversation, run_openhands_conversation
 
     recorder = CanaryRecorder()
     endpoint_retries = EndpointRetryRecorder()
@@ -171,7 +171,7 @@ def _canary_attempt(
         try:
             conversation.send_message(CANARY_USER_MESSAGE)
             try:
-                conversation.run()
+                run_openhands_conversation(conversation)
             except Exception as error:
                 try:
                     setattr(error, "endpoint_retry_snapshot", endpoint_retries.snapshot())

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from app.design import cascade
 from app.design.nodes.artifact import DesignArtifactSpec
 
@@ -10,7 +8,7 @@ def _validation(_content):
     return {"syntax_valid": True, "syntax_errors": []}
 
 
-def test_apply_uses_state_revision_and_preserves_untargeted_diagrams() -> None:
+def test_apply_uses_local_reviser_and_preserves_untargeted_diagrams() -> None:
     original = {
         "Diagrams": [
             {"use_case_id": "UC9", "Messages": [{"label": "old"}]},
@@ -24,13 +22,6 @@ def test_apply_uses_state_revision_and_preserves_untargeted_diagrams() -> None:
         ]
     }
 
-    def revise_state(_current, _feedback, _state, _targets):
-        return {
-            "sequence_model": revised,
-            "class_model": {"Collaborations": [{"collaborationId": "UC9"}]},
-            "revised_upstream_stages": ["class_diagram"],
-        }
-
     spec = DesignArtifactSpec(
         stage="sequence_diagram",
         model_key="sequence_model",
@@ -40,8 +31,7 @@ def test_apply_uses_state_revision_and_preserves_untargeted_diagrams() -> None:
         feedback_key="sequence_feedback",
         empty="",
         extract=lambda _state: {},
-        revise=lambda *_args: (_ for _ in ()).throw(AssertionError("wrong revision path")),
-        revise_state=revise_state,
+        revise=lambda *_args: revised,
         render=str,
         validate=_validation,
         elements={"Diagrams": lambda item: item.get("use_case_id", "")},
@@ -58,10 +48,7 @@ def test_apply_uses_state_revision_and_preserves_untargeted_diagrams() -> None:
         {"use_case_id": "UC9", "Messages": [{"label": "fixed"}]},
         {"use_case_id": "UC10", "Messages": [{"label": "stable"}]},
     ]
-    assert patch["class_model"] == {
-        "Collaborations": [{"collaborationId": "UC9"}]
-    }
-    assert patch["revised_upstream_stages"] == ["class_diagram"]
+    assert "class_model" not in patch
 
 
 def test_deterministic_projection_refreshes_provenance_without_replacing_siblings() -> None:
@@ -168,73 +155,3 @@ def test_targeted_class_merge_updates_dependent_collaboration() -> None:
         patch["class_model"]["Collaborations"][0]["calls"][0]["receiverOperationId"]
         == new_operation
     )
-
-
-def test_upstream_owned_sequence_revision_skips_second_reverse_class_edit(
-    monkeypatch,
-) -> None:
-    calls: list[str] = []
-
-    monkeypatch.setattr(
-        cascade,
-        "DESIGN_SPECS",
-        {
-            "class_diagram": SimpleNamespace(
-                stage="class_diagram", model_key="class_model", elements={}
-            ),
-            "sequence_diagram": SimpleNamespace(
-                stage="sequence_diagram",
-                model_key="sequence_model",
-                elements={"Diagrams": lambda item: item.get("use_case_id", "")},
-            ),
-            "api_spec": SimpleNamespace(
-                stage="api_spec", model_key="api_model", elements={}
-            ),
-            "deployment_diagram": SimpleNamespace(
-                stage="deployment_diagram", model_key="deployment_model", elements={}
-            ),
-        },
-    )
-    monkeypatch.setattr(
-        cascade,
-        "build_design_rtm",
-        lambda _state: {
-            "rows": [{"stage": "sequence_diagram", "element": "UC9"}],
-            "links": [{
-                "from": "sequence_diagram:UC9",
-                "to": "class_diagram:UserBoundary",
-                "relation": "invokes",
-            }],
-        },
-    )
-    monkeypatch.setattr(
-        cascade,
-        "linked_elements",
-        lambda _rtm, stage, _element: (
-            ["class_diagram:UserBoundary"] if stage == "sequence_diagram" else []
-        ),
-    )
-    monkeypatch.setattr(cascade, "affected_by_element", lambda *_args: [])
-
-    def apply(spec, _state, _feedback, _targets, **_kwargs):
-        calls.append(spec.stage)
-        if spec.stage == "sequence_diagram":
-            return {
-                "sequence_model": {"Diagrams": [{"use_case_id": "UC9"}]},
-                "class_model": {"Collaborations": [{"collaborationId": "UC9"}]},
-                "revised_upstream_stages": ["class_diagram"],
-            }
-        raise AssertionError("class diagram must not be revised a second time")
-
-    monkeypatch.setattr(cascade, "_apply", apply)
-
-    result = cascade.revise_and_cascade(
-        {"sequence_model": {}, "class_model": {"Classes": [{"className": "UserBoundary"}]}} ,
-        "sequence_diagram:UC9",
-        "Place extension 1a at its branch",
-        approved_authority_targets={"class_diagram:UserBoundary"},
-    )
-
-    assert calls == ["sequence_diagram"]
-    assert result["changed"] == ["class_diagram", "sequence_diagram"]
-    assert result["state"]["revised_upstream_stages"] == []

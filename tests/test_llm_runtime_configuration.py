@@ -11,7 +11,12 @@ from app.design.services.deployment_diagram import extractor as deployment_extra
 from app.implementation.agents import runtime as openhands_runtime
 from app.implementation.generation.orchestrator import load_job
 from app.implementation.planning.design_context import llm_config
-from app.llm_connection import build_llm_connection, llm_subprocess_environment
+from app.llm_connection import (
+    build_admission_llm_connection,
+    build_llm_connection,
+    build_openhands_llm_connection,
+    llm_subprocess_environment,
+)
 
 _PROVIDER_CASES = (
     pytest.param(
@@ -51,6 +56,8 @@ def _provider_settings(
     model: str,
     *,
     cloudflare_values: bool = True,
+    openhands_model: str | None = None,
+    admission_model: str | None = None,
 ) -> Settings:
     """테스트용 연결 설정을 만든다. 실제 비밀값은 사용하지 않는다."""
 
@@ -60,6 +67,8 @@ def _provider_settings(
         "api_key": "test-provider-secret",  # noqa: S105 - 네트워크에 쓰지 않는 가짜 값
         "base_url": base_url,
         "model": model,
+        "openhands_model": openhands_model,
+        "admission_model": admission_model,
         # 개발 PC의 실제 환경변수가 단위 테스트 설정에 섞이지 않게 명시적으로 비운다.
         "cloudflare_account_id": None,
         "cloudflare_api_token": None,
@@ -125,9 +134,37 @@ def test_implementation_job_uses_only_root_environment_llm_settings(tmp_path: Pa
 
     assert spec.agent_temperature == settings.implementation_agent_temperature
     assert spec.agent_max_output_tokens == settings.implementation_agent_max_output_tokens
-    connection = build_llm_connection()
+    connection = build_openhands_llm_connection()
     assert llm_config(spec)["model"] == connection.model
     assert llm_config(spec)["baseUrl"] == connection.base_url
+
+
+def test_specialized_models_override_only_their_own_connections() -> None:
+    config = _provider_settings(
+        "cloudflare",
+        "https://ignored.example.invalid/v1",
+        "openai/gpt-oss-120b",
+        openhands_model="@cf/zai-org/glm-5.3-flash",
+        admission_model="@cf/zai-org/glm-5.3-flash",
+    )
+
+    design = build_llm_connection(config)
+    implementation = build_openhands_llm_connection(config)
+    admission = build_admission_llm_connection(config)
+    environment = llm_subprocess_environment(config)
+
+    assert design.model == "openai/gpt-oss-120b"
+    assert implementation.model == "@cf/zai-org/glm-5.3-flash"
+    assert admission.model == "@cf/zai-org/glm-5.3-flash"
+    assert implementation.provider == design.provider
+    assert implementation.base_url == design.base_url
+    assert implementation.api_key == design.api_key
+    assert admission.provider == design.provider
+    assert admission.base_url == design.base_url
+    assert admission.api_key == design.api_key
+    assert environment["MODEL"] == design.model
+    assert environment["OPENHANDS_MODEL"] == implementation.model
+    assert environment["ADMISSION_MODEL"] == admission.model
 
 
 @pytest.mark.parametrize(
@@ -172,16 +209,19 @@ def test_subprocess_restores_the_same_provider_endpoint_and_model(
     assert environment["LLM_PROVIDER"] == provider
     assert environment["BASE_URL"] == base_url
     assert environment["MODEL"] == model
+    assert environment["ADMISSION_MODEL"] == model
     assert environment["API_KEY"] == expected_api_key
+    assert environment["LLM_TIMEOUT_SECONDS"] == "300.0"
+    assert environment["LLM_WALL_TIMEOUT_SECONDS"] == "330.0"
     assert environment["IMPLEMENTATION_OPENHANDS_REQUEST_ATTEMPTS"] == "3"
     assert environment["IMPLEMENTATION_OPENHANDS_RETRY_MIN_WAIT_SECONDS"] == "1"
     assert environment["IMPLEMENTATION_OPENHANDS_RETRY_MAX_WAIT_SECONDS"] == "8"
     assert environment["IMPLEMENTATION_OPENHANDS_RETRY_MULTIPLIER"] == "1.0"
-    assert environment["IMPLEMENTATION_OPENHANDS_CANARY_REPETITIONS"] == "3"
-    assert environment["IMPLEMENTATION_OPENHANDS_CANARY_MAX_ATTEMPTS"] == "5"
+    assert environment["IMPLEMENTATION_OPENHANDS_CANARY_REPETITIONS"] == "1"
+    assert environment["IMPLEMENTATION_OPENHANDS_CANARY_MAX_ATTEMPTS"] == "1"
     assert (
         environment["IMPLEMENTATION_OPENHANDS_CANARY_TRANSIENT_TTL_SECONDS"]
-        == "600"
+        == "0"
     )
 
     child_values: dict[str, object] = {
@@ -190,6 +230,7 @@ def test_subprocess_restores_the_same_provider_endpoint_and_model(
         "api_key": environment["API_KEY"],
         "base_url": environment["BASE_URL"],
         "model": environment["MODEL"],
+        "admission_model": environment["ADMISSION_MODEL"],
     }
     if provider == "cloudflare":
         child_values.update(

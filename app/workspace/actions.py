@@ -20,7 +20,6 @@ class StagePolicy(StrEnum):
     DESIGN = "design"
     IMPLEMENTATION = "implementation"
     TESTING = "testing"
-    RETRY_IMPLEMENTATION = "retry_implementation"
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +36,12 @@ _SPECS = (
         WorkspaceAction.ADVANCE,
         "stage_message",
         StagePolicy.REFERENCE,
+        ("action_id",),
+    ),
+    ActionSpec(
+        WorkspaceAction.PLAN_DOWNSTREAM_REVISION,
+        "plan_downstream_revision",
+        StagePolicy.DESIGN,
         ("action_id",),
     ),
     ActionSpec(
@@ -84,7 +89,7 @@ _SPECS = (
     ActionSpec(
         WorkspaceAction.RETRY_IMPLEMENTATION,
         "retry_implementation",
-        StagePolicy.RETRY_IMPLEMENTATION,
+        StagePolicy.IMPLEMENTATION,
         ("action_id", "job_id"),
     ),
     ActionSpec(
@@ -132,16 +137,19 @@ _PASSIVE_REQUEST_DEFAULTS: dict[str, Any] = {
     "auto_approve_method_proposals": False,
 }
 _INTERNAL_CONVERSATION_FIELDS = {
+    "_resource_answer_context",
     "_conversation_actions",
     "_conversation_outcome",
     "conversation_intent",
     "revision_execution",
     "revision_instructions",
     "revision_interpretation",
+    "revision_origin_stage",
     "revision_plan",
     "validated_impact",
     "validated_target_feedbacks",
     "validated_targets",
+    "feedback_decision",
 }
 
 
@@ -181,23 +189,55 @@ def _offer(
 def _answer_offers(command_id: str, result: dict[str, Any]) -> list[ActionOffer]:
     question = result.get("resource_question") or {}
     choices = question.get("choices") or [] if isinstance(question, dict) else []
+    context = question.get("context") if isinstance(question, dict) else None
+    pinned_context = (
+        dict(context)
+        if isinstance(context, dict)
+        and context.get("element_ref")
+        and isinstance(context.get("validated_target"), dict)
+        else None
+    )
+    if result.get("current_stage") == "class_diagram" and pinned_context is None:
+        raise ValueError("A class design question must pin one validated target.")
     offers = [
         _offer(
             WorkspaceAction.MESSAGE,
             str(choice.get("label") or choice.get("value") or "Select"),
-            {"action_id": command_id, "text": str(choice.get("value") or "")},
+            {
+                "action_id": command_id,
+                "text": str(choice.get("value") or ""),
+                **({"context": pinned_context} if pinned_context is not None else {}),
+            },
             description=str(choice.get("description") or "") or None,
         )
         for choice in choices
         if isinstance(choice, dict) and choice.get("value") is not None
     ]
     if offers:
+        if question.get("allowFreeText") is True:
+            offers.append(
+                _offer(
+                    WorkspaceAction.MESSAGE,
+                    "Provide another answer",
+                    {
+                        "action_id": command_id,
+                        **(
+                            {"context": pinned_context}
+                            if pinned_context is not None
+                            else {}
+                        ),
+                    },
+                )
+            )
         return offers
     return [
         _offer(
             WorkspaceAction.MESSAGE,
             "Send answer",
-            {"action_id": command_id},
+            {
+                "action_id": command_id,
+                **({"context": pinned_context} if pinned_context is not None else {}),
+            },
         )
     ]
 
@@ -290,6 +330,66 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
             actions=_answer_offers(command_id, result),
         )
 
+    if isinstance(result.get("downstream_revision_handoff"), dict):
+        return AwaitingOutcome(
+            wait_reason=WaitReason.REVIEW,
+            actions=[
+                _offer(WorkspaceAction.MESSAGE, "Send revision feedback", common),
+                _offer(
+                    WorkspaceAction.PLAN_DOWNSTREAM_REVISION,
+                    "Plan affected design changes",
+                    common,
+                ),
+            ],
+        )
+
+    raw_feedback_question = result.get("feedback_question")
+    if raw_feedback_question is None and isinstance(result.get("validation"), dict):
+        raw_feedback_question = result["validation"].get("feedback_question")
+    if isinstance(raw_feedback_question, dict):
+        try:
+            from .conversation.feedback_envelope import Question
+
+            question = Question.model_validate(raw_feedback_question)
+        except (TypeError, ValueError):
+            question = None
+        if question is not None:
+            actions = [
+                _offer(
+                    WorkspaceAction.MESSAGE,
+                    option.label,
+                    {
+                        **common,
+                        "feedback_option_id": option.option_id,
+                        "text": "\n".join(
+                            [
+                                option.decision_payload.normalized_meaning.requested_effect,
+                                *(
+                                    f"Preserve constraint: {constraint}"
+                                    for constraint in option.decision_payload.preserved_constraints
+                                ),
+                            ]
+                        ),
+                    },
+                    description=option.description or None,
+                )
+                for option in question.options
+            ]
+            if question.allow_free_text:
+                target_ref = question.authority_candidates[0].ref
+                actions.append(
+                    _offer(
+                        WorkspaceAction.MESSAGE,
+                        "Provide another answer",
+                        {
+                            **common,
+                            "feedback_free_text": True,
+                            "context": {"element_ref": target_ref},
+                        },
+                    )
+                )
+            return AwaitingOutcome(wait_reason=WaitReason.QUESTION, actions=actions)
+
     blockers = [item for item in result.get("blocking_findings") or [] if isinstance(item, dict)]
     blocking_route = str(result.get("blocking_route") or blocking_findings_route(blockers))
     repair_job_id = str(
@@ -355,21 +455,9 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
             if blocking_route == "design"
             else "Review deployment design or platform issue"
         )
-        actions = [_offer(WorkspaceAction.MESSAGE, label, common)]
-        if stage == "testing" and testing_implementation_job_id:
-            actions.append(
-                _offer(
-                    WorkspaceAction.START_TESTING,
-                    "Retry testing with current artifacts",
-                    {
-                        **common,
-                        "implementation_job_id": testing_implementation_job_id,
-                    },
-                )
-            )
         return AwaitingOutcome(
             wait_reason=WaitReason.REPAIR,
-            actions=actions,
+            actions=[_offer(WorkspaceAction.MESSAGE, label, common)],
         )
 
     if result.get("requires_revision"):
@@ -411,12 +499,20 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
             actions=actions,
         )
 
-    next_action = (
-        WorkspaceAction.ADVANCE
-        if stage in {"requirements", "design"}
-        else WorkspaceAction.MESSAGE
-    )
-    next_label = "Continue to next stage" if next_action == WorkspaceAction.ADVANCE else "Send feedback"
+    if stage == "design" and result.get("resume_implementation") is True:
+        next_action = WorkspaceAction.START_IMPLEMENTATION
+        next_label = "Resume implementation"
+    else:
+        next_action = (
+            WorkspaceAction.ADVANCE
+            if stage in {"requirements", "design"}
+            else WorkspaceAction.MESSAGE
+        )
+        next_label = (
+            "Continue to next stage"
+            if next_action == WorkspaceAction.ADVANCE
+            else "Send feedback"
+        )
     next_payload: dict[str, Any] = dict(common)
     if stage == "design" and result.get("method_proposals"):
         next_label = "Approve method proposals and continue"
@@ -442,19 +538,21 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
     command_id = str(command.get("command_id") or "")
     result = dict(command.get("result") or {})
     common = {"action_id": command_id}
+    if result.get("feedback_question_answered_by"):
+        return [_offer(WorkspaceAction.MESSAGE, "Continue conversation", common)]
     if status in {"FAILED", "INTERRUPTED"}:
         discuss = _offer(WorkspaceAction.MESSAGE, "Ask about this error", common)
-        if stage == "testing" and command.get("action") == "delegate_repair":
-            repair_job_id = str((command.get("payload") or {}).get("job_id") or "")
-            if repair_job_id:
-                return [
-                    discuss,
-                    _offer(
-                        WorkspaceAction.RETRY_IMPLEMENTATION,
-                        "Retry implementation repair checkpoint",
-                        {**common, "job_id": repair_job_id},
-                    )
-                ]
+        if command.get("action") == "confirm_change":
+            source_action_id = str((command.get("payload") or {}).get("action_id") or "")
+            return [
+                discuss,
+                _offer(
+                    WorkspaceAction.CONFIRM_CHANGE,
+                    "Retry approved change",
+                    {"action_id": source_action_id},
+                    auto=True,
+                ),
+            ]
         if stage == "requirements":
             return [
                 discuss,
@@ -481,6 +579,16 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
                 or result.get("job_id")
                 or ""
             )
+            source_action_id = str((command.get("payload") or {}).get("action_id") or "")
+            if command.get("action") == "delegate_repair" and not job_id and source_action_id:
+                return [
+                    discuss,
+                    _offer(
+                        WorkspaceAction.DELEGATE_REPAIR,
+                        "Retry implementation repair request",
+                        {"action_id": source_action_id},
+                    ),
+                ]
             if job_id:
                 return [
                     discuss,

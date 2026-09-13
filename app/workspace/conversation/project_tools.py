@@ -30,6 +30,11 @@ from app.db.models import (
 )
 from app.design.rtm import build_design_rtm
 from app.design.schemas.class_model import BCEModel
+from app.design.services.api_spec.normalization import (
+    allowed_path_parameter_names,
+    interaction_contracts,
+    path_placeholders,
+)
 from app.design.services.class_diagram.identity import reconcile_stable_ids
 from app.repositories import artifact_repository
 from app.workspace import repository as workspace_repository
@@ -42,6 +47,9 @@ _MAX_CONTENT_STRING_CHARS = 4_000
 _MAX_CONTENT_ITEMS = 50
 _MAX_CONTENT_DEPTH = 6
 _REDACTED = "[REDACTED]"
+_EXPLICIT_PATH_TEMPLATE = re.compile(
+    r"/[^\s`\"']*\{[^{}\s]+\}[^\s`\"']*"
+)
 _SECRET_KEYS = {
     "accesstoken",
     "apikey",
@@ -402,10 +410,12 @@ def _design_content(
     model = _mapping(state.get("extracted_bce_classes"))
     if model:
         try:
-            accepted, _metadata = reconcile_stable_ids(
-                None,
-                BCEModel.model_validate(model),
-            )
+            # This is an accepted artifact read boundary, so persisted stable IDs
+            # are authoritative. Reconcile the snapshot with itself only to fill
+            # IDs missing from legacy artifacts; treating it as a fresh proposal
+            # would derive new identities after an operation signature changes.
+            accepted = BCEModel.model_validate(model)
+            accepted, _metadata = reconcile_stable_ids(accepted, accepted)
             model = accepted.model_dump(mode="json", by_alias=True)
         except (TypeError, ValueError):
             # Invalid legacy artifacts remain readable for diagnostics. They
@@ -725,6 +735,75 @@ class ProjectTools:
             return None
         return matches[0]
 
+    def design_entry_targets_for_requirements(
+        self,
+        refs: Sequence[str | Mapping[str, Any]],
+    ) -> list[RevisionTarget] | None:
+        """Resolve current UC specs to their exact RTM-linked Boundary entry operations.
+
+        This is intentionally narrower than a generic downstream traversal. A targeted
+        class revision needs one current collaboration root per selected UC; ambiguity or
+        a missing explicit RTM edge returns no executable authority instead of guessing.
+        """
+
+        try:
+            sources = self.normalize_revision_targets(refs, require_editable=False)
+        except (TypeError, ValueError):
+            # ``None`` distinguishes a stale source selection from a valid current
+            # specification that simply has no exact Design entry yet.
+            return None
+        try:
+            model = BCEModel.model_validate(
+                self._catalog().state.get("extracted_bce_classes") or {}
+            )
+        except (TypeError, ValueError):
+            return []
+        if not sources or any(source.kind != "use_case_spec" for source in sources):
+            return None
+
+        relations = self.revision_relations(sources).get("relations")
+        if not isinstance(relations, Mapping):
+            return []
+        operation_owners = {
+            operation.operation_id: item
+            for item in model.Classes
+            for operation in item.operations
+        }
+        entries: list[RevisionTarget] = []
+        for source in sources:
+            use_case_id = TraceRef.parse(source.ref).id
+            roots = [
+                call
+                for collaboration in model.Collaborations
+                if use_case_id in collaboration.use_case_ids
+                for call in collaboration.calls
+                if call.parent_call_id is None
+            ]
+            if len(roots) != 1:
+                return []
+            root = roots[0]
+            owner = operation_owners.get(root.receiver_operation_id)
+            if owner is None or owner.stereotype != "Boundary":
+                return []
+            try:
+                target = self.normalize_revision_targets(
+                    [f"class_diagram:{root.receiver_operation_id}"]
+                )[0]
+            except (TypeError, ValueError, IndexError):
+                return []
+            source_relations = relations.get(source.ref)
+            downstream = (
+                set(source_relations.get("downstream") or [])
+                if isinstance(source_relations, Mapping)
+                else set()
+            )
+            if target.ref not in downstream:
+                return []
+            entries.append(target)
+        if len({target.ref for target in entries}) != len(entries):
+            return []
+        return sorted(entries, key=lambda target: target.ref)
+
     # Short alias for callers that describe the operation as normalization.
     canonical_revision_targets = normalize_revision_targets
 
@@ -983,6 +1062,70 @@ class ProjectTools:
             **snapshot,
             "targets": [target.model_dump(mode="json") for target in normalized],
             "relations": related,
+        }
+
+    def api_path_change_scope(
+        self,
+        ref: str,
+        requested_effect: str,
+    ) -> dict[str, Any] | None:
+        """Resolve an explicit unsupported API placeholder to its Boundary owner.
+
+        Ordinary API wording remains a local API revision. This narrow read-only
+        check runs only when the user wrote a concrete URI template containing a
+        placeholder that the accepted Boundary contract cannot currently supply.
+        """
+
+        templates = _EXPLICIT_PATH_TEMPLATE.findall(requested_effect)
+        requested = tuple(
+            dict.fromkeys(
+                placeholder
+                for template in templates
+                for placeholder in path_placeholders(template)
+            )
+        )
+        if not requested:
+            return None
+
+        target = self.normalize_revision_targets([ref], require_editable=False)[0]
+        if target.kind != "api":
+            return None
+        catalog = self._catalog()
+        element = catalog.resolve(target.ref)
+        endpoint = _mapping(element.content if element is not None else None)
+        interaction_id = str(endpoint.get("interaction_id") or "").strip()
+        try:
+            bce_model = BCEModel.model_validate(
+                catalog.state.get("extracted_bce_classes") or {}
+            )
+        except (TypeError, ValueError):
+            return None
+        contract = next(
+            (
+                candidate
+                for candidate in interaction_contracts(bce_model)
+                if candidate.interaction_id == interaction_id
+            ),
+            None,
+        )
+        if contract is None:
+            return None
+        allowed = allowed_path_parameter_names(contract, bce_model)
+        unsupported = tuple(name for name in requested if name not in allowed)
+        if not unsupported:
+            return None
+
+        boundary_operation = contract.interaction_id.split(" -> ", 1)[0]
+        authority_ref = f"class_diagram:{boundary_operation}"
+        try:
+            authority = self.normalize_revision_targets([authority_ref])[0]
+        except (TypeError, ValueError):
+            authority = None
+        return {
+            "requested": requested,
+            "allowed": allowed,
+            "unsupported": unsupported,
+            "authority_targets": [authority] if authority is not None else [],
         }
 
     def read_workspace(self) -> dict[str, Any]:

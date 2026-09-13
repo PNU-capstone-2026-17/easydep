@@ -237,11 +237,6 @@ class DesignArtifactSpec:
     reconcile: Callable[[ArchitectureState], dict] | None = None
     #: 검사·수리가 모델을 바꾼 뒤 렌더 직전에 다시 적용할 산출물 구성 규칙.
     finalize: Callable[[ArchitectureState], dict] | None = None
-    #: 피드백이 앞 stage의 기준 모델을 수정했을 때 이 산출물을 코드로 다시 만드는 함수.
-    #: 반환하는 변경값에는 반드시 ``model_key``가 있어야 한다.
-    revise_state: Callable[
-        [Any, str, ArchitectureState, set[str]], dict[str, Any]
-    ] | None = None
 
 
 def merge_targeted(
@@ -392,18 +387,6 @@ def revise_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]
         # 게이트 피드백은 산출물 전체를 대상으로 한다 — 사용자가 그 산출물을 보면서
         # 말하는 자리라 항목을 좁힐 근거가 없다. 항목을 지목하는 수정은 cascade 가 한다.
         current = state.get(spec.model_key) or {}
-        if spec.revise_state is not None:
-            delta = spec.revise_state(
-                current,
-                state.get(spec.feedback_key, ""),
-                state,
-                set(),
-            )
-            if spec.model_key not in delta:
-                raise ValueError(
-                    f"{spec.stage} state revision did not return {spec.model_key}"
-                )
-            return delta
         revised = spec.revise(
             current,
             state.get(spec.feedback_key, ""),

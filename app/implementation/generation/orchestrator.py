@@ -20,7 +20,7 @@ from app.design.contracts.api_spec import ApiSpecModel
 from app.design.contracts.application_runtime import application_security_required
 from app.design.schemas.class_model import BCEModel
 from app.design.schemas.sequence_model import SequenceCollection
-from app.llm_connection import build_llm_connection
+from app.llm_connection import build_openhands_llm_connection
 
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (
@@ -32,6 +32,7 @@ from ..planning.design_context import (
     TaskSpec,
     generate_backend_owner_tasks,
     generate_frontend_tasks,
+    generate_vertical_integration_task,
     llm_config,
 )
 from ..planning.method_projection import project_method_calls
@@ -47,7 +48,6 @@ from .java_scaffold import (
 )
 from .method_skeleton import (
     render_backend_method_skeletons,
-    render_backend_test_shell,
 )
 from .persistence_scaffold import (
     PERSISTENCE_SCAFFOLDER_VERSION,
@@ -513,7 +513,7 @@ class PrototypeOrchestrator:
             }
 
     def _combined_input_hash(self) -> str:
-        connection = build_llm_connection()
+        connection = build_openhands_llm_connection()
         digest = hashlib.sha256()
         digest.update(self.spec.name.encode())
         digest.update(self.spec.job_type.encode())
@@ -645,10 +645,6 @@ class PrototypeOrchestrator:
             else {}
         )
         application = java_root.parents[2]
-        test_relative, test_source = render_backend_test_shell(self.spec.base_package)
-        test_target = application / test_relative
-        test_target.parent.mkdir(parents=True, exist_ok=True)
-        test_target.write_text(test_source, encoding="utf-8", newline="\n")
         for relative, content in persistence_files.items():
             target = application / relative
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -1150,20 +1146,20 @@ def plan_persistence_tasks(spec: JobSpec, run_root: Path) -> None:
 
 
 def plan_backend_owner_task(spec: JobSpec, run_root: Path) -> None:
-    """Plan the configured backend owner or sequential marker strategy."""
+    """Plan backend behavior once and preserve that frozen task graph on resume."""
     run_root = run_root.resolve()
     manifest_path = run_root / "reports" / "run-manifest.json"
     if manifest_path.is_file():
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if any(
-            isinstance(task, dict) and task.get("task_type") == "backend-operation"
+            isinstance(task, dict)
+            and task.get("task_type")
+            in {"backend-implementation", "backend-operation"}
             for task in manifest.get("implementation_tasks", [])
         ):
             # Completed markers disappear from source. Replanning from that
-            # mutable tree would renumber the remaining operations and lose
-            # durable checkpoint identities, so reuse the first frozen plan.
-            # The run owns this decision even if a resumed process no longer
-            # has the opt-in environment variable that created it.
+            # mutable tree would change task scope and checkpoint identity.
+            # Older owner/marker plans remain valid only inside their own run.
             return
     _merge_implementation_tasks(
         run_root,
@@ -1178,12 +1174,28 @@ def plan_backend_owner_task(spec: JobSpec, run_root: Path) -> None:
 
 
 def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> None:
-    """Add the design-driven React implementation task to the run manifest."""
+    """Add the frontend owner and its bounded final integration pass."""
     run_root = run_root.resolve()
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    backend_tasks = [
+        task
+        for task in manifest.get("implementation_tasks", [])
+        if isinstance(task, dict)
+        and task.get("task_type") in {"backend-implementation", "backend-operation"}
+    ]
+    if not backend_tasks:
+        raise ValueError("Frontend planning requires a persisted backend task plan.")
+    frontend_tasks = generate_frontend_tasks(spec, run_root)
+    integration_task = generate_vertical_integration_task(
+        spec,
+        run_root,
+        [*backend_tasks, *(task.to_dict() for task in frontend_tasks)],
+    )
     _merge_implementation_tasks(
         run_root,
-        generate_frontend_tasks(spec, run_root),
-        replace_types={"frontend-implementation"},
+        [*frontend_tasks, integration_task],
+        replace_types={"frontend-implementation", "integration-implementation"},
     )
 
 

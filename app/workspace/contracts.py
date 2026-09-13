@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class WorkspaceAction(StrEnum):
     MESSAGE = "message"
     ADVANCE = "advance"
+    PLAN_DOWNSTREAM_REVISION = "plan_downstream_revision"
     DELEGATE_REPAIR = "delegate_repair"
     CONFIRM_CHANGE = "confirm_change"
     DISMISS_CHANGE = "dismiss_change"
