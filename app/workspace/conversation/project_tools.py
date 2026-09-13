@@ -14,7 +14,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, Literal
 
-from app.artifact_trace import TraceRef
+from app.artifact_context import ArtifactContextIndex, ArtifactContextNode
+from app.artifact_trace import ArtifactTrace, TraceNode, TraceRef
 from app.artifact_trace_projection import project_artifact_trace
 from app.artifact_trace_service import UnknownTraceRef, artifact_trace_response
 from app.db.models import (
@@ -90,6 +91,16 @@ _REQUIREMENTS_KINDS_BY_STAGE = {
     "specs": {"use_case_spec"},
     "relationships": {"relationship"},
 }
+_IMPLEMENTATION_ARTIFACT_STAGES = {
+    "implementation",
+    "SOURCE_CODE",
+    "FRONTEND_SOURCE_CODE",
+    "TEST_CODE",
+    "DEPLOYMENT_FILE",
+    "IAC_CODE",
+    "LIVE_SOURCE",
+}
+_TESTING_ARTIFACT_STAGES = {"testing", "TESTING_RESULTS"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -640,6 +651,18 @@ class ProjectTools:
                     or element.ref in supported_sections
                 )
             ]
+        elif stage in _IMPLEMENTATION_ARTIFACT_STAGES:
+            elements = [
+                element for element in catalog.elements.values()
+                if element.owner == "implementation"
+                and element.ref.startswith(("task:", "file:"))
+            ]
+        elif stage in _TESTING_ARTIFACT_STAGES:
+            elements = [
+                element for element in catalog.elements.values()
+                if element.owner == "testing"
+                and element.ref.startswith("finding:")
+            ]
         else:
             artifact_type = _VERSION_BY_DESIGN_STAGE.get(stage)
             if artifact_type is None:
@@ -946,9 +969,8 @@ class ProjectTools:
             normalized_inputs, require_editable=False
         )
         catalog = self._catalog()
-        trace = project_artifact_trace(
-            dict(catalog.state), implementation_rtm=catalog.implementation_rtm
-        )
+        context_index = _artifact_context_index(catalog)
+        trace = context_index.trace
         change_plans = {
             str(item.get("ref") or ""): item
             for item in _records(catalog.design_rtm.get("change_plan"))
@@ -969,6 +991,16 @@ class ProjectTools:
                     )
                 )
             return sorted(expanded)
+
+        def editable_context_refs(refs: Sequence[str]) -> list[str]:
+            return sorted(
+                {
+                    element.canonical_ref or element.ref
+                    for ref in refs
+                    if (element := catalog.resolve(ref)) is not None
+                    and element.editable
+                }
+            )
 
         related: dict[str, dict[str, list[str]]] = {}
         for target in normalized:
@@ -1022,8 +1054,13 @@ class ProjectTools:
                     "direct_downstream": downstream_refs,
                 }
                 continue
-            trace_ref = _trace_ref_for_element(element)
-            if trace_ref is None or trace_ref not in trace.refs:
+            context_relations = context_index.relations(target.ref)
+            if not any((
+                context_relations.direct_upstream,
+                context_relations.direct_downstream,
+                context_relations.upstream,
+                context_relations.downstream,
+            )):
                 related[target.ref] = {
                     "upstream": [],
                     "downstream": [],
@@ -1042,47 +1079,20 @@ class ProjectTools:
                     else []
                 )
                 related[target.ref] = {
-                    "upstream": _catalog_refs_for_trace(catalog, trace.upstream(trace_ref)),
+                    "upstream": editable_context_refs(context_relations.upstream),
                     # The cascade executor freezes its scope from the design
                     # RTM change plan. Include that same bounded set here so a
                     # normal class edit is not rejected merely because the
                     # generic artifact trace omits nested class members.
                     "downstream": include_trace_downstream(
                         [
-                            *_catalog_refs_for_trace(
-                                catalog, trace.downstream(trace_ref)
-                            ),
+                            *editable_context_refs(context_relations.downstream),
                             *planned_downstream,
                         ]
                     ),
-                    "direct_upstream": _catalog_refs_for_trace(
-                        catalog, trace.sources(trace_ref), require_editable=False
-                    ),
-                    "direct_downstream": _catalog_refs_for_trace(
-                        catalog, trace.consumers(trace_ref), require_editable=False
-                    ),
+                    "direct_upstream": list(context_relations.direct_upstream),
+                    "direct_downstream": list(context_relations.direct_downstream),
                 }
-            if target.kind == "finding" and element is not None:
-                evidence = _mapping(element.content)
-                exact_refs = {
-                    str(value).strip()
-                    for key in ("target_ids", "trace_refs")
-                    for value in evidence.get(key) or []
-                    if isinstance(value, str) and value.strip()
-                }
-                exact_refs.update(
-                    str(TraceRef("file", value.strip()))
-                    for value in evidence.get("file_hints") or []
-                    if isinstance(value, str) and value.strip()
-                )
-                exact_catalog_refs = {
-                    catalog.resolve(ref).ref
-                    for ref in exact_refs
-                    if catalog.resolve(ref) is not None
-                }
-                related[target.ref]["direct_upstream"] = sorted(
-                    set(related[target.ref]["direct_upstream"]) | exact_catalog_refs
-                )
         snapshot = self.revision_snapshot()
         return {
             **snapshot,
@@ -1213,172 +1223,102 @@ class ProjectTools:
         ]
         return _unique_public_refs([*exact, *lexical])[:limit]
 
+    def search_change_context(
+        self,
+        queries: Sequence[str],
+        *,
+        anchor_refs: Sequence[str] = (),
+        artifact_stage: str | None = None,
+        limit_per_query: int = 12,
+    ) -> dict[str, Any]:
+        """Search requirements, design, implementation, and findings uniformly.
+
+        Natural-language search discovers roots; the accepted artifact trace expands
+        them. A small class-design adapter adds current collaboration roots because
+        nested collaboration membership is more precise than stage-wide provenance.
+        This method is read-only and never grants edit authority.
+        """
+
+        normalized_queries = _normalized_context_queries(queries)
+        if not normalized_queries:
+            raise ValueError("change context search requires at least one query")
+        if limit_per_query < 1 or limit_per_query > 20:
+            raise ValueError("change context search limit must be between 1 and 20")
+
+        catalog = self._catalog()
+        matches = _interleaved_search_results(
+            [
+                self.search_elements(query, limit=limit_per_query)
+                for query in normalized_queries
+            ],
+            limit=40,
+        )
+        matched_refs = [str(item.get("ref") or "") for item in matches]
+        plans = {
+            str(item.get("ref") or ""): item
+            for item in _records(catalog.design_rtm.get("change_plan"))
+            if item.get("ref")
+        }
+        context_index = _artifact_context_index(catalog)
+        preferred_refs = (
+            _design_context_candidates(
+                catalog,
+                [*anchor_refs, *matched_refs],
+                plans,
+            )
+            if artifact_stage in {None, "class_diagram", "sequence_diagram"}
+            else []
+        )
+        stage_scope = _artifact_context_scope(
+            self,
+            artifact_stage,
+            context_index=context_index,
+            anchor_refs=anchor_refs,
+            matched_refs=matched_refs,
+            preferred_refs=preferred_refs,
+        )
+        selection = context_index.select(
+            matched_refs,
+            anchor_refs=anchor_refs,
+            preferred_refs=preferred_refs,
+            candidate_scope=stage_scope,
+        )
+        candidates = [
+            element.public(self.app_id)
+            for ref in selection.candidate_refs
+            if (element := catalog.resolve(ref)) is not None
+        ]
+        return {
+            "candidates": candidates,
+            "evidence": _context_evidence(
+                self.app_id,
+                catalog,
+                context_index,
+                selection.evidence_refs,
+                candidate_refs=selection.candidate_refs,
+                anchor_refs=anchor_refs,
+                plans=plans,
+            ),
+            "relations": {
+                ref: relation.public()
+                for ref, relation in selection.relations.items()
+            },
+        }
+
     def search_revision_context(
         self,
         queries: Sequence[str],
         *,
         anchor_refs: Sequence[str] = (),
         limit_per_query: int = 12,
-    ) -> dict[str, list[dict[str, Any]]]:
-        """Return bounded search evidence plus executable design candidates.
+    ) -> dict[str, Any]:
+        """Compatibility alias for clients using the former class-centric name."""
 
-        Natural-language matching discovers relevant behavior.  Existing RTM flow-step
-        provenance then expands matched use cases to their current class collaborations.
-        The expansion never creates a ref: every returned candidate is read from the
-        current catalog and the LLM must still select the actual revision owners.
-        """
-
-        normalized_queries = list(dict.fromkeys(
-            str(query or "").strip() for query in queries if str(query or "").strip()
-        ))[:5]
-        if not normalized_queries:
-            raise ValueError("revision search requires at least one query")
-        if limit_per_query < 1 or limit_per_query > 20:
-            raise ValueError("revision search limit must be between 1 and 20")
-
-        catalog = self._catalog()
-        result_sets = [
-            self.search_elements(query, limit=limit_per_query)
-            for query in normalized_queries
-        ]
-        interleaved = [
-            result_set[position]
-            for position in range(limit_per_query)
-            for result_set in result_sets
-            if position < len(result_set)
-        ]
-        matches = _unique_public_refs(interleaved)[:40]
-        matched_refs = [str(item.get("ref") or "") for item in matches]
-        use_case_ids: set[str] = set()
-        plans = {
-            str(item.get("ref") or ""): item
-            for item in _records(catalog.design_rtm.get("change_plan"))
-            if item.get("ref")
-        }
-
-        for ref in matched_refs:
-            if ref.startswith(("use_case:", "use_case_spec:")):
-                use_case_ids.add(ref.split(":", 1)[1])
-            plan = plans.get(ref)
-            sources = plan.get("sources") if isinstance(plan, Mapping) else None
-            if not isinstance(sources, Mapping):
-                continue
-            for step_ref in sources.get("flow_step") or []:
-                use_case_id = str(step_ref or "").split(":", 1)[0].strip()
-                if use_case_id:
-                    use_case_ids.add(use_case_id)
-
-        model = BCEModel.model_validate(catalog.state.get("extracted_bce_classes") or {})
-        collaboration_refs = [
-            f"class_diagram:{item.collaboration_id}"
-            for item in model.Collaborations
-            if set(item.use_case_ids) & use_case_ids
-        ]
-        ordered_candidate_refs = list(dict.fromkeys([
-            *(str(ref) for ref in anchor_refs if str(ref)),
-            *collaboration_refs,
-            *(
-                ref
-                for ref in matched_refs
-                if (element := catalog.resolve(ref)) is not None
-                and element.owner == "design"
-                and element.editable
-                and isinstance(element.content, Mapping)
-                and any(
-                    key in element.content
-                    for key in ("className", "collaborationId", "operationId")
-                )
-            ),
-        ]))
-        candidates = [
-            element.public(self.app_id)
-            for ref in ordered_candidate_refs[:20]
-            if (element := catalog.resolve(ref)) is not None
-        ]
-
-        anchor_set = {str(ref) for ref in anchor_refs if str(ref)}
-
-        def evidence_priority(item: dict[str, Any]) -> tuple[int, str]:
-            ref = str(item.get("ref") or "")
-            plan = plans.get(ref)
-            sources = plan.get("sources") if isinstance(plan, Mapping) else None
-            if ref.startswith("use_case_spec:"):
-                rank = 0
-            elif ref.startswith("use_case:"):
-                rank = 1
-            elif ref in anchor_set:
-                rank = 2
-            elif isinstance(sources, Mapping) and sources.get("flow_step"):
-                rank = 3
-            elif ref.startswith("requirement:"):
-                rank = 4
-            else:
-                rank = 5
-            return rank, ref
-
-        evidence: list[dict[str, Any]] = []
-        for item in sorted(matches, key=evidence_priority)[:24]:
-            ref = str(item.get("ref") or "")
-            element = catalog.resolve(ref)
-            if element is None:
-                continue
-            record = element.public(self.app_id)
-            content = _mapping(_safe_content(element.content))
-            if ref.startswith("use_case_spec:"):
-                record["behavior"] = {
-                    "use_case_id": content.get("use_case_id"),
-                    "name": content.get("name"),
-                    "main_scenario": content.get("main_scenario") or [],
-                    "extensions": content.get("extensions") or [],
-                }
-            elif (
-                ref in anchor_set
-                or any(key in content for key in ("operationId", "collaborationId"))
-            ):
-                record["content"] = content
-            plan = plans.get(ref)
-            sources = plan.get("sources") if isinstance(plan, Mapping) else None
-            if isinstance(sources, Mapping):
-                record["rtm_sources"] = {
-                    key: list(sources.get(key) or [])
-                    for key in ("class", "class_operation", "flow_step", "use_case")
-                    if sources.get(key)
-                }
-            evidence.append(record)
-
-        # Search ranking is optimized for discovery and can fill the evidence
-        # budget with requirement/use-case summaries before a collaboration is
-        # reached. Structured call patches need the exact current call IDs,
-        # receiver operation IDs, step refs, and bindings. Attach the bounded
-        # executable candidates themselves as read-only evidence so the model
-        # never has to reconstruct those values from a summary.
-        evidence_by_ref = {
-            str(item.get("ref") or ""): item for item in evidence if item.get("ref")
-        }
-        for ref in ordered_candidate_refs[:12]:
-            element = catalog.resolve(ref)
-            if element is None:
-                continue
-            content = _mapping(_safe_content(element.content))
-            if not any(
-                key in content for key in ("className", "collaborationId", "operationId")
-            ):
-                continue
-            record = evidence_by_ref.get(ref)
-            if record is None:
-                record = element.public(self.app_id)
-                evidence.append(record)
-                evidence_by_ref[ref] = record
-            record["content"] = content
-            plan = plans.get(ref)
-            sources = plan.get("sources") if isinstance(plan, Mapping) else None
-            if isinstance(sources, Mapping):
-                record["rtm_sources"] = {
-                    key: list(sources.get(key) or [])
-                    for key in ("class", "class_operation", "flow_step", "use_case")
-                    if sources.get(key)
-                }
-        return {"candidates": candidates, "evidence": evidence}
+        return self.search_change_context(
+            queries,
+            anchor_refs=anchor_refs,
+            limit_per_query=limit_per_query,
+        )
 
     def resolve_exact_elements(self, text: str, *, limit: int = 20) -> list[dict[str, Any]]:
         """Return catalog elements whose public identifier occurs literally in text.
@@ -1736,6 +1676,234 @@ def _catalog_refs_for_trace(
                 else element.ref
             )
     return sorted(result)
+
+
+def _artifact_context_index(catalog: _Catalog) -> ArtifactContextIndex:
+    """Build the shared read-only index from the current accepted snapshot."""
+
+    projected = project_artifact_trace(
+        dict(catalog.state),
+        implementation_rtm=catalog.implementation_rtm,
+    )
+    finding_nodes: list[TraceNode] = []
+    for element in catalog.elements.values():
+        if not element.ref.startswith("finding:"):
+            continue
+        finding_nodes.append(
+            TraceNode(TraceRef.parse(element.ref), _finding_source_refs(element))
+        )
+    trace = ArtifactTrace([*projected.nodes, *finding_nodes])
+    return ArtifactContextIndex(
+        (
+            ArtifactContextNode(
+                ref=element.ref,
+                trace_ref=_trace_ref_for_element(element),
+                selectable=bool(element.artifact_type),
+            )
+            for element in catalog.elements.values()
+        ),
+        trace,
+        aliases=catalog.aliases,
+    )
+
+
+def _finding_source_refs(element: _Element) -> tuple[TraceRef, ...]:
+    content = _mapping(element.content)
+    refs: list[TraceRef] = []
+    for value in [
+        *(content.get("target_ids") or []),
+        *(content.get("trace_refs") or []),
+    ]:
+        if not isinstance(value, str):
+            continue
+        try:
+            refs.append(TraceRef.parse(value.strip()))
+        except (TypeError, ValueError):
+            continue
+    refs.extend(
+        TraceRef("file", value.strip())
+        for value in content.get("file_hints") or []
+        if isinstance(value, str) and value.strip()
+    )
+    return tuple(refs)
+
+
+def _artifact_context_scope(
+    tools: ProjectTools,
+    artifact_stage: str | None,
+    *,
+    context_index: ArtifactContextIndex,
+    anchor_refs: Sequence[str],
+    matched_refs: Sequence[str],
+    preferred_refs: Sequence[str],
+) -> set[str] | None:
+    if not artifact_stage:
+        return None
+    stages = [artifact_stage]
+    if artifact_stage in _TESTING_ARTIFACT_STAGES:
+        stages.append("implementation")
+    scope = {
+        str(item.get("ref") or "")
+        for stage in stages
+        for item in tools.artifact_candidates(stage)
+        if item.get("ref")
+    }
+    if artifact_stage not in {"sequence_diagram", "erd"}:
+        return scope
+
+    # Projection views may name their exact BCE authority, but must not admit
+    # every same-stage class merely because it shares a word or a distant UC.
+    scope.update(preferred_refs)
+    scope.update(
+        canonical
+        for ref in anchor_refs
+        if (canonical := context_index.resolve(str(ref or "").strip())) is not None
+        and canonical.startswith("class_diagram:")
+    )
+    for ref in [*anchor_refs, *matched_refs]:
+        canonical = context_index.resolve(str(ref or "").strip())
+        if canonical is None or not canonical.startswith(("entity:", "sequence_diagram:")):
+            continue
+        scope.update(
+            upstream
+            for upstream in context_index.relations(canonical).direct_upstream
+            if upstream.startswith("class_diagram:")
+        )
+    return scope
+
+
+def _normalized_context_queries(queries: Sequence[str]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            str(query or "").strip()
+            for query in queries
+            if str(query or "").strip()
+        )
+    )[:5]
+
+
+def _interleaved_search_results(
+    result_sets: Sequence[Sequence[dict[str, Any]]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
+    interleaved = [
+        result_set[position]
+        for position in range(max((len(result) for result in result_sets), default=0))
+        for result_set in result_sets
+        if position < len(result_set)
+    ]
+    return _unique_public_refs(interleaved)[:limit]
+
+
+def _design_context_candidates(
+    catalog: _Catalog,
+    refs: Sequence[str],
+    plans: Mapping[str, Mapping[str, Any]],
+) -> list[str]:
+    """Map matched UC/flow evidence to exact current class collaborations."""
+
+    use_case_ids: set[str] = set()
+    for requested_ref in refs:
+        element = catalog.resolve(str(requested_ref or "").strip())
+        ref = element.ref if element is not None else str(requested_ref or "").strip()
+        if ref.startswith(("use_case:", "use_case_spec:")):
+            use_case_ids.add(ref.split(":", 1)[1])
+        plan = plans.get(ref)
+        sources = plan.get("sources") if isinstance(plan, Mapping) else None
+        if not isinstance(sources, Mapping):
+            continue
+        use_case_ids.update(
+            str(value).strip()
+            for value in sources.get("use_case") or []
+            if str(value).strip()
+        )
+        use_case_ids.update(
+            str(value).split(":", 1)[0].strip()
+            for value in sources.get("flow_step") or []
+            if str(value).strip()
+        )
+    if not use_case_ids:
+        return []
+    try:
+        model = BCEModel.model_validate(catalog.state.get("extracted_bce_classes") or {})
+    except (TypeError, ValueError):
+        return []
+    return [
+        f"class_diagram:{item.collaboration_id}"
+        for item in model.Collaborations
+        if set(item.use_case_ids) & use_case_ids
+    ]
+
+
+def _context_evidence(
+    app_id: str,
+    catalog: _Catalog,
+    context_index: ArtifactContextIndex,
+    evidence_refs: Sequence[str],
+    *,
+    candidate_refs: Sequence[str],
+    anchor_refs: Sequence[str],
+    plans: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Render a bounded, safe body for LLM target selection."""
+
+    anchors = {
+        element.ref
+        for ref in anchor_refs
+        if (element := catalog.resolve(str(ref or "").strip())) is not None
+    }
+    full_content = {*candidate_refs[:12], *anchors}
+    positions = {ref: index for index, ref in enumerate(evidence_refs)}
+
+    def priority(ref: str) -> tuple[int, int]:
+        if ref.startswith("use_case_spec:"):
+            rank = 0
+        elif ref.startswith("use_case:"):
+            rank = 1
+        elif ref in anchors:
+            rank = 2
+        elif ref.startswith("requirement:"):
+            rank = 3
+        elif ref in full_content:
+            rank = 4
+        else:
+            rank = 5
+        return rank, positions[ref]
+
+    evidence: list[dict[str, Any]] = []
+    for ref in sorted(evidence_refs, key=priority)[:24]:
+        element = catalog.resolve(ref)
+        if element is None:
+            continue
+        record = element.public(app_id)
+        safe_content = _safe_content(element.content)
+        content = _mapping(safe_content)
+        if ref.startswith("use_case_spec:"):
+            record["behavior"] = {
+                "use_case_id": content.get("use_case_id"),
+                "name": content.get("name"),
+                "main_scenario": content.get("main_scenario") or [],
+                "extensions": content.get("extensions") or [],
+            }
+        if ref in full_content:
+            record["content"] = safe_content
+        plan = plans.get(ref)
+        sources = plan.get("sources") if isinstance(plan, Mapping) else None
+        if isinstance(sources, Mapping):
+            record["rtm_sources"] = {
+                str(kind): list(values)
+                for kind, values in sources.items()
+                if values
+            }
+        relations = context_index.relations(ref)
+        if relations.direct_upstream or relations.direct_downstream:
+            record["trace"] = {
+                "direct_sources": list(relations.direct_upstream),
+                "direct_consumers": list(relations.direct_downstream),
+            }
+        evidence.append(record)
+    return evidence
 
 
 def _normalized_refs(refs: Sequence[str]) -> list[str]:

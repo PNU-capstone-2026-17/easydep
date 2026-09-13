@@ -217,6 +217,7 @@ class ConversationAgent:
             queries,
             exact_candidates,
             tools,
+            context=context,
         )
         candidates = _merge_candidates(
             exact_candidates,
@@ -265,13 +266,20 @@ class ConversationAgent:
                 )
             except KeyError:
                 continue
+        named_candidates = self._exact_catalog_candidates(text, tools)
+        search_context = self._revision_search_context(
+            [text],
+            _merge_candidates(named_candidates, exact_candidates),
+            tools,
+            context=context,
+        )
         # A selected card is locality, not necessarily the leaf that owns the
         # requested change. Include finite current-project matches so a named
         # operation inside a selected sequence can become the exact authority.
         candidates = _merge_candidates(
-            self._exact_catalog_candidates(text, tools),
+            named_candidates,
             exact_candidates,
-            tools.search_elements(text),
+            list(search_context.get("candidates") or []),
             self._selected_scope_candidates(
                 context, self._selected_artifact_candidates(context, tools)
             ),
@@ -281,6 +289,7 @@ class ConversationAgent:
             candidates,
             tools,
             context=context,
+            evidence=list(search_context.get("evidence") or []),
         )
 
     def _select_revision(
@@ -549,19 +558,34 @@ class ConversationAgent:
         queries: list[str],
         exact_candidates: list[dict],
         tools: ProjectTools,
+        *,
+        context: ConversationContext | None = None,
     ) -> dict[str, list[dict]]:
-        """Ask the project tool for bounded semantic and RTM-backed evidence."""
+        """Ask the project tool for bounded, cross-stage trace evidence."""
 
-        search = getattr(tools, "search_revision_context", None)
+        anchors = [
+            str(item.get("ref") or "")
+            for item in exact_candidates
+            if item.get("ref")
+        ]
+        search = getattr(tools, "search_change_context", None)
         if callable(search):
             result = search(
                 queries,
-                anchor_refs=[
-                    str(item.get("ref") or "")
-                    for item in exact_candidates
-                    if item.get("ref")
-                ],
+                anchor_refs=anchors,
+                artifact_stage=str(
+                    ConversationAgent._selection(context).get("artifact_stage") or ""
+                ).strip()
+                or None,
             )
+            if isinstance(result, dict):
+                return {
+                    "candidates": list(result.get("candidates") or []),
+                    "evidence": list(result.get("evidence") or []),
+                }
+        search = getattr(tools, "search_revision_context", None)
+        if callable(search):
+            result = search(queries, anchor_refs=anchors)
             if isinstance(result, dict):
                 return {
                     "candidates": list(result.get("candidates") or []),

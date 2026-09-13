@@ -199,6 +199,14 @@ def _direct_links(state: dict, known_classes: set[str]) -> list[dict[str, str]]:
         and str(operation.get("operationId") or "").strip()
         and declared_method(operation)
     }
+    declared_methods = {
+        (class_name, parsed_method)
+        for item in class_model.get("Classes", []) or []
+        if isinstance(item, dict)
+        if (class_name := str(item.get("className") or "").strip())
+        for signature in _class_method_signatures(item)
+        if (parsed_method := method_name(signature))
+    }
     declared_operation_ids = set(declared_operations.values())
     links: set[tuple[str, str, str]] = set()
 
@@ -252,15 +260,20 @@ def _direct_links(state: dict, known_classes: set[str]) -> list[dict[str, str]]:
         method = method_name(str(binding.get("method") or "").strip())
         endpoint_use_cases = set(_as_list(endpoint.get("use_case_ids")))
         control_operation = declared_operations.get((control, method))
-        if control not in known_classes or not control_operation or not endpoint_use_cases:
+        if (
+            control not in known_classes
+            or (control, method) not in declared_methods
+            or not endpoint_use_cases
+        ):
             continue
 
         links.add((f"api_spec:{operation}", f"class_diagram:{control}", "binds"))
-        links.add((
-            f"api_spec:{operation}",
-            f"class_diagram:{control_operation}",
-            "binds_operation",
-        ))
+        if control_operation:
+            links.add((
+                f"api_spec:{operation}",
+                f"class_diagram:{control_operation}",
+                "binds_operation",
+            ))
         interaction_id = str(endpoint.get("interaction_id") or "").strip()
         boundary_operation = interaction_id.partition(" -> ")[0].strip()
         if boundary_operation in declared_operation_ids:
@@ -568,6 +581,13 @@ def _build_change_plan(matrix: dict) -> list[dict[str, Any]]:
                 "ref": f"{row['stage']}:{row['element']}",
                 "stage": row["stage"],
                 "element": row["element"],
+                # Keep the row's exact provenance with the executable view.
+                # Context search must not re-derive flow-step or class links
+                # from names after the RTM has already established them.
+                "sources": {
+                    kind: list(refs)
+                    for kind, refs in row.get("sources", {}).items()
+                },
                 # Direct, contract-backed neighbours.  The client can show
                 # these as the bounded reverse-change scope before a revision
                 # is applied; broad provenance alone is never used to guess it.

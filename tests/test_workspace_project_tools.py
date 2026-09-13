@@ -18,8 +18,14 @@ from app.db.models import (
 from app.design.services.class_diagram.identity import stable_operation_id
 from app.workspace.conversation import project_tools as project_tools_module
 from app.workspace.conversation.context import build_conversation_context
-from app.workspace.conversation.contracts import Clarification, CommandIntent, Reply
+from app.workspace.conversation.contracts import (
+    Clarification,
+    CommandIntent,
+    Reply,
+    RevisionInterpretation,
+)
 from app.workspace.conversation.project_tools import ProjectTools
+from app.workspace.conversation.revision_planner import RevisionPlanner
 
 APP_ID = "11111111-1111-4111-8111-111111111111"
 
@@ -248,6 +254,200 @@ def test_revision_search_maps_use_case_evidence_to_current_collaboration(
     assert collaboration["content"]["collaborationId"] == "UC-ORDER:main:1"
     assert collaboration["content"]["useCaseIds"] == ["UC-ORDER"]
     assert collaboration["content"]["calls"] == []
+    assert collaboration["rtm_sources"] == {"use_case": ["UC-ORDER"]}
+
+
+def test_change_context_uses_the_global_trace_with_api_scope(
+    tools: ProjectTools,
+) -> None:
+    result = tools.search_change_context(
+        ["OrderControl"],
+        artifact_stage="api_spec",
+    )
+
+    assert [item["ref"] for item in result["candidates"]] == [
+        "api_spec:placeOrder"
+    ]
+    class_evidence = next(
+        item for item in result["evidence"]
+        if item["ref"] == "class_diagram:OrderControl"
+    )
+    assert "api_spec:placeOrder" in class_evidence["trace"]["direct_consumers"]
+
+
+def test_selected_stage_filters_exact_same_name_hits_from_other_artifacts(
+    tools: ProjectTools,
+) -> None:
+    result = tools.search_change_context(
+        [
+            "The requirements should state that members receive an email "
+            "after order confirmation."
+        ],
+        anchor_refs=["entity:Order"],
+        artifact_stage="refined_requirements",
+    )
+
+    assert [item["ref"] for item in result["candidates"]] == [
+        "requirement:REQ-ORDER"
+    ]
+    assert "entity:Order" in {
+        item["ref"] for item in result["evidence"]
+    }
+
+
+def test_change_context_can_cross_design_to_the_implementation_scope(
+    tools: ProjectTools,
+) -> None:
+    result = tools.search_change_context(
+        ["OrderControl"],
+        artifact_stage=TYPE_SOURCE_CODE,
+    )
+
+    candidate_refs = {item["ref"] for item in result["candidates"]}
+    assert candidate_refs == {
+        "task:implement-order",
+        "file:application/src/OrderService.java",
+    }
+    assert all(item["owner"] == "implementation" for item in result["candidates"])
+    assert "task:implement-order" in result["relations"][
+        "class_diagram:OrderControl"
+    ]["downstream"]
+
+
+def test_sequence_scope_includes_its_exact_class_collaboration_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _state()
+    state["extracted_bce_classes"]["Collaborations"] = [
+        {
+            "collaborationId": "UC-ORDER:main:1",
+            "useCaseIds": ["UC-ORDER"],
+            "calls": [],
+        }
+    ]
+    monkeypatch.setattr(
+        project_tools_module.artifact_repository,
+        "load_state",
+        lambda _app_id: state,
+    )
+    monkeypatch.setattr(
+        project_tools_module.artifact_repository,
+        "load_file_snapshot",
+        lambda *_args: _snapshot(),
+    )
+    monkeypatch.setattr(
+        project_tools_module.workspace_repository,
+        "latest_command",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = ProjectTools(APP_ID).search_change_context(
+        ["add a validation call"],
+        anchor_refs=["sequence_diagram:UC-ORDER"],
+        artifact_stage="sequence_diagram",
+    )
+
+    assert [item["ref"] for item in result["candidates"]][:2] == [
+        "sequence_diagram:UC-ORDER",
+        "class_diagram:UC-ORDER:main:1",
+    ]
+
+
+def test_erd_feedback_finds_and_routes_to_its_exact_class_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _state()
+    state["extracted_bce_classes"]["Classes"].append(
+        {
+            "className": "Order",
+            "stereotype": "Entity",
+            "use_case_ids": ["UC-ORDER"],
+            "fields": [],
+            "operations": [],
+        }
+    )
+    monkeypatch.setattr(
+        project_tools_module.artifact_repository,
+        "load_state",
+        lambda _app_id: state,
+    )
+    monkeypatch.setattr(
+        project_tools_module.artifact_repository,
+        "load_file_snapshot",
+        lambda *_args: _snapshot(),
+    )
+    monkeypatch.setattr(
+        project_tools_module.workspace_repository,
+        "latest_command",
+        lambda *_args, **_kwargs: None,
+    )
+    tools = ProjectTools(APP_ID)
+
+    context = tools.search_change_context(
+        ["Order should store a delivery address."],
+        anchor_refs=["entity:Order"],
+        artifact_stage="erd",
+    )
+    plan = RevisionPlanner(tools).plan(
+        RevisionInterpretation(
+            targets=["entity:Order"],
+            semantic_scope="contract",
+            requested_effect="Add a delivery address.",
+            change_type="add",
+        )
+    )
+
+    candidate_refs = [item["ref"] for item in context["candidates"]]
+    assert candidate_refs[:2] == [
+        "entity:Order",
+        "class_diagram:Order",
+    ]
+    assert "class_diagram:OrderControl" not in candidate_refs
+    assert plan.status == "needs_confirmation"
+    assert [target.ref for target in plan.authority_targets] == [
+        "class_diagram:Order"
+    ]
+
+
+def test_testing_finding_context_uses_exact_file_hints_for_repair_scope(
+    tools: ProjectTools,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def latest_command(_app_id: str, *, stage: str) -> dict[str, Any] | None:
+        if stage != "testing":
+            return None
+        return {
+            "command_id": "testing-1",
+            "stage": "testing",
+            "status": "AWAITING_INPUT",
+            "result": {
+                "blocking_findings": [
+                    {
+                        "code": "testing.static",
+                        "repair_owner": "implementation",
+                        "file_hints": ["application/src/OrderService.java"],
+                    }
+                ]
+            },
+        }
+
+    monkeypatch.setattr(
+        project_tools_module.workspace_repository,
+        "latest_command",
+        latest_command,
+    )
+
+    result = tools.search_change_context(
+        ["testing.static"],
+        artifact_stage="TESTING_RESULTS",
+    )
+
+    candidate_refs = {item["ref"] for item in result["candidates"]}
+    assert {
+        "finding:testing.static",
+        "file:application/src/OrderService.java",
+        "task:implement-order",
+    } <= candidate_refs
 
 
 def test_exact_identifier_and_path_search_work_across_registration_and_incident_domains(

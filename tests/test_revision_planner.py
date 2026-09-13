@@ -204,6 +204,64 @@ def test_local_revision_of_a_later_owner_stage_requires_confirmation() -> None:
     assert "delivery_stage_transition_requires_confirmation" in plan.reason_codes
 
 
+def test_persisted_deployment_workload_is_a_local_design_target() -> None:
+    tools = _Tools()
+    workload = _target(
+        "deployment_diagram:order-api",
+        "workload",
+        "design",
+        25,
+    )
+    tools.targets[workload.ref] = workload
+    tools.relations[workload.ref] = {"upstream": [], "downstream": []}
+
+    plan = RevisionPlanner(tools).plan(  # type: ignore[arg-type]
+        RevisionInterpretation(
+            targets=[workload.ref],
+            semantic_scope="behavior",
+            requested_effect="Use the order database.",
+            change_type="modify",
+        )
+    )
+
+    assert plan.status == "ready_local"
+    assert [target.ref for target in plan.authority_targets] == [workload.ref]
+    assert plan.execution_mode == "targeted_revision"
+
+
+def test_read_only_deployment_resource_routes_to_confirmed_stage_rewind() -> None:
+    tools = _Tools()
+    resource = _target(
+        "resource:aws:ap-northeast-2:databases:order-db",
+        "resource",
+        "design",
+        25,
+    )
+    stage = _target(
+        "design_stage:deployment_diagram",
+        "design_stage",
+        "design",
+        25,
+    )
+    tools.targets[resource.ref] = resource
+    tools.targets[stage.ref] = stage
+    tools.relations[stage.ref] = {"upstream": [], "downstream": []}
+
+    plan = RevisionPlanner(tools).plan(  # type: ignore[arg-type]
+        RevisionInterpretation(
+            targets=[resource.ref],
+            semantic_scope="contract",
+            requested_effect="Use PostgreSQL 17.",
+            change_type="modify",
+        )
+    )
+
+    assert plan.status == "needs_confirmation"
+    assert [target.ref for target in plan.authority_targets] == [stage.ref]
+    assert plan.execution_mode == "stage_rewind"
+    assert "targeted_reviser_unavailable" in plan.reason_codes
+
+
 def test_design_feedback_routes_exact_spec_edit_back_to_requirements_confirmation() -> None:
     tools = _Tools()
     tools.current_stage = "design"
