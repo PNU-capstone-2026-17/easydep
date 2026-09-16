@@ -1195,7 +1195,19 @@ def _repair_execution_plan(
             for key in ("code", "message", "stepId", "operationId")
         },
         "steps": [
-            {key: step.get(key) for key in ("stepId", "operationId", "statusCode", "status")}
+            {
+                **{
+                    key: step.get(key)
+                    for key in ("stepId", "operationId", "statusCode", "status", "request")
+                    if step.get(key) is not None
+                },
+                **(
+                    {"responseBody": str(step.get("responseBody"))[:4000]}
+                    if step.get("responseBody") is not None
+                    else {}
+                ),
+                **({"finding": step["finding"]} if isinstance(step.get("finding"), dict) else {}),
+            }
             for step in result.get("steps") or [] if isinstance(step, dict)
         ],
     }
@@ -1482,6 +1494,40 @@ def _failure_finding(workflow_id: str, result: dict[str, Any]) -> dict[str, Any]
     return finding
 
 
+def _workflow_failure_analysis(
+    workflow_id: str,
+    result: dict[str, Any],
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    """Make one use-case failure actionable without asking an LLM to guess ownership."""
+
+    defect_class = str(result.get("defectClass") or "SUT_DEFECT")
+    route = repair_route(defect_class)
+    use_case = candidate.get("useCase") if isinstance(candidate.get("useCase"), dict) else {}
+    finding = _failure_finding(workflow_id, result)
+    return {
+        "workflowId": str(result.get("failedWorkflowId") or workflow_id),
+        "useCaseId": str(
+            use_case.get("use_case_id") or use_case.get("useCaseId") or workflow_id
+        ),
+        "useCaseName": str(use_case.get("name") or workflow_id),
+        "defectClass": defect_class,
+        "repairOwner": route["repairOwner"],
+        "repairAction": {
+            "TEST_DEFECT": "repair_test_plan",
+            "SUT_DEFECT": "delegate_implementation_repair",
+            "ENVIRONMENT_DEFECT": "restore_environment",
+            "UPSTREAM_AMBIGUITY": "request_design_or_test_data",
+        }.get(defect_class, "review_failure"),
+        "reason": str(result.get("reason") or "Dynamic functional workflow failed.")[-4000:],
+        "finding": finding,
+        "planDigest": str(result.get("planDigest") or ""),
+        "requestDigest": (
+            stable_digest(finding["request"]) if finding.get("request") else ""
+        ),
+    }
+
+
 def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
     """Plan once, execute Arazzo workflows, and preserve exact inputs for repair."""
     scope = state.get("gate_scope")
@@ -1688,6 +1734,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
     }
     results: list[dict[str, Any]] = []
     plan_repairs: list[dict[str, Any]] = []
+    failure_analyses: list[dict[str, Any]] = []
     reused_workflow_ids: list[str] = []
     failures: list[tuple[str, dict[str, Any]]] = []
     priority_workflow_id = str(state.get("priority_workflow_id") or "").strip()
@@ -1805,29 +1852,32 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                        "reason": str(result.get("reason") or "")}
             plan_repairs.append(attempt)
             candidate = candidate_by_workflow_id[workflow_id]
-            if not _read_only_workflow(workflow, candidate):
-                attempt["detail"] = "Automatic replay requires a fresh application: workflow may change data."
+            emit_testing_progress(
+                phase="repair",
+                scope="workflow",
+                status="RUNNING",
+                label="Analyzing and repairing test plan from execution logs",
+                workflow_id=workflow_id,
+            )
+            try:
+                if client is None:
+                    client = _client()
+                updated, evidence = _repair_execution_plan(
+                    client, document, workflow, candidate, candidates, frozen["openapi"], result
+                )
+                # Preserve input values already resolved by the first execution.
+                for key, values in (result.get("workflowInputsById") or {}).items():
+                    if key in workflow_ids and isinstance(values, dict):
+                        workflow_inputs[key] = deepcopy(values)
+                if isinstance(result.get("workflowInputs"), dict):
+                    workflow_inputs[workflow_id] = deepcopy(result["workflowInputs"])
+                document = updated
+                workflow = next(item for item in document["workflows"] if item["workflowId"] == workflow_id)
+                attempt.update({"status": "RECHECKING", "evidence": evidence})
+            except Exception as error:
+                attempt.update({"status": "FAILED", "detail": str(error)})
             else:
-                emit_testing_progress(phase="repair", scope="workflow", status="RUNNING",
-                                      label="Repairing test plan from execution logs", workflow_id=workflow_id)
-                try:
-                    if client is None:
-                        client = _client()
-                    updated, evidence = _repair_execution_plan(
-                        client, document, workflow, candidate, candidates, frozen["openapi"], result
-                    )
-                    # Preserve input values already resolved by the first execution.
-                    for key, values in (result.get("workflowInputsById") or {}).items():
-                        if key in workflow_ids and isinstance(values, dict):
-                            workflow_inputs[key] = deepcopy(values)
-                    if isinstance(result.get("workflowInputs"), dict):
-                        workflow_inputs[workflow_id] = deepcopy(result["workflowInputs"])
-                    document = updated
-                    workflow = next(item for item in document["workflows"] if item["workflowId"] == workflow_id)
-                    attempt.update({"status": "RECHECKING", "evidence": evidence})
-                except Exception as error:
-                    attempt.update({"status": "FAILED", "detail": str(error)})
-                else:
+                if _read_only_workflow(workflow, candidate):
                     try:
                         result = execute_arazzo_workflow(
                             document, workflow_id, openapi=frozen["openapi"], target_url=target_url,
@@ -1838,8 +1888,37 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                     except Exception as error:
                         result = _report("UNAVAILABLE", "INCONCLUSIVE", str(error), "ENVIRONMENT_DEFECT")
                     attempt["status"] = "PASS" if result.get("gateStatus") == "PASS" else "FAILED"
-                emit_testing_progress(phase="repair", scope="workflow", status=attempt["status"] if attempt["status"] == "PASS" else "FAIL",
-                                      label="Test plan repair complete", workflow_id=workflow_id)
+                else:
+                    attempt.update(
+                        {
+                            "status": "READY_FOR_RERUN",
+                            "detail": (
+                                "The repaired test plan is preserved; a fresh application "
+                                "runtime is required before replaying a state-changing workflow."
+                            ),
+                        }
+                    )
+            emit_testing_progress(
+                phase="repair",
+                scope="workflow",
+                status=(
+                    "PASS"
+                    if attempt["status"] == "PASS"
+                    else "DEFERRED"
+                    if attempt["status"] == "READY_FOR_RERUN"
+                    else "FAIL"
+                ),
+                label="Test plan repair complete",
+                workflow_id=workflow_id,
+            )
+        if str(result.get("gateStatus") or "").upper() != "PASS":
+            failure_analyses.append(
+                _workflow_failure_analysis(
+                    workflow_id,
+                    result,
+                    candidate_by_workflow_id[workflow_id],
+                )
+            )
         saved_inputs = result.get("workflowInputs")
         if isinstance(saved_inputs, dict):
             workflow_inputs[workflow_id] = deepcopy(saved_inputs)
@@ -1891,6 +1970,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         "reusedWorkflowIds": reused_workflow_ids,
         "executionOrder": [item["workflowId"] for item in results],
         "requirements": _requirements(results, candidates),
+        "failureAnalyses": failure_analyses,
         "targetUrl": target_url,
     }
     if failures:

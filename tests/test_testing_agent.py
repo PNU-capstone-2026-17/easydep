@@ -216,6 +216,61 @@ def test_dynamic_and_static_verification_branches_run_concurrently() -> None:
     assert result["static_report"]["gateStatus"] == "PASS"
 
 
+def test_dynamic_failure_analyses_become_use_case_scoped_repair_blockers(monkeypatch) -> None:
+    testing_input = FrozenTestingInput(
+        app_id="app-1",
+        implementation_job_id="implementation-1",
+        artifact_version_ids={TYPE_SOURCE_CODE: 1, TYPE_DEPLOYMENT_FILE: 2},
+    )
+    monkeypatch.setattr(testing_service, "load_file_snapshot", lambda *_args, **_kwargs: None)
+    verification = {
+        "reports": {
+            "dynamicFunctional": {
+                "gateStatus": "FAIL",
+                "candidateDigest": "candidate-1",
+                "planDigest": "plan-1",
+                "candidatePlan": {"arazzo": "1.1.0"},
+                "failureAnalyses": [
+                    {
+                        "workflowId": "workflow-UC-1",
+                        "useCaseId": "UC-1",
+                        "useCaseName": "Create order",
+                        "defectClass": "SUT_DEFECT",
+                        "repairOwner": "implementation",
+                        "repairAction": "delegate_implementation_repair",
+                        "reason": "POST /orders returned HTTP 500",
+                        "requestDigest": "request-1",
+                        "finding": {
+                            "stepId": "create",
+                            "operationId": "createOrder",
+                            "request": {"method": "POST", "path": "/orders"},
+                        },
+                    },
+                    {
+                        "workflowId": "workflow-UC-2",
+                        "useCaseId": "UC-2",
+                        "useCaseName": "List orders",
+                        "defectClass": "TEST_DEFECT",
+                        "repairOwner": "testing",
+                        "repairAction": "repair_test_plan",
+                        "reason": "Response pointer is invalid",
+                        "finding": {"stepId": "list", "operationId": "listOrders"},
+                    },
+                ],
+            }
+        }
+    }
+
+    blockers = testing_service._blocking_findings(testing_input, verification)
+
+    dynamic = [item for item in blockers if item["code"] == "testing.dynamic-functional"]
+    assert [(item["use_case_id"], item["repair_owner"]) for item in dynamic] == [
+        ("UC-1", "implementation"),
+        ("UC-2", "testing"),
+    ]
+    assert dynamic[0]["evidence"]["finding"]["operationId"] == "createOrder"
+
+
 # ---------------------------------------------------------------------------
 # Bringing the generated application up for the dynamic stages
 # ---------------------------------------------------------------------------

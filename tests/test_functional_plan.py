@@ -1313,15 +1313,63 @@ def test_execution_repair_respects_ownership_and_replay_boundary(monkeypatch, de
     def unexpected_generation(*args, **kwargs):
         pytest.fail("This failure must not trigger local plan repair/replay")
 
+    def repair_generation(*_args, **_kwargs):
+        revised = deepcopy(_document()["workflows"][0])
+        revised["steps"][0]["outputs"] = {"payload": "$response.body"}
+        return revised
+
     monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
-    monkeypatch.setattr(dynamic, "_client", unexpected_generation)
+    monkeypatch.setattr(
+        dynamic,
+        "_client",
+        object if defect == "TEST_DEFECT" else unexpected_generation,
+    )
+    monkeypatch.setattr(dynamic, "_generate", repair_generation)
     report = dynamic.dynamic_functional_node(state)["dynamic_functional_report"]
     assert len(calls) == 1
     assert report["defectClass"] == defect
     if defect == "TEST_DEFECT":
-        assert report["planRepairs"][0]["status"] == "DEFERRED"
+        assert report["planRepairs"][0]["status"] == "READY_FOR_RERUN"
     else:
         assert report["planRepairs"] == []
+
+
+def test_dynamic_report_keeps_one_actionable_analysis_per_failed_use_case(monkeypatch) -> None:
+    state = _state(2)
+
+    def execute(_document, workflow_id, **_kwargs):
+        return {
+            "workflowId": workflow_id,
+            "gateStatus": "FAIL",
+            "defectClass": "SUT_DEFECT",
+            "reason": f"{workflow_id} returned HTTP 500",
+            "failedWorkflowId": workflow_id,
+            "failedStepId": "health",
+            "finding": {"code": "HTTP_STATUS_NOT_SUCCESS", "stepId": "health"},
+            "steps": [
+                    {
+                        "workflowId": workflow_id,
+                        "stepId": "health",
+                        "operationId": "health",
+                        "status": "failed",
+                        "request": {"method": "GET", "path": "/health"},
+                    "responseBody": "failure",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
+
+    report = dynamic.dynamic_functional_node(state)["dynamic_functional_report"]
+
+    assert [item["workflowId"] for item in report["failureAnalyses"]] == [
+        "workflow-UC-1",
+        "workflow-UC-2",
+    ]
+    assert {item["repairAction"] for item in report["failureAnalyses"]} == {
+        "delegate_implementation_repair"
+    }
+    assert all(item["finding"]["request"]["path"] == "/health" for item in report["failureAnalyses"])
 
 
 def test_incomplete_structured_output_is_rejected_before_json_parsing() -> None:

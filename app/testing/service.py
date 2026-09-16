@@ -493,6 +493,81 @@ def _blocking_findings(
                 "evidence": evidence,
             }
         )
+    analyses = dynamic.get("failureAnalyses") or []
+    if isinstance(analyses, list) and analyses:
+        # The aggregate dynamic report exposes the first failed workflow for
+        # backwards compatibility. Replace its single blocker with the
+        # use-case-scoped analyses so an implementation repair receives every
+        # independently classified failure and its own HTTP evidence.
+        result = [item for item in result if item.get("code") != "testing.dynamic-functional"]
+        route_by_class = {
+            "TEST_DEFECT": "testing",
+            "SUT_DEFECT": "implementation",
+            "ENVIRONMENT_DEFECT": "environment",
+            "UPSTREAM_AMBIGUITY": "requirements-or-design",
+        }
+        for analysis in analyses:
+            if not isinstance(analysis, dict):
+                continue
+            defect_class = str(analysis.get("defectClass") or "SUT_DEFECT")
+            repair_owner = str(
+                analysis.get("repairOwner") or route_by_class.get(defect_class, "testing")
+            )
+            finding = analysis.get("finding")
+            finding = dict(finding) if isinstance(finding, dict) else {}
+            scoped_dynamic = {
+                **dynamic,
+                "finding": finding,
+                "reason": str(analysis.get("reason") or dynamic.get("reason") or ""),
+                "defectClass": defect_class,
+                "failedWorkflowId": str(analysis.get("workflowId") or ""),
+                "failedStepId": str(finding.get("stepId") or ""),
+                "defect": {
+                    "class": defect_class,
+                    "defectClass": defect_class,
+                    "route": repair_owner,
+                    "preserveTests": defect_class != "TEST_DEFECT",
+                },
+            }
+            target_ids = _dynamic_target_ids(scoped_dynamic)
+            file_hints, related_refs = _trace_hints(testing_input, scoped_dynamic, target_ids)
+            evidence = _evidence_for_gate(
+                "dynamicFunctional", scoped_dynamic, target_ids=target_ids
+            )
+            result.append(
+                {
+                    "code": "testing.dynamic-functional",
+                    "stage": "testing.dynamic-functional",
+                    "target_ids": target_ids,
+                    "message": str(
+                        analysis.get("reason") or "Dynamic functional workflow failed."
+                    ),
+                    "severity": "error",
+                    "repairable": defect_class != "ENVIRONMENT_DEFECT",
+                    "defect_class": defect_class,
+                    "repair_owner": repair_owner,
+                    "implementation_owner": (
+                        _DYNAMIC_IMPLEMENTATION_OWNER
+                        if repair_owner == "implementation"
+                        else None
+                    ),
+                    "preserve_tests": defect_class != "TEST_DEFECT",
+                    "candidate_digest": scoped_dynamic.get("candidateDigest"),
+                    "plan_digest": scoped_dynamic.get("planDigest"),
+                    "request_digest": analysis.get("requestDigest"),
+                    "candidate_plan": scoped_dynamic.get("candidatePlan"),
+                    "workflow_inputs": scoped_dynamic.get("workflowInputs"),
+                    "input_values": scoped_dynamic.get("inputValues"),
+                    "failed_workflow_id": scoped_dynamic.get("failedWorkflowId"),
+                    "failed_step_id": scoped_dynamic.get("failedStepId"),
+                    "file_hints": file_hints,
+                    "trace_refs": related_refs,
+                    "use_case_id": analysis.get("useCaseId"),
+                    "use_case_name": analysis.get("useCaseName"),
+                    "repair_action": analysis.get("repairAction"),
+                    "evidence": evidence,
+                }
+            )
     return result
 
 
