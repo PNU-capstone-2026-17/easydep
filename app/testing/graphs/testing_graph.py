@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 from langgraph.graph import END, START, StateGraph
 
 from app.testing.nodes.dynamic_functional import dynamic_functional_node
@@ -8,8 +10,11 @@ from app.testing.progress import emit_testing_progress
 from app.testing.schemas.testing_state import TestingState
 from app.testing.utils.gates import gate_status
 
-def _after_dynamic(state: TestingState) -> str:
-    """Record the dynamic result and continue with independent verification gates."""
+def _dynamic_branch(state: TestingState) -> dict[str, Any]:
+    """Run dynamic verification without writing keys owned by the static branch."""
+
+    update = dict(dynamic_functional_node(state))
+    update.pop("current_node", None)
 
     scope = state.get("gate_scope")
     selected = (
@@ -20,8 +25,8 @@ def _after_dynamic(state: TestingState) -> str:
     # static-only repair는 이전 dynamic FAIL을 고치는 작업이 아니다. 이전 report를
     # 재사용했더라도 요청된 정적 gate는 실제로 실행한다.
     if "dynamicFunctional" not in selected:
-        return "static_verification"
-    dynamic = state.get("dynamic_functional_report") or {}
+        return update
+    dynamic = update.get("dynamic_functional_report") or {}
     dynamic_status = gate_status(dynamic)
     emit_testing_progress(
         phase="dynamic",
@@ -36,26 +41,36 @@ def _after_dynamic(state: TestingState) -> str:
         label="Completed dynamic API verification",
         gate="dynamicFunctional",
     )
-    return "static_verification"
+    return update
+
+
+def _static_branch(state: TestingState) -> dict[str, Any]:
+    """Run static gates without racing on the shared current_node state key."""
+
+    update = dict(static_verification_node(state))
+    update.pop("current_node", None)
+    return update
+
+
+def _join_verification(_state: TestingState) -> dict[str, str]:
+    """Publish one deterministic node after both independent branches finish."""
+
+    return {"current_node": "verification_complete"}
 
 
 def create_testing_graph():
-    """Run dynamic verification first, then complete the independent static gates."""
+    """Run dynamic and static verification concurrently, then join their reports."""
     workflow = StateGraph(TestingState)
 
-    workflow.add_node("dynamic_functional", dynamic_functional_node)
-    workflow.add_node("static_verification", static_verification_node)
+    workflow.add_node("dynamic_functional", _dynamic_branch)
+    workflow.add_node("static_verification", _static_branch)
+    workflow.add_node("join_verification", _join_verification)
 
     workflow.add_edge(START, "dynamic_functional")
-    workflow.add_conditional_edges(
-        "dynamic_functional",
-        _after_dynamic,
-        {
-            "static_verification": "static_verification",
-            END: END,
-        },
-    )
-    workflow.add_edge("static_verification", END)
+    workflow.add_edge(START, "static_verification")
+    workflow.add_edge("dynamic_functional", "join_verification")
+    workflow.add_edge("static_verification", "join_verification")
+    workflow.add_edge("join_verification", END)
     return workflow.compile()
 
 

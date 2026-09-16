@@ -13,6 +13,7 @@ import json
 import re
 from collections.abc import Callable
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from app.artifact_trace import TraceRef
@@ -952,15 +953,21 @@ def run_testing(
             }
         )
 
+    progress_lock = RLock()
+
     def observe_testing_progress(event: dict[str, Any]) -> None:
         nonlocal testing_progress
-        testing_progress = reduce_testing_progress(testing_progress, event)
-        save_progress(
-            {
-                "current_node": "verification",
-                "result": partial_result,
-            }
-        )
+        # Dynamic planning/execution and static gates emit from separate graph
+        # workers. Folding and persisting must be one critical section or two
+        # snapshots can read the same predecessor and overwrite each other.
+        with progress_lock:
+            testing_progress = reduce_testing_progress(testing_progress, event)
+            save_progress(
+                {
+                    "current_node": "verification",
+                    "result": partial_result,
+                }
+            )
 
     # 파일 복원이나 도구 실행 전에 고정 입력을 저장한다. 서버가 여기서 중단되어도 다음
     # 실행은 같은 산출물 ID와 계약 digest를 사용한다.

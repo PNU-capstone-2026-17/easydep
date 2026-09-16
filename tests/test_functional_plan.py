@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from threading import Barrier
 from types import SimpleNamespace
 from typing import Any
 
@@ -980,17 +981,28 @@ def test_plan_progress_identifies_completed_retrying_and_failed_use_cases(monkey
     monkeypatch.setattr(dynamic, "_generate", generate)
     with testing_progress_scope(events.append), pytest.raises(ValueError, match="Invalid reference"):
         dynamic._generate_document(object(), candidates, openapi)
-    assert [(e["workflow_id"], e["status"]) for e in events] == [
+    assert [(e["workflow_id"], e["status"]) for e in events[:3]] == [
         ("workflow-UC-1", "PENDING"), ("workflow-UC-2", "PENDING"),
         ("workflow-UC-3", "PENDING"),
-        ("workflow-UC-1", "RUNNING"), ("workflow-UC-1", "PASS"),
-        ("workflow-UC-2", "RUNNING"), ("workflow-UC-2", "RUNNING"),
-        ("workflow-UC-2", "FAIL"), ("workflow-UC-3", "DEFERRED"),
     ]
-    assert events[-3]["attempt"] == 2
-    assert events[-2]["use_case_id"] == "UC-2"
-    assert events[-2]["use_case_name"] == "Check service 2"
-    assert events[-1]["use_case_id"] == "UC-3"
+    statuses = {
+        workflow_id: [
+            event["status"]
+            for event in events
+            if event["workflow_id"] == workflow_id
+        ]
+        for workflow_id in ("workflow-UC-1", "workflow-UC-2", "workflow-UC-3")
+    }
+    assert statuses == {
+        "workflow-UC-1": ["PENDING", "RUNNING", "PASS"],
+        "workflow-UC-2": ["PENDING", "RUNNING", "RUNNING", "FAIL"],
+        "workflow-UC-3": ["PENDING", "RUNNING", "PASS"],
+    }
+    failed = next(event for event in events if event["status"] == "FAIL")
+    assert failed["attempt"] == 2
+    assert failed["use_case_id"] == "UC-2"
+    assert failed["use_case_name"] == "Check service 2"
+    assert not [event for event in events if event["status"] == "DEFERRED"]
 
 
 def test_generated_document_gets_one_bounded_regeneration(
@@ -1090,6 +1102,36 @@ def test_generated_document_retries_only_the_failed_workflow(
     document = dynamic._generate_document(object(), candidates, openapi)
 
     assert calls == {"workflow-UC-1": 1, "workflow-UC-2": 2}
+    assert [workflow["workflowId"] for workflow in document["workflows"]] == [
+        "workflow-UC-1",
+        "workflow-UC-2",
+    ]
+
+
+def test_independent_llm_workflow_plans_are_generated_concurrently(monkeypatch) -> None:
+    openapi = _openapi_with_secondary_operation("UC-1", "UC-2")
+    candidates = build_workflow_candidates(_requirements(2), _use_cases(2), openapi)
+    rendezvous = Barrier(2)
+
+    def generate(
+        _client: object,
+        candidate: dict[str, Any],
+        error: str = "",
+    ) -> dict[str, Any]:
+        assert error == ""
+        rendezvous.wait(timeout=3)
+        return attach_workflow_trace(
+            {
+                "workflowId": candidate["workflowId"],
+                "steps": [{"stepId": "health", "operationId": "health"}],
+            },
+            candidate,
+        )
+
+    monkeypatch.setattr(dynamic, "_generate", generate)
+
+    document = dynamic._generate_document(object(), candidates, openapi)
+
     assert [workflow["workflowId"] for workflow in document["workflows"]] == [
         "workflow-UC-1",
         "workflow-UC-2",

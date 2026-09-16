@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from typing import Any
 
 import pytest
@@ -97,6 +99,53 @@ def test_run_testing_freezes_input_before_running(monkeypatch) -> None:
     assert checkpoints[-1]["current_node"] == "verification"
     assert checkpoints[-1]["testing_progress"]["active_workflow_id"] == "workflow-UC-1"
     assert job["testing_progress"]["workflow_counts"]["total"] == 2
+
+
+def test_parallel_progress_events_do_not_lose_checkpoint_rows(monkeypatch) -> None:
+    fixed_input = _input("implementation-1")
+    checkpoints: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        testing_service.implementation_worker,
+        "get_testing_input",
+        lambda _job_id: _completed_implementation("implementation-1"),
+    )
+    monkeypatch.setattr(
+        testing_service,
+        "capture_testing_input",
+        lambda *_args, **_kwargs: fixed_input,
+    )
+
+    def run(_run_id, _received_input, **_kwargs):
+        def publish(index: int) -> None:
+            emit_testing_progress(
+                phase="planning",
+                scope="workflow",
+                status="PASS",
+                label=f"UC{index} · generated",
+                workflow_id=f"workflow-UC{index}",
+                use_case_id=f"UC{index}",
+            )
+
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            futures = [
+                executor.submit(copy_context().run, publish, index)
+                for index in range(40)
+            ]
+            for future in futures:
+                future.result()
+        return {"passed": True, "blocking_findings": []}, {"status": "COMPLETED"}
+
+    monkeypatch.setattr(testing_service, "_run_test", run)
+
+    job = testing_service.run_testing(
+        "app-1",
+        "implementation-1",
+        run_id="parallel-progress",
+        progress=checkpoints.append,
+    )
+
+    assert len(job["testing_progress"]["plans"]) == 40
+    assert job["testing_progress"]["plan_counts"]["passed"] == 40
 
 
 def test_checkpoint_reuses_saved_input_without_reloading_implementation(monkeypatch) -> None:

@@ -1,7 +1,7 @@
 """정적 검사와 동적 검사를 한 번의 공통 검증 절차로 실행한다.
 
-Testing HTTP API와 전체 파이프라인은 모두 생성된 앱을 실행하고 같은 순서로 검사해야 한다.
-이 모듈에 공통 순서를 두어 두 진입점의 성공·실패 판정이 달라지지 않게 한다.
+Testing HTTP API와 전체 파이프라인은 모두 생성된 앱을 실행하고 같은 병렬 검증 경계를
+사용해야 한다. 이 모듈에 공통 절차를 두어 두 진입점의 성공·실패 판정이 달라지지 않게 한다.
 """
 
 from __future__ import annotations
@@ -318,7 +318,7 @@ def _run_verification_graph(
     previous_reports: dict[str, Any] | None = None,
     previous_job_id: str = "",
 ) -> dict[str, Any]:
-    """저장된 애플리케이션을 실행한 뒤 dynamic-first testing graph를 호출한다."""
+    """저장된 애플리케이션을 실행한 뒤 병렬 Testing graph를 호출한다."""
     graph = create_testing_graph()
     previous_reports = dict(previous_reports or {})
     input_digests = _gate_input_digests(

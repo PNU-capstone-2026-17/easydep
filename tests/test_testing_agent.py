@@ -8,6 +8,7 @@ falls back to a stale directory reports a pass that means nothing.
 
 import hashlib
 from contextlib import contextmanager
+from threading import Barrier
 from unittest.mock import patch
 
 import pytest
@@ -177,11 +178,42 @@ def test_dynamic_failure_does_not_skip_independent_static_and_iac_gates(monkeypa
             _initial_state(target_url="http://localhost:8080")
         )
 
-    assert result["current_node"] == "static_verification"
+    assert result["current_node"] == "verification_complete"
     assert result["dynamic_functional_report"]["gateStatus"] == "FAIL"
     assert result["static_report"]["gateStatus"] == "PASS"
     assert result["iac_report"]["gateStatus"] == "PASS"
     assert not [event for event in progress_events if event.get("status") == "DEFERRED"]
+
+
+def test_dynamic_and_static_verification_branches_run_concurrently() -> None:
+    rendezvous = Barrier(2)
+
+    def dynamic(_state):
+        rendezvous.wait(timeout=3)
+        return {
+            "current_node": "dynamic_functional",
+            "dynamic_functional_report": {"status": "passed", "gateStatus": "PASS"},
+        }
+
+    def static(_state):
+        rendezvous.wait(timeout=3)
+        return {
+            "current_node": "static_verification",
+            "static_report": {"status": "PASSED", "gateStatus": "PASS"},
+            "iac_report": {"status": "PASSED", "gateStatus": "PASS"},
+        }
+
+    with (
+        patch("app.testing.graphs.testing_graph.dynamic_functional_node", dynamic),
+        patch("app.testing.graphs.testing_graph.static_verification_node", static),
+    ):
+        result = create_testing_graph().invoke(
+            _initial_state(target_url="http://localhost:8080")
+        )
+
+    assert result["current_node"] == "verification_complete"
+    assert result["dynamic_functional_report"]["gateStatus"] == "PASS"
+    assert result["static_report"]["gateStatus"] == "PASS"
 
 
 # ---------------------------------------------------------------------------
