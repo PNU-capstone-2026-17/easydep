@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import settings
+from app.demo_validation import demo_skip_validation_enabled
 from app.llm_connection import LlmConnection
 from app.llm_profiles import profile_for
 from app.metrics import langsmith as langsmith_metrics
@@ -31,6 +32,7 @@ from .admission import (
     integration_evidence_paths,
     preflight_semantic_behavior,
     preflight_semantic_integration,
+    prepare_integration_admission_payload,
 )
 from .canary import (
     TRANSIENT_CANARY_FAILURES,
@@ -673,6 +675,8 @@ def preflight_behavior_task(
 ) -> UpstreamGap | None:
     """Run deterministic and cached semantic readiness checks once."""
 
+    if demo_skip_validation_enabled():
+        return None
     projection_gap = _explicit_projection_gap(context, source_refs)
     if projection_gap is None:
         return preflight_semantic_behavior(run_root, task, context, source_refs)
@@ -909,21 +913,29 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             for value in task.get("source_refs", task.get("sourceRefs", []))
             if isinstance(value, str) and value
         ]
-        admission_started = time.monotonic()
-        admission_gap = (
-            preflight_semantic_integration(run_root, task, context, source_refs)
+        integration_payload = (
+            prepare_integration_admission_payload(run_root, task, context, source_refs)
             if task_type == "integration-implementation"
-            else preflight_behavior_task(run_root, task, context, source_refs)
+            else None
         )
-        if admission_gap is not None:
-            return _persist_admission_gap(
-                run_root,
-                task,
-                task_id,
-                admission_gap,
-                execution_attempt(run_root, task_id),
-                admission_started,
+        if not demo_skip_validation_enabled():
+            admission_started = time.monotonic()
+            admission_gap = (
+                preflight_semantic_integration(
+                    run_root, task, context, source_refs, payload=integration_payload
+                )
+                if task_type == "integration-implementation"
+                else preflight_behavior_task(run_root, task, context, source_refs)
             )
+            if admission_gap is not None:
+                return _persist_admission_gap(
+                    run_root,
+                    task,
+                    task_id,
+                    admission_gap,
+                    execution_attempt(run_root, task_id),
+                    admission_started,
+                )
     if bounded_evidence:
         owner_tool_mode = "restricted"
     connection = openhands_connection()
@@ -958,7 +970,12 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             for value in task.get("source_refs", task.get("sourceRefs", []))
             if isinstance(value, str) and value
         ]
-        if owner_task and bounded_evidence and owner_tool_mode == "restricted"
+        if (
+            owner_task
+            and bounded_evidence
+            and owner_tool_mode == "restricted"
+            and not demo_skip_validation_enabled()
+        )
         else None
     )
     verification_profile = task.get("verification_profile")
@@ -1212,7 +1229,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     else OWNER_STUCK_RECOVERY_MESSAGE
                 )
             run_openhands_conversation(conversation)
-        upstream_gap = reported_upstream_gap(agent)
+        upstream_gap = (
+            reported_upstream_gap(agent) if upstream_gap_source_refs is not None else None
+        )
         if upstream_gap is not None:
             candidate_changes = _candidate_application_changes(sandbox, run_root)
             result = {

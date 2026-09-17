@@ -36,6 +36,8 @@ class TestingState(TypedDict):
     gate_scope: list[str] | None
     previous_reports: dict[str, Any]
     previous_job_id: str
+    # 데모 모드는 계획과 산출물은 그대로 만들되 실제 검증 도구만 실행하지 않는다.
+    validation_skipped: bool
 
     # State
     current_node: str

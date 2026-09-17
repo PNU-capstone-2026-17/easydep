@@ -21,8 +21,6 @@
   import DeploymentPreferencesCard from '$lib/components/DeploymentPreferencesCard.svelte';
   import ImplementationErrorPanel from '$lib/components/ImplementationErrorPanel.svelte';
   import LlmTimingHistory from '$lib/components/LlmTimingHistory.svelte';
-  import TestingRunCard from '$lib/components/TestingRunCard.svelte';
-  import { projectTestingRun } from '$lib/testing-results';
 
   let {
     appId,
@@ -51,7 +49,6 @@
     onDeploymentPreferencesSave: (preferences: DeploymentPreferences) => Promise<void>;
     onArtifactSelect: (stage: string) => void;
   } = $props();
-  let testingRun = $derived(projectTestingRun({ command, events }));
   let latestProgress = $derived(
     [...events]
       .reverse()
@@ -284,7 +281,7 @@
 </script>
 
 <div class="mx-auto w-full max-w-3xl px-5 pb-8 pt-6">
-  {#if events.length === 0 && !testingRun}
+  {#if events.length === 0}
     <div class="mt-20 text-center text-[#74766e]">
       <Bot class="mx-auto mb-4" size={30} strokeWidth={1.5} />
       <p class="text-sm">Waiting for the first command.</p>
@@ -512,11 +509,6 @@
     </article>
     {/if}
   {/each}
-  {#if testingRun}
-    <div class="mb-5 ml-11" data-kind="testing-run">
-      <TestingRunCard run={testingRun} onOpen={() => onArtifactSelect('TESTING_RESULTS')} />
-    </div>
-  {/if}
   {#if showDeploymentPreferences && Object.values(regions).some((items) => items.length)}
     {#key appId}
       <DeploymentPreferencesCard

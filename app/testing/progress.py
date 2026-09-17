@@ -133,6 +133,59 @@ def emit_testing_progress(
         _log.warning("Testing progress observer failed.", exc_info=True)
 
 
+def emit_dynamic_workflow_terminal(
+    *,
+    status: str,
+    label: str,
+    workflow_id: str,
+    use_case_id: str = "",
+    use_case_name: str = "",
+    total_steps: int | None = None,
+    completed_workflows: int | None = None,
+    total_workflows: int | None = None,
+    elapsed_ms: int | None = None,
+) -> None:
+    """Emit the shared terminal event for one dynamic workflow."""
+
+    emit_testing_progress(
+        phase="dynamic",
+        scope="workflow",
+        status=status,
+        label=label,
+        workflow_id=workflow_id,
+        use_case_id=use_case_id,
+        use_case_name=use_case_name,
+        total_steps=total_steps,
+        completed_workflows=completed_workflows,
+        total_workflows=total_workflows,
+        elapsed_ms=elapsed_ms,
+    )
+
+
+def emit_dynamic_workflow_planned(
+    *,
+    label: str,
+    workflow_id: str,
+    use_case_id: str = "",
+    use_case_name: str = "",
+    total_workflows: int,
+    total_steps: int | None = None,
+) -> None:
+    """Emit the shared dynamic execution-lane row before it can finish."""
+
+    emit_testing_progress(
+        phase="dynamic",
+        scope="workflow",
+        status="PENDING",
+        label=label,
+        workflow_id=workflow_id,
+        use_case_id=use_case_id,
+        use_case_name=use_case_name,
+        total_workflows=total_workflows,
+        total_steps=total_steps,
+    )
+
+
 def testing_progress_enabled() -> bool:
     """Return whether the current execution context has a progress consumer."""
 
@@ -304,6 +357,8 @@ def reduce_testing_progress(
 
 __all__ = [
     "TestingProgressObserver",
+    "emit_dynamic_workflow_planned",
+    "emit_dynamic_workflow_terminal",
     "emit_testing_progress",
     "reduce_testing_progress",
     "testing_progress_enabled",

@@ -14,6 +14,8 @@ import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from app.demo_validation import demo_skip_validation_enabled
+
 from ..workspace import cleanup_agent_workspace, prepare_agent_workspace
 from .frontend import (
     reuse_frontend_build,
@@ -21,6 +23,10 @@ from .frontend import (
     run_frontend_verification,
     store_frontend_build,
 )
+
+
+def _skipped_validation_evidence() -> dict[str, object]:
+    return {"status": "SKIPPED", "reason": "demo-validation-skip"}
 
 
 def gradle_command() -> list[str]:
@@ -70,6 +76,25 @@ def verify_run_workspace(
     ``verify_end_to_end=False``는 HTTP 시나리오만 생략한다. 피드백 수리 뒤에는
     compile만으로 회귀를 확인할 수 없으므로 backend의 단위·작은 통합 테스트는 모두 실행한다.
     """
+    if Path(report_name).name != report_name or not report_name.endswith(".json"):
+        raise ValueError(f"Invalid verification report name: {report_name}")
+    if demo_skip_validation_enabled():
+        result: dict[str, object] = {
+            "status": "SUCCEEDED",
+            "verification": _skipped_validation_evidence(),
+            "scenarioVerification": {"status": "SKIPPED", "tasks": []},
+            "frontendVerification": (
+                _skipped_validation_evidence() if verify_frontend else None
+            ),
+        }
+        report = run_root / "reports" / report_name
+        report.parent.mkdir(parents=True, exist_ok=True)
+        report.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        return result
+
     cached_frontend = reuse_frontend_build(run_root) if verify_frontend else None
     sandbox = prepare_agent_workspace(
         run_root,
@@ -112,8 +137,6 @@ def verify_run_workspace(
             "scenarioVerification": scenario_verification,
             "frontendVerification": frontend_verification,
         }
-        if Path(report_name).name != report_name or not report_name.endswith(".json"):
-            raise ValueError(f"Invalid verification report name: {report_name}")
         report = run_root / "reports" / report_name
         report.parent.mkdir(parents=True, exist_ok=True)
         report.write_text(
@@ -163,6 +186,8 @@ def verify_agent_workspace(
         if evidence.get("gateStatus") != "PASS":
             raise WorkspaceVerificationError(evidence)
         return evidence
+    if demo_skip_validation_enabled():
+        return _skipped_validation_evidence()
     if task_type == "integration-implementation":
         backend = verify_agent_workspace(sandbox)
         frontend = verify_frontend_workspace(sandbox)
@@ -387,6 +412,8 @@ def _focused_test_classes(
 
 def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:
     """frontend production build 결과를 같은 오류 형식으로 반환한다."""
+    if demo_skip_validation_enabled():
+        return _skipped_validation_evidence()
     evidence = run_frontend_verification(sandbox, run_frontend_command)
     if evidence["exitCode"] != 0:
         raise WorkspaceVerificationError(evidence)

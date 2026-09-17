@@ -88,6 +88,46 @@ def _workflow_id(use_case_id: str) -> str:
     return "workflow-" + normalized
 
 
+def use_case_id_for_candidate(candidate: Mapping[str, Any]) -> str:
+    """Return the frozen use-case identifier behind a workflow candidate.
+
+    A workflow ID is an execution identifier, not a useful public label.  Keep
+    the two concepts separate so a missing display name never leaks a value
+    such as ``workflow-UC2`` into the Testing result.
+    """
+
+    use_case = candidate.get("useCase")
+    if isinstance(use_case, Mapping):
+        for key in ("use_case_id", "useCaseId", "id"):
+            value = use_case.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    trace = candidate.get("trace")
+    if isinstance(trace, Mapping):
+        values = trace.get("useCaseIds")
+        if isinstance(values, list):
+            for value in values:
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+    workflow_id = candidate.get("workflowId")
+    if isinstance(workflow_id, str) and workflow_id.startswith("workflow-"):
+        return workflow_id.removeprefix("workflow-")
+    return ""
+
+
+def use_case_display_name(candidate: Mapping[str, Any]) -> str:
+    """Resolve the public workflow label from frozen use-case evidence only."""
+
+    use_case = candidate.get("useCase")
+    if isinstance(use_case, Mapping):
+        for key in ("name", "useCaseName", "use_case_name", "title"):
+            value = use_case.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+    use_case_id = use_case_id_for_candidate(candidate)
+    return f"Use case {use_case_id}" if use_case_id else "Functional use case"
+
+
 def _is_functional(use_case: Mapping[str, Any]) -> bool:
     """Respect only an explicit classification; unclassified use cases are functional."""
     for key in ("functional", "isFunctional", "is_functional"):
@@ -458,4 +498,6 @@ __all__ = [
     "build_arazzo_document",
     "build_deterministic_workflow",
     "build_workflow_candidates",
+    "use_case_display_name",
+    "use_case_id_for_candidate",
 ]

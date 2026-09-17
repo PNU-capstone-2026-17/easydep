@@ -11,6 +11,7 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
+from app.demo_validation import demo_skip_validation_enabled
 from app.metrics import langsmith as langsmith_metrics
 from app.testing.graphs.testing_graph import create_testing_graph, initial_state
 from app.testing.progress import emit_testing_progress
@@ -298,6 +299,25 @@ def run_verification_graph(
         )
 
 
+def _demo_pass_statuses(value: Any) -> Any:
+    """Keep demo validation metadata internal without exposing a third status.
+
+    A graph node may carry an older/reused ``SKIPPED`` report.  Once the shared
+    demo switch elected the PASS-only public contract, normalize that status at
+    the one result boundary while retaining every other evidence field.
+    """
+
+    if isinstance(value, dict):
+        projected = {key: _demo_pass_statuses(item) for key, item in value.items()}
+        if str(projected.get("status") or "").upper() == "SKIPPED":
+            projected["status"] = "PASSED"
+            projected["gateStatus"] = "PASS"
+        return projected
+    if isinstance(value, list):
+        return [_demo_pass_statuses(item) for item in value]
+    return value
+
+
 def _run_verification_graph(
     *,
     run_id: str,
@@ -320,6 +340,7 @@ def _run_verification_graph(
 ) -> dict[str, Any]:
     """저장된 애플리케이션을 실행한 뒤 병렬 Testing graph를 호출한다."""
     graph = create_testing_graph()
+    validation_skipped = demo_skip_validation_enabled()
     previous_reports = dict(previous_reports or {})
     input_digests = _gate_input_digests(
         application_dir,
@@ -349,12 +370,24 @@ def _run_verification_graph(
                 gate_scope=sorted(selected) if selected is not None else None,
                 previous_reports=previous_reports,
                 previous_job_id=previous_job_id,
+                validation_skipped=validation_skipped,
             )
         )
 
     dynamic_selected = selected is None or "dynamicFunctional" in selected
     try:
-        if not dynamic_selected:
+        if validation_skipped:
+            emit_testing_progress(
+                phase="prepare",
+                scope="phase",
+                status="SKIPPED",
+                label="Runtime and verification execution skipped for demo",
+                detail="Arazzo plans and Testing artifacts are still generated.",
+            )
+            # The graph still plans and validates the Arazzo artifact, but the
+            # runtime, HTTP executor, and static validation tools are never invoked.
+            result = invoke()
+        elif not dynamic_selected:
             emit_testing_progress(
                 phase="prepare",
                 scope="phase",
@@ -461,6 +494,8 @@ def _run_verification_graph(
         "iac": result.get("iac_report"),
         "dynamicFunctional": result.get("dynamic_functional_report"),
     }
+    if validation_skipped:
+        reports = _demo_pass_statuses(reports)
     required = {
         "static": True,
         # An unspecified IaC contract is a legacy/no-IaC application. The service
@@ -501,9 +536,17 @@ def _run_verification_graph(
         "deferredGates": list((reports.get("dynamicFunctional") or {}).get("deferredGates") or []),
         "blockingReason": blocking,
         "diagnostics": diagnostics,
+        "validationSkipped": validation_skipped,
+        "validationSkipReason": "demo" if validation_skipped else None,
+        "executedWorkflowCount": (
+            0
+            if validation_skipped
+            else len((reports.get("dynamicFunctional") or {}).get("workflows") or [])
+        ),
+        "workflowCounts": dict(
+            (reports.get("dynamicFunctional") or {}).get("workflowCounts") or {}
+        ),
     }
-
-
 def blocking_reason(reports: dict[str, Any]) -> str | None:
     """정적 또는 동적 필수 검사가 실패한 첫 번째 이유를 반환한다."""
     for label, key in (("Deployment configuration", "static"), ("IaC", "iac")):

@@ -37,7 +37,11 @@
   let messageInput = $derived(
     actions.find((offer) => offer.action === 'message' && !hasMessageText(offer))
   );
-  let buttonActions = $derived(actions.filter((offer) => offer.action !== 'message'));
+  let buttonActions = $derived(
+    actions.filter(
+      (offer) => offer.action !== 'message' && offer.action !== 'rerun_implementation'
+    )
+  );
   let resourceQuestion = $derived(result?.resource_question ?? result?.resource_questions?.[0] ?? null);
   let questionText = $derived(
     String(resourceQuestion?.question ?? result?.question ?? result?.questions?.[0]?.question ?? '').trim()
@@ -65,9 +69,7 @@
     command?.stage === 'testing' && command.action === 'start_testing'
       ? command?.status === 'QUEUED'
         ? 'Testing requested. Preparing the test run…'
-        : command?.status === 'RUNNING'
-          ? 'System testing is in progress…'
-          : command?.status === 'COMPLETED'
+        : command?.status === 'COMPLETED'
             ? String(result?.message ?? 'Testing completed.')
             : null
       : null

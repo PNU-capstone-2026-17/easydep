@@ -96,7 +96,12 @@ def test_run_testing_freezes_input_before_running(monkeypatch) -> None:
     assert job["job_id"] == "command-1"
     assert job["testing_input"] == fixed_input.model_dump(mode="json")
     assert checkpoints[0]["current_node"] == "queued"
-    assert checkpoints[-1]["current_node"] == "verification"
+    assert checkpoints[-1]["current_node"] == "verification_complete"
+    assert checkpoints[-1]["result"] == job["result"]
+    assert sum(
+        checkpoint.get("current_node") == "verification_complete"
+        for checkpoint in checkpoints
+    ) == 1
     assert checkpoints[-1]["testing_progress"]["active_workflow_id"] == "workflow-UC-1"
     assert job["testing_progress"]["workflow_counts"]["total"] == 2
 

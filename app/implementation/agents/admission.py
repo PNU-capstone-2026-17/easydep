@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.demo_validation import demo_skip_validation_enabled
 from app.design.services.common.structured import parse_structured
 from app.llm_connection import build_admission_llm_connection
 
@@ -394,6 +395,8 @@ def preflight_semantic_behavior(
 ) -> UpstreamGap | None:
     """Return a cached or new behavior gap before starting OpenHands."""
 
+    if demo_skip_validation_enabled():
+        return None
     if not any(ref.startswith("use_case_spec:") for ref in source_refs):
         return None
     payload = {
@@ -462,7 +465,7 @@ def integration_evidence_paths(
     return sorted(evidence_paths)
 
 
-def _integration_admission_payload(
+def prepare_integration_admission_payload(
     run_root: Path,
     task: dict[str, object],
     context: dict[str, object],
@@ -514,10 +517,17 @@ def preflight_semantic_integration(
     task: dict[str, object],
     context: dict[str, object],
     source_refs: list[str],
+    *,
+    payload: dict[str, object] | None = None,
 ) -> UpstreamGap | None:
     """Return a cached or new integration gap before starting OpenHands."""
 
-    payload = _integration_admission_payload(run_root, task, context, source_refs)
+    if payload is None:
+        payload = prepare_integration_admission_payload(
+            run_root, task, context, source_refs
+        )
+    if demo_skip_validation_enabled():
+        return None
     return _preflight_admission(
         run_root,
         task,

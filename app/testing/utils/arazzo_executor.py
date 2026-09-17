@@ -12,7 +12,7 @@ from typing import Any
 import httpx
 import jsonschema
 
-from app.testing.progress import emit_testing_progress
+from app.testing.progress import emit_dynamic_workflow_terminal, emit_testing_progress
 from app.testing.schemas.arazzo import ArazzoValidationError, validate_arazzo_document
 from app.testing.utils.arazzo_expression import (
     ArazzoExpressionError,
@@ -625,9 +625,7 @@ def execute_arazzo_workflow(
 
     def finish(result: dict[str, Any]) -> dict[str, Any]:
         gate_status = str(result.get("gateStatus") or "INCONCLUSIVE").upper()
-        emit_testing_progress(
-            phase="dynamic",
-            scope="workflow",
+        emit_dynamic_workflow_terminal(
             status=gate_status
             if gate_status in {"PASS", "FAIL", "INCONCLUSIVE"}
             else "INCONCLUSIVE",

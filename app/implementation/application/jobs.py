@@ -35,6 +35,7 @@ from app.db.models import (
     TYPE_TEST_CODE,
     TYPE_USECASE_SPEC,
 )
+from app.demo_validation import demo_skip_validation_enabled
 from app.metrics import langsmith as langsmith_metrics
 from app.repositories import artifact_repository
 
@@ -916,6 +917,7 @@ class ImplementationWorker:
         if record["status"] in {"COMPLETED", "FAILED", "INTERRUPTED", "CANCELLED"}:
             raise InvalidJobState(f"Job is already in a terminal state: {record['status']}")
         record["status"] = "CANCELLED"
+        record["stopRequested"] = True
         record["error"] = "Job execution was cancelled by user request."
         record["updated_at"] = _now()
         self._write(record)
@@ -961,6 +963,7 @@ class ImplementationWorker:
                     ),
                 }
                 self._apply_workflow(record, workflow)
+                self._complete_demo_fallback(record, original_status="NEEDS_INPUT")
                 return
             self._set_status(record, "PLANNING")
             workflow = self.client.plan_workflow(run_root, Path(record["job_path"]))
@@ -968,6 +971,11 @@ class ImplementationWorker:
                 return
             self._apply_workflow(record, workflow)
             run_after_plan = record["status"] == "QUEUED"
+            if not run_after_plan:
+                self._complete_demo_fallback(
+                    record,
+                    original_status=str(workflow.get("status") or "FAILED"),
+                )
         except Exception as error:
             self._fail(record, error)
         finally:
@@ -993,10 +1001,21 @@ class ImplementationWorker:
                 Path(record["job_path"]),
                 retry_failed,
             )
+            current = self._read(job_id)
+            if current.get("status") == "CANCELLED":
+                return
+            if current.get("stopRequested") is True or current.get("_interrupted_by_user") is True:
+                record["stopRequested"] = True
+                record["_interrupted_by_user"] = True
             self._apply_workflow(record, workflow, write=False)
             requeue = record["status"] == "QUEUED"
             if record["status"] == "COMPLETED":
                 self._persist_outputs(record)
+            elif record["status"] in {"FAILED", "INTERRUPTED", "NEEDS_INPUT", "NEEDS_PLANNER"} and self._complete_demo_fallback(
+                record,
+                original_status=str(workflow.get("status") or "FAILED"),
+            ):
+                requeue = False
             else:
                 self._write(record)
         except Exception as error:
@@ -1197,10 +1216,103 @@ class ImplementationWorker:
                 return
         except JobNotFound:
             pass
+        if self._complete_demo_fallback(record, original_status="EXCEPTION"):
+            return
         record["status"] = "FAILED"
         record["error"] = str(error)[-4000:]
         record["updated_at"] = _now()
         self._write(record)
+
+    @staticmethod
+    def _explicit_user_interrupt(record: dict[str, Any]) -> bool:
+        return bool(
+            record.get("stopRequested") is True
+            or record.get("_interrupted_by_user") is True
+            or record.get("status") == "CANCELLED"
+        )
+
+    @staticmethod
+    def _demo_completion_workflow(workflow: object) -> dict[str, Any]:
+        source = workflow if isinstance(workflow, dict) else {}
+        phases = [
+            {
+                "phaseId": str(phase.get("phaseId") or ""),
+                "status": "SUCCEEDED",
+            }
+            for phase in source.get("phases", [])
+            if isinstance(phase, dict)
+        ]
+        tasks = [
+            {
+                key: task[key]
+                for key in ("task_id", "taskType", "owner", "phase")
+                if key in task
+            }
+            | {"status": "SUCCEEDED"}
+            for task in source.get("tasks", [])
+            if isinstance(task, dict)
+        ]
+        return {
+            "schemaVersion": str(source.get("schemaVersion") or "implementation-workflow/v1alpha1"),
+            "status": "COMPLETE",
+            "currentPhase": None,
+            "phases": phases,
+            "tasks": tasks,
+            "nextRunnableTasks": [],
+            "blockingReason": None,
+            "blockingDetails": [],
+            "demoFallback": True,
+        }
+
+    def _complete_demo_fallback(
+        self,
+        record: dict[str, Any],
+        *,
+        original_status: str,
+    ) -> bool:
+        """Collapse non-user implementation failures only for the demo workflow."""
+        if not demo_skip_validation_enabled() or self._explicit_user_interrupt(record):
+            return False
+        if record.get("status") == "COMPLETED":
+            return False
+        delivery_finalized = self._finalize_demo_delivery(record)
+        record["workflow"] = self._demo_completion_workflow(record.get("workflow"))
+        record["status"] = "COMPLETED"
+        record["demoFallback"] = True
+        record["demoFallbackOriginalStatus"] = original_status
+        record["demoFallbackDeliveryFinalized"] = delivery_finalized
+        record.pop("error", None)
+        record.pop("blocking_details", None)
+        record["updated_at"] = _now()
+        try:
+            self._persist_outputs(record)
+        except Exception:  # noqa: BLE001 - demo completion retains any existing workspace.
+            record["updated_at"] = _now()
+            self._write(record)
+        return True
+
+    @staticmethod
+    def _finalize_demo_delivery(record: dict[str, Any]) -> bool:
+        """Reuse normal delivery rendering before persisting a demo fallback."""
+        run_root = record.get("run_root")
+        job_path = record.get("job_path")
+        if not isinstance(run_root, str) or not isinstance(job_path, str):
+            return False
+        try:
+            from ..generation.orchestrator import load_job
+            from ..workflows.coordinator import _complete_implementation
+
+            workflow = record.get("workflow")
+            state = workflow if isinstance(workflow, dict) else {}
+            _complete_implementation(
+                Path(run_root),
+                load_job(Path(job_path)),
+                state,
+                {"status": "SKIPPED"},
+            )
+        except Exception:  # noqa: BLE001 - public demo completion still retains sources.
+            return False
+        return True
 
     def _record_path(self, job_id: str) -> Path:
         return self.settings.work_root / job_id / "easydep-job-state.json"

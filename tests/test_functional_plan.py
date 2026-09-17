@@ -16,6 +16,7 @@ from app.testing.utils.arazzo_planner import (
     attach_workflow_trace,
     build_arazzo_document,
     build_workflow_candidates,
+    use_case_display_name,
 )
 from app.testing.utils.functional_executor import InputValueRequest
 
@@ -985,6 +986,7 @@ def test_plan_progress_identifies_completed_retrying_and_failed_use_cases(monkey
         ("workflow-UC-1", "PENDING"), ("workflow-UC-2", "PENDING"),
         ("workflow-UC-3", "PENDING"),
     ]
+    assert [event["total_workflows"] for event in events[:3]] == [3, 3, 3]
     statuses = {
         workflow_id: [
             event["status"]
@@ -994,9 +996,9 @@ def test_plan_progress_identifies_completed_retrying_and_failed_use_cases(monkey
         for workflow_id in ("workflow-UC-1", "workflow-UC-2", "workflow-UC-3")
     }
     assert statuses == {
-        "workflow-UC-1": ["PENDING", "RUNNING", "PASS"],
+        "workflow-UC-1": ["PENDING", "RUNNING", "PENDING"],
         "workflow-UC-2": ["PENDING", "RUNNING", "RUNNING", "FAIL"],
-        "workflow-UC-3": ["PENDING", "RUNNING", "PASS"],
+        "workflow-UC-3": ["PENDING", "RUNNING", "PENDING"],
     }
     failed = next(event for event in events if event["status"] == "FAIL")
     assert failed["attempt"] == 2
@@ -1072,6 +1074,149 @@ def test_single_operation_testing_does_not_require_plan_llm(
     assert report["candidatePlan"]["workflows"][0]["steps"] == [
         {"stepId": "health", "operationId": "health"}
     ]
+
+
+def test_demo_skip_preserves_plan_without_executing_workflows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Demo mode makes a durable plan but must not claim HTTP assertions ran."""
+
+    def unexpected_execution(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        pytest.fail("demo validation skip must not invoke the Arazzo executor")
+
+    monkeypatch.setattr(dynamic, "execute_arazzo_workflow", unexpected_execution)
+
+    report = dynamic.dynamic_functional_node(
+        _state(validation_skipped=True)
+    )["dynamic_functional_report"]
+
+    assert report["status"] == "PASSED"
+    assert report["gateStatus"] == "PASS"
+    assert report["validationSkipped"] is True
+    assert report["validationSkipReason"] == "demo"
+    assert report["candidatePlan"]["workflows"]
+    planned = report["workflows"]
+    assert planned[0]["status"] == "PASSED"
+    assert planned[0]["result"]["gateStatus"] == "PASS"
+    assert planned[0]["useCaseName"] == "Check service 1"
+    assert planned[0]["summary"] == "Check service 1"
+    operation = planned[0]["operations"][0]
+    assert (operation["method"], operation["path"], operation["operationId"]) == (
+        "GET", "/health", "health"
+    )
+    assert operation["responses"][0]["status"] == "200"
+    assert report["executedWorkflowCount"] == 0
+
+
+def test_demo_workflow_progress_transitions_pending_plan_to_terminal_passes() -> None:
+    from app.testing import service as testing_service
+    from app.testing.progress import reduce_testing_progress, testing_progress_scope
+
+    events: list[dict[str, Any]] = []
+    with testing_progress_scope(events.append):
+        report = dynamic.dynamic_functional_node(
+            _state(2, validation_skipped=True)
+        )["dynamic_functional_report"]
+        testing_service._emit_demo_terminal_workflow_progress(
+            {"validationSkipped": True, "reports": {"dynamicFunctional": report}}
+        )
+
+    lifecycle = [event for event in events if event["scope"] == "workflow" and event["phase"] == "dynamic"]
+    assert [(event["workflow_id"], event["status"]) for event in lifecycle] == [
+        ("workflow-UC-1", "PENDING"),
+        ("workflow-UC-2", "PENDING"),
+        ("workflow-UC-1", "PASS"),
+        ("workflow-UC-2", "PASS"),
+    ]
+    assert [event["phase"] for event in lifecycle] == ["dynamic", "dynamic", "dynamic", "dynamic"]
+    assert [event["use_case_name"] for event in lifecycle] == [
+        "Check service 1", "Check service 2", "Check service 1", "Check service 2",
+    ]
+    progress: dict[str, Any] = {}
+    for event in events:
+        progress = reduce_testing_progress(progress, event)
+    assert progress["workflow_counts"] == {
+        "total": 2,
+        "passed": 2,
+        "failed": 0,
+        "running": 0,
+        "pending": 0,
+        "reused": 0,
+        "inconclusive": 0,
+        "deferred": 0,
+        "completed": 2,
+    }
+    assert report["workflowCounts"] == {
+        "total": 2,
+        "completed": 2,
+        "passed": 2,
+        "failed": 0,
+        "running": 0,
+        "pending": 0,
+    }
+    assert all("status" not in workflow for workflow in report["candidatePlan"]["workflows"])
+
+
+def test_workflow_summary_uses_each_use_case_name_with_readable_missing_name_fallback() -> None:
+    use_cases = _use_cases(2)
+    use_cases["use_case_specs"][1].pop("name")
+    candidates = build_workflow_candidates(_requirements(2), use_cases, _openapi())
+
+    assert [use_case_display_name(candidate) for candidate in candidates] == [
+        "Check service 1", "Use case UC-2"
+    ]
+    public_records = [
+        dynamic._workflow_record(
+            attach_workflow_trace(
+                {"workflowId": candidate["workflowId"], "steps": [{"stepId": "health", "operationId": "health"}]},
+                candidate,
+            ),
+            _pass(str(candidate["workflowId"])),
+            [],
+            {},
+            {},
+            candidate,
+        )
+        for candidate in candidates
+    ]
+    assert [record["summary"] for record in public_records] == [
+        "Check service 1", "Use case UC-2"
+    ]
+
+
+def test_validation_skip_disabled_still_invokes_workflow_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    def execute(_document: dict[str, Any], workflow_id: str, **_kwargs: Any) -> dict[str, Any]:
+        calls.append(workflow_id)
+        return _pass(workflow_id)
+
+    monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
+
+    report = dynamic.dynamic_functional_node(
+        _state(validation_skipped=False)
+    )["dynamic_functional_report"]
+
+    assert report["gateStatus"] == "PASS"
+    assert calls == ["workflow-UC-1"]
+
+
+def test_demo_skip_keeps_plan_generation_errors_as_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_generation(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise ValueError("planner response is invalid")
+
+    monkeypatch.setattr(dynamic, "_generate_document", fail_generation)
+
+    report = dynamic.dynamic_functional_node(
+        _state(validation_skipped=True, fixed_arazzo_document=None)
+    )["dynamic_functional_report"]
+
+    assert report["gateStatus"] == "FAIL"
+    assert "planner response is invalid" in report["reason"]
 
 
 def test_generated_document_retries_only_the_failed_workflow(

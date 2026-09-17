@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from app.demo_validation import DEMO_SKIP_VALIDATION_ENV
 from app.implementation.agents.verification.build import verification_timeout_seconds
 from app.implementation.runtime.linux_runner_transport import (
     OWNER_CONTROL_ROOT_ENV,
@@ -122,6 +123,7 @@ def test_runner_command_transmits_verification_timeout(tmp_path: Path):
             "IMPLEMENTATION_VERIFICATION_TIMEOUT_SECONDS": "1200",
             "IMPLEMENTATION_MAX_TASK_ATTEMPTS": "5",
             "EASYDEP_MEMBER_CHECKPOINT_RUN": "run_abc123",
+            DEMO_SKIP_VALIDATION_ENV: "true",
         },
         llm_environment={},
     )
@@ -129,6 +131,7 @@ def test_runner_command_transmits_verification_timeout(tmp_path: Path):
     assert "IMPLEMENTATION_VERIFICATION_TIMEOUT_SECONDS" in command
     assert "IMPLEMENTATION_MAX_TASK_ATTEMPTS" in command
     assert "EASYDEP_MEMBER_CHECKPOINT_RUN" in command
+    assert DEMO_SKIP_VALIDATION_ENV in command
 
 
 def test_verification_timeout_is_configurable(monkeypatch):

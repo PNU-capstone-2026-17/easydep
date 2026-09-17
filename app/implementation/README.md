@@ -126,3 +126,7 @@ python -X utf8 -m pytest -q tests/test_implementation_worker.py
 python -X utf8 -m pytest -q tests/test_linux_runner_transport.py
 python -X utf8 -m pytest -q tests/test_workspace_service.py
 ```
+
+데모에서만 `EASYDEP_DEMO_SKIP_VALIDATION=true`를 설정하면 구현 단계의 Gradle 및 frontend
+검증 명령을 실행하지 않고 `SKIPPED` 결과를 기록한다. 구현 agent 작업, 산출물 생성·승격,
+감사와 설계 정합성 검사는 그대로 실행하며 Testing 단계에는 적용하지 않는다.

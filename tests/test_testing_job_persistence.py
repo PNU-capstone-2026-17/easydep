@@ -156,20 +156,21 @@ def test_testing_service_checkpoints_latest_repair_ledger(monkeypatch) -> None:
     )
 
     def run(_run_id, _testing_input, **kwargs):
-        kwargs["progress"](
-            {
-                "current_node": "verification_complete",
-                "result": {"passed": False},
-                "repair_history": {
-                    "status": "ACTIVE",
-                    "attempts": [{"strategy_key": "second_candidate"}],
-                },
-                "previous_findings": ["testing.dynamicFunctional:HTTP 409"],
-            }
-        )
-        return {"passed": False}, {"status": "ACTIVE", "attempts": []}
+        assert kwargs["emit_terminal_progress"] is False
+        return {
+            "passed": False,
+            "blocking_findings": [{"code": "testing.dynamicFunctional:HTTP 409"}],
+        }, {
+            "status": "ACTIVE",
+            "attempts": [{"strategy_key": "second_candidate"}],
+        }
 
     monkeypatch.setattr(testing_service, "_run_test", run)
+    monkeypatch.setattr(
+        testing_service,
+        "_finding_keys",
+        lambda _report: ("testing.dynamicFunctional:HTTP 409",),
+    )
     testing_service.run_testing(
         "app-1",
         "implementation-1",

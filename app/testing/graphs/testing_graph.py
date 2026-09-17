@@ -10,6 +10,7 @@ from app.testing.progress import emit_testing_progress
 from app.testing.schemas.testing_state import TestingState
 from app.testing.utils.gates import gate_status
 
+
 def _dynamic_branch(state: TestingState) -> dict[str, Any]:
     """Run dynamic verification without writing keys owned by the static branch."""
 
@@ -92,6 +93,7 @@ def initial_state(
     gate_scope: list[str] | None = None,
     previous_reports: dict | None = None,
     previous_job_id: str = "",
+    validation_skipped: bool = False,
 ) -> dict:
     """호출 인자를 빠짐없이 채운 graph 시작 상태를 만든다."""
     return {
@@ -111,6 +113,7 @@ def initial_state(
         "gate_scope": gate_scope,
         "previous_reports": previous_reports or {},
         "previous_job_id": previous_job_id,
+        "validation_skipped": validation_skipped,
         "current_node": "",
         "errors": [],
         "static_report": None,

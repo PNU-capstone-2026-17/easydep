@@ -5,6 +5,7 @@ import io
 import json
 import os
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -12,18 +13,22 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.db.models import TYPE_DEPLOYMENT_FILE
 from app.implementation.agents.runtime import _owner_conversation_identity
 from app.implementation.agents.workspace import (
     cleanup_agent_workspace,
     prepare_agent_workspace,
 )
+from app.implementation.application import jobs as implementation_jobs
 from app.implementation.application.feedback import resolve_feedback_targets
 from app.implementation.application.jobs import ImplementationWorker, InvalidJobState
 from app.implementation.application.prototype import PrototypeClient, PrototypeExecutionError
 from app.implementation.config import ImplementationSettings
 from app.implementation.generation.orchestrator import PrototypeOrchestrator, load_job
 from app.implementation.interfaces.http import router
+from app.implementation.workflows import coordinator as coordinator_module
 from app.implementation.workflows.coordinator import phase_for_task
+from app.workspace import checkpoints as checkpoint_module
 from tests.class_design_fixtures import typed_class_model_payload
 
 
@@ -464,6 +469,268 @@ def test_completed_job_is_not_published_before_artifacts_are_persisted(
         worker.shutdown()
 
     assert events == [("write", "RUNNING"), ("persist", "COMPLETED")]
+
+
+@pytest.mark.parametrize("workflow_status", ["FAILED", "NEEDS_INPUT", "NEEDS_PLANNER"])
+def test_demo_fallback_completes_failed_workflow_statuses(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    workflow_status: str,
+) -> None:
+    monkeypatch.setenv("EASYDEP_DEMO_SKIP_VALIDATION", "true")
+    record = {
+        "job_id": f"demo-{workflow_status.lower()}",
+        "status": "QUEUED",
+        "run_root": str(tmp_path / "run-root"),
+        "job_path": str(tmp_path / "job.json"),
+    }
+
+    class Client:
+        @staticmethod
+        def run_phase(*_args: object) -> dict[str, object]:
+            return {
+                "status": workflow_status,
+                "blockingReason": "internal detail must not be public",
+                "tasks": [{"task_id": "owner", "status": workflow_status}],
+            }
+
+        @staticmethod
+        def cancel_all() -> None:
+            return None
+
+    worker = ImplementationWorker(settings(tmp_path))
+    worker.client = Client()
+    worker._read = lambda _job_id: record
+    worker._write = lambda _record: None
+    persisted: list[str] = []
+    worker._persist_outputs = lambda current: persisted.append(current["status"])
+    try:
+        worker._run(record["job_id"], False)
+    finally:
+        worker.shutdown()
+
+    assert record["status"] == "COMPLETED"
+    assert record["demoFallback"] is True
+    assert record["demoFallbackOriginalStatus"] == workflow_status
+    assert record["workflow"]["status"] == "COMPLETE"
+    assert "error" not in record
+    assert persisted == ["COMPLETED"]
+
+
+def test_demo_fallback_completes_openhands_unfinished_interrupt_and_keeps_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EASYDEP_DEMO_SKIP_VALIDATION", "true")
+    source = tmp_path / "run-root" / "application" / "src" / "App.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class App {}", encoding="utf-8")
+    job_path = tmp_path / "job.json"
+    job_path.write_text(
+        json.dumps(
+            {
+                "workspaceRoot": ".",
+                "inputs": {},
+                "requiredInputs": [],
+                "outputRoot": "generated/runs",
+            }
+        ),
+        encoding="utf-8",
+    )
+    record = {
+        "job_id": "demo-openhands-interrupted",
+        "app_id": "app-1",
+        "status": "QUEUED",
+        "run_root": str(tmp_path / "run-root"),
+        "job_path": str(job_path),
+    }
+
+    class Client:
+        calls = 0
+
+        @staticmethod
+        def run_phase(*_args: object) -> dict[str, object]:
+            Client.calls += 1
+            return {
+                "status": "INTERRUPTED",
+                "terminationReason": "OWNER_CONVERSATION_INCOMPLETE",
+                "blockingReason": "OpenHands conversation did not finish",
+                "tasks": [
+                    {"task_id": "first", "status": "SUCCEEDED"},
+                    {"task_id": "second", "status": "INTERRUPTED"},
+                ],
+            }
+
+        @staticmethod
+        def cancel_all() -> None:
+            return None
+
+    worker = ImplementationWorker(settings(tmp_path))
+    worker.client = Client()
+    worker._read = lambda _job_id: record
+    worker._write = lambda _record: None
+    persisted: dict[str, object] = {}
+    monkeypatch.setattr(
+        implementation_jobs.artifact_repository,
+        "save_file_snapshots",
+        lambda _app_id, snapshots: persisted.update(snapshots)
+        or {artifact_type: index for index, artifact_type in enumerate(snapshots, start=1)},
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "build_rtm_traceability_map",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        coordinator_module,
+        "verify_run_workspace",
+        lambda *_args, **_kwargs: pytest.fail("Demo fallback must not rerun verification"),
+    )
+    try:
+        worker._run(record["job_id"], False)
+    finally:
+        worker.shutdown()
+
+    assert record["status"] == "COMPLETED"
+    assert record["demoFallbackOriginalStatus"] == "INTERRUPTED"
+    assert record["demoFallbackDeliveryFinalized"] is True
+    assert source.read_text(encoding="utf-8") == "class App {}"
+    assert Client.calls == 1
+    assert TYPE_DEPLOYMENT_FILE in persisted
+    assert "Dockerfile" in persisted[TYPE_DEPLOYMENT_FILE][0]
+    assert record["workflow"]["status"] == "COMPLETE"
+    assert "OpenHands conversation did not finish" not in str(record["workflow"])
+
+
+def test_demo_fallback_completes_execution_exception(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EASYDEP_DEMO_SKIP_VALIDATION", "true")
+    record = {
+        "job_id": "demo-exception",
+        "status": "QUEUED",
+        "run_root": str(tmp_path / "run-root"),
+        "job_path": str(tmp_path / "job.json"),
+    }
+
+    class Client:
+        @staticmethod
+        def run_phase(*_args: object) -> dict[str, object]:
+            raise RuntimeError("verification failed")
+
+        @staticmethod
+        def cancel_all() -> None:
+            return None
+
+    worker = ImplementationWorker(settings(tmp_path))
+    worker.client = Client()
+    worker._read = lambda _job_id: record
+    worker._write = lambda _record: None
+    worker._persist_outputs = lambda _record: None
+    try:
+        worker._run(record["job_id"], False)
+    finally:
+        worker.shutdown()
+
+    assert record["status"] == "COMPLETED"
+    assert record["demoFallbackOriginalStatus"] == "EXCEPTION"
+    assert "error" not in record
+
+
+def test_demo_fallback_preserves_explicit_user_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("EASYDEP_DEMO_SKIP_VALIDATION", "true")
+    record = {
+        "job_id": "demo-user-interrupt",
+        "status": "QUEUED",
+        "_interrupted_by_user": True,
+        "run_root": str(tmp_path / "run-root"),
+        "job_path": str(tmp_path / "job.json"),
+    }
+
+    class Client:
+        @staticmethod
+        def run_phase(*_args: object) -> dict[str, object]:
+            return {"status": "INTERRUPTED", "blockingReason": "stopped by user"}
+
+        @staticmethod
+        def cancel_all() -> None:
+            return None
+
+    worker = ImplementationWorker(settings(tmp_path))
+    worker.client = Client()
+    worker._read = lambda _job_id: record
+    worker._write = lambda _record: None
+    worker._persist_outputs = lambda _record: pytest.fail("User interruption must not persist")
+    try:
+        worker._run(record["job_id"], False)
+    finally:
+        worker.shutdown()
+
+    assert record["status"] == "INTERRUPTED"
+    assert "demoFallback" not in record
+
+
+def test_demo_fallback_is_disabled_by_default(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
+    record = {
+        "job_id": "normal-exception",
+        "status": "QUEUED",
+        "run_root": str(tmp_path / "run-root"),
+        "job_path": str(tmp_path / "job.json"),
+    }
+
+    class Client:
+        @staticmethod
+        def run_phase(*_args: object) -> dict[str, object]:
+            raise RuntimeError("verification failed")
+
+        @staticmethod
+        def cancel_all() -> None:
+            return None
+
+    worker = ImplementationWorker(settings(tmp_path))
+    worker.client = Client()
+    worker._read = lambda _job_id: record
+    worker._write = lambda _record: None
+    try:
+        worker._run(record["job_id"], False)
+    finally:
+        worker.shutdown()
+
+    assert record["status"] == "FAILED"
+    assert record["error"] == "verification failed"
+
+
+def test_implementation_checkpoint_keeps_deployment_file_mandatory_in_demo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Session:
+        @staticmethod
+        def scalar(_statement: object) -> object:
+            return object()
+
+    @contextmanager
+    def fake_session_scope():
+        yield Session()
+
+    available = set(checkpoint_module._REQUIRED_TYPES["implementation"])
+    available.remove("DEPLOYMENT_FILE")
+    monkeypatch.setattr(checkpoint_module, "session_scope", fake_session_scope)
+    monkeypatch.setattr(
+        checkpoint_module,
+        "_latest_versions",
+        lambda *_args: {item: object() for item in available},
+    )
+
+    for value in (None, "true"):
+        if value is None:
+            monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
+        else:
+            monkeypatch.setenv("EASYDEP_DEMO_SKIP_VALIDATION", value)
+        with pytest.raises(
+            ValueError,
+            match=r"^The selected checkpoint is incomplete: DEPLOYMENT_FILE$",
+        ):
+            checkpoint_module.create_checkpoint_branch("source-app", "implementation")
 
 
 def test_job_execution_lease_rejects_a_second_process(

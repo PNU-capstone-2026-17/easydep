@@ -257,6 +257,70 @@ def test_persisted_command_projects_user_message_and_terminal_card() -> None:
     assert events[1]["metadata"]["current_stage"] == "class_diagram"
 
 
+def _completed_testing_row(*, status: str = "COMPLETED", passed: bool = True):
+    completed_at = datetime(2026, 9, 13, 1, 2, 4, tzinfo=UTC)
+    return SimpleNamespace(
+        command_id="testing-command",
+        app_id="app-1",
+        action="start_testing",
+        stage="testing",
+        status=status,
+        payload={
+            "testing_checkpoint": {
+                "current_node": "verification_complete",
+                "result": {"passed": passed, "gateStatus": "PASS" if passed else "FAIL"},
+            }
+        },
+        result={"message": "Testing completed.", "job": {"result": {"passed": passed}}},
+        error="Testing stopped." if status == "INTERRUPTED" else None,
+        created_at=completed_at,
+        started_at=completed_at,
+        completed_at=completed_at,
+    )
+
+
+def test_completed_testing_checkpoint_projects_terminal_steps_after_stale_running() -> None:
+    row = _completed_testing_row()
+    stale_running = repository._timeline_event_id(row.completed_at, 0) - 1
+
+    events = repository._command_timeline_events(row)
+
+    steps = [
+        event for event in events
+        if event["metadata"].get("progress_event") == "testingStepUpdated"
+    ]
+    assert [(event["metadata"]["step"], event["metadata"]["progress_status"]) for event in steps] == [
+        ("prepare-testing", "completed"),
+        ("run-verification", "completed"),
+        ("finalize-testing", "completed"),
+    ]
+    assert all(event["event_id"] > stale_running for event in steps)
+    assert events[-1]["kind"] == "status"
+
+
+@pytest.mark.parametrize(
+    ("status", "passed"),
+    [
+        ("FAILED", True),
+        ("INTERRUPTED", True),
+        ("AWAITING_INPUT", True),
+        ("COMPLETED", False),
+    ],
+)
+def test_nonterminal_or_nonpassing_testing_command_never_projects_completion_steps(
+    status: str,
+    passed: bool,
+) -> None:
+    events = repository._command_timeline_events(
+        _completed_testing_row(status=status, passed=passed)
+    )
+
+    assert not [
+        event for event in events
+        if event["metadata"].get("progress_event") == "testingStepUpdated"
+    ]
+
+
 @pytest.mark.parametrize("action", ["start_implementation", "delegate_repair"])
 def test_reconcile_implementation_command_closes_stale_running_command(
     monkeypatch,

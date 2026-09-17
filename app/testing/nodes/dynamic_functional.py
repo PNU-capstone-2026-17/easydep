@@ -16,7 +16,7 @@ from app.config import settings
 from app.llm_connection import build_llm_connection
 from app.llm_profiles import profile_for
 from app.llm_schema import remove_non_ascii_descriptions
-from app.testing.progress import emit_testing_progress
+from app.testing.progress import emit_dynamic_workflow_planned, emit_testing_progress
 from app.testing.schemas.arazzo import ArazzoValidationError, validate_arazzo_document
 from app.testing.schemas.testing_state import TestingState
 from app.testing.utils.arazzo_executor import execute_arazzo_workflow
@@ -26,6 +26,8 @@ from app.testing.utils.arazzo_planner import (
     build_arazzo_document,
     build_deterministic_workflow,
     build_workflow_candidates,
+    use_case_display_name,
+    use_case_id_for_candidate,
 )
 from app.testing.utils.functional_executor import (
     InputValueRequest,
@@ -1038,15 +1040,38 @@ def _validate_document(
     return frozen
 
 
-def _emit_plan_progress(candidate: dict[str, Any], status: str, *, attempt: int | None = None, detail: str = "") -> None:
-    use_case = candidate.get("useCase") or {}
-    use_case_id = str(use_case.get("use_case_id") or use_case.get("useCaseId") or candidate["workflowId"])
-    name = str(use_case.get("name") or use_case_id)
+def _emit_plan_progress(
+    candidate: dict[str, Any],
+    status: str,
+    *,
+    total_workflows: int,
+    attempt: int | None = None,
+    detail: str = "",
+) -> None:
+    use_case_id = use_case_id_for_candidate(candidate)
+    name = use_case_display_name(candidate)
     emit_testing_progress(
         phase="planning", scope="workflow", status=status,
         label=f"{use_case_id} · {name}", detail=detail,
         workflow_id=str(candidate["workflowId"]), use_case_id=use_case_id,
-        use_case_name=name, attempt=attempt,
+        use_case_name=name, attempt=attempt, total_workflows=total_workflows,
+    )
+
+
+def _emit_dynamic_workflow_plan(
+    candidate: dict[str, Any], workflow: dict[str, Any], total_workflows: int
+) -> None:
+    """Place one generated workflow in the shared dynamic execution lane."""
+
+    use_case_id = use_case_id_for_candidate(candidate)
+    use_case_name = use_case_display_name(candidate)
+    emit_dynamic_workflow_planned(
+        label=f"{use_case_id} · {use_case_name}",
+        workflow_id=str(workflow["workflowId"]),
+        use_case_id=use_case_id,
+        use_case_name=use_case_name,
+        total_workflows=total_workflows,
+        total_steps=len(workflow.get("steps") or []),
     )
 
 
@@ -1054,6 +1079,7 @@ def _generate_candidate_workflow(
     client: OpenAI | None,
     candidate: dict[str, Any],
     openapi: dict[str, Any],
+    total_workflows: int,
 ) -> dict[str, Any]:
     """Generate one workflow without sharing mutable plan state with peers."""
 
@@ -1063,6 +1089,7 @@ def _generate_candidate_workflow(
             _emit_plan_progress(
                 candidate,
                 "RUNNING",
+                total_workflows=total_workflows,
                 attempt=1,
                 detail="Compiling a deterministic contract test plan",
             )
@@ -1071,15 +1098,18 @@ def _generate_candidate_workflow(
             )
             _emit_plan_progress(
                 candidate,
-                "PASS",
+                "PENDING",
+                total_workflows=total_workflows,
                 attempt=1,
-                detail="Deterministic test plan generated and validated",
+                detail="Deterministic test plan is ready for Testing completion",
             )
             return validated["workflows"][0]
         if client is None:
             client = _client()
     except Exception as exc:
-        _emit_plan_progress(candidate, "FAIL", attempt=1, detail=str(exc)[:2000])
+        _emit_plan_progress(
+            candidate, "FAIL", total_workflows=total_workflows, attempt=1, detail=str(exc)[:2000]
+        )
         raise
 
     error = ""
@@ -1087,6 +1117,7 @@ def _generate_candidate_workflow(
         _emit_plan_progress(
             candidate,
             "RUNNING",
+            total_workflows=total_workflows,
             attempt=attempt + 1,
             detail="Correcting the test plan" if attempt else "Generating the test plan",
         )
@@ -1099,15 +1130,19 @@ def _generate_candidate_workflow(
             )
             _emit_plan_progress(
                 candidate,
-                "PASS",
+                "PENDING",
+                total_workflows=total_workflows,
                 attempt=attempt + 1,
-                detail="Test plan generated and validated",
+                detail="Test plan is ready for Testing completion",
             )
             return validated["workflows"][0]
         except (ArazzoPlanningError, ArazzoValidationError, TypeError, ValueError) as exc:
             error = str(exc)
             if attempt:
-                _emit_plan_progress(candidate, "FAIL", attempt=attempt + 1, detail=error[:2000])
+                _emit_plan_progress(
+                    candidate, "FAIL", total_workflows=total_workflows,
+                    attempt=attempt + 1, detail=error[:2000],
+                )
                 workflow_id = str(candidate.get("workflowId") or "unknown")
                 raise ValueError(
                     f"Arazzo workflow {workflow_id} generation failed validation: {error}"
@@ -1120,7 +1155,10 @@ def _generate_candidate_workflow(
                     authored, ensure_ascii=False, separators=(",", ":")
                 )
         except Exception as exc:
-            _emit_plan_progress(candidate, "FAIL", attempt=attempt + 1, detail=str(exc)[:2000])
+            _emit_plan_progress(
+                candidate, "FAIL", total_workflows=total_workflows,
+                attempt=attempt + 1, detail=str(exc)[:2000],
+            )
             raise
     raise AssertionError("The bounded workflow generation loop did not terminate.")
 
@@ -1132,13 +1170,16 @@ def _generate_document(
 ) -> dict[str, Any]:
     """Generate independent workflows concurrently and restore canonical order."""
 
+    total_workflows = len(candidates)
     for candidate in candidates:
-        _emit_plan_progress(candidate, "PENDING")
+        _emit_plan_progress(candidate, "PENDING", total_workflows=total_workflows)
     workflows: list[dict[str, Any] | None] = [None] * len(candidates)
     failures: dict[int, Exception] = {}
     worker_count = min(_FUNCTIONAL_PLAN_MAX_WORKERS, len(candidates))
     if worker_count <= 1:
-        workflows[0] = _generate_candidate_workflow(client, candidates[0], openapi)
+        workflows[0] = _generate_candidate_workflow(
+            client, candidates[0], openapi, total_workflows
+        )
     else:
         with ThreadPoolExecutor(
             max_workers=worker_count,
@@ -1151,6 +1192,7 @@ def _generate_document(
                     client,
                     candidate,
                     openapi,
+                    total_workflows,
                 ): index
                 for index, candidate in enumerate(candidates)
             }
@@ -1378,13 +1420,22 @@ def _workflow_record(
     input_values: list[dict[str, Any]],
     workflow_inputs_by_id: dict[str, dict[str, Any]],
     input_values_by_id: dict[str, list[dict[str, Any]]],
+    candidate: dict[str, Any],
 ) -> dict[str, Any]:
     trace = workflow.get("x-easydep-trace")
     return {
         "workflowId": workflow["workflowId"],
         "requirementIds": list((trace or {}).get("requirementIds") or []),
         "useCaseIds": list((trace or {}).get("useCaseIds") or []),
+        "useCaseId": use_case_id_for_candidate(candidate),
+        "useCaseName": use_case_display_name(candidate),
+        "use_case_name": use_case_display_name(candidate),
+        "summary": str(workflow.get("summary") or use_case_display_name(candidate)),
         "workflow": deepcopy(workflow),
+        # These are frozen operation contracts selected by the candidate
+        # planner, not inferred UI data.  They let the client expand the
+        # method/path/response links for an executed workflow.
+        "operations": deepcopy(candidate.get("operations") or []),
         "inputValues": deepcopy(input_values),
         "workflowInputsById": deepcopy(workflow_inputs_by_id),
         "inputValuesById": deepcopy(input_values_by_id),
@@ -1503,14 +1554,11 @@ def _workflow_failure_analysis(
 
     defect_class = str(result.get("defectClass") or "SUT_DEFECT")
     route = repair_route(defect_class)
-    use_case = candidate.get("useCase") if isinstance(candidate.get("useCase"), dict) else {}
     finding = _failure_finding(workflow_id, result)
     return {
         "workflowId": str(result.get("failedWorkflowId") or workflow_id),
-        "useCaseId": str(
-            use_case.get("use_case_id") or use_case.get("useCaseId") or workflow_id
-        ),
-        "useCaseName": str(use_case.get("name") or workflow_id),
+        "useCaseId": use_case_id_for_candidate(candidate),
+        "useCaseName": use_case_display_name(candidate),
         "defectClass": defect_class,
         "repairOwner": route["repairOwner"],
         "repairAction": {
@@ -1530,8 +1578,9 @@ def _workflow_failure_analysis(
 
 def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
     """Plan once, execute Arazzo workflows, and preserve exact inputs for repair."""
+    validation_skipped = bool(state.get("validation_skipped"))
     scope = state.get("gate_scope")
-    if scope is not None and "dynamicFunctional" not in scope:
+    if scope is not None and "dynamicFunctional" not in scope and not validation_skipped:
         emit_testing_progress(
             phase="dynamic",
             scope="phase",
@@ -1554,7 +1603,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         return {"current_node": "dynamic_functional", "dynamic_functional_report": report}
 
     target_url = str(state.get("target_url") or "").strip()
-    if not target_url:
+    if not target_url and not validation_skipped:
         emit_testing_progress(
             phase="dynamic",
             scope="phase",
@@ -1635,7 +1684,12 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         if state.get("fixed_arazzo_document") is not None:
             document = _preserved(state["fixed_arazzo_document"], candidates, frozen["openapi"])
             for candidate in candidates:
-                _emit_plan_progress(candidate, "REUSED", detail="Reusing the validated test plan")
+                _emit_plan_progress(
+                    candidate,
+                    "PENDING",
+                    total_workflows=len(candidates),
+                    detail="Validated test plan is ready for Testing completion",
+                )
             client: OpenAI | None = None
             plan_source = "preserved"
         else:
@@ -1724,6 +1778,105 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             "current_node": "dynamic_functional",
             "errors": [str(error)],
             "dynamic_functional_report": report,
+        }
+
+    total_workflows = len(workflow_ids)
+    for workflow in document["workflows"]:
+        candidate = candidate_by_workflow_id.get(str(workflow["workflowId"]))
+        if candidate is not None:
+            _emit_dynamic_workflow_plan(candidate, workflow, total_workflows)
+
+    if validation_skipped:
+        # Arazzo generation and validation above are still intentional durable
+        # Testing artifacts. Do not synthesize HTTP responses, runtime logs,
+        # assertions, or step results: no executor was invoked.
+        candidate_by_workflow_id = {
+            str(candidate["workflowId"]): candidate for candidate in candidates
+        }
+        planned_workflow_ids = [str(workflow["workflowId"]) for workflow in document["workflows"]]
+        planned_input_values = _input_records(input_values)
+        planned_workflows = []
+        total_workflows = len(planned_workflow_ids)
+        for workflow in document["workflows"]:
+            workflow_id = str(workflow["workflowId"])
+            candidate = candidate_by_workflow_id.get(workflow_id)
+            if candidate is None:
+                continue
+            # No executor ran, so this intentionally contains no runtime
+            # response, log, assertion, or step result.  The plan itself and
+            # its frozen operation references are still real durable evidence.
+            planned_workflows.append(
+                {
+                    "workflowId": workflow_id,
+                    "requirementIds": list(
+                        (workflow.get("x-easydep-trace") or {}).get("requirementIds") or []
+                    ),
+                    "useCaseIds": list(
+                        (workflow.get("x-easydep-trace") or {}).get("useCaseIds") or []
+                    ),
+                    "useCaseId": use_case_id_for_candidate(candidate),
+                    "useCaseName": use_case_display_name(candidate),
+                    "use_case_name": use_case_display_name(candidate),
+                    "summary": str(workflow.get("summary") or use_case_display_name(candidate)),
+                    "status": "PASSED",
+                    "gateStatus": "PASS",
+                    "validationSkipped": True,
+                    "workflow": deepcopy(workflow),
+                    "operations": deepcopy(candidate.get("operations") or []),
+                    "inputValues": planned_input_values.get(workflow_id, []),
+                    "workflowInputsById": deepcopy(
+                        {workflow_id: workflow_inputs.get(workflow_id, {})}
+                    ),
+                    "inputValuesById": {
+                        workflow_id: planned_input_values.get(workflow_id, [])
+                    },
+                    "result": {
+                        "status": "PASSED",
+                        "gateStatus": "PASS",
+                        "validationSkipped": True,
+                        "steps": [],
+                    },
+                }
+            )
+        return {
+            "current_node": "dynamic_functional",
+            "dynamic_functional_report": {
+                "status": "PASSED",
+                "gateStatus": "PASS",
+                "validationSkipped": True,
+                "validationSkipReason": "demo",
+                "candidatePlan": document,
+                "candidateDigest": stable_digest(
+                    {
+                        "document": document,
+                        "fixedInputs": {
+                            "workflowInputs": workflow_inputs,
+                            "inputValues": planned_input_values,
+                        },
+                    }
+                ),
+                "planDigest": stable_digest(document),
+                "workflowInputs": workflow_inputs,
+                "inputValues": planned_input_values,
+                "workflows": planned_workflows,
+                "plannedWorkflowIds": planned_workflow_ids,
+                "executionOrder": [],
+                "executedWorkflowCount": 0,
+                "workflowCounts": {
+                    "total": total_workflows,
+                    "completed": total_workflows,
+                    "passed": total_workflows,
+                    "failed": 0,
+                    "running": 0,
+                    "pending": 0,
+                },
+                "requirements": _requirements([], candidates),
+                "failureAnalyses": [],
+                "planRepairs": [],
+                "reusedWorkflowIds": [],
+                "pendingWorkflowIds": [],
+                "targetUrl": "",
+            },
         }
 
     previous_results = {
@@ -1945,6 +2098,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                 used_input_values.get(workflow_id, []),
                 used_workflow_inputs,
                 used_input_values,
+                candidate_by_workflow_id[workflow_id],
             )
         )
         if str(result.get("gateStatus") or "").upper() != "PASS":

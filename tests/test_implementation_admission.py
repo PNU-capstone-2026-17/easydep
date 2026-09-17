@@ -1,6 +1,9 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
 
 import app.implementation.agents.admission as admission
 from app.implementation.agents.admission import admit_behavior_capsule
@@ -113,6 +116,7 @@ def test_needs_input_admission_returns_one_upstream_gap() -> None:
 def test_preflight_reuses_exact_checkpoint_and_invalidates_changed_input(
     tmp_path: Path, monkeypatch
 ) -> None:
+    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     calls = []
     monkeypatch.setattr(
         admission,
@@ -179,6 +183,7 @@ def test_preflight_reuses_exact_checkpoint_and_invalidates_changed_input(
 def test_integration_preflight_hashes_exact_file_evidence_without_persisting_it(
     tmp_path: Path, monkeypatch
 ) -> None:
+    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     monkeypatch.setattr(
         admission,
         "build_admission_llm_connection",
@@ -237,3 +242,20 @@ def test_integration_preflight_hashes_exact_file_evidence_without_persisting_it(
     assert admission.preflight_semantic_integration(tmp_path, task, context, refs) is None
     assert len(payloads) == 2
     assert checkpoint_path.read_text(encoding="utf-8") != first_checkpoint
+
+
+def test_demo_skip_preserves_missing_integration_evidence_error(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("EASYDEP_DEMO_SKIP_VALIDATION", "true")
+    context = {"readSourcePaths": ["application/missing-source.java"]}
+    with (
+        patch.object(admission, "_preflight_admission") as preflight,
+        pytest.raises(ValueError, match="Missing integration admission evidence"),
+    ):
+        admission.preflight_semantic_integration(
+            tmp_path,
+            {"task_id": "integration"},
+            context,
+            ["use_case_spec:UC-1"],
+        )
+
+    preflight.assert_not_called()

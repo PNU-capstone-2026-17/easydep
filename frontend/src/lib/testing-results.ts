@@ -18,6 +18,8 @@ export interface TestingStepView {
   detail?: string;
   method?: string;
   path?: string;
+  expectedStatus?: string;
+  inputLinks: string[];
   statusCode?: number;
   control?: string;
   elapsedMs?: number;
@@ -50,6 +52,7 @@ export interface TestingGateView {
   issues: string[];
   files: string[];
   commands: string[];
+  plannedChecks: string[];
   elapsedMs?: number;
   reused?: boolean;
 }
@@ -70,6 +73,7 @@ export interface TestingRunView {
   failedStepId?: string;
   candidateDigest?: string;
   gateCounts?: { passed: number; failed: number; inconclusive: number };
+  planTotal: number;
   workflowCounts: {
     total: number;
     completed?: number;
@@ -177,6 +181,7 @@ function gate(id: string, value: unknown, progressValue: unknown): TestingGateVi
     issues: strings(item.issues),
     files: strings(item.targets ?? item.files),
     commands,
+    plannedChecks: strings(item.plannedChecks ?? item.planned_checks ?? item.checks ?? item.checkNames),
     elapsedMs:
       typeof item.elapsedMs === 'number'
         ? item.elapsedMs
@@ -208,6 +213,22 @@ function reportStep(
   const step = record(raw);
   const finding = record(step.finding);
   const code = typeof step.statusCode === 'number' ? step.statusCode : undefined;
+  const successCriteria = criteria(step.successCriteria ?? step.criteria);
+  const expectedStatus = successCriteria
+    .map((item) => item.condition.match(/\b([1-5]\d\d)\b/)?.[1])
+    .find(Boolean) ?? (Array.isArray(step.responses)
+      ? step.responses.map((response) => String(record(response).status ?? '')).find(Boolean)
+      : undefined);
+  const parameters = Array.isArray(step.parameters) ? step.parameters : [];
+  const inputLinks = parameters
+    .map((raw) => {
+      const parameter = record(raw);
+      const name = String(parameter.name ?? '').trim();
+      const value = String(parameter.value ?? '').trim();
+      return name && value ? `${name}=${value}` : '';
+    })
+    .filter(Boolean);
+  if (record(step.requestBody).payload !== undefined) inputLinks.push('request body payload');
   const failed = Boolean(finding.code) || step.contractStatus === 'FAIL' || step.semanticStatus === 'FAIL';
   return {
     stepId: String(step.stepId ?? planned.stepId ?? 'step'),
@@ -215,19 +236,61 @@ function reportStep(
     status: status(step.status ?? (failed ? 'FAIL' : code == null ? 'PENDING' : 'PASS')),
     detail: String(finding.message ?? '').trim() || undefined,
     operationId: String(step.operationId ?? planned.operationId ?? '').trim() || undefined,
-    method: String(step.method ?? '').trim().toUpperCase() || undefined,
-    path: String(step.path ?? '').trim() || undefined,
+    method: String(step.method ?? step.httpMethod ?? '').trim().toUpperCase() || undefined,
+    path: String(step.path ?? step.operationPath ?? '').trim() || undefined,
+    expectedStatus,
+    inputLinks,
     statusCode: code,
     control: String(step.control ?? '').trim() || undefined,
     elapsedMs: typeof step.elapsedMs === 'number' ? step.elapsedMs : undefined,
     attempt: typeof step.attempt === 'number' ? step.attempt : undefined,
     contractStatus: String(step.contractStatus ?? '').trim() || undefined,
     semanticStatus: String(step.semanticStatus ?? '').trim() || undefined,
-    criteria: criteria(step.criteria),
+    criteria: successCriteria,
     request: step.request,
     response: step.responseBody,
     cleanup
   };
+}
+
+function count(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+}
+
+function terminalVerificationStatus(value: unknown): TestingStatus | undefined {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  if (normalized === 'PASS' || normalized === 'PASSED') return 'PASS';
+  if (normalized === 'FAIL' || normalized === 'FAILED') return 'FAIL';
+  return undefined;
+}
+
+function terminalCommandStatus(value: unknown): boolean {
+  return ['COMPLETED', 'FAILED'].includes(String(value ?? '').trim().toUpperCase());
+}
+
+function terminalWorkflowStatus(
+  result: Record<string, any>,
+  finalReportTerminal: boolean
+): TestingStatus | undefined {
+  const value = terminalVerificationStatus(result.gateStatus ?? result.status);
+  // Candidate/profile reports contain planned workflow steps and can mark
+  // their generation PASSED before any request runs. Only a terminal final
+  // report makes report status authoritative; live workflow terminal states
+  // come from testingProgressUpdated and are merged separately.
+  return value && finalReportTerminal ? value : undefined;
+}
+
+function workflowAliases(workflowId: string, useCaseIds: string[]): Set<string> {
+  return new Set([workflowId, ...useCaseIds].map((value) => value.trim().toLowerCase()).filter(Boolean));
+}
+
+function sameWorkflow(
+  left: Pick<TestingWorkflowView, 'workflowId' | 'useCaseIds'>,
+  right: Pick<TestingWorkflowView, 'workflowId' | 'useCaseIds'>
+): boolean {
+  const leftAliases = workflowAliases(left.workflowId, left.useCaseIds);
+  return [...workflowAliases(right.workflowId, right.useCaseIds)].some((alias) => leftAliases.has(alias));
 }
 
 function workflowsFromProgress(progress: Record<string, any>): TestingWorkflowView[] {
@@ -243,13 +306,15 @@ function workflowsFromProgress(progress: Record<string, any>): TestingWorkflowVi
         operationId: String(step.operation_id ?? step.operationId ?? '').trim() || undefined,
         method: String(step.method ?? '').trim().toUpperCase() || undefined,
         path: String(step.path ?? '').trim() || undefined,
+        expectedStatus: undefined,
+        inputLinks: [],
         statusCode: typeof step.status_code === 'number' ? step.status_code : undefined,
         control: String(step.control ?? '').trim() || undefined,
         elapsedMs: typeof step.elapsed_ms === 'number' ? step.elapsed_ms : undefined,
         attempt: typeof step.attempt === 'number' ? step.attempt : undefined,
         contractStatus: String(step.contract_status ?? '').trim() || undefined,
         semanticStatus: String(step.semantic_status ?? '').trim() || undefined,
-        criteria: []
+      criteria: []
       };
     });
     return {
@@ -260,37 +325,61 @@ function workflowsFromProgress(progress: Record<string, any>): TestingWorkflowVi
       steps,
       totalSteps: typeof item.total_steps === 'number' ? item.total_steps : undefined,
       requirementIds: [],
-      useCaseIds: [],
+      useCaseIds: strings(item.use_case_id ?? item.useCaseId),
       reused: item.status === 'REUSED'
     };
   });
 }
 
-function workflowsFromReport(report: Record<string, any>): TestingWorkflowView[] {
+function workflowsFromReport(
+  report: Record<string, any>,
+  verificationFinal: boolean
+): TestingWorkflowView[] {
+  const dynamicStatus = verificationFinal
+    ? terminalVerificationStatus(report.gateStatus ?? report.status)
+    : undefined;
+  const finalDynamicPass = dynamicStatus === 'PASS';
   const results: TestingWorkflowView[] = (
     Array.isArray(report.workflows) ? report.workflows : []
   ).map((raw) => {
     const item = record(raw);
     const result = record(item.result);
+    const workflowStatus = terminalWorkflowStatus(result, verificationFinal);
     const workflow = record(item.workflow);
     const trace = record(workflow['x-easydep-trace'] ?? item['x-easydep-trace']);
+    const operations = new Map(
+      (Array.isArray(item.operations) ? item.operations : [])
+        .map((raw) => record(raw))
+        .map((operation) => [String(operation.operationId ?? ''), operation] as const)
+        .filter(([operationId]) => operationId)
+    );
+    const withOperation = (raw: unknown): Record<string, any> => {
+      const step = record(raw);
+      return { ...record(operations.get(String(step.operationId ?? ''))), ...step };
+    };
     const executedSteps = Array.isArray(result.steps) ? result.steps : [];
     const executedIds = new Set(executedSteps.map((step) => String(record(step).stepId ?? '')));
     const planned = Array.isArray(workflow.steps) ? workflow.steps : [];
     let cleanupLane = false;
     const executedViews = executedSteps.map((step) => {
-      const view = reportStep(step, {}, cleanupLane);
+      const actual = record(step);
+      const definition = withOperation(
+        planned.find((plannedStep) => String(record(plannedStep).stepId ?? '') === String(actual.stepId ?? ''))
+      );
+      const view = reportStep({ ...definition, ...actual }, definition, cleanupLane);
       if (String(record(step).control ?? '').startsWith('cleanup-')) cleanupLane = true;
       return view;
     });
     const unexecutedViews = planned
       .filter((plannedStep) => !executedIds.has(String(record(plannedStep).stepId ?? '')))
       .map((plannedStep) => {
-        const definition = record(plannedStep);
+        const definition = withOperation(plannedStep);
         return reportStep(
           {
             ...definition,
-            status: status(result.gateStatus ?? result.status) === 'PASS' ? 'SKIPPED' : 'PENDING'
+            status: (workflowStatus === 'PASS' || (verificationFinal && dynamicStatus === 'PASS'))
+              ? 'SKIPPED'
+              : 'PENDING'
           },
           definition
         );
@@ -299,7 +388,7 @@ function workflowsFromReport(report: Record<string, any>): TestingWorkflowView[]
     return {
       workflowId: String(item.workflowId ?? result.workflowId ?? workflow.workflowId ?? 'workflow'),
       label: String(workflow.summary ?? workflow.description ?? item.summary ?? item.workflowId ?? 'Workflow'),
-      status: status(result.reused ? 'REUSED' : result.gateStatus ?? result.status),
+      status: workflowStatus ?? (verificationFinal ? dynamicStatus ?? 'PENDING' : 'PENDING'),
       detail: String(result.reason ?? '').trim() || undefined,
       steps,
       totalSteps: planned.length || steps.length || undefined,
@@ -308,7 +397,6 @@ function workflowsFromReport(report: Record<string, any>): TestingWorkflowView[]
       reused: Boolean(result.reused)
     };
   });
-  const resultIds = new Set(results.map((item) => item.workflowId));
   const pendingIds = new Set(strings(report.pendingWorkflowIds));
   const plannedWorkflows = Array.isArray(record(report.candidatePlan).workflows)
     ? record(report.candidatePlan).workflows
@@ -316,19 +404,26 @@ function workflowsFromReport(report: Record<string, any>): TestingWorkflowView[]
   for (const raw of plannedWorkflows) {
     const workflow = record(raw);
     const workflowId = String(workflow.workflowId ?? 'workflow');
-    if (resultIds.has(workflowId)) continue;
     const trace = record(workflow['x-easydep-trace']);
-    results.push({
+    const planned: TestingWorkflowView = {
       workflowId,
       label: String(workflow.summary ?? workflow.description ?? workflowId),
-      status: pendingIds.has(workflowId) ? 'PENDING' : 'SKIPPED',
+      status: finalDynamicPass
+        ? 'PASS'
+        : dynamicStatus === 'FAIL' && !pendingIds.has(workflowId)
+          ? 'SKIPPED'
+          : 'PENDING',
       steps: (Array.isArray(workflow.steps) ? workflow.steps : []).map((step) =>
-        reportStep({ ...record(step), status: 'PENDING' }, record(step))
+        reportStep({ ...record(step), status: finalDynamicPass ? 'PASS' : 'PENDING' }, record(step))
       ),
       totalSteps: Array.isArray(workflow.steps) ? workflow.steps.length : undefined,
       requirementIds: strings(trace.requirementIds),
       useCaseIds: strings(trace.useCaseIds)
-    });
+    };
+    // A final execution entry is authoritative. Match on the durable workflow
+    // ID and on trace-linked use-case IDs so a pending candidate cannot add a
+    // second row or replace a completed row.
+    if (!results.some((result) => sameWorkflow(result, planned))) results.push(planned);
   }
   return results;
 }
@@ -353,6 +448,115 @@ function latestProgressEvent(
   );
 }
 
+function progressFields(event: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(
+    [
+      'status', 'progress_step_label', 'progress_detail', 'updated_at', 'elapsed_ms',
+      'operation_id', 'method', 'path', 'status_code', 'contract_status',
+      'semantic_status', 'control', 'attempt', 'use_case_id', 'use_case_name'
+    ].filter((key) => event[key] !== undefined && event[key] !== '').map((key) => [key, event[key]])
+  );
+}
+
+type ProgressWorkflowRecord = Record<string, unknown> & {
+  workflow_id: string;
+  steps: Record<string, unknown>;
+  total_steps?: unknown;
+};
+
+function foldTestingProgress(
+  checkpoint: Record<string, any>,
+  events: WorkspaceEvent[],
+  commandId: string | undefined
+): Record<string, any> {
+  const relevantEvents = events.filter(
+    (event) =>
+      event.command_id === commandId && event.metadata?.progress_event === 'testingProgressUpdated'
+  );
+  if (!Object.keys(checkpoint).length && !relevantEvents.length) return {};
+  const result: Record<string, any> = {
+    ...checkpoint,
+    plan_total: Math.max(
+      count(checkpoint.plan_total),
+      count(record(checkpoint.plan_counts).total),
+      count(record(checkpoint.workflow_counts).total)
+    ),
+    plans: { ...record(checkpoint.plans) },
+    workflows: { ...record(checkpoint.workflows) },
+    gates: { ...record(checkpoint.gates) }
+  };
+  const checkpointUpdatedAt = String(checkpoint.updated_at ?? '');
+  const ordered = relevantEvents
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => (left.event.event_id ?? left.index) - (right.event.event_id ?? right.index));
+
+  for (const { event } of ordered) {
+    const value = record(event.metadata);
+    const updatedAt = String(value.updated_at ?? event.created_at ?? '');
+    if (checkpointUpdatedAt && updatedAt && updatedAt < checkpointUpdatedAt) continue;
+    const phase = String(value.phase ?? '');
+    const scope = String(value.scope ?? '');
+    const workflowId = String(value.workflow_id ?? '');
+    const fields = progressFields(value);
+    result.phase = phase;
+    result.status = value.status;
+    result.updated_at = updatedAt || result.updated_at;
+    result.last_event = value;
+    if (count(value.total_workflows)) {
+      result.plan_total = Math.max(count(result.plan_total), count(value.total_workflows));
+    }
+
+    if (phase === 'planning' && scope === 'workflow' && workflowId) {
+      result.plans[workflowId] = { workflow_id: workflowId, ...fields };
+      continue;
+    }
+    if ((scope === 'workflow' || scope === 'step') && workflowId) {
+      const existing = record(result.workflows[workflowId]);
+      const workflow: ProgressWorkflowRecord = {
+        ...existing,
+        workflow_id: workflowId,
+        steps: { ...record(existing.steps) }
+      };
+      if (scope === 'workflow') {
+        Object.assign(workflow, fields);
+        if (value.total_steps != null) workflow.total_steps = value.total_steps;
+      } else {
+        const stepId = String(value.step_id ?? '');
+        if (stepId) workflow.steps[stepId] = { step_id: stepId, ...fields };
+      }
+      result.workflows[workflowId] = workflow;
+    }
+    if (scope === 'gate' && value.gate) {
+      result.gates[String(value.gate)] = { gate: String(value.gate), ...fields };
+    }
+  }
+  return result;
+}
+
+function mergeWorkflows(
+  reportWorkflows: TestingWorkflowView[],
+  progressWorkflows: TestingWorkflowView[]
+): TestingWorkflowView[] {
+  const merged = [...reportWorkflows];
+  for (const progress of progressWorkflows) {
+    const index = merged.findIndex((report) => sameWorkflow(report, progress));
+    if (index < 0) {
+      merged.push(progress);
+      continue;
+    }
+    const report = merged[index];
+    if (terminalVerificationStatus(report.status)) continue;
+    merged[index] = {
+      ...report,
+      status: progress.status,
+      detail: progress.detail ?? report.detail,
+      steps: progress.steps.length ? progress.steps : report.steps,
+      totalSteps: progress.totalSteps ?? report.totalSteps
+    };
+  }
+  return merged;
+}
+
 export function projectTestingRun(input: {
   command?: WorkspaceCommand | null;
   events?: WorkspaceEvent[];
@@ -368,38 +572,48 @@ export function projectTestingRun(input: {
   const reports = record(verification.reports ?? source.reports);
   const event = latestProgressEvent(input.events ?? [], command?.command_id);
   const checkpointProgress = record(checkpoint.testing_progress);
-  const progress = Object.keys(checkpointProgress).length
-    ? checkpointProgress
-    : record(event?.metadata);
+  const progress = foldTestingProgress(
+    checkpointProgress,
+    input.events ?? [],
+    command?.command_id
+  );
   const lastProgress = record(progress.last_event);
   const currentProgress = Object.keys(lastProgress).length ? lastProgress : record(event?.metadata);
-  const planRecords = { ...record(progress.plans) };
-  // SSE can arrive before the refreshed command checkpoint. Fold planning
-  // events over the saved rows, without letting older events overwrite them.
-  for (const item of input.events ?? []) {
-    const metadata = record(item.metadata);
-    if (item.command_id !== command?.command_id || metadata.progress_event !== 'testingProgressUpdated' ||
-        metadata.phase !== 'planning' || metadata.scope !== 'workflow' || !metadata.workflow_id) continue;
-    const previous = record(planRecords[metadata.workflow_id]);
-    if (String(metadata.updated_at ?? item.created_at ?? '') >= String(previous.updated_at ?? '')) {
-      planRecords[metadata.workflow_id] = metadata;
-    }
-  }
-  const plans = Object.values(planRecords).map((raw) => {
+  const plans: TestingRunView['plans'] = Object.values(record(progress.plans)).map((raw) => {
     const item = record(raw);
+    const lifecycleStatus = status(item.status);
     return {
       workflowId: String(item.workflow_id),
       useCaseId: String(item.use_case_id ?? item.workflow_id),
       name: String(item.use_case_name ?? item.progress_step_label ?? item.workflow_id),
-      status: status(item.status),
+      // Profile generation is preparation, not a verification result. Keep
+      // non-failure plan rows pending even if an older event calls it passed.
+      status: lifecycleStatus === 'FAIL' ? 'FAIL' : 'PENDING',
       attempt: item.attempt == null ? undefined : Number(item.attempt),
       detail: String(item.progress_detail ?? '') || undefined
     };
   });
   const dynamicReport = record(reports.dynamicFunctional);
-  const reportWorkflows = workflowsFromReport(dynamicReport);
+  const candidatePlan = record(dynamicReport.candidatePlan);
+  const candidatePlanWorkflows = Array.isArray(candidatePlan.workflows)
+    ? candidatePlan.workflows
+    : [];
+  const counts = record(progress.workflow_counts);
+  const planTotal = Math.max(
+    count(progress.plan_total),
+    count(record(progress.plan_counts).total),
+    count(counts.total),
+    candidatePlanWorkflows.length,
+    plans.length
+  );
+  const commandTerminal = terminalCommandStatus(command?.status);
+  const verificationFinal = Boolean(
+    terminalVerificationStatus(dynamicReport.gateStatus ?? dynamicReport.status) &&
+      commandTerminal
+  );
+  const reportWorkflows = workflowsFromReport(dynamicReport, verificationFinal);
   const progressWorkflows = workflowsFromProgress(progress);
-  const workflows = reportWorkflows.length ? reportWorkflows : progressWorkflows;
+  const workflows = mergeWorkflows(reportWorkflows, progressWorkflows);
   const progressGates = record(progress.gates);
   const aggregateGates = record(verification.gates ?? source.gates);
   const staticReport = record(reports.static);
@@ -454,20 +668,30 @@ export function projectTestingRun(input: {
   if (!Object.keys(source).length && !Object.keys(progress).length && !hasTestingEvent && !isTestingCommand) {
     return null;
   }
-  const counts = record(progress.workflow_counts);
   const gateCounts = record(verification.gateCounts ?? source.gateCounts);
-  const finalGateStatus = status(source.gateStatus ?? verification.gateStatus, 'PENDING');
+  const finalGateStatus = verificationFinal
+    ? terminalVerificationStatus(source.gateStatus ?? verification.gateStatus ?? dynamicReport.gateStatus) ?? 'PENDING'
+    : 'PENDING';
   const commandStatus = String(command?.status ?? '').toUpperCase();
-  const runStatus: TestingStatus = Object.keys(report).length
+  const runStatus: TestingStatus = verificationFinal
     ? finalGateStatus
     : commandStatus === 'RUNNING' || commandStatus === 'QUEUED'
       ? 'RUNNING'
       : commandStatus === 'FAILED'
         ? 'FAIL'
-        : status(currentProgress.status ?? currentProgress.progress_status);
+        : 'PENDING';
   const blockingReason =
     String(source.blockingReason ?? verification.blockingReason ?? findings[0]?.message ?? '').trim() ||
     undefined;
+
+  const completedWorkflows = workflows.filter(
+    (item) => !['PENDING', 'RUNNING'].includes(item.status)
+  ).length;
+  const passedWorkflows = workflows.filter(
+    (item) => ['PASS', 'REUSED', 'SKIPPED'].includes(item.status)
+  ).length;
+  const failedWorkflows = workflows.filter((item) => item.status === 'FAIL').length;
+  const workflowTotal = Math.max(workflows.length, planTotal);
 
   return {
     available: true,
@@ -503,20 +727,14 @@ export function projectTestingRun(input: {
           )
         }
       : undefined,
+    planTotal,
     workflowCounts: {
-      total: Number(counts.total ?? workflows.length),
-      completed: counts.completed == null ? undefined : Number(counts.completed),
-      passed:
-        counts.passed == null
-          ? workflows.filter((item) => item.status === 'PASS' || item.status === 'REUSED').length
-          : Number(counts.passed) + Number(counts.reused ?? 0),
-      failed: Number(counts.failed ?? workflows.filter((item) => item.status === 'FAIL').length),
-      running: Number(
-        counts.running ?? workflows.filter((item) => item.status === 'RUNNING').length
-      ),
-      pending: Number(
-        counts.pending ?? workflows.filter((item) => item.status === 'PENDING').length
-      )
+      total: workflowTotal,
+      completed: completedWorkflows,
+      passed: passedWorkflows,
+      failed: failedWorkflows,
+      running: workflows.filter((item) => item.status === 'RUNNING').length,
+      pending: Math.max(0, workflowTotal - completedWorkflows - workflows.filter((item) => item.status === 'RUNNING').length)
     },
     workflows,
     plans,

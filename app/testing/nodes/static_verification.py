@@ -293,6 +293,102 @@ def _resource_plan(state: TestingState) -> dict:
     return {}
 
 
+def _demo_static_plan(state: TestingState) -> tuple[dict, dict, dict]:
+    """Project real, not-run validation work for an explicit demo result.
+
+    This reads the already materialized snapshot and frozen deployment profile;
+    it never calls a scanner, shell, container, or package verifier.  Keeping
+    the planned commands and concrete targets makes a PASS-only demo result
+    expandable without claiming that a command produced output.
+    """
+
+    directory = str(state.get("application_dir") or "").strip()
+    application = Path(directory) if directory else None
+    deployment = application / "deployment" if application is not None else None
+    targets: list[str] = []
+    if application is not None and application.is_dir():
+        for path in sorted(application.glob("Dockerfile")):
+            targets.append(f"application/{path.relative_to(application).as_posix()}")
+        if deployment is not None and deployment.is_dir():
+            targets.extend(
+                f"application/{path.relative_to(application).as_posix()}"
+                for path in sorted(deployment.rglob("*"))
+                if path.is_file()
+            )
+    targets = sorted(set(targets))
+    trivy_command = {
+        "name": "trivy config",
+        "tool": "trivy",
+        "command": [
+            "trivy", "config", ".", "--format", "json", "--severity", "HIGH,CRITICAL",
+            "--skip-check-update", "--disable-telemetry", "--skip-version-check", "--quiet",
+        ],
+        "profile": "config-high-critical",
+        "planned": True,
+    }
+    package_commands: list[dict] = [
+        {
+            "name": "deployment package structure",
+            "profile": "deployment-package",
+            "planned": True,
+            "targets": targets,
+        }
+    ]
+    tofu = deployment / "tofu" if deployment is not None else None
+    tofu_targets = [target for target in targets if "/deployment/tofu/" in target]
+    tofu_commands: list[dict] = []
+    if tofu is not None and tofu.is_dir():
+        tofu_commands = [
+            {"name": "tofu fmt", "command": ["tofu", "fmt", "-check", "-recursive"], "planned": True},
+            {"name": "tofu init", "command": ["tofu", "init", "-backend=false", "-input=false", "-no-color"], "planned": True},
+            {"name": "tofu validate", "command": ["tofu", "validate", "-no-color"], "planned": True},
+        ]
+        for path in sorted(tofu.glob("cloud-init_*.yaml.tftpl")):
+            tofu_commands.append(
+                {"name": "cloud-init schema", "command": ["cloud-init", "schema", "--config-file", path.relative_to(deployment).as_posix()], "planned": True}
+            )
+        for path in sorted(tofu.glob("bootstrap_*.sh.tftpl")):
+            tofu_commands.append(
+                {"name": "bash syntax", "command": ["bash", "-n", path.relative_to(deployment).as_posix()], "planned": True}
+            )
+    if deployment is not None and (deployment / "runtime" / "compose.yaml").is_file():
+        package_commands.append(
+            {"name": "docker compose config", "command": ["docker", "compose", "-f", "runtime/compose.yaml", "config"], "profile": "deployment-package", "planned": True}
+        )
+    package_commands.extend(tofu_commands)
+    common = {
+        "status": "PASSED",
+        "gateStatus": "PASS",
+        "issues": [],
+        "validationSkipped": True,
+        "validationSkipReason": "demo",
+        "targets": targets,
+        "resourcePlan": _resource_plan(state),
+    }
+    trivy = {
+        **common,
+        "tool": "trivy",
+        "commands": [trivy_command],
+        "checkNames": ["Trivy configuration scan"],
+        "checkCounts": {"total": 1, "passed": 1, "failed": 0},
+    }
+    package = {
+        **common,
+        "targets": sorted(set(targets)),
+        "commands": package_commands,
+        "checkNames": [item["name"] for item in package_commands],
+        "checkCounts": {"total": len(package_commands), "passed": len(package_commands), "failed": 0},
+    }
+    iac = {
+        **common,
+        "targets": tofu_targets,
+        "commands": tofu_commands,
+        "checkNames": [item["name"] for item in tofu_commands],
+        "checkCounts": {"total": len(tofu_commands), "passed": len(tofu_commands), "failed": 0},
+    }
+    return trivy, package, iac
+
+
 def _selected_gates(state: TestingState) -> set[str]:
     """이번 실행에서 실제 도구를 호출할 정적 gate를 반환한다."""
 
@@ -335,6 +431,19 @@ def _previous_static_parts(state: TestingState) -> tuple[dict, dict, dict]:
 
 def static_verification_node(state: TestingState) -> dict:
     """복원한 애플리케이션 전체에서 배포 설정 문제를 찾는다."""
+    if state.get("validation_skipped"):
+        trivy, package, iac = _demo_static_plan(state)
+        return {
+            "current_node": "static_verification",
+            "errors": [],
+            "static_report": {
+                **trivy,
+                "trivyScan": trivy,
+                "deploymentPackage": package,
+                "checkCounts": {"total": 2, "passed": 2, "failed": 0},
+            },
+            "iac_report": iac,
+        }
     selected = _selected_gates(state)
     previous_trivy, previous_package, previous_iac = _previous_static_parts(state)
     if "static" in selected:

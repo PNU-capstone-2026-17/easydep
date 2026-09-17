@@ -333,9 +333,11 @@ def _command_timeline_events(row: WorkspaceCommand) -> list[dict[str, Any]]:
     terminal_at = (
         row.started_at if conversational else row.completed_at
     ) or row.started_at or row.created_at
+    testing_completion = _testing_completion_projection(row, terminal_at)
+    events.extend(testing_completion)
     events.append(
         {
-            "event_id": _timeline_event_id(terminal_at, 2),
+            "event_id": _timeline_event_id(terminal_at, 3 if testing_completion else 2),
             "app_id": row.app_id,
             "command_id": row.command_id,
             "stage": row.stage,
@@ -347,6 +349,75 @@ def _command_timeline_events(row: WorkspaceCommand) -> list[dict[str, Any]]:
         }
     )
     return events
+
+
+def _testing_completion_projection(
+    row: WorkspaceCommand,
+    terminal_at: datetime,
+) -> list[dict[str, Any]]:
+    """Rebuild terminal Testing steps from a completed command checkpoint."""
+
+    if str(row.stage or "") != "testing" or str(row.status or "") != "COMPLETED":
+        return []
+    payload = row.payload if isinstance(row.payload, dict) else {}
+    checkpoint = payload.get("testing_checkpoint")
+    if not isinstance(checkpoint, dict) or checkpoint.get("current_node") != "verification_complete":
+        return []
+    result = row.result if isinstance(row.result, dict) else {}
+    job = result.get("job") if isinstance(result.get("job"), dict) else {}
+    reports = (checkpoint.get("result"), job.get("result"), result)
+    if not any(_testing_report_passed(report) for report in reports):
+        return []
+
+    steps = (
+        (
+            "prepare-testing",
+            "Prepare testing snapshot",
+            "Testing inputs are ready.",
+        ),
+        (
+            "run-verification",
+            "Run application verification",
+            "Verification gates finished.",
+        ),
+        (
+            "finalize-testing",
+            "Finalize testing results",
+            "Test results are ready.",
+        ),
+    )
+    return [
+        {
+            "event_id": _timeline_event_id(terminal_at, slot),
+            "app_id": row.app_id,
+            "command_id": row.command_id,
+            "stage": "testing",
+            "kind": "progress",
+            "actor": "system",
+            "text": detail,
+            "metadata": {
+                "progress_event": "testingStepUpdated",
+                "step": step,
+                "progress_step_label": label,
+                "progress_card_label": "Testing progress",
+                "progress_detail": detail,
+                "progress_status": "completed",
+            },
+            "created_at": _timestamp_in_kst(terminal_at),
+        }
+        for slot, (step, label, detail) in enumerate(steps)
+    ]
+
+
+def _testing_report_passed(report: Any) -> bool:
+    """Return whether a Testing report contains terminal passing evidence."""
+
+    if not isinstance(report, dict):
+        return False
+    if report.get("passed") is True or str(report.get("gateStatus") or "").upper() == "PASS":
+        return True
+    verification = report.get("verification")
+    return isinstance(verification, dict) and _testing_report_passed(verification)
 
 
 def list_timeline_events(
@@ -391,12 +462,15 @@ def list_timeline_events(
         }
         if command_id
     }
+    next_terminal_event_id: dict[str, int] = {}
     for event in durable:
         if event.get("actor") == "user":
             continue
-        progress_id = last_progress.get(str(event.get("command_id") or ""))
-        if progress_id is not None and int(event["event_id"]) <= progress_id:
-            event["event_id"] = progress_id + 1
+        command_id = str(event.get("command_id") or "")
+        minimum = last_progress.get(command_id, -1) + 1
+        event_id = max(int(event["event_id"]), minimum, next_terminal_event_id.get(command_id, -1))
+        event["event_id"] = event_id
+        next_terminal_event_id[command_id] = event_id + 1
     return sorted([*durable, *progress], key=lambda event: int(event["event_id"]))
 
 
