@@ -21,6 +21,7 @@
   import DeploymentPreferencesCard from '$lib/components/DeploymentPreferencesCard.svelte';
   import ImplementationErrorPanel from '$lib/components/ImplementationErrorPanel.svelte';
   import LlmTimingHistory from '$lib/components/LlmTimingHistory.svelte';
+  import { workspaceProgressCards, type ProgressCard } from '$lib/workspace-timeline';
 
   let {
     appId,
@@ -49,13 +50,17 @@
     onDeploymentPreferencesSave: (preferences: DeploymentPreferences) => Promise<void>;
     onArtifactSelect: (stage: string) => void;
   } = $props();
+  let progressCards = $derived(workspaceProgressCards(events));
+  let progressCardCommandIds = $derived(new Set(progressCards.map((card) => card.commandId)));
   let latestProgress = $derived(
     [...events]
       .reverse()
       .find(
         (event) =>
           event.kind === 'progress' &&
-          event.metadata?.progress_event !== 'testingProgressUpdated'
+          event.metadata?.progress_event !== 'testingProgressUpdated' &&
+          event.metadata?.progress_event !== 'durableProgressCards' &&
+          event.metadata?.progress_event !== 'progressCardPatch'
       )
   );
   let latestImplementationError = $derived(
@@ -174,6 +179,8 @@
           event.event_id < implementationTimelineResetId
         ) &&
         event.metadata?.progress_event !== 'testingProgressUpdated' &&
+        event.metadata?.progress_event !== 'durableProgressCards' &&
+        event.metadata?.progress_event !== 'progressCardPatch' &&
         !(
           event.stage === 'implementation' &&
           event.kind === 'progress' &&
@@ -186,10 +193,30 @@
         ) &&
         (event.kind !== 'status' || eventArtifactStages(event).length > 0) &&
         (event.kind !== 'progress' ||
-          event.event_id === lastProgressId ||
-          event.metadata?.progress_event === 'designLlmMetrics')
+          event.metadata?.progress_event === 'designLlmMetrics' ||
+          (!progressCardCommandIds.has(String(event.command_id ?? '')) &&
+            event.event_id === lastProgressId))
     );
   });
+  type TimelineEntry =
+    | { key: string; type: 'event'; eventId: number; order: number; event: WorkspaceEvent }
+    | { key: string; type: 'progress-card'; eventId: number; order: number; card: ProgressCard };
+  let timelineEntries = $derived.by((): TimelineEntry[] => [
+    ...visibleEvents.map((event) => ({
+      key: `event:${event.event_id}`,
+      type: 'event' as const,
+      eventId: event.event_id,
+      order: 0,
+      event
+    })),
+    ...progressCards.map((card) => ({
+      key: `progress:${card.commandId}:${card.id}`,
+      type: 'progress-card' as const,
+      eventId: card.eventId,
+      order: card.order,
+      card
+    }))
+  ].sort((left, right) => left.eventId - right.eventId || left.order - right.order || left.key.localeCompare(right.key)));
   let artifactEventOwners = $derived.by(() => {
     const owners = new Map<string, number>();
     for (const event of events) {
@@ -202,6 +229,15 @@
 
   function available(stage: string): boolean {
     return Boolean(fileArtifacts[stage]) || artifactPresent(document?.artifacts?.[stage]);
+  }
+
+  function topLevelProgressSteps(card: ProgressCard) {
+    const taskIds = new Set(card.tasks.map((task) => task.id));
+    return card.tasks.filter((task) => !task.parentId || !taskIds.has(task.parentId));
+  }
+
+  function childProgressSteps(card: ProgressCard, parentId: string) {
+    return card.tasks.filter((task) => task.parentId === parentId);
   }
 
   function artifactCandidates(event: WorkspaceEvent): string[] {
@@ -287,10 +323,82 @@
       <p class="text-sm">Waiting for the first command.</p>
     </div>
   {/if}
-  {#each visibleEvents as event (event.event_id)}
-    {@const relatedArtifacts = eventArtifactStages(event)}
-    {@const isLlmMetrics = event.metadata?.progress_event === 'designLlmMetrics'}
-    {#if event.kind === 'progress'}
+  {#each timelineEntries as item (item.key)}
+    {#if item.type === 'progress-card'}
+      {@const card = item.card}
+      <div
+        class="mb-4 ml-11 rounded-xl border border-[#dfe3dc] bg-[#fafbf8] px-3 py-2.5 text-xs text-[#555950]"
+        data-kind="progress"
+        data-command-id={card.commandId}
+        data-progress-card-id={card.id}
+      >
+        <div class="mb-2 flex items-center justify-between gap-3">
+          <span class="font-semibold text-[#343831]">{card.label}</span>
+          {#if card.createdAt}
+            <time class="text-[10px] text-[#a0a29a]">{formatTime(card.createdAt)}</time>
+          {/if}
+        </div>
+        <div class="space-y-2">
+          {#if card.stage === 'implementation' && implementationFocus && card.commandId === latestProgress?.command_id}
+            <div class="rounded-lg border border-[#dfe6dd] bg-[#f3f7f2] px-2.5 py-2 text-[10px] leading-5 text-[#3b453f]">
+              <div class="font-medium text-[#2f3d33]">Current implementation target</div>
+              <div class="mt-0.5 flex flex-wrap items-center gap-1.5">
+                <span class="font-mono text-[9px] text-[#57615d]">{implementationFocus.file}</span>
+                {#if implementationFocus.className}
+                  <span class="rounded bg-[#dfeee2] px-1.5 py-0.5 text-[9px] font-semibold text-[#2d7354]">{implementationFocus.className}</span>
+                {/if}
+              </div>
+            </div>
+          {/if}
+          {#each topLevelProgressSteps(card) as step (step.id)}
+            <div class="flex items-start gap-2">
+              {#if step.status === 'completed'}
+                <CheckCircle2 size={13} class="mt-0.5 shrink-0 text-[#5d806c]" />
+              {:else if step.status === 'failed'}
+                <AlertTriangle size={13} class="mt-0.5 shrink-0 text-[#a8433a]" />
+              {:else if step.status === 'waiting'}
+                <Circle size={13} class="mt-0.5 shrink-0 text-[#b1b4ac]" />
+              {:else}
+                <LoaderCircle size={13} class="mt-0.5 shrink-0 animate-spin text-[#2d7354]" />
+              {/if}
+              <div class="min-w-0">
+                <div class="leading-4">{step.label}</div>
+                {#if step.detail && step.detail !== 'Started'}
+                  <div class="mt-0.5 text-[10px] leading-4 text-[#85887f]">{step.detail}</div>
+                {/if}
+              </div>
+            </div>
+            {#if childProgressSteps(card, step.id).length}
+              <div class="ml-5 space-y-2 border-l border-[#dfe6dd] pl-3">
+                {#each childProgressSteps(card, step.id) as child (child.id)}
+                  <div class="flex items-start gap-2">
+                    {#if child.status === 'completed'}
+                      <CheckCircle2 size={12} class="mt-0.5 shrink-0 text-[#5d806c]" />
+                    {:else if child.status === 'failed'}
+                      <AlertTriangle size={12} class="mt-0.5 shrink-0 text-[#a8433a]" />
+                    {:else if child.status === 'waiting'}
+                      <Circle size={12} class="mt-0.5 shrink-0 text-[#b1b4ac]" />
+                    {:else}
+                      <LoaderCircle size={12} class="mt-0.5 shrink-0 animate-spin text-[#2d7354]" />
+                    {/if}
+                    <div class="min-w-0">
+                      <div class="leading-4">{child.label}</div>
+                      {#if child.detail && child.detail !== 'Started'}
+                        <div class="mt-0.5 text-[10px] leading-4 text-[#85887f]">{child.detail}</div>
+                      {/if}
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          {/each}
+        </div>
+      </div>
+    {:else}
+      {@const event = item.event}
+      {@const relatedArtifacts = eventArtifactStages(event)}
+      {@const isLlmMetrics = event.metadata?.progress_event === 'designLlmMetrics'}
+      {#if event.kind === 'progress'}
       <div
         class="mb-4 ml-11 rounded-xl border border-[#dfe3dc] bg-[#fafbf8] px-3 py-2.5 text-xs text-[#555950]"
         data-kind="progress"
@@ -507,6 +615,7 @@
         {/if}
       </div>
     </article>
+    {/if}
     {/if}
   {/each}
   {#if showDeploymentPreferences && Object.values(regions).some((items) => items.length)}

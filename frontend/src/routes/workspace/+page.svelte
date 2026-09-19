@@ -23,6 +23,7 @@
   } from '$lib/artifacts';
   import { nextAutoAction } from '$lib/auto-mode';
   import { projectTestingRun } from '$lib/testing-results';
+  import { optimisticCommandEvents, reconcileWorkspaceEvents } from '$lib/workspace-timeline';
 
   const AUTO_MODE_STORAGE_KEY = 'easydep:auto-mode';
 
@@ -273,7 +274,7 @@
           void refreshState(id);
           return;
         }
-        if (!events.some((item) => item.event_id === event.event_id)) events = [...events, event];
+        events = reconcileWorkspaceEvents(events, [event]);
         if (
           event.metadata?.progress_event === 'classDiagramPreviewUpdated' &&
           event.command_id
@@ -314,7 +315,13 @@
     const previousCommand = command;
     const [snapshot, document] = await Promise.all([getWorkspace(id), getArtifacts(id)]);
     const nextCommand = snapshot.command ?? null;
-    events = snapshot.events;
+    events = reconcileWorkspaceEvents(
+      events,
+      snapshot.events,
+      nextCommand && !['QUEUED', 'RUNNING'].includes(nextCommand.status)
+        ? nextCommand.command_id
+        : ''
+    );
     progressCursor = Math.max(progressCursor, snapshot.progress_cursor);
     command = nextCommand;
     deploymentPreferences = snapshot.deployment_preferences ?? null;
@@ -477,7 +484,13 @@
     actionBusy = true;
     error = '';
     try {
-      await sendCommand(appId, { action, ...extra });
+      const accepted = await sendCommand(appId, { action, ...extra }) as { command: WorkspaceCommand };
+      command = accepted.command;
+      currentStage = accepted.command.stage;
+      events = [
+        ...events,
+        ...optimisticCommandEvents(accepted.command, String(extra.text ?? ''))
+      ];
       await refreshState();
     } catch (reason) {
       error = errorMessage(reason);

@@ -38,6 +38,7 @@ _EVENT_LIMIT_PER_APP = 1_000
 _event_lock = RLock()
 _last_progress_event_id = 0
 _events: dict[str, deque[dict[str, Any]]] = defaultdict(lambda: deque(maxlen=_EVENT_LIMIT_PER_APP))
+_TIMELINE_PROGRESS_KEY = "_timeline_progress_cards"
 
 
 def now() -> datetime:
@@ -193,13 +194,207 @@ def latest_command(
 def update_command(command_id: str, **changes: Any) -> dict[str, Any]:
     """command의 지정된 필드만 갱신하고 갱신 직후 snapshot을 반환한다."""
     with session_scope() as session:
-        row = session.get(WorkspaceCommand, command_id)
+        row = session.scalar(
+            select(WorkspaceCommand)
+            .where(WorkspaceCommand.command_id == command_id)
+            .with_for_update()
+        )
         if row is None:
             raise KeyError(command_id)
         for key, value in changes.items():
+            # Long-running workers still checkpoint an entire payload from a
+            # stale in-memory copy. The timeline namespace is server-owned.
+            if key == "payload" and isinstance(value, dict):
+                existing = row.payload if isinstance(row.payload, dict) else {}
+                value = {
+                    item_key: item_value
+                    for item_key, item_value in value.items()
+                    if item_key != _TIMELINE_PROGRESS_KEY
+                }
+                if _TIMELINE_PROGRESS_KEY in existing:
+                    value[_TIMELINE_PROGRESS_KEY] = existing[_TIMELINE_PROGRESS_KEY]
             setattr(row, key, value)
         session.flush()
         return command_dict(row)
+
+
+def _progress_status(value: object) -> str:
+    status = str(value or "").lower()
+    if status == "running":
+        return "running"
+    if status in {"waiting", "pending", "queued"}:
+        return "waiting"
+    return "completed"
+
+
+def _safe_progress_task(value: dict[str, Any], *, fallback_order: int = 0) -> dict[str, Any]:
+    task_id = str(value.get("id") or "")
+    task = {
+        "id": task_id,
+        "label": str(value.get("label") or task_id),
+        "order": int(value.get("order") or fallback_order),
+        "status": _progress_status(value.get("status") or "waiting"),
+        "detail": str(value.get("detail") or "")[:500],
+    }
+    parent_id = str(value.get("parent_id") or "")
+    if parent_id:
+        task["parent_id"] = parent_id
+    return task
+
+
+def _card_status(tasks: list[dict[str, Any]], fallback: object = "waiting") -> str:
+    if any(task["status"] == "running" for task in tasks):
+        return "running"
+    if tasks and all(task["status"] == "completed" for task in tasks):
+        return "completed"
+    return _progress_status(fallback)
+
+
+def _safe_progress_card(value: dict[str, Any]) -> dict[str, Any]:
+    card_id = str(value.get("id") or "")
+    raw_tasks = value.get("tasks") if isinstance(value.get("tasks"), list) else []
+    tasks = [
+        _safe_progress_task(task, fallback_order=index)
+        for index, task in enumerate(raw_tasks)
+        if isinstance(task, dict) and str(task.get("id") or "")
+    ]
+    card = {
+        "id": card_id,
+        "stage": str(value.get("stage") or "requirements"),
+        "order": int(value.get("order") or 0),
+        "label": str(value.get("label") or card_id),
+        "status": _card_status(tasks, value.get("status")),
+        "tasks": tasks,
+    }
+    if isinstance(value.get("event_id"), int):
+        card["event_id"] = value["event_id"]
+    if isinstance(value.get("created_at"), str) and value["created_at"]:
+        card["created_at"] = value["created_at"]
+    return card
+
+
+def _merge_progress_card(existing: dict[str, Any] | None, patch: dict[str, Any]) -> dict[str, Any]:
+    base = _safe_progress_card(existing or patch)
+    incoming = _safe_progress_card(patch)
+    by_id = {task["id"]: task for task in base["tasks"]}
+    for task in incoming["tasks"]:
+        previous = by_id.get(task["id"])
+        if previous and task["status"] == "waiting" and previous["status"] != "waiting":
+            # Reconstructed cards start from waiting defaults. They must not
+            # rewind already observed running or completed work.
+            by_id[task["id"]] = {
+                **previous,
+                **task,
+                "status": previous["status"],
+                "detail": previous["detail"] or task["detail"],
+            }
+        else:
+            by_id[task["id"]] = {**previous, **task} if previous else task
+    tasks = sorted(by_id.values(), key=lambda task: (task["order"], task["id"]))
+    return {
+        **base,
+        **{key: incoming[key] for key in ("stage", "order", "label")},
+        "status": _card_status(tasks, incoming["status"]),
+        "tasks": tasks,
+    }
+
+
+def publish_progress_cards(
+    app_id: str,
+    *,
+    command_id: str,
+    stage: str,
+    cards: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Merge durable progress-card patches and publish their live counterpart."""
+
+    with session_scope() as session:
+        row = session.scalar(
+            select(WorkspaceCommand)
+            .where(WorkspaceCommand.command_id == command_id)
+            .with_for_update()
+        )
+        if row is None or row.app_id != app_id:
+            raise KeyError(command_id)
+        if str(row.status or "") not in ACTIVE_STATUSES:
+            # A late worker callback must not mutate a completed, failed, or
+            # interrupted command's durable snapshot.
+            return {}
+        payload = dict(row.payload or {})
+        stored = payload.get(_TIMELINE_PROGRESS_KEY)
+        current_cards = stored.get("cards") if isinstance(stored, dict) else []
+        by_id = {
+            str(card.get("id")): _safe_progress_card(card)
+            for card in current_cards
+            if isinstance(card, dict) and str(card.get("id") or "")
+        }
+        changed: list[dict[str, Any]] = []
+        first_seen_at = now()
+        for card in cards:
+            if not isinstance(card, dict) or not str(card.get("id") or ""):
+                continue
+            merged = _merge_progress_card(by_id.get(str(card["id"])), card)
+            if "event_id" not in merged:
+                merged["event_id"] = _timeline_event_id(first_seen_at, 3 + len(changed))
+                merged["created_at"] = _timestamp_in_kst(first_seen_at)
+            by_id[merged["id"]] = merged
+            changed.append(merged)
+        if not changed:
+            return {}
+        payload[_TIMELINE_PROGRESS_KEY] = {
+            "version": 1,
+            "revision": int(stored.get("revision") or 0) + 1 if isinstance(stored, dict) else 1,
+            "cards": sorted(by_id.values(), key=lambda card: (card["order"], card["id"])),
+        }
+        row.payload = payload
+        session.flush()
+
+    return append_progress_event(
+        app_id,
+        command_id=command_id,
+        stage=stage,
+        text="",
+        metadata={
+            "progress_event": "progressCardPatch",
+            "progress_cards": {"version": 1, "cards": changed},
+        },
+    )
+
+
+def _stage_progress_card(
+    stage: str, command_id: str, metadata: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Adapt existing stage emitters into stable durable card patches."""
+
+    event = str(metadata.get("progress_event") or "")
+    if event in {
+        "progressCardPatch",
+        "durableProgressCards",
+        "commandStateChanged",
+        "designLlmMetrics",
+    }:
+        return []
+    resolved_stage = workflow_stage(stage)
+    if resolved_stage not in {"requirements", "design", "implementation", "testing"}:
+        return []
+    step = str(metadata.get("step") or metadata.get("analysis_step") or "")
+    if not step:
+        return []
+    status = _progress_status(metadata.get("progress_status") or "running")
+    return [{
+        "id": f"{resolved_stage}:{command_id}:progress",
+        "stage": resolved_stage,
+        "order": ("requirements", "design", "implementation", "testing").index(resolved_stage),
+        "label": str(metadata.get("progress_card_label") or f"{resolved_stage.title()} progress"),
+        "status": status,
+        "tasks": [{
+            "id": step,
+            "label": str(metadata.get("progress_step_label") or step),
+            "order": 0,
+            "status": status,
+            "detail": str(metadata.get("progress_detail") or ""),
+        }],
+    }]
 
 
 def append_progress_event(
@@ -212,6 +407,7 @@ def append_progress_event(
 ) -> dict[str, Any]:
     """실시간 표시용 진행 이벤트만 bounded process memory에 추가한다."""
 
+    safe_metadata = dict(metadata or {})
     with session_scope() as session:
         if session.get(App, app_id) is None:
             raise KeyError(app_id)
@@ -219,6 +415,17 @@ def append_progress_event(
             command = session.get(WorkspaceCommand, command_id)
             if command is None or command.app_id != app_id:
                 raise KeyError(command_id)
+    # Existing workers keep their transient event contract. This central
+    # adapter persists the corresponding card before publishing that event.
+    if command_id is not None:
+        cards = _stage_progress_card(stage, command_id, safe_metadata)
+        if cards:
+            publish_progress_cards(
+                app_id,
+                command_id=command_id,
+                stage=workflow_stage(stage),
+                cards=cards,
+            )
     with _event_lock:
         global _last_progress_event_id
         created_at = now()
@@ -234,7 +441,7 @@ def append_progress_event(
             "kind": "progress",
             "actor": "system",
             "text": text,
-            "metadata": metadata or {},
+            "metadata": safe_metadata,
             "created_at": _timestamp_in_kst(created_at),
         }
         _events[app_id].append(event)
@@ -288,6 +495,10 @@ def _command_timeline_events(row: WorkspaceCommand) -> list[dict[str, Any]]:
     payload = row.payload if isinstance(row.payload, dict) else {}
     result = row.result if isinstance(row.result, dict) else {}
     events: list[dict[str, Any]] = []
+    progress_cards = payload.get(_TIMELINE_PROGRESS_KEY)
+    has_progress_cards = isinstance(progress_cards, dict) and isinstance(
+        progress_cards.get("cards"), list
+    ) and bool(progress_cards["cards"])
     user_text = str(payload.get("text") or payload.get("_timeline_text") or "").strip()
     if user_text:
         events.append(
@@ -305,7 +516,27 @@ def _command_timeline_events(row: WorkspaceCommand) -> list[dict[str, Any]]:
         )
 
     status = str(row.status or "")
+    if has_progress_cards:
+        events.append(
+            {
+                # Keep restored progress before the terminal command card.
+                "event_id": _timeline_event_id(row.created_at, 1),
+                "app_id": row.app_id,
+                "command_id": row.command_id,
+                "stage": row.stage,
+                "kind": "progress",
+                "actor": "system",
+                "text": "",
+                "metadata": {
+                    "progress_event": "durableProgressCards",
+                    "progress_cards": progress_cards,
+                },
+                "created_at": _timestamp_in_kst(row.created_at),
+            }
+        )
     if status in ACTIVE_STATUSES:
+        if has_progress_cards:
+            return events
         return events
     result_kind = str(result.get("kind") or "")
     if status in {"FAILED", "INTERRUPTED"}:
@@ -333,7 +564,9 @@ def _command_timeline_events(row: WorkspaceCommand) -> list[dict[str, Any]]:
     terminal_at = (
         row.started_at if conversational else row.completed_at
     ) or row.started_at or row.created_at
-    testing_completion = _testing_completion_projection(row, terminal_at)
+    # New snapshots already contain these stable terminal Testing tasks. Keep
+    # the legacy projection only for commands created before durable cards.
+    testing_completion = [] if has_progress_cards else _testing_completion_projection(row, terminal_at)
     events.extend(testing_completion)
     events.append(
         {
