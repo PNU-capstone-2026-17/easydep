@@ -502,7 +502,7 @@
   {/if}
 
   {#if selected !== 'TESTING_RESULTS'}
-  <div class="flex shrink-0 border-b border-[#e6e6e0] px-2 pt-1" role="tablist">
+  <!--<div class="flex shrink-0 border-b border-[#e6e6e0] px-2 pt-1" role="tablist">
     {#each [
       ['artifact', 'Artifact'],
       ['validation', 'Validation'],
@@ -516,7 +516,7 @@
         onclick={() => (tab = item[0] as typeof tab)}
       >{item[1]}</button>
     {/each}
-  </div>
+  </div>-->
   {/if}
 
   <div class="scrollbar-thin flex-1 overflow-auto bg-[#fbfbf8]">
