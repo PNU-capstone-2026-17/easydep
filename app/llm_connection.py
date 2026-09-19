@@ -118,6 +118,12 @@ def build_admission_llm_connection(config: Settings = settings) -> LlmConnection
     return _build_llm_connection(config, config.admission_model or config.model)
 
 
+def build_arazzo_llm_connection(config: Settings = settings) -> LlmConnection:
+    """Build the Testing workflow-planning connection without changing MODEL."""
+
+    return _build_llm_connection(config, config.arazzo_model or config.model)
+
+
 def _build_llm_connection(config: Settings, model_id: str) -> LlmConnection:
     """Assemble one provider connection while the caller chooses its model."""
 
@@ -177,6 +183,7 @@ def llm_subprocess_environment(config: Settings = settings) -> dict[str, str]:
     design_connection = build_llm_connection(config)
     openhands_connection = build_openhands_llm_connection(config)
     admission_connection = build_admission_llm_connection(config)
+    arazzo_connection = build_arazzo_llm_connection(config)
     environment = {
         "LLM_PROVIDER": design_connection.provider,
         "API_KEY": design_connection.api_key,
@@ -184,6 +191,7 @@ def llm_subprocess_environment(config: Settings = settings) -> dict[str, str]:
         "MODEL": design_connection.model,
         "OPENHANDS_MODEL": openhands_connection.model,
         "ADMISSION_MODEL": admission_connection.model,
+        "ARAZZO_MODEL": arazzo_connection.model,
         "LLM_TIMEOUT_SECONDS": str(config.llm_timeout_seconds),
         "LLM_WALL_TIMEOUT_SECONDS": str(config.llm_wall_timeout_seconds),
         "IMPLEMENTATION_OWNER_TOOL_MODE": config.implementation_owner_tool_mode,

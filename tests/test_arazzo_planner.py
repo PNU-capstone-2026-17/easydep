@@ -12,6 +12,7 @@ from app.testing.utils.arazzo_planner import (
     attach_workflow_trace,
     build_arazzo_document,
     build_deterministic_workflow,
+    build_execution_candidates,
     build_workflow_candidates,
 )
 
@@ -148,6 +149,94 @@ def _use_cases() -> dict[str, Any]:
 
 def _candidates() -> list[dict[str, Any]]:
     return build_workflow_candidates(_requirements(), _use_cases(), _openapi())
+
+
+@pytest.mark.parametrize(
+    ("mutate", "operation_id", "location"),
+    [
+        (
+            lambda document: document["paths"]["/items/{id}"]["get"]["parameters"][
+                0
+            ].update(schema={"type": "object"}),
+            "getItem",
+            "parameter path:id",
+        ),
+        (
+            lambda document: document["paths"]["/items"]["post"]["requestBody"]["content"][
+                "application/json"
+            ].update(schema={"type": "object", "properties": {}, "additionalProperties": False}),
+            "createItem",
+            "requestBody",
+        ),
+        (
+            lambda document: document["paths"]["/items"]["post"]["responses"]["201"]["content"][
+                "application/json"
+            ].update(schema={"type": "object", "properties": {}, "additionalProperties": False}),
+            "createItem",
+            "response 201",
+        ),
+    ],
+)
+def test_execution_candidates_reject_closed_empty_input_or_response_schema(
+    mutate, operation_id: str, location: str
+) -> None:
+    openapi = _openapi()
+    mutate(openapi)
+    selected = [_candidate_for(build_workflow_candidates(_requirements(), _use_cases(), openapi), "UC-1")]
+
+    with pytest.raises(ArazzoPlanningError, match=rf"{operation_id}.*{location}"):
+        build_execution_candidates(selected, openapi)
+
+
+def test_execution_candidates_expose_finite_typed_connection_choices() -> None:
+    candidates = build_execution_candidates([_candidate_for(_candidates(), "UC-1")], _openapi())
+
+    assert [(item["stepId"], item["operationId"]) for item in candidates] == [
+        ("createItem", "createItem"),
+        ("getItem", "getItem"),
+    ]
+    get_item = candidates[1]
+    assert get_item["inputs"][0]["inputSlot"] == "path:id"
+    assert get_item["inputs"][0]["connections"] == [
+        {
+            "connectionId": "createItem.bodyId->getItem.path:id",
+            "sourceStepId": "createItem",
+            "sourceSlot": "body.id",
+            "outputName": "bodyId",
+            "outputExpression": "$response.body#/id",
+            "targetStepId": "getItem",
+            "targetInputSlot": "path:id",
+            "value": "$steps.createItem.outputs.bodyId",
+        },
+        {
+            "connectionId": "createItem.bodyName->getItem.path:id",
+            "sourceStepId": "createItem",
+            "sourceSlot": "body.name",
+            "outputName": "bodyName",
+            "outputExpression": "$response.body#/name",
+            "targetStepId": "getItem",
+            "targetInputSlot": "path:id",
+            "value": "$steps.createItem.outputs.bodyName",
+        },
+    ]
+    assert candidates[0]["successStatuses"] == ["201"]
+
+
+def test_execution_candidates_escape_json_pointer_tokens_and_ground_statuses() -> None:
+    openapi = _openapi()
+    openapi["paths"]["/items"]["post"]["responses"]["201"]["content"]["application/json"][
+        "schema"
+    ] = {
+        "type": "object",
+        "properties": {"a/b": {"type": "string"}, "til~de": {"type": "string"}},
+    }
+    output = build_execution_candidates([_candidate_for(_candidates(), "UC-1")], openapi)[0]
+
+    assert [(item["outputName"], item["outputExpression"]) for item in output["outputs"]] == [
+        ("bodyAB", "$response.body#/a~1b"),
+        ("bodyTilDe", "$response.body#/til~0de"),
+    ]
+    assert output["successStatuses"] == ["201"]
 
 
 def test_candidates_use_natural_use_case_order() -> None:

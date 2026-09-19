@@ -7,9 +7,12 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from app.testing.utils.functional_executor import resolve_schema
+
 _METHODS = ("delete", "get", "head", "options", "patch", "post", "put", "trace")
 _IDENTIFIER = re.compile(r"[^A-Za-z0-9_-]+")
 _NATURAL_PARTS = re.compile(r"(\d+)")
+_SCENARIO_ORDER = re.compile(r":(\d+)$")
 
 
 class ArazzoPlanningError(ValueError):
@@ -233,6 +236,274 @@ def _response_contracts(operation: Mapping[str, Any]) -> list[dict[str, Any]]:
                 else None,
             }
         )
+    return result
+
+
+def _is_empty_object(schema: Mapping[str, Any] | None) -> bool:
+    return (
+        isinstance(schema, Mapping)
+        and schema.get("type") == "object"
+        and not schema.get("properties")
+    )
+
+
+def _schema_slots(
+    openapi: Mapping[str, Any],
+    schema: Any,
+    slot: str,
+    issues: list[str],
+    *,
+    require_concrete: bool = True,
+    pointer_parts: tuple[str, ...] = (),
+    include_pointer: bool = False,
+) -> list[dict[str, Any]]:
+    """Project OpenAPI leaves into typed, connectable input/output slots."""
+
+    try:
+        resolved = resolve_schema(dict(openapi), schema)
+    except ValueError as error:
+        issues.append(f"{slot}: {error}")
+        return []
+    schema_type = resolved.get("type")
+    if isinstance(schema_type, list):
+        non_null = [item for item in schema_type if item != "null"]
+        if len(non_null) == 1:
+            resolved = {**resolved, "type": non_null[0]}
+            schema_type = non_null[0]
+    if schema_type is None:
+        for key in ("anyOf", "oneOf"):
+            branches = resolved.get(key)
+            if not isinstance(branches, list):
+                continue
+            resolved_branches = [
+                resolve_schema(dict(openapi), branch)
+                for branch in branches
+                if isinstance(branch, Mapping)
+            ]
+            non_null = [branch for branch in resolved_branches if branch.get("type") != "null"]
+            if len(non_null) == 1 and len(non_null) < len(resolved_branches):
+                resolved = non_null[0]
+                schema_type = resolved.get("type")
+                break
+    if schema_type == "object":
+        properties = resolved.get("properties")
+        if not isinstance(properties, Mapping) or not properties:
+            if require_concrete:
+                issues.append(f"{slot}: object schema has no properties")
+            return []
+        names = sorted(properties)
+        if require_concrete:
+            required = resolved.get("required")
+            required_names = set(required) if isinstance(required, list) else set()
+            names = [name for name in names if name in required_names]
+            if not names:
+                value: dict[str, Any] = {
+                    "slot": slot,
+                    "type": "object",
+                    "format": "",
+                    "cardinality": "one",
+                }
+                if include_pointer:
+                    value["pointerParts"] = pointer_parts
+                return [value]
+        return [
+            value
+            for name in names
+            for child in [properties[name]]
+            for value in _schema_slots(
+                openapi,
+                child,
+                f"{slot}.{name}",
+                issues,
+                require_concrete=require_concrete,
+                pointer_parts=pointer_parts + (str(name),),
+                include_pointer=include_pointer,
+            )
+        ]
+    if schema_type == "array":
+        values = _schema_slots(
+            openapi,
+            resolved.get("items"),
+            f"{slot}[]",
+            issues,
+            require_concrete=require_concrete,
+            pointer_parts=pointer_parts + ("0",),
+            include_pointer=include_pointer,
+        )
+        return values if include_pointer else [{**value, "cardinality": "many"} for value in values]
+    if not isinstance(schema_type, str):
+        issues.append(f"{slot}: schema has no concrete type")
+        return []
+    value = {
+        "slot": slot,
+        "type": schema_type,
+        "format": str(resolved.get("format") or ""),
+        "cardinality": "one",
+    }
+    if include_pointer:
+        value["pointerParts"] = pointer_parts
+    return [value]
+
+
+def _json_pointer(parts: tuple[str, ...]) -> str:
+    return "#" if not parts else "#/" + "/".join(
+        part.replace("~", "~0").replace("/", "~1") for part in parts
+    )
+
+
+def _output_name(parts: tuple[str, ...], used: set[str]) -> str:
+    words = [word for part in parts for word in re.findall(r"[A-Za-z0-9]+", part)]
+    stem = "body" + "".join(word[:1].upper() + word[1:] for word in words)
+    stem = stem if stem != "body" else "bodyValue"
+    name, suffix = stem, 2
+    while name in used:
+        name = f"{stem}{suffix}"
+        suffix += 1
+    used.add(name)
+    return name
+
+
+def _step_id(operation: Mapping[str, Any]) -> str:
+    value = _IDENTIFIER.sub("-", _id(operation, "operationId")).strip("-")
+    if not value:
+        raise ArazzoPlanningError("Operation cannot produce a deterministic stepId.")
+    return value
+
+
+def _operation_order(operation: Mapping[str, Any]) -> tuple[int, str]:
+    hints = operation.get("traceHints")
+    refs = hints.get("scenarioRefs") if isinstance(hints, Mapping) else []
+    positions = [
+        int(match.group(1))
+        for reference in refs if isinstance(refs, list) and isinstance(reference, str)
+        if (match := _SCENARIO_ORDER.search(reference))
+    ]
+    return min(positions, default=10**9), _id(operation, "operationId")
+
+
+def _current_operation_contract(
+    openapi: Mapping[str, Any], operation_id: str, fallback: Mapping[str, Any]
+) -> Mapping[str, Any]:
+    """Read schemas from the supplied frozen OpenAPI, never a stale projection copy."""
+
+    paths = openapi.get("paths")
+    if not isinstance(paths, Mapping):
+        return fallback
+    for path_item in paths.values():
+        if not isinstance(path_item, Mapping):
+            continue
+        for method in _METHODS:
+            operation = path_item.get(method)
+            if not isinstance(operation, Mapping) or operation.get("operationId") != operation_id:
+                continue
+            return {
+                **fallback,
+                "parameters": _effective_parameters(path_item, operation),
+                "requestBody": _request_contract(operation),
+                "responses": _response_contracts(operation),
+            }
+    return fallback
+
+
+def build_execution_candidates(
+    candidates: Iterable[Mapping[str, Any]], openapi: Mapping[str, Any]
+) -> list[dict[str, Any]]:
+    """Deterministically expose executable steps, input slots, and legal connections."""
+
+    result: list[dict[str, Any]] = []
+    issues: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, Mapping):
+            raise ArazzoPlanningError("Selected workflow candidate must be an object.")
+        operations = candidate.get("operations")
+        if not isinstance(operations, list):
+            raise ArazzoPlanningError("Selected workflow candidate has no operations.")
+        prior_outputs: list[dict[str, Any]] = []
+        for operation in sorted(operations, key=_operation_order):
+            if not isinstance(operation, Mapping):
+                raise ArazzoPlanningError("Selected candidate operation must be an object.")
+            operation_id, step_id = _id(operation, "operationId"), _step_id(operation)
+            operation = _current_operation_contract(openapi, operation_id, operation)
+
+            def slots(
+                schema: Any, slot: str, location: str, *, require_concrete: bool = True,
+                include_pointer: bool = False,
+            ) -> list[dict[str, Any]]:
+                local_issues: list[str] = []
+                values = _schema_slots(
+                    openapi, schema, slot, local_issues,
+                    require_concrete=require_concrete, include_pointer=include_pointer,
+                )
+                issues.extend(
+                    f"{operation_id} {location}: " + issue.removeprefix(f"{slot}: ")
+                    for issue in local_issues
+                )
+                return values
+
+            inputs: list[dict[str, Any]] = []
+            for parameter in operation.get("parameters", []):
+                if not isinstance(parameter, Mapping):
+                    raise ArazzoPlanningError("Selected operation parameter must be an object.")
+                if parameter.get("required") is True:
+                    slot = f"{parameter.get('in')}:{parameter.get('name')}"
+                    inputs.extend(slots(parameter.get("schema"), slot, f"parameter {slot}"))
+            request_body = operation.get("requestBody")
+            if isinstance(request_body, Mapping) and request_body.get("required") is True:
+                inputs.extend(slots(request_body.get("schema"), "body", "requestBody", include_pointer=True))
+            responses = operation.get("responses")
+            if not isinstance(responses, list):
+                raise ArazzoPlanningError("Selected operation responses must be a list.")
+            outputs: list[dict[str, Any]] = []
+            for response in responses:
+                if not isinstance(response, Mapping):
+                    raise ArazzoPlanningError("Selected operation response must be an object.")
+                if not str(response.get("status", "")).startswith("2"):
+                    continue
+                schema = response.get("schema")
+                if schema is None:
+                    continue
+                resolved = resolve_schema(dict(openapi), schema)
+                if _is_empty_object(resolved) and resolved.get("additionalProperties") is False:
+                    issues.append(f"{operation_id} has a closed empty JSON response at response {response.get('status')}")
+                    continue
+                outputs.extend(slots(schema, "body", f"response {response.get('status')}", require_concrete=False, include_pointer=True))
+            used_output_names: set[str] = set()
+            for output in outputs:
+                pointer_parts = tuple(output.pop("pointerParts", ()))
+                output["outputName"] = _output_name(pointer_parts, used_output_names)
+                output["outputExpression"] = "$response.body" + _json_pointer(pointer_parts)
+            for input_slot in inputs:
+                input_slot["inputSlot"] = input_slot["slot"]
+                input_slot["connections"] = [
+                    {
+                        "connectionId": f"{output['stepId']}.{output['outputName']}->{step_id}.{input_slot['inputSlot']}",
+                        "sourceStepId": output["stepId"],
+                        "sourceSlot": output["slot"],
+                        "outputName": output["outputName"],
+                        "outputExpression": output["outputExpression"],
+                        "targetStepId": step_id,
+                        "targetInputSlot": input_slot["inputSlot"],
+                        "value": f"$steps.{output['stepId']}.outputs.{output['outputName']}",
+                    }
+                    for output in prior_outputs
+                    if all(input_slot[key] == output[key] for key in ("type", "format", "cardinality"))
+                ]
+            result.append(
+                {
+                    "workflowId": _id(candidate, "workflowId"),
+                    "stepId": step_id,
+                    "operationId": operation_id,
+                    "successStatuses": [
+                        response["status"] for response in responses
+                        if isinstance(response, Mapping) and str(response.get("status", "")).startswith("2")
+                    ],
+                    "inputs": inputs,
+                    "outputs": outputs,
+                }
+            )
+            prior_outputs.extend({**output, "stepId": step_id} for output in outputs)
+    if issues:
+        raise ArazzoPlanningError("Selected frozen OpenAPI contracts are not executable: " + "; ".join(issues))
     return result
 
 
@@ -497,6 +768,7 @@ __all__ = [
     "attach_workflow_trace",
     "build_arazzo_document",
     "build_deterministic_workflow",
+    "build_execution_candidates",
     "build_workflow_candidates",
     "use_case_display_name",
     "use_case_id_for_candidate",

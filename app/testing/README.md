@@ -10,18 +10,21 @@ Testing은 Implementation이 남긴 고정 `TestingInput`으로 애플리케이�
 
 ```text
 requirements / use cases / OpenAPI / RTM hints
-  → workflow 후보 투영
-  → LLM이 Arazzo Workflow Object 작성
+  → 허용 step·입력 slot·응답 연결 후보 투영
+  → Arazzo 전용 LLM이 step 순서·연결·성공 상태만 선택
+  → 코드가 선택 결과를 Arazzo Workflow Object로 컴파일
   → 공식 Arazzo schema와 EasyDep 실행 profile 검증
   → frozen OpenAPI와 target URL로 workflow 실행
   → workflow/step/criterion 결과와 trace evidence 기록
 ```
 
-문서 envelope, source, 버전과 stable workflow ID는 코드가 결정한다. LLM은 존재하는 OpenAPI
-`operationId`만 사용하여 step 순서, Runtime Expression과 근거 있는 `successCriteria`를
-작성한다. RTM과 sequence는 후보 순서와 조사 근거를 제공하지만 실행 operation을 제한하는
-allowlist가 아니다. Arazzo 실행 의미는 표준 필드에만 두며 `x-easydep-trace`는 요구사항,
-유스케이스와 evidence reference만 보존한다.
+문서 envelope, source, 버전과 stable workflow ID는 코드가 결정한다. 코드는 frozen OpenAPI에서
+사용 가능한 step, 필수 입력 slot, 앞선 응답에서 연결할 수 있는 값과 허용 성공 상태를 유한한
+후보로 만든다. LLM은 `orderedStepIds`, `connectionIds`와 근거 있는 성공 상태만 고른다. 코드가
+선택한 ID를 parameter, request body, output과 Runtime Expression으로 컴파일하므로 LLM은 Arazzo
+필드나 표현식을 직접 작성하지 않는다. RTM과 sequence는 후보 순서와 조사 근거를 제공하지만
+OpenAPI에 없는 operation을 추가하지 않는다. `x-easydep-trace`에는 요구사항, 유스케이스와
+evidence reference만 보존한다.
 
 공식 schema를 통과한 문서는 다시 EasyDep 실행 profile로 검사한다. 현재 profile은 frozen local
 OpenAPI, 동기 HTTP와 local workflow, workflow input, step output, Runtime Expression,
@@ -85,5 +88,7 @@ digest가 같은 미선택 gate만 이전 PASS 결과를 재사용한다.
 - `service.py`: checkpoint, selective rerun, repair evidence와 공개 결과
 - `repair_check.py`: Implementation 수리 공간에서 동일 gate 재검증
 
-LLM 연결은 다른 단계와 동일하게 `app.llm_connection`을 사용한다. API key는 요청에만 전달하고
-Arazzo 문서, 결과와 로그에는 저장하지 않는다.
+LLM 연결은 다른 단계와 동일한 provider·endpoint·API key 조립을 사용한다. Arazzo 계획 모델은
+`ARAZZO_MODEL`로 별도 선택하며 값이 없으면 `MODEL`을 사용한다. 현재 실행 설정에서는
+`@cf/zai-org/glm-5.3-flash`를 사용한다. API key는 요청에만 전달하고 Arazzo 문서, 결과와 로그에는
+저장하지 않는다.
