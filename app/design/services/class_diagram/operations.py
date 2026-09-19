@@ -32,8 +32,13 @@ from app.design.services.class_diagram.models import (
     DataTypeCollision as _DataTypeCollision,
 )
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
-from app.design.services.class_diagram.proposals import OperationFragment
+from app.design.services.class_diagram.proposals import (
+    OperationFragment,
+    legacy_data_type,
+    structured_data_type,
+)
 from app.design.services.class_diagram.scenario import ScenarioIndex, UseCase, id_key, text
+from app.design.services.class_diagram.trusted_context import trusted_context_evidence
 from app.design.services.class_diagram.type_system import (
     field_type,
     referenced_type_names,
@@ -121,7 +126,9 @@ Only a subject explicitly selected or provided by the scenario is caller input.
 An explicit use-case precondition may instead provide trusted server context to a
 Control operation. Keep that parameter internal to the Control call; never add it to
 the actor-facing Boundary operation or expose it as an HTTP caller input. Do not infer
-trusted context from an actor name alone.
+trusted context from an actor name alone. `availableTrustedContext` contains the only
+evidence that may justify it. A listed source still requires a typed parameter whose
+subject matches that evidence, and is internal to the Boundary-to-Control handoff.
 
 When this use case reuses a reserved operation, include that operation in the
 fragment with its exact supplied name, parameters, and returnType, plus this use
@@ -245,7 +252,7 @@ def _operation_payload(
             compact["identifier"] = list(item.get("identifier") or [])
         scoped_classes.append(compact)
     scoped_types = [
-        {key: value for key, value in item.items() if key not in {"useCaseIds", "identifier"}}
+        structured_data_type({key: value for key, value in item.items() if key not in {"useCaseIds", "identifier"}})
         for item in inventory.get("DataTypes") or []
         if use_case.id in set(item.get("useCaseIds") or [])
     ]
@@ -286,7 +293,17 @@ def _operation_payload(
         "fixedClasses": scoped_classes,
         "fixedDataTypes": scoped_types,
         "reservedOperations": scoped_reserved,
-        "reservedDataTypes": list(reserved_types or []),
+        "reservedDataTypes": [structured_data_type(item) for item in (reserved_types or [])],
+        "availableTrustedContext": trusted_context_evidence(
+            use_case, index.raw.get("actors") or [],
+        ),
+        "valueSourcePolicy": {
+            "requestInputs": "actor-facing Boundary parameters declared by the scenario",
+            "trustedContext": "only availableTrustedContext with structural typed-subject evidence; Control handoff only",
+            "previousResults": "an earlier collaboration operation result",
+            "runtimeValues": "supported clock values only",
+            "derivedValues": "a DataType whose required fields have eligible sources",
+        },
     }
     if previous is not None:
         payload["previousFragment"] = previous
@@ -692,7 +709,15 @@ def normalize_operation_fragment(
     """raw operation 제안을 기존 저장 표기로 정규화한다."""
 
     inventory_payload = inventory.as_payload()
-    candidate = OperationFragment.model_validate(proposal).model_dump(by_alias=True)
+    proposal_payload = (
+        deepcopy(dict(proposal))
+        if isinstance(proposal, Mapping)
+        else proposal.model_dump(by_alias=True)
+    )
+    proposal_payload["DataTypes"] = [
+        structured_data_type(item) for item in proposal_payload.get("DataTypes") or []
+    ]
+    candidate = OperationFragment.model_validate(proposal_payload).model_dump(by_alias=True)
     candidate = _canonicalize_loose_collection_types(
         candidate, inventory_payload, reserved, reserved_types
     )
@@ -713,9 +738,11 @@ def normalize_operation_fragment(
         {
             **item,
             "fields": [
-                fields.normalize_java_field_candidate(
-                    f"{field['name']} : {field['type']}"
-                )
+                structured_data_type({
+                    "fields": [fields.normalize_java_field_candidate(
+                        f"{field['name']} : {field['type']}"
+                    )],
+                })["fields"][0]
                 for field in item.get("fields") or []
             ],
         }
@@ -1033,25 +1060,60 @@ def _validate_accepted_fragment(
 ) -> dict[str, Any]:
     """cache hit을 Pydantic과 기존 operation validator로 다시 수락한다."""
 
-    normalized = deepcopy(candidate)
+    # Keep the accepted proposal in the structured contract. Legacy cached
+    # values are adapted at the persistence/validation boundary below.
+    # Persisted class-model fragments contain generated identities such as
+    # stableId/operationId.  They are not proposal fields, so project the
+    # stored value explicitly instead of weakening the strict proposal schema.
+    def proposal_data_type(item: dict[str, Any]) -> dict[str, Any]:
+        normalized_type = structured_data_type(item)
+        return {
+            key: normalized_type.get(key)
+            for key in ("name", "kind", "fields", "values")
+            if key in normalized_type
+        }
+
+    proposal_payload = {
+        "DataTypes": [
+            proposal_data_type(item)
+            for item in candidate.get("DataTypes") or []
+            if isinstance(item, dict)
+        ],
+        "Classes": [
+            {
+                "className": owner.get("className"),
+                "operations": [
+                    {
+                        "name": operation.get("name"),
+                        "parameters": [
+                            {
+                                "name": parameter.get("name"),
+                                "type": parameter.get("type"),
+                            }
+                            for parameter in operation.get("parameters") or []
+                            if isinstance(parameter, dict)
+                        ],
+                        "returnType": operation.get("returnType"),
+                        "stepRefs": list(operation.get("stepRefs") or []),
+                    }
+                    for operation in owner.get("operations") or []
+                    if isinstance(operation, dict)
+                ],
+            }
+            for owner in candidate.get("Classes") or []
+            if isinstance(owner, dict)
+        ],
+    }
+    normalized = OperationFragment.model_validate(proposal_payload).model_dump(by_alias=True)
     # 실제 cache value는 이미 ``name : Type`` 수락 표기다. test double이나 호환 caller가
     # parse 직후의 field mapping을 넣어도 같은 수락 표기로만 바꾼 뒤 영속 BCE schema를
     # 검증한다. raw ``OperationFragment`` schema로 normalized value를 다시 읽지는 않는다.
-    for item in normalized.get("DataTypes") or []:
-        if not isinstance(item, dict):
-            continue
-        item["fields"] = [
-            fields.normalize_java_field(f"{field['name']} : {field['type']}")
-            if isinstance(field, dict)
-            else field
-            for field in item.get("fields") or []
-        ]
     validation_inventory = {
         **inventory,
         "DataTypes": [
             *(inventory.get("DataTypes") or []),
             *(
-                item
+                legacy_data_type(item)
                 for item in (reserved_types or [])
                 if isinstance(item, dict)
                 and text(item.get("name"))
@@ -1071,7 +1133,10 @@ def _validate_accepted_fragment(
         ) from error
     report = run_checks(
         OPERATION_CHECKS,
-        normalized,
+        {
+            **normalized,
+            "DataTypes": [legacy_data_type(item) for item in normalized.get("DataTypes") or []],
+        },
         OperationContext(
             index,
             validation_inventory,
@@ -1216,9 +1281,15 @@ def _canonical_signature_type(value: object) -> str:
 
 
 def _data_type_signature(item: dict[str, Any]) -> tuple[Any, ...]:
+    fields_signature = tuple(
+        (text(field.get("name")), text(field.get("type")))
+        if isinstance(field, dict)
+        else tuple(text(part.strip()) for part in str(field).split(":", 1))
+        for field in item.get("fields") or []
+    )
     return (
         text(item.get("kind")),
-        tuple(item.get("fields") or []),
+        fields_signature,
         tuple(item.get("values") or []),
     )
 
@@ -1235,6 +1306,19 @@ def _compose(
     ``Collision``로 현재 fragment repair를 요구한다. ``final=True``이면 operation에서
     도달할 수 없는 클래스·관계·지역 타입을 제거한다.
     """
+    # BCEModel is the persistence/display boundary and still stores field
+    # declarations as strings.  Keep proposal payloads structured until this
+    # point, then adapt once for composition.
+    inventory = dict(inventory)
+    inventory["DataTypes"] = [
+        legacy_data_type(item) for item in inventory.get("DataTypes") or []
+    ]
+    fragments = [
+        (unit_id, {**fragment, "DataTypes": [
+            legacy_data_type(item) for item in fragment.get("DataTypes") or []
+        ]})
+        for unit_id, fragment in fragments
+    ]
     classes = {
         class_name(item): {
             **{

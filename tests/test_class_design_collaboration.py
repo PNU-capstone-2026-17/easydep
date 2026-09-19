@@ -353,6 +353,13 @@ def test_optional_results_use_explicit_unwrap_sources(monkeypatch):
             "derived-structured-value",
             "runtime-value",
         ],
+        "availableSources": [],
+        "instruction": (
+            "No finite compatible source exists. Change this operation so every "
+            "parameter is supplied by an entry input, evidence-backed trusted "
+            "context, an earlier result, a supported runtime value, or a "
+            "derivable structured value."
+        ),
     }
 
     entity_to_control = CallPlanProposal.model_validate({
@@ -557,9 +564,10 @@ def test_scalar_parameter_can_use_same_typed_request_fields_with_different_names
         "UC1::call:1#request.targetUnitCode",
     ]
 
-    def select_source(_group, ambiguous):
+    def select_source(_group, ambiguous, parameter_types):
         location = "UC1::call:2#code"
         assert ambiguous == {location: expected_candidates}
+        assert parameter_types == {location: "String"}
         return {location: expected_candidates[0]}
 
     monkeypatch.setattr(collaboration, "select_ambiguous_bindings", select_source)

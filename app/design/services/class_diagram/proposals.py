@@ -13,6 +13,41 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.design.schemas.class_model import ClassParameter
 
 
+def structured_field(value: object) -> dict[str, str]:
+    """Return the single structured representation used at LLM boundaries.
+
+    Persisted BCE models still use ``"name : Type"`` declarations.  This small
+    adapter is deliberately limited to that compatibility boundary; proposal
+    contracts never need to make the LLM reconstruct a field from a string.
+    """
+    if isinstance(value, dict):
+        return {"name": str(value.get("name", "")).strip(), "type": str(value.get("type", "")).strip()}
+    raw = str(value).strip()
+    name, separator, raw_type = raw.partition(":")
+    return {"name": name.strip(), "type": raw_type.strip() if separator else ""}
+
+
+def structured_data_type(value: object) -> dict:
+    """Adapt one legacy/persisted DataType to the proposal shape."""
+    if not isinstance(value, dict):
+        return value  # Let the strict Pydantic boundary report malformed input.
+    result = dict(value)
+    result["fields"] = [structured_field(field) for field in value.get("fields") or []]
+    return result
+
+
+def legacy_data_type(value: object) -> dict:
+    """Render a proposal DataType for the legacy BCE persistence boundary."""
+    if not isinstance(value, dict):
+        return value
+    result = dict(value)
+    result["fields"] = [
+        f"{field['name']} : {field['type']}" if isinstance(field, dict) else str(field)
+        for field in value.get("fields") or []
+    ]
+    return result
+
+
 class Proposal(BaseModel):
     """Base contract that rejects unrecognized LLM fields in every proposal."""
 

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
@@ -22,6 +21,7 @@ from app.design.services.class_diagram.scenario import (
     UseCase,
     text,
 )
+from app.design.services.class_diagram.trusted_context import trusted_context_sources
 from app.design.services.class_diagram.type_system import (
     projected_field_type,
     structured_field_types,
@@ -404,29 +404,6 @@ def _field_matches_parameter(parameter: str, owner_type: str, field: str) -> boo
     return expected in {normalize(field), normalize(owner_type + field)}
 
 
-def _matching_precondition_sources(use_case: UseCase, parameter: str) -> list[str]:
-    """Offer a precondition only when it names this otherwise-unsourced value."""
-
-    parameter_tokens = {
-        token.casefold()
-        for token in re.findall(r"[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+", parameter)
-        if token.casefold() != "id"
-    }
-    if not parameter_tokens:
-        return []
-    preconditions = use_case.specification.get("preconditions") or []
-    return [
-        f"{source_ref}#{parameter}"
-        for source_ref, precondition in zip(use_case.precondition_refs, preconditions)
-        if parameter_tokens.intersection(
-            token.casefold()
-            for token in re.findall(
-                r"[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+", text(precondition)
-            )
-        )
-    ]
-
-
 def _is_boundary_control_handoff(
     calls: list[dict[str, Any]],
     call_index: int,
@@ -461,6 +438,7 @@ def _binding_candidates(
     call_index: int,
     parameter: dict[str, Any],
     operations: dict[str, dict[str, Any]],
+    actor_contracts: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> list[str]:
     name = text(parameter.get("name"))
     target_type = text(parameter.get("type"))
@@ -566,12 +544,13 @@ def _binding_candidates(
             candidates.append(derived_value_source(target_type, mappings))
     if not candidates and runtime_value_source(target_type):
         candidates.append(runtime_value_source(target_type))
-    if (
-        not candidates
-        and target_type.casefold() == "string"
-        and _is_boundary_control_handoff(calls, call_index, operations)
-    ):
-        candidates.extend(_matching_precondition_sources(use_case, name))
+    if not candidates and _is_boundary_control_handoff(calls, call_index, operations):
+        candidates.extend(
+            source.source_ref
+            for source in trusted_context_sources(
+                use_case, name, target_type, actors=actor_contracts,
+            )
+        )
     return list(dict.fromkeys(candidates))
 
 
@@ -586,7 +565,7 @@ def _binding_search_scopes(
     if is_root and actor_step:
         scopes.append("actor-entry-input")
     if use_case.precondition_refs:
-        scopes.append("use-case-precondition")
+        scopes.append("trusted-context")
     scopes.extend([
         "ancestor-call-parameter",
         "earlier-root-input",
@@ -597,8 +576,30 @@ def _binding_search_scopes(
     return scopes
 
 
+def _candidate_detail(source_ref: str, target_type: str) -> dict[str, Any]:
+    """Describe an already-compatible finite candidate without widening it."""
+
+    if source_ref.startswith("context#"):
+        kind = "trusted_context"
+        evidence = source_ref.partition("#")[2].rsplit(":", 1)[0]
+    elif source_ref.startswith("runtime#"):
+        kind, evidence = "runtime_value", ""
+    elif source_ref.startswith("derived#"):
+        kind, evidence = "derived_value", ""
+    elif "#result" in source_ref:
+        kind, evidence = "previous_result", ""
+    else:
+        kind, evidence = "request_or_prior_parameter", ""
+    detail: dict[str, Any] = {"sourceRef": source_ref, "kind": kind, "type": target_type}
+    if evidence:
+        detail["evidenceRef"] = evidence
+    return detail
+
+
 def select_ambiguous_bindings(
-    use_case: UseCase, ambiguous: dict[str, list[str]],
+    use_case: UseCase,
+    ambiguous: dict[str, list[str]],
+    parameter_types: dict[str, str] | None = None,
 ) -> dict[str, str]:
     fields: dict[str, tuple[Any, Any]] = {}
     choices: list[dict[str, Any]] = []
@@ -609,7 +610,18 @@ def select_ambiguous_bindings(
         fields[field_name] = (
             Literal.__getitem__(values), Field(description=f"Source for {parameter}"),
         )
-        choices.append({"choice": field_name, "parameter": parameter, "candidates": list(values)})
+        choices.append({
+            "choice": field_name,
+            "parameter": parameter,
+            "candidates": list(values),
+            "candidateDetails": [
+                _candidate_detail(
+                    value,
+                    (parameter_types or {}).get(parameter, ""),
+                )
+                for value in values
+            ],
+        })
         locations[field_name] = parameter
     schema = _finite_schema(
         "FiniteBindingChoices", __config__=ConfigDict(extra="forbid"), **fields,
@@ -731,6 +743,7 @@ def materialize(
     if control_roots != set(range(len(groups))):
         raise ValueError("each Boundary root must delegate to Control")
     ambiguous: dict[str, list[str]] = {}
+    parameter_types: dict[str, str] = {}
     for call_index, call in enumerate(calls):
         operation = operations[call["receiverOperationId"]]
         group = groups[assignments[call_index + 1]]
@@ -740,6 +753,7 @@ def materialize(
             candidates = _binding_candidates(
                 model_payload, use_case, group.actor_step,
                 call_index + 1 in root_set, calls, call_index, parameter, operations,
+                index.raw.get("actors") or [],
             )
             location = f"{call['callId']}#{text(parameter.get('name'))}"
             if not candidates:
@@ -757,6 +771,13 @@ def materialize(
                         group.actor_step,
                         call_index + 1 in root_set,
                     ),
+                    "availableSources": [],
+                    "instruction": (
+                        "No finite compatible source exists. Change this operation so every "
+                        "parameter is supplied by an entry input, evidence-backed trusted "
+                        "context, an earlier result, a supported runtime value, or a "
+                        "derivable structured value."
+                    ),
                 })
             if len(candidates) == 1:
                 call["argumentBindings"].append({
@@ -764,7 +785,11 @@ def materialize(
                 })
             else:
                 ambiguous[location] = candidates
-    selected = select_ambiguous_bindings(use_case, ambiguous) if ambiguous else {}
+                parameter_types[location] = text(parameter.get("type"))
+    selected = (
+        select_ambiguous_bindings(use_case, ambiguous, parameter_types)
+        if ambiguous else {}
+    )
     for call in calls:
         operation = operations[call["receiverOperationId"]]
         existing = {text(item.get("parameter")) for item in call["argumentBindings"]}
@@ -882,7 +907,7 @@ def _cache_key(
             "bindingMaxCompletionTokens": min(
                 settings.design_class_collaboration_max_completion_tokens, 2048,
             ),
-            "bindingCandidateVersion": 2,
+            "bindingCandidateVersion": 3,
         },
     )
 

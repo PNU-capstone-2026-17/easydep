@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.design.services.class_diagram.proposals import legacy_data_type
 from app.design.services.class_diagram.scenario import ScenarioIndex, UseCase, text
 from app.design.services.class_diagram.type_system import (
     field_name,
@@ -162,7 +163,11 @@ def validate_operations(
 ) -> ValidationReport:
     """타입 참조와 명세 단계 coverage를 변경 없이 검사한다."""
 
-    return run_checks(OPERATION_CHECKS, fragment or {}, context)
+    normalized = dict(fragment or {})
+    normalized["DataTypes"] = [
+        legacy_data_type(item) for item in normalized.get("DataTypes") or []
+    ]
+    return run_checks(OPERATION_CHECKS, normalized, context)
 
 
 __all__ = ["OPERATION_CHECKS", "OperationContext", "validate_operations"]

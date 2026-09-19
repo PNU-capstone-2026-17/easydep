@@ -10,6 +10,7 @@ from app.design.services.class_diagram.scenario import (
     UseCase,
     text,
 )
+from app.design.services.class_diagram.trusted_context import is_trusted_context_ref
 from app.design.services.class_diagram.type_system import (
     projected_field_type,
     structured_field_types,
@@ -282,7 +283,6 @@ def _collaboration_bindings(
     calls = [item for item in collaboration.get("calls") or [] if isinstance(item, dict)]
     roots = _root_positions(calls)
     root_ordinal = {position: ordinal for ordinal, position in enumerate(roots)}
-    preconditions = set(context.use_case.precondition_refs)
     findings: list[Finding] = []
     for position, call in enumerate(calls):
         operation = operations.get(text(call.get("receiverOperationId")), {})
@@ -302,35 +302,44 @@ def _collaboration_bindings(
             parameter = text(binding.get("parameter"))
             source_ref = text(binding.get("sourceRef"))
             expected = parameter_types.get(parameter, "")
+            # Rebuild the same finite source catalog used by materialization.
+            # This is intentionally a local import: collaboration imports this
+            # validation module for the final report, while validation must also
+            # reject hand-authored bindings that were never eligible.
+            from app.design.services.class_diagram.collaboration import _binding_candidates
+
+            eligible = set(_binding_candidates(
+                context.model,
+                context.use_case,
+                actor_step,
+                position == root_position,
+                calls,
+                position,
+                {"name": parameter, "type": expected},
+                operations,
+                context.index.raw.get("actors") or [],
+            ))
             source_type = _source_type(source_ref, calls[:position], operations, fields_by_type)
-            source_id = source_ref.partition("#")[0]
-            if source_ref == runtime_value_source(expected):
-                valid = True
+            if is_trusted_context_ref(source_ref):
+                # Its type and evidence are carried by the finite candidate;
+                # no caller may fabricate a context ref outside that catalog.
+                valid = source_ref in eligible
+            elif source_ref == runtime_value_source(expected):
+                valid = source_ref in eligible
             elif source_type == "__entry__":
-                valid = bool(actor_step and source_ref == f"{actor_step}#{parameter}")
-            elif source_type == "__precondition__":
-                _source, separator, source_parameter = source_ref.partition("#")
-                parent_call_id = text(call.get("parentCallId"))
-                parent_call = next(
-                    (item for item in calls if text(item.get("callId")) == parent_call_id),
-                    None,
-                )
-                parent_operation = (
-                    operations.get(text(parent_call.get("receiverOperationId")))
-                    if parent_call else None
-                )
                 valid = bool(
-                    source_id in preconditions
-                    and separator
-                    and source_parameter == parameter
-                    and expected.casefold() == "string"
-                    and operation.get("stereotype") == "control"
-                    and parent_operation
-                    and not text(parent_call.get("parentCallId"))
-                    and parent_operation.get("stereotype") == "boundary"
+                    actor_step
+                    and source_ref == f"{actor_step}#{parameter}"
+                    and source_ref in eligible
                 )
+            elif source_type == "__precondition__":
+                valid = False
             else:
-                valid = bool(source_type and types_compatible(source_type, expected))
+                valid = bool(
+                    source_ref in eligible
+                    and source_type
+                    and types_compatible(source_type, expected)
+                )
             if not valid:
                 findings.append(Finding(
                     "class.collaboration.bindings",

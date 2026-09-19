@@ -64,6 +64,51 @@ def test_known_concatenated_collection_types_are_canonicalized(monkeypatch):
     assert normalized["returnType"] == "List<RequestResult>"
 
 
+def test_operation_payload_exposes_structured_data_type_fields_to_llm():
+    index = build_scenario_index(single_use_case())
+    payload = operations._operation_payload(
+        index,
+        {
+            "Classes": [],
+            "DataTypes": [{
+                "name": "RequestData",
+                "kind": "valueObject",
+                "fields": ["value : String"],
+                "values": [],
+                "useCaseIds": ["UC1"],
+            }],
+        },
+        index.use_case("UC1"),
+        reserved_types=[{
+            "name": "RequestResult",
+            "kind": "valueObject",
+            "fields": ["accepted : Boolean"],
+            "values": [],
+        }],
+    )
+
+    assert payload["fixedDataTypes"][0]["fields"] == [
+        {"name": "value", "type": "String"},
+    ]
+    assert payload["reservedDataTypes"][0]["fields"] == [
+        {"name": "accepted", "type": "Boolean"},
+    ]
+
+
+def test_legacy_data_type_is_adapted_at_validation_but_returned_structured():
+    index = build_scenario_index(single_use_case())
+    inventory = _normalization_inventory()
+    proposal = operation_fragment()
+    proposal["DataTypes"][0]["fields"] = ["value : String"]
+    accepted = operations.normalize_operation_fragment(
+        proposal, index, inventory, index.use_case("UC1")
+    ).as_payload()
+
+    assert accepted["DataTypes"][0]["fields"] == [
+        {"name": "value", "type": "String"},
+    ]
+
+
 def test_unknown_concatenated_collection_type_stays_rejectable():
     index = build_scenario_index(single_use_case())
     proposal = operation_fragment()
