@@ -11,3 +11,26 @@ def test_cloud_region_suffix_does_not_change_an_exact_region_code() -> None:
     matches = regions.resolve("ap-northeast-2", provider="aws")
 
     assert [match.code for match in matches] == ["ap-northeast-2"]
+
+
+def test_formatted_provider_region_label_requires_matching_display_name_and_code() -> None:
+    matches = regions.resolve("  east us  ( EASTUS ) ", provider="azure")
+
+    assert [match.code for match in matches] == ["eastus"]
+
+
+def test_formatted_provider_region_label_does_not_fall_back_to_partial_name() -> None:
+    assert regions.resolve("East US (eastus2)", provider="azure") == ()
+    assert regions.resolve("East US (eastus)", provider="aws") == ()
+    assert regions.resolve("East US (unknown-code)", provider="azure") == ()
+
+
+def test_exact_display_name_precedes_partial_name_search() -> None:
+    assert [match.code for match in regions.resolve("East US", provider="azure")] == ["eastus"]
+    assert [match.code for match in regions.resolve("East US region", provider="azure")] == [
+        "eastus"
+    ]
+
+
+def test_short_partial_display_name_remains_ambiguous() -> None:
+    assert len(regions.resolve("US", provider="azure")) > 1

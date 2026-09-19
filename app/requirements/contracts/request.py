@@ -45,6 +45,24 @@ class ResourceAnswer(BaseModel):
 
     #: 계약 칸 이름 → 사용자가 쓴 답. 모르는 칸은 단계가 버린다.
     answers: dict[str, str] = Field(default_factory=dict)
+    #: ConversationAgent가 질문에 대한 자유문장 답변으로 판정한 원문.
+    free_text: str | None = None
+    #: 자유문장이 답하려던 화면의 질문 field. 해석 근거이지 직접 대입 대상이 아니다.
+    expected_field: str | None = None
+
+    @model_validator(mode="after")
+    def _one_answer_mode(self) -> ResourceAnswer:
+        """Keep typed UI answers and interpreted prose as distinct inputs."""
+        if self.free_text is None:
+            if self.expected_field is not None:
+                raise ValueError("expected_field requires free_text")
+            return self
+        self.free_text = self.free_text.strip()
+        expected = (self.expected_field or "").strip()
+        if not self.free_text or not expected or self.answers:
+            raise ValueError("free_text requires expected_field and cannot include direct answers")
+        self.expected_field = expected
+        return self
 
 
 class InitialCloudConstraints(BaseModel):
@@ -149,6 +167,8 @@ class AnalyzeRequest(BaseModel):
     # 되묻기의 답(칸 이름 → 사용자가 쓴 문자열). answer/edit과 함께 보낼 수 없다 —
     # 재개 값은 하나이고, 섞이면 무엇을 따를지가 모호해진다.
     resource_answers: dict[str, str] | None = None
+    # ConversationAgent가 resource 질문의 자유문장 답으로 분류한 typed 재개 입력.
+    resource_answer: ResourceAnswer | None = None
     thread_id: str | None = None
     # 대화형 게이트(step1 clarify + 각 스텝 피드백) 사용 여부. None이면 서버 기본값(설정)을 따른다.
     # 신규 세션 시작 시에만 의미가 있으며, 이후 재개(answer)는 세션이 시작된 모드를 유지한다.

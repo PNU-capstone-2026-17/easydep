@@ -121,6 +121,7 @@ def analyze_requirements(req: AnalyzeRequest) -> dict[str, object]:
             ("answer", req.answer),
             ("edit", req.edit),
             ("resource_answers", req.resource_answers),
+            ("resource_answer", req.resource_answer),
             (
                 "deployment_preferences",
                 req.deployment_preferences if not req.requirements else None,
@@ -139,6 +140,8 @@ def analyze_requirements(req: AnalyzeRequest) -> dict[str, object]:
     )
     if resume is None and req.resource_answers is not None:
         resume = ResourceAnswer(answers=req.resource_answers)
+    if resume is None and req.resource_answer is not None:
+        resume = req.resource_answer
     if resume is None and req.deployment_preferences is not None and not req.requirements:
         resume = req.deployment_preferences
     with langsmith_metrics.trace_metadata(

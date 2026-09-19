@@ -998,6 +998,48 @@ def test_requirement_reply_answers_the_resource_question_without_reclassificatio
     assert captured["request"].answer is None
 
 
+def test_conversation_answer_to_resource_question_uses_free_form_contract(monkeypatch) -> None:
+    captured = {}
+    monkeypatch.setattr(
+        repository,
+        "get_command",
+        lambda *_args, **_kwargs: {
+            "command_id": "prior",
+            "stage": "requirements",
+            "status": "AWAITING_INPUT",
+            "result": {"resource_question": {"field": "provider", "kind": "missing"}},
+        },
+    )
+
+    def analyze(request):
+        captured["request"] = request
+        return {"status": "completed", "saved_stages": []}
+
+    monkeypatch.setattr(workspace_module, "analyze_requirements", analyze)
+    service = WorkspaceService()
+    try:
+        service._stage_message(
+            {
+                "app_id": "app-1",
+                "command_id": "reply",
+                "action": "message",
+                "stage": "requirements",
+                "payload": {
+                    "text": "Use Azure East US and a 100 USD budget.",
+                    "action_id": "prior",
+                    "conversation_intent": {"intent": "answer"},
+                },
+            },
+            advance=False,
+        )
+    finally:
+        service.shutdown()
+
+    assert captured["request"].resource_answers is None
+    assert captured["request"].resource_answer.free_text == "Use Azure East US and a 100 USD budget."
+    assert captured["request"].resource_answer.expected_field == "provider"
+
+
 def test_planned_requirement_revision_is_not_consumed_as_a_resource_answer(
     monkeypatch,
 ) -> None:

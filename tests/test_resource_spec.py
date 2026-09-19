@@ -286,6 +286,56 @@ def test_resource_answer_overrides_cached_ambiguous_region(monkeypatch):
     )
 
 
+def test_free_form_answer_is_evidence_for_every_related_cloud_constraint(monkeypatch):
+    seen = {}
+
+    def extract(briefing: str) -> CloudConstraintExtraction:
+        seen["briefing"] = briefing
+        return CloudConstraintExtraction(
+            provider="azure",
+            provider_evidence="Azure",
+            region_as_written="East US",
+            region_evidence="East US",
+            monthly_budget_amount=100,
+            monthly_budget_currency="USD",
+            monthly_budget_evidence="100 USD",
+        )
+
+    result = sr.build_resource_spec(
+        {
+            "classified": [],
+            "resource_free_text_answers": [
+                {
+                    "expected_field": "provider",
+                    "text": "Use Azure East US and keep the budget under 100 USD.",
+                }
+            ],
+        },
+        proposal_call=extract,
+    )
+
+    assert "Answer to provider: Use Azure East US and keep the budget under 100 USD." in seen["briefing"]
+    assert result["resource_spec"]["provider"] == "azure"
+    assert result["resource_spec"]["region"] == "eastus"
+    assert result["resource_spec"]["monthlyBudgetUSD"] == 100
+
+
+def test_invalid_direct_region_can_be_repaired_by_extraction(monkeypatch):
+    result = sr.build_resource_spec(
+        {
+            "classified": [],
+            "initial_cloud_constraints": {"provider": "azure"},
+            "resource_answers": {"region": "not a region"},
+        },
+        proposal_call=lambda _briefing: CloudConstraintExtraction(
+            region_as_written="East US",
+            region_evidence="East US",
+        ),
+    )
+
+    assert result["resource_spec"]["region"] == "eastus"
+
+
 def test_unsupported_or_ungrounded_values_do_not_enter_the_spec(monkeypatch):
     result = _run(
         monkeypatch,

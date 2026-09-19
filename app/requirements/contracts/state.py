@@ -133,6 +133,9 @@ class AgentState(TypedDict):
     # 구조화 에이전트가 산문과 같은 규율로 해석한다("서울"은 여전히 카탈로그를 거쳐
     # 코드로 풀려야 하고, 후보가 여럿이면 여전히 모호하다).
     resource_answers: NotRequired[dict[str, str]]
+    # 자유문장 resource 답변. 질문 field와 원문을 함께 보존해 제약 추출 모델이 복수
+    # 필드를 다시 해석할 수 있게 한다. direct answers와 섞지 않는다.
+    resource_free_text_answers: NotRequired[list[dict[str, str]]]
     # 제약 구조화의 작업 기록: 초안·질문·근거·버린 후보(`resources/service.py`).
     # 계약을 만족하지 못해도 **여기는 늘 존재한다** — 왜 못 채웠는지가 사라지면 안 된다.
     resource_intake: NotRequired[dict]

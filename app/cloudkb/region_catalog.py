@@ -55,6 +55,7 @@ Azure는 리전 일부를 방위로 적는다 — `Southeast Asia`(실제로는 
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -270,6 +271,36 @@ def resolve_region(
     exact = [r for r in regions if r.code.lower() == lowered]
     if exact:
         return exact
+
+    # 표시명이 정확히 맞으면 부분 이름보다 먼저 끝낸다. 예를 들어 Azure의
+    # ``East US``는 ``East US 2``의 부분 문자열이기도 하지만, 원본 catalog의
+    # 정확한 표시명은 전자 하나다. 같은 provider에 동명 리전이 있으면 모두 돌려
+    # 호출자가 고르게 하며 여기서 임의 선택하지 않는다.
+    exact_names = [
+        region
+        for region in regions
+        if any(
+            " ".join(region.name.casefold().split()) == name_query
+            for name_query in name_queries
+        )
+    ]
+    if exact_names:
+        return [_retag(region, "name") for region in exact_names]
+
+    # UI 선택지는 ``Display Name (canonical-code)`` 형식으로 돌아온다. 괄호 속
+    # 코드만 뽑으면 ``East US (eastus2)``가 East US로 조용히 해석될 수 있으므로,
+    # 표시명과 코드가 **같은** catalog row에 모두 일치할 때만 받아들인다.
+    formatted = re.fullmatch(r"(?P<name>[^()]+?)\s*\(\s*(?P<code>[^()]+?)\s*\)", text)
+    if formatted:
+        display_name = " ".join(formatted.group("name").casefold().split())
+        code = " ".join(formatted.group("code").casefold().split())
+        matched = [
+            region
+            for region in regions
+            if " ".join(region.name.casefold().split()) == display_name
+            and region.code.casefold() == code
+        ]
+        return [_retag(region, "name") for region in matched]
 
     by_name = [
         r

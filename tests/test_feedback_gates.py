@@ -268,6 +268,28 @@ def test_a_resource_answer_does_not_reclassify_requirements(monkeypatch):
     assert out["resource_answers"] == {"region": "Seoul", "provider": "aws"}
 
 
+def test_free_form_resource_answer_loops_to_cloud_analysis_without_reclassifying(monkeypatch):
+    monkeypatch.setattr(fg, "classify", lambda *_a, **_k: (_ for _ in ()).throw(AssertionError()))
+    monkeypatch.setattr(
+        fg,
+        "interrupt",
+        lambda _p: ResourceAnswer(
+            free_text="Use Azure East US and keep the budget under 100 USD.",
+            expected_field="provider",
+        ),
+    )
+
+    out = fg.gate_requirements({"classified": [], "resource_answers": {"region": "Seoul"}})
+
+    assert out["gate_route"] == "loop"
+    assert out["resource_free_text_answers"] == [
+        {
+            "expected_field": "provider",
+            "text": "Use Azure East US and keep the budget under 100 USD.",
+        }
+    ]
+
+
 def test_an_all_blank_resource_answer_advances(monkeypatch):
     """모르는 칸 하나가 세션을 게이트에 영원히 묶어 두면 안 된다."""
     from app.requirements.schemas import ResourceAnswer

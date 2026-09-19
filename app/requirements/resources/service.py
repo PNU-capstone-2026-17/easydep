@@ -473,6 +473,14 @@ def perceive_resource_inputs(state: AgentState) -> tuple[list[str], str]:
         for k, v in (state.get("resource_answers") or {}).items()
         if str(v or "").strip()
     }
+    free_text_answers = [
+        {
+            "expected_field": str(item.get("expected_field") or "").strip(),
+            "text": str(item.get("text") or "").strip(),
+        }
+        for item in (state.get("resource_free_text_answers") or [])
+        if isinstance(item, dict) and str(item.get("text") or "").strip()
+    ]
 
     # 모델은 답변 블록을 읽고 `provider: azure`처럼 필드 이름까지 포함해 인용하는
     # 경향이 있다. 그 문자열은 실제로 모델에게 보여 준 사용자 답변 표현이므로 원문 값과
@@ -488,6 +496,7 @@ def perceive_resource_inputs(state: AgentState) -> tuple[list[str], str]:
         *rendered_initial,
         *answers.values(),
         *rendered_answers,
+        *(item["text"] for item in free_text_answers),
     ]
     parts = [
         "# Structured cloud constraints supplied at intake",
@@ -508,6 +517,17 @@ def perceive_resource_inputs(state: AgentState) -> tuple[list[str], str]:
             "These are the user's own words about that field — they outrank the prose. "
             "They still have to be resolved and checked like anything else "
             '("Seoul" is still not a region code).',
+        ]
+    if free_text_answers:
+        parts += [
+            "",
+            "# Free-form answers to resource questions",
+            "\n".join(
+                f"Answer to {item['expected_field']}: {item['text']}"
+                for item in free_text_answers
+            ),
+            "Interpret these as user evidence for all relevant cloud constraints; "
+            "the named question is context, not a single-field assignment.",
         ]
     return [h for h in haystack if h], "\n".join(parts)
 
@@ -957,7 +977,14 @@ def build_resource_spec(
     }
     if initial_cloud_constraints.get("targets"):
         protected.update({"provider", "region"})
-    protected.update(resource_answers)
+    # A direct answer protects a field only after deterministic normalization
+    # accepted it. For example, an unresolvable region response must remain
+    # repairable by the contextual extraction rather than masking its evidence.
+    protected.update(
+        field
+        for field in resource_answers
+        if session.draft.get(field) not in (None, "")
+    )
     protected_fields = frozenset(protected)
 
     degraded = ""

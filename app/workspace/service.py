@@ -46,6 +46,7 @@ from app.requirements.contracts.request import (
     FeedbackEdit,
     FeedbackStage,
     InitialCloudConstraints,
+    ResourceAnswer,
 )
 from app.requirements.orchestration.service import (
     analyze_requirements,
@@ -2212,6 +2213,20 @@ class WorkspaceService:
                             scope="local" if targets else "broad",
                             target_ids=targets,
                             instruction=text,
+                        ),
+                        thread_id=app_id,
+                        app_id=app_id,
+                    )
+                elif (
+                    text
+                    and resource_field
+                    and isinstance(conversation_intent, dict)
+                    and conversation_intent.get("intent") == "answer"
+                ):
+                    request = AnalyzeRequest(
+                        resource_answer=ResourceAnswer(
+                            free_text=text,
+                            expected_field=resource_field,
                         ),
                         thread_id=app_id,
                         app_id=app_id,

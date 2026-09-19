@@ -62,6 +62,8 @@ def _empty(answer) -> bool:
     # 것은 "이 칸은 모르겠다"이므로 진행 신호로 읽는다 — 아니면 모르는 칸 하나가
     # 세션을 영원히 게이트에 묶어 둔다.
     if isinstance(answer, ResourceAnswer):
+        if answer.free_text is not None:
+            return not answer.free_text.strip()
         return not any(str(v or "").strip() for v in answer.answers.values())
     if isinstance(answer, DeploymentPreferences):
         return not answer.targets
@@ -147,6 +149,16 @@ def gate_requirements(state: AgentState) -> dict[str, object]:
         }
 
     if isinstance(answer, ResourceAnswer):
+        if answer.free_text is not None:
+            contexts = list(state.get("resource_free_text_answers") or [])
+            contexts.append(
+                {
+                    "expected_field": str(answer.expected_field or ""),
+                    "text": answer.free_text,
+                }
+            )
+            # The graph's loop edge starts at analyze_cloud_inputs, never classify.
+            return {"resource_free_text_answers": contexts, "gate_route": "loop"}
         merged = {**(state.get("resource_answers") or {}), **answer.answers}
         # **`answers` 경로로 돌아간다** — 일반 `loop`는 `derive_deployment_needs`부터 다시
         # 도는데, 이 분기는 `classify`를 안 돌려 `classified`가 그대로다. 배포 필요사항은
