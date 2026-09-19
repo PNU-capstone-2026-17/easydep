@@ -51,6 +51,7 @@ from app.design.services.deployment_diagram.sizing import (
     apply_capacity_overrides,
     apply_compute_selections,
     compute_sizing_guidance,
+    estimate_selected_deployment_cost,
 )
 from app.design.services.deployment_diagram.workload_contracts import (
     data_execution_mode_decision,
@@ -337,7 +338,12 @@ def deployment_sizing_session(
     target_id: str,
     capacity_overrides: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """선택 후보의 compute unit별 VM 크기와 compute-only 비용을 계산한다."""
+    """VM 후보와 선택 구성의 전체 배포 비용 견적을 함께 계산한다.
+
+    VM 후보의 월 가격은 SKU 비교를 위한 compute detail이다. ``pricing``은 선택된
+    ResourcePlan 전체를 local retail-rate snapshot으로 견적 낸 결과이며, usage나
+    rate가 없는 항목은 0으로 바꾸지 않고 known monthly floor에 남긴다.
+    """
 
     _validate_app_id(app_id)
     state = _load_app(app_id)
@@ -365,6 +371,35 @@ def deployment_sizing_session(
         region=str(projection.get("region") or ""),
         workload_graph=dict(selected.get("workloadGraph") or {}),
     )
+    stored = list((projection.get("sizing") or {}).get("selected") or [])
+    stored_by_compute = {
+        str(item.get("computeUnitId") or ""): item
+        for item in stored
+        if isinstance(item, dict)
+    }
+    selections: list[dict[str, Any]] = []
+    for unit in guidance.get("computeUnits") or []:
+        if not isinstance(unit, dict):
+            continue
+        candidates = [item for item in unit.get("candidates") or [] if isinstance(item, dict)]
+        previous = stored_by_compute.get(str(unit.get("computeUnitId") or ""), {})
+        sku = str(previous.get("sku") or "")
+        candidate = next((item for item in candidates if item.get("sku") == sku), candidates[0] if candidates else None)
+        if candidate is None:
+            selections = []
+            break
+        selections.append({
+            "computeUnitId": unit.get("computeUnitId"),
+            "sku": candidate.get("sku"),
+            "replicaCount": previous.get("replicaCount") or unit.get("minimumReplicaCount") or 1,
+            "replicationConfirmed": bool(previous.get("replicationConfirmed") or False),
+        })
+    pricing: dict[str, Any] | None = None
+    if selections:
+        _preview, pricing = estimate_selected_deployment_cost(
+            bundle, selections, target=selected.get("selectedTarget") or target_id,
+            capacity_overrides=effective_capacity,
+        )
     return {
         "target": selected.get("selectedTarget"),
         "structureDigest": projection.get("deploymentPlanStructureDigest", ""),
@@ -374,6 +409,7 @@ def deployment_sizing_session(
         # selection, so never use it to prefill a different target.
         "selected": list((projection.get("sizing") or {}).get("selected") or []),
         "capacityOverrides": [item.model_dump(by_alias=True) for item in normalized_capacity],
+        "pricing": pricing,
     }
 
 
@@ -411,6 +447,16 @@ def apply_deployment_sizing_session(
     )
     if updated.get("status") != "completed":
         return {"app_id": app_id, "status": "needs_input", "sizing": updated.get("sizing")}
+    _priced, pricing = estimate_selected_deployment_cost(
+        bundle, selections, target=target_id, capacity_overrides=capacity_overrides,
+    )
+    if pricing is not None:
+        selected_projection = next(
+            item for item in updated.get("projections") or []
+            if isinstance(item, dict) and item.get("target") == updated.get("selectedTarget")
+        )
+        selected_projection.setdefault("sizing", {})["pricing"] = pricing
+        updated.setdefault("sizing", {})["pricing"] = pricing
     hydrated = hydrate_deployment_diagram_bundle(updated)
     state.update(hydrated)
     state["deployment_diagram_puml"] = deployment_bundle_runtime_puml(updated)

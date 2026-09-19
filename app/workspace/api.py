@@ -378,7 +378,11 @@ def get_deployment_sizing(
     target: str = Query(min_length=1),
     capacity: str | None = Query(default=None),
 ) -> dict[str, Any]:
-    """저장된 target의 VM 후보와 compute-only 예상 비용을 반환한다."""
+    """저장 target의 VM 후보와 전체 배포 비용 견적을 반환한다.
+
+    ``pricing``의 미확정 항목은 0원이 아니라 known monthly floor 밖의 unknown term으로
+    반환한다.
+    """
 
     validate_app_id(app_id)
     try:

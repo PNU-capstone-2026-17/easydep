@@ -407,6 +407,25 @@ export interface DeploymentSizingResponse {
     replicaCount: number;
     replicationConfirmed: boolean;
   }>;
+  pricing?: DeploymentCostEstimate | null;
+}
+
+export interface DeploymentCostEstimate {
+  currency: 'USD';
+  knownFloorUSD: number;
+  complete: boolean;
+  monthlyBudgetUSD: number | null;
+  status: 'within' | 'exceeds' | 'indeterminate' | 'notProvided';
+  sourceMetadata?: { snapshotDigest: string };
+  components: Array<{
+    ruleId: string;
+    primitiveKind: string;
+    term: string;
+    amountUSD: number | null;
+    rateKey: string | null;
+    known: boolean;
+    reason: string | null;
+  }>;
 }
 
 export interface FileArtifactSnapshot {

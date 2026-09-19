@@ -4,25 +4,44 @@ from __future__ import annotations
 
 import copy
 import math
+import os
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.cloudkb.costkb.dataset import filter_specs, find_by_name, load_dataset
+from app.cloudkb.costkb.deployment_cost import (
+    DeploymentCostQuote,
+    RetailRateResolver,
+    estimate_deployment_cost,
+)
 from app.cloudkb.costkb.free_tier import (
     preferred_vm_free_tier_skus,
     vm_free_tier_notice,
     vm_free_tier_status,
 )
+from app.cloudkb.costkb.retail_rates import (
+    build_retail_rate_resolver,
+    load_retail_rate_snapshot,
+)
 from app.cloudkb.perfkb.agent_api import recommendation_profile
 from app.design.services.deployment_diagram.bundle import select_deployment_target
+from app.design.services.deployment_diagram.costing import build_pricing_inventory
 from app.design.services.deployment_diagram.planner import (
     build_deployment_plan,
     build_provider_resource_plan,
 )
 
 HOURS_PER_MONTH = 730
+_BUNDLED_RETAIL_RATE_SNAPSHOT_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "cloudkb"
+    / "costkb"
+    / "retail_rates_all_providers_20260915.json"
+)
 
 
 class ComputeSelection(BaseModel):
@@ -188,9 +207,11 @@ def compute_sizing_guidance(
     capacity_overrides: list[dict[str, Any] | CapacityOverride] | None = None,
     limit: int = 5,
 ) -> dict[str, Any]:
-    """compute unit별 SKU 후보와 compute-only 월 예상치를 반환한다.
+    """compute unit별 SKU 후보와 VM 비교용 월 가격을 반환한다.
 
-    DB, disk, network, load balancer, tax, support, 할인은 계산에 포함하지 않는다.
+    후보의 ``monthlyComputeUSD``는 VM SKU를 비교하는 detail일 뿐 전체 배포 견적이
+    아니다. 전체 ResourcePlan 가격·예산 비교는 선택 구성을 materialize한 뒤
+    ``estimate_selected_deployment_cost``가 known floor와 unknown term으로 제공한다.
     """
 
     deployment_plan, _overrides = apply_capacity_overrides(
@@ -522,10 +543,101 @@ def apply_compute_selections(
     return result
 
 
+def _configured_rate_resolver() -> tuple[RetailRateResolver, str | None]:
+    """Load the reviewed local snapshot; a sizing request never calls a CSP."""
+
+    configured = os.getenv("EASYDEP_RETAIL_RATE_SNAPSHOT_PATH", "").strip()
+    path = Path(configured) if configured else _BUNDLED_RETAIL_RATE_SNAPSHOT_PATH
+    if not path.is_file():
+        raise ValueError(
+            "Configured retail-rate snapshot file does not exist."
+            if configured
+            else "Bundled retail-rate snapshot file does not exist."
+        )
+    try:
+        snapshot = load_retail_rate_snapshot(path.read_bytes())
+    except Exception as error:
+        raise ValueError("Retail-rate snapshot is invalid.") from error
+    return build_retail_rate_resolver(snapshot), snapshot.snapshot_digest
+
+
+def _monthly_budget(value: object) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        budget = Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+    return budget if budget >= 0 else None
+
+
+def _public_quote(quote: DeploymentCostQuote, snapshot_digest: str | None) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "currency": quote.currency,
+        "knownFloorUSD": float(quote.known_floor_usd),
+        "complete": quote.complete,
+        "monthlyBudgetUSD": float(quote.monthly_budget_usd) if quote.monthly_budget_usd is not None else None,
+        "status": quote.verdict.value,
+        "components": [
+            {
+                "ruleId": component.rule_id,
+                "primitiveKind": component.primitive_kind,
+                "term": component.term,
+                "amountUSD": float(component.amount_usd) if component.amount_usd is not None else None,
+                "rateKey": component.rate_key,
+                "known": component.known,
+                "reason": component.reason,
+            }
+            for component in quote.components
+        ],
+    }
+    if snapshot_digest:
+        result["sourceMetadata"] = {"snapshotDigest": snapshot_digest}
+    return result
+
+
+def estimate_selected_deployment_cost(
+    bundle: dict[str, Any],
+    selections: list[dict[str, Any]],
+    *,
+    target: dict[str, Any] | str,
+    capacity_overrides: list[dict[str, Any]] | None = None,
+    resolver: RetailRateResolver | None = None,
+    snapshot_digest: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Materialize the exact VM choices, then quote its entire existing plan."""
+
+    updated = apply_compute_selections(
+        bundle,
+        selections,
+        selected_target=target,
+        capacity_overrides=capacity_overrides,
+    )
+    if updated.get("status") != "completed":
+        return updated, None
+    if resolver is None:
+        resolver, snapshot_digest = _configured_rate_resolver()
+    projection = next(
+        item for item in updated.get("projections") or []
+        if isinstance(item, dict) and item.get("target") == updated.get("selectedTarget")
+    )
+    resource_spec = updated.get("resourceSpec")
+    inventory = build_pricing_inventory(
+        dict(projection.get("resourcePlan") or {}),
+        dict(projection.get("deploymentPlan") or {}),
+        dict(updated.get("workloadGraph") or {}),
+        monthly_budget_usd=_monthly_budget(
+            resource_spec.get("monthlyBudgetUSD") if isinstance(resource_spec, dict) else None
+        ),
+    )
+    return updated, _public_quote(estimate_deployment_cost(inventory, resolver), snapshot_digest)
+
+
 __all__ = [
     "CapacityOverride",
     "ComputeSelection",
     "apply_capacity_overrides",
     "apply_compute_selections",
     "compute_sizing_guidance",
+    "estimate_selected_deployment_cost",
 ]

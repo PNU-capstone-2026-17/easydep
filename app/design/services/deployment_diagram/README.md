@@ -110,9 +110,13 @@ endpoint와 same-process 호출은 정규화가 결정하지만, 실제 주소�
 제품이 실제 배포까지 검증한 파일 기반 H2와 workload-owned disk를 기본 템플릿으로 쓴다.
 별도 DB workload와 scale-out은 승인된 배포 계약에서 선택해야 한다.
 
-`sizing.py`는 기존 cloud catalog의 provider·region 일치 SKU만 읽어 compute-only 월 예상치를
-만든다. scale-out은 WorkloadGraph의 `replicationSafety`를 다시 확인하고, 선택된 SKU와 replica는
-ResourcePlan에 투영된다.
+`sizing.py`는 기존 cloud catalog의 provider·region 일치 SKU를 읽어 VM 후보를 비교한다.
+후보의 월 VM 가격은 비교용 detail이며 총 배포 비용이 아니다. 선택된 SKU와 replica를
+ResourcePlan에 투영한 뒤 `costing.py`가 생성된 VM·disk·load balancer·NAT·public IP 등 현재
+계획에 이미 존재하는 리소스만 pricing inventory로 바꾼다. local retail-rate snapshot으로 계산한
+전체 견적은 확정 가능한 항목의 `knownFloorUSD`, 미확정 usage/rate의 unknown term, 그리고 예산
+판정(`within`, `exceeds`, `indeterminate`, `notProvided`)을 함께 반환한다. usage를 알 수 없는
+항목을 0으로 가정하지 않는다. scale-out은 계속 WorkloadGraph의 `replicationSafety`를 확인한다.
 
 ## LLM 호출과 repair 범위
 

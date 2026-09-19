@@ -547,7 +547,7 @@
         {"name": "operating_system", "unit": "name", "source": "configuration", "required": true}
       ],
       "rateLookups": [
-        {"key": "vm_runtime_rate", "dimensions": ["serviceName", "armRegionName", "armSkuName", "productName", "meterName", "priceType", "unitOfMeasure"]}
+        {"key": "vm_runtime_rate", "dimensions": ["region", "vm_size", "operating_system"]}
       ],
       "billingTerms": [
         {"name": "runtime", "formula": "instance_count * running_hours * vm_runtime_rate", "rateKey": "vm_runtime_rate", "unit": "USD"}
@@ -572,13 +572,14 @@
       "inputs": [
         {"name": "disk_count", "unit": "disk", "source": "derived", "required": true},
         {"name": "requested_capacity_gib", "unit": "GiB", "source": "configuration", "required": true},
-        {"name": "provisioned_hours", "unit": "hour", "source": "usage", "required": true},
-        {"name": "billable_transactions", "unit": "transaction", "source": "usage", "required": true},
+        {"name": "provisioned_seconds", "unit": "second", "source": "usage", "required": true},
+        {"name": "billable_transaction_batches_after_hourly_cap", "unit": "batch", "source": "usage", "required": true},
+        {"name": "disk_sku", "unit": "name", "source": "derived", "required": true},
         {"name": "region", "unit": "region", "source": "configuration", "required": true}
       ],
       "rateLookups": [
-        {"key": "disk_tier_month_rate", "dimensions": ["armRegionName", "disk_sku", "meterName", "priceType", "unitOfMeasure"]},
-        {"key": "transaction_batch_rate", "dimensions": ["armRegionName", "disk_sku", "meterName", "tierMinimumUnits", "unitOfMeasure"]}
+        {"key": "disk_tier_month_rate", "dimensions": ["region", "disk_sku"]},
+        {"key": "transaction_batch_rate", "dimensions": ["region", "disk_sku"]}
       ],
       "billingTerms": [
         {"name": "capacity_tier", "formula": "disk_count * provisioned_month_fraction * disk_tier_month_rate", "rateKey": "disk_tier_month_rate", "unit": "USD"},
@@ -609,9 +610,9 @@
         {"name": "region", "unit": "region", "source": "configuration", "required": true}
       ],
       "rateLookups": [
-        {"key": "first_five_rules_hour_rate", "dimensions": ["armRegionName", "skuName", "meterName", "unitOfMeasure"]},
-        {"key": "additional_rule_hour_rate", "dimensions": ["armRegionName", "skuName", "meterName", "unitOfMeasure"]},
-        {"key": "processed_gb_rate", "dimensions": ["armRegionName", "skuName", "meterName", "unitOfMeasure"]}
+        {"key": "first_five_rules_hour_rate", "dimensions": ["region", "tier"]},
+        {"key": "additional_rule_hour_rate", "dimensions": ["region", "tier"]},
+        {"key": "processed_gb_rate", "dimensions": ["region", "tier"]}
       ],
       "billingTerms": [
         {"name": "first_five_rules", "formula": "if(billable_rule_count > 0, load_balancer_hours * first_five_rules_hour_rate, 0)", "rateKey": "first_five_rules_hour_rate", "unit": "USD"},
@@ -639,8 +640,8 @@
         {"name": "sku", "unit": "name", "source": "configuration", "required": true}
       ],
       "rateLookups": [
-        {"key": "gateway_hour_rate", "dimensions": ["armRegionName", "armSkuName", "meterName", "unitOfMeasure"]},
-        {"key": "processed_gb_rate", "dimensions": ["armRegionName", "armSkuName", "meterName", "unitOfMeasure"]}
+        {"key": "gateway_hour_rate", "dimensions": ["region", "sku"]},
+        {"key": "processed_gb_rate", "dimensions": ["region", "sku"]}
       ],
       "billingTerms": [
         {"name": "gateway_runtime", "formula": "ceil_each_partial_gateway_hour(gateway_hours) * gateway_hour_rate", "rateKey": "gateway_hour_rate", "unit": "USD"},
@@ -668,7 +669,7 @@
         {"name": "region", "unit": "region", "source": "configuration", "required": true}
       ],
       "rateLookups": [
-        {"key": "public_ipv4_hour_rate", "dimensions": ["armRegionName", "armSkuName", "meterName", "unitOfMeasure"]}
+        {"key": "public_ipv4_hour_rate", "dimensions": ["region", "sku", "allocation_method"]}
       ],
       "billingTerms": [
         {"name": "address_runtime", "formula": "address_count * rounded_allocated_hours * public_ipv4_hour_rate", "rateKey": "public_ipv4_hour_rate", "unit": "USD"}
@@ -694,8 +695,8 @@
         {"name": "region", "unit": "region", "source": "configuration", "required": true}
       ],
       "rateLookups": [
-        {"key": "registry_day_rate", "dimensions": ["armRegionName", "armSkuName", "meterName", "unitOfMeasure"]},
-        {"key": "excess_storage_gib_day_rate", "dimensions": ["armRegionName", "armSkuName", "meterName", "unitOfMeasure"]}
+        {"key": "registry_day_rate", "dimensions": ["region", "sku"]},
+        {"key": "excess_storage_gib_day_rate", "dimensions": ["region", "sku"]}
       ],
       "billingTerms": [
         {"name": "tier_runtime", "formula": "registry_days * registry_day_rate", "rateKey": "registry_day_rate", "unit": "USD"},
@@ -779,12 +780,13 @@
         {"name": "vcpu_count", "unit": "vCPU", "source": "derived", "required": true},
         {"name": "memory_gib", "unit": "GiB", "source": "derived", "required": true},
         {"name": "region", "unit": "region", "source": "configuration", "required": true},
-        {"name": "operating_system", "unit": "name", "source": "configuration", "required": true}
+        {"name": "operating_system", "unit": "name", "source": "configuration", "required": true},
+        {"name": "unit", "unit": "name", "source": "derived", "required": true}
       ],
       "rateLookups": [
-        {"key": "vcpu_runtime_rate", "dimensions": ["machine_family", "resourceGroup", "serviceRegions", "usageType", "usageUnit", "tieredRates"]},
-        {"key": "memory_gib_runtime_rate", "dimensions": ["machine_family", "resourceGroup", "serviceRegions", "usageType", "usageUnit", "tieredRates"]},
-        {"key": "shared_core_instance_runtime_rate", "dimensions": ["description", "resourceGroup", "serviceRegions", "usageType", "usageUnit", "tieredRates"], "notes": "The SKU description distinguishes the shared-core machine type."}
+        {"key": "vcpu_runtime_rate", "dimensions": ["region", "machine_family", "pricing_model", "operating_system", "unit"]},
+        {"key": "memory_gib_runtime_rate", "dimensions": ["region", "machine_family", "pricing_model", "operating_system", "unit"]},
+        {"key": "shared_core_instance_runtime_rate", "dimensions": ["region", "machine_type", "pricing_model", "operating_system", "unit"], "notes": "The SKU description distinguishes the shared-core machine type."}
       ],
       "billingTerms": [
         {"name": "vcpu_runtime", "formula": "instance_count * vcpu_count * billable_runtime_units * vcpu_runtime_rate", "rateKey": "vcpu_runtime_rate", "unit": "USD", "condition": "pricing_model == resource-based"},
@@ -814,10 +816,12 @@
         {"name": "capacity_gib", "unit": "GiB", "source": "configuration", "required": true},
         {"name": "provisioned_seconds", "unit": "second", "source": "usage", "required": true},
         {"name": "disk_type", "unit": "name", "source": "configuration", "required": true},
-        {"name": "region", "unit": "region", "source": "configuration", "required": true}
+        {"name": "disk_scope", "unit": "name", "source": "configuration", "required": true},
+        {"name": "region", "unit": "region", "source": "configuration", "required": true},
+        {"name": "unit", "unit": "name", "source": "derived", "required": true}
       ],
       "rateLookups": [
-        {"key": "disk_gib_time_rate", "dimensions": ["disk_type", "serviceRegions", "usageUnit", "tieredRates"]}
+        {"key": "disk_gib_time_rate", "dimensions": ["region", "disk_type", "disk_scope", "unit"]}
       ],
       "billingTerms": [
         {"name": "capacity", "formula": "disk_count * capacity_gib * provisioned_time_units * disk_gib_time_rate", "rateKey": "disk_gib_time_rate", "unit": "USD"}
@@ -844,13 +848,15 @@
         {"name": "forwarding_rule_hours", "unit": "hour", "source": "usage", "required": true},
         {"name": "inbound_processed_gib", "unit": "GiB", "source": "usage", "required": true},
         {"name": "outbound_processed_gib", "unit": "GiB", "source": "usage", "required": true},
-        {"name": "region", "unit": "region", "source": "configuration", "required": true}
+        {"name": "region", "unit": "region", "source": "configuration", "required": true},
+        {"name": "load_balancing_scheme", "unit": "name", "source": "configuration", "required": true},
+        {"name": "unit", "unit": "name", "source": "derived", "required": true}
       ],
       "rateLookups": [
-        {"key": "first_five_forwarding_rules_hour_rate", "dimensions": ["serviceRegions", "resourceGroup", "usageUnit", "tieredRates"]},
-        {"key": "additional_forwarding_rule_hour_rate", "dimensions": ["serviceRegions", "resourceGroup", "usageUnit", "tieredRates"]},
-        {"key": "inbound_processed_gib_rate", "dimensions": ["serviceRegions", "resourceGroup", "direction", "usageUnit", "tieredRates"]},
-        {"key": "outbound_processed_gib_rate", "dimensions": ["serviceRegions", "resourceGroup", "direction", "usageUnit", "tieredRates"]}
+        {"key": "first_five_forwarding_rules_hour_rate", "dimensions": ["region", "load_balancing_scheme", "unit"]},
+        {"key": "additional_forwarding_rule_hour_rate", "dimensions": ["region", "load_balancing_scheme", "unit"]},
+        {"key": "inbound_processed_gib_rate", "dimensions": ["region", "load_balancing_scheme", "unit"]},
+        {"key": "outbound_processed_gib_rate", "dimensions": ["region", "load_balancing_scheme", "unit"]}
       ],
       "billingTerms": [
         {"name": "first_five_forwarding_rules", "formula": "if(forwarding_rule_count > 0, forwarding_rule_hours * first_five_forwarding_rules_hour_rate, 0)", "rateKey": "first_five_forwarding_rules_hour_rate", "unit": "USD"},
@@ -880,13 +886,15 @@
         {"name": "gateway_hours", "unit": "hour", "source": "usage", "required": true},
         {"name": "processed_gib", "unit": "GiB", "source": "usage", "required": true},
         {"name": "external_ip_count", "unit": "address", "source": "derived", "required": true},
-        {"name": "region", "unit": "region", "source": "configuration", "required": true}
+        {"name": "region", "unit": "region", "source": "configuration", "required": true},
+        {"name": "nat_allocation_mode", "unit": "name", "source": "configuration", "required": true},
+        {"name": "unit", "unit": "name", "source": "derived", "required": true}
       ],
       "rateLookups": [
-        {"key": "per_vm_gateway_hour_rate", "dimensions": ["serviceRegions", "resourceGroup", "usageUnit", "tieredRates"]},
-        {"key": "capped_gateway_hour_rate", "dimensions": ["serviceRegions", "resourceGroup", "usageUnit", "tieredRates"]},
-        {"key": "processed_gib_rate", "dimensions": ["serviceRegions", "resourceGroup", "usageUnit", "tieredRates"]},
-        {"key": "nat_external_ip_hour_rate", "dimensions": ["serviceRegions", "resourceGroup", "usageUnit", "tieredRates"]}
+        {"key": "per_vm_gateway_hour_rate", "dimensions": ["region", "nat_allocation_mode", "unit"]},
+        {"key": "capped_gateway_hour_rate", "dimensions": ["region", "nat_allocation_mode", "unit"]},
+        {"key": "processed_gib_rate", "dimensions": ["region", "nat_allocation_mode", "unit"]},
+        {"key": "nat_external_ip_hour_rate", "dimensions": ["region", "nat_allocation_mode", "unit"]}
       ],
       "billingTerms": [
         {"name": "gateway_runtime_below_cap", "formula": "if(assigned_vm_count <= 32, assigned_vm_count * gateway_hours * per_vm_gateway_hour_rate, 0)", "rateKey": "per_vm_gateway_hour_rate", "unit": "USD"},
@@ -913,10 +921,12 @@
         {"name": "allocated_hours", "unit": "hour", "source": "usage", "required": true},
         {"name": "attachment_class", "unit": "name", "source": "derived", "required": true},
         {"name": "region", "unit": "region", "source": "configuration", "required": true},
+        {"name": "network_tier", "unit": "name", "source": "configuration", "required": true},
+        {"name": "unit", "unit": "name", "source": "derived", "required": true},
         {"name": "account_remaining_free_address_hours", "unit": "address-hour", "source": "account", "required": false}
       ],
       "rateLookups": [
-        {"key": "external_ipv4_hour_rate", "dimensions": ["serviceRegions", "attachment_class", "usageUnit", "tieredRates"]}
+        {"key": "external_ipv4_hour_rate", "dimensions": ["region", "attachment_class", "network_tier", "unit"]}
       ],
       "billingTerms": [
         {"name": "address_runtime", "formula": "max(0, address_count * allocated_hours - account_remaining_free_address_hours) * external_ipv4_hour_rate", "rateKey": "external_ipv4_hour_rate", "unit": "USD", "condition": "The forwarding-rule attachment class has a zero rate; other attachment classes use their matching SKU."}

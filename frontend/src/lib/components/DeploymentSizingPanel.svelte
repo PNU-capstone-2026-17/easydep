@@ -188,25 +188,23 @@
       : 'Sustained CPU unknown';
   }
 
-  function hasUnpricedSelection(stored = false) {
-    if (stored) {
-      return (response?.selected ?? []).some(
-        (selection) => savedCandidate(selection.computeUnitId, selection.sku)?.hourlyComputeUSD === null
-      );
-    }
+  function hasUnpricedSelection() {
     return (response?.guidance.computeUnits ?? []).some(
       (unit) => selectedCandidate(unit)?.hourlyComputeUSD === null
     );
   }
 
-  function savedMonthlyTotal() {
-    return (response?.selected ?? []).reduce((total, selection) => {
-      const unit = response?.guidance.computeUnits.find(
-        (candidate) => candidate.computeUnitId === selection.computeUnitId
-      );
-      const candidate = unit?.candidates.find((item) => item.sku === selection.sku);
-      return total + (candidate?.hourlyComputeUSD ?? 0) * 730 * selection.replicaCount;
-    }, 0);
+  function costStatusLabel() {
+    const pricing = response?.pricing;
+    if (!pricing) return 'Whole deployment quote unavailable';
+    if (pricing.status === 'within') return 'Within monthly budget';
+    if (pricing.status === 'exceeds') return 'Exceeds monthly budget';
+    if (pricing.status === 'indeterminate') return 'Budget comparison needs usage inputs';
+    return pricing.complete ? 'Complete list-price estimate' : 'Known cost floor only';
+  }
+
+  function unknownCostTerms() {
+    return response?.pricing?.components.filter((component) => !component.known).length ?? 0;
   }
 
   function canApply() {
@@ -251,7 +249,7 @@
     <Server class="mt-0.5 shrink-0 text-[#477058]" size={15} />
     <div class="min-w-0 flex-1">
       <strong class="block text-xs text-[#315641]">VM size and replicas</strong>
-      <p class="mt-0.5 text-[10px] leading-4 text-[#737970]">Choose values for this target. Prices cover VM compute only.</p>
+      <p class="mt-0.5 text-[10px] leading-4 text-[#737970]">Choose VM capacity for this target. The saved configuration shows its whole-deployment list-price estimate.</p>
     </div>
   </header>
 
@@ -265,7 +263,7 @@
             <strong class="block text-[11px] text-[#315641]">Saved deployment configuration</strong>
             <p class="mt-1 text-[10px] text-[#737970]">{response.target.provider.toUpperCase()} · {response.target.region}</p>
           </div>
-          <span class="shrink-0 text-[10px] font-semibold text-[#477058]">{hasUnpricedSelection(true) ? 'List price unavailable' : `$${savedMonthlyTotal().toFixed(2)}/month`}</span>
+          <span class="shrink-0 text-[10px] font-semibold text-[#477058]">{response.pricing ? (response.pricing.complete ? `$${response.pricing.knownFloorUSD.toFixed(2)}/month` : `from $${response.pricing.knownFloorUSD.toFixed(2)}/month`) : 'Estimate unavailable'}</span>
         </div>
         <div class="mt-2 space-y-1.5">
           {#each response.selected as selection}
@@ -275,6 +273,32 @@
             </div>
           {/each}
         </div>
+        {#if response.pricing}
+          <div class="mt-2 rounded-md border border-[#dce2dc] bg-[#f7f9f6] p-2 text-[10px] leading-4 text-[#59645b]">
+            <div class="flex items-start justify-between gap-2">
+              <span><strong class="text-[#315641]">Whole deployment estimate</strong> · {costStatusLabel()}</span>
+              <span class="shrink-0 font-semibold text-[#315641]">{response.pricing.complete ? `$${response.pricing.knownFloorUSD.toFixed(2)}/month` : `from $${response.pricing.knownFloorUSD.toFixed(2)}/month`}</span>
+            </div>
+            {#if response.pricing.monthlyBudgetUSD !== null}
+              <p class="mt-0.5">Budget: ${response.pricing.monthlyBudgetUSD.toFixed(2)}/month</p>
+            {/if}
+            {#if !response.pricing.complete}
+              <p class="mt-0.5 text-[#8a5f2c]">Known monthly floor; {unknownCostTerms()} term{unknownCostTerms() === 1 ? '' : 's'} still need usage or a matched retail rate.</p>
+            {/if}
+            <details class="mt-1.5">
+              <summary class="cursor-pointer font-semibold text-[#477058]">Cost breakdown</summary>
+              <dl class="mt-1 grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-0.5">
+                {#each response.pricing.components as component}
+                  <dt class="truncate" title={`${component.primitiveKind} · ${component.term}`}>{component.primitiveKind} · {component.term}</dt>
+                  <dd class="text-right font-medium">{component.amountUSD === null ? 'Usage or rate unavailable' : `$${component.amountUSD.toFixed(2)}`}</dd>
+                  {#if component.reason}
+                    <dd class="col-span-2 text-[#8a5f2c]">{component.reason}</dd>
+                  {/if}
+                {/each}
+              </dl>
+            </details>
+          </div>
+        {/if}
         <button
           type="button"
           class="focus-ring mt-3 w-full rounded-md border border-[#b7cbbd] bg-white px-2.5 py-1.5 text-[10px] font-semibold text-[#315f46] hover:bg-[#f1f7f2]"
@@ -393,7 +417,7 @@
       {/each}
     </div>
     <footer class="mt-3 flex items-center justify-between gap-3 border-t border-[#e1e5df] pt-2.5">
-      <span class="text-[10px] text-[#6f746d]">Estimated compute: {hasUnpricedSelection() ? 'list price unavailable for selected SKU' : `$${monthlyTotal().toFixed(2)}/month`}</span>
+      <span class="text-[10px] text-[#6f746d]">Selected VM compute detail (not total): {hasUnpricedSelection() ? 'list price unavailable for selected SKU' : `$${monthlyTotal().toFixed(2)}/month`}</span>
       <button
         class="focus-ring flex items-center gap-1 rounded-md bg-[#2d6b4d] px-2.5 py-1.5 text-[10px] font-semibold text-white disabled:opacity-50"
         disabled={!canApply() || saving}
