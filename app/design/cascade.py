@@ -33,8 +33,8 @@ from app.design.nodes.artifact import (
     merge_model,
     render_and_validate,
 )
+from app.design.revision_impact import design_revision_impact
 from app.design.rtm import (
-    affected_by_element,
     build_design_rtm,
     linked_elements,
 )
@@ -409,35 +409,7 @@ def _frozen_cascade_scope(
     approved_downstream_targets: set[str] | None,
 ) -> dict[str, set[str]]:
     """Calculate bounded forward targets from the frozen pre-change RTM."""
-
-    directly_linked = _refs_by_stage(linked_elements(rtm, stage, element))
-    scheduled = {
-        target_stage: set(elements)
-        for target_stage, elements in directly_linked.items()
-        if stage == "class_diagram"
-        and target_stage in {"sequence_diagram", "api_spec"}
-    }
-    if stage == "class_diagram":
-        class_units = _class_execution_merge_targets(state, {element})
-        class_names = {
-            str(item.get("className") or "").strip()
-            for item in (state.get(DESIGN_SPECS["class_diagram"].model_key) or {}).get("Classes") or []
-            if isinstance(item, dict) and str(item.get("className") or "").strip()
-        }
-        # Exact operation targets use exact contract links. Expanding their
-        # owner class would turn one operation edit into every artifact that
-        # merely mentions the same Boundary or Control.
-        classes_for_forward = class_units & class_names if element in class_names else set()
-        for class_name in classes_for_forward:
-            for affected in affected_by_element(rtm, "class_diagram", class_name):
-                affected_ref = _design_target(affected)
-                if affected_ref is not None:
-                    scheduled.setdefault(affected_ref.kind, set()).add(affected_ref.id)
-
-    # Do not revise the selected element twice.  It is a requested target, not
-    # a downstream expansion, even when a frozen RTM has a cycle through it.
-    scheduled.get(stage, set()).discard(element)
-    scheduled = {key: value for key, value in scheduled.items() if value}
+    scheduled = design_revision_impact(state, rtm, stage, element)
 
     if approved_downstream_targets is not None:
         approved = set(approved_downstream_targets)

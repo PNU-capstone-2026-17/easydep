@@ -219,20 +219,36 @@ def _direct_links(state: dict, known_classes: set[str]) -> list[dict[str, str]]:
         if not isinstance(item, dict):
             continue
         collaboration_id = str(item.get("collaborationId") or "").strip()
-        if collaboration_id not in available_sequences:
+        collaboration_use_cases = set(_as_list(item.get("useCaseIds")))
+        projected_use_cases = collaboration_use_cases & available_sequences
+        if not collaboration_id or not projected_use_cases:
             continue
+        for use_case_id in projected_use_cases:
+            links.add((
+                f"sequence_diagram:{use_case_id}",
+                f"class_diagram:{collaboration_id}",
+                "projects_collaboration",
+            ))
         for call in item.get("calls") or []:
+            call_id = str(call.get("callId") or "").strip() if isinstance(call, dict) else ""
             operation_id = (
                 str(call.get("receiverOperationId") or "").strip()
                 if isinstance(call, dict)
                 else ""
             )
-            if operation_id in declared_operation_ids:
-                links.add((
-                    f"sequence_diagram:{collaboration_id}",
-                    f"class_diagram:{operation_id}",
-                    "projects",
-                ))
+            for use_case_id in projected_use_cases:
+                if call_id:
+                    links.add((
+                        f"sequence_diagram:{use_case_id}",
+                        f"class_diagram:{call_id}",
+                        "projects_call",
+                    ))
+                if operation_id in declared_operation_ids:
+                    links.add((
+                        f"sequence_diagram:{use_case_id}",
+                        f"class_diagram:{operation_id}",
+                        "projects",
+                    ))
 
     for call in sequence_calls:
         receiver = call["receiver_class"]

@@ -105,8 +105,11 @@ def test_feedback_decision_to_requirements_class_and_sequence_cascade(monkeypatc
             "impact": {"class:OrderController": ["sequence_diagram:UC1"]},
         },
     )
-    monkeypatch.setattr(cascade, "affected_by_element", lambda *_: ["sequence_diagram:UC1"])
-    monkeypatch.setattr(cascade, "linked_elements", lambda *_: [])
+    monkeypatch.setattr(
+        cascade,
+        "design_revision_impact",
+        lambda *_: {"sequence_diagram": {"UC1"}},
+    )
     revised_class = deepcopy(CLEAN)
     controller = next(
         item for item in revised_class["Classes"] if item["className"] == "OrderController"

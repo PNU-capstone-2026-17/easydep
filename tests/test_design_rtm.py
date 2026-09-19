@@ -13,6 +13,7 @@ from copy import deepcopy
 from app.design.rtm import (
     affected_by_element,
     build_design_rtm,
+    exact_contract_links,
     impacted_by,
     impacted_stages,
     linked_elements,
@@ -186,6 +187,92 @@ def test_exact_api_sequence_class_links_are_materialized_for_reverse_changes():
     assert linked_elements(rtm, "sequence_diagram", "UC1") == [
         "api_spec:createOrder", "class_diagram:OrderController",
     ]
+
+
+def test_sequence_projection_links_use_case_to_scoped_collaboration_and_call():
+    state = {
+        **STATE,
+        "extracted_bce_classes": {
+            "Classes": [
+                {
+                    "className": "OrderController",
+                    "stereotype": "Control",
+                    "operations": [
+                        {
+                            "operationId": "OrderController::createOrder()",
+                            "name": "createOrder",
+                        }
+                    ],
+                }
+            ],
+            "Collaborations": [
+                {
+                    "collaborationId": "UC1:main:1",
+                    "useCaseIds": ["UC1"],
+                    "calls": [
+                        {
+                            "callId": "UC1:main:1::call:1",
+                            "receiverOperationId": "OrderController::createOrder()",
+                        }
+                    ],
+                }
+            ],
+        },
+        "sequence_diagram_model": {
+            "Diagrams": [{"use_case_id": "UC1", "Participants": [], "Messages": []}]
+        },
+        "api_spec_model": {"Endpoints": [], "Schemas": []},
+    }
+
+    rtm = build_design_rtm(state)
+
+    assert {
+        (link["to"], link["relation"])
+        for link in exact_contract_links(
+            rtm,
+            "sequence_diagram",
+            "UC1",
+            direction="outgoing",
+        )
+    } == {
+        ("class_diagram:OrderController::createOrder()", "projects"),
+        ("class_diagram:UC1:main:1", "projects_collaboration"),
+        ("class_diagram:UC1:main:1::call:1", "projects_call"),
+    }
+    assert not any(
+        link["from"] == "sequence_diagram:UC1:main:1"
+        and link["relation"] == "projects"
+        for link in rtm["links"]
+    )
+
+
+def test_sequence_projection_ignores_unscoped_or_undeclared_operation_edges():
+    state = {
+        **STATE,
+        "extracted_bce_classes": {
+            "Classes": [],
+            "Collaborations": [{
+                "collaborationId": "UC1:main:1",
+                "useCaseIds": [],
+                "calls": [{
+                    "callId": "UC1:main:1::call:1",
+                    "receiverOperationId": "Missing::operation()",
+                }],
+            }],
+        },
+        "sequence_diagram_model": {
+            "Diagrams": [{"use_case_id": "UC1", "Participants": [], "Messages": []}]
+        },
+        "api_spec_model": {"Endpoints": [], "Schemas": []},
+    }
+
+    rtm = build_design_rtm(state)
+
+    assert not any(
+        link["from"].startswith("sequence_diagram:")
+        and link["relation"] in {"projects", "projects_collaboration", "projects_call"}
+        for link in rtm["links"]
+    )
 
 
 def test_missing_exact_control_binding_does_not_create_a_reverse_link():

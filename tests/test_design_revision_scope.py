@@ -83,7 +83,6 @@ def test_api_revision_rejects_extra_class_authority_and_stays_local(monkeypatch)
     })
     calls: list[tuple[str, set[str]]] = []
     monkeypatch.setattr(cascade, "build_design_rtm", lambda _state: rtm)
-    monkeypatch.setattr(cascade, "affected_by_element", lambda *_args: [])
 
     def apply(spec, state, _feedback, targets, **_kwargs):
         calls.append((spec.stage, set(targets)))
@@ -168,6 +167,7 @@ def test_operation_scope_uses_exact_contract_links_not_its_whole_boundary() -> N
         "Collaborations": [
             {
                 "collaborationId": use_case,
+                "useCaseIds": [use_case],
                 "calls": [
                     {
                         "receiverOperationId": (
@@ -229,7 +229,6 @@ def test_class_operation_uses_owning_class_merge_unit_without_widening_reviser(m
     rtm["rows"].append({"stage": "class_diagram", "element": operation})
     observed: list[tuple[set[str], set[str]]] = []
     monkeypatch.setattr(cascade, "build_design_rtm", lambda _state: rtm)
-    monkeypatch.setattr(cascade, "affected_by_element", lambda *_args: [])
 
     def apply(spec, current, _feedback, targets, **kwargs):
         observed.append((set(targets), set(kwargs["revision_targets"])))
@@ -250,7 +249,6 @@ def test_direct_collaboration_uses_its_own_merge_unit(monkeypatch) -> None:
     rtm["rows"].append({"stage": "class_diagram", "element": "UC1"})
     observed: list[tuple[set[str], set[str]]] = []
     monkeypatch.setattr(cascade, "build_design_rtm", lambda _state: rtm)
-    monkeypatch.setattr(cascade, "affected_by_element", lambda *_args: [])
 
     def apply(spec, current, _feedback, targets, **kwargs):
         observed.append((set(targets), set(kwargs["revision_targets"])))
@@ -281,7 +279,6 @@ def test_class_revision_receives_companion_collaborations_as_read_only_context(
     ]
     observed: list[tuple[set[str], set[str]]] = []
     monkeypatch.setattr(cascade, "build_design_rtm", lambda _state: rtm)
-    monkeypatch.setattr(cascade, "affected_by_element", lambda *_args: [])
 
     def apply(spec, current, _feedback, targets, **kwargs):
         observed.append((set(targets), set(kwargs["revision_targets"])))
