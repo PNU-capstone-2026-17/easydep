@@ -459,23 +459,6 @@
     await act(offer.action, offer.payload);
   }
 
-  async function submitSequenceFeedback(
-    entries: Array<{ useCaseId: string; feedback: string }>
-  ) {
-    await act('message', {
-      text: `Targeted sequence feedback for ${entries.map((entry) => entry.useCaseId).join(', ')}`,
-      action_id: command?.status === 'AWAITING_INPUT' ? command.command_id : undefined,
-      context: {
-        stage: 'design',
-        artifact_stage: 'sequence_diagram',
-        target_feedbacks: entries.map((entry) => ({
-          target: `sequence_diagram:${entry.useCaseId}`,
-          feedback: entry.feedback
-        }))
-      }
-    });
-  }
-
   async function loadFileArtifacts(id: string) {
     const entries = await Promise.all(
       fileArtifactTypes.map(async (type) => {
@@ -658,7 +641,6 @@
               artifact_stage:
                 selectedArtifact === 'TESTING_RESULTS' ? undefined : selectedArtifact
             }}
-            targetRequired={selectedArtifact === 'sequence_diagram'}
             onSend={send}
             onAction={act}
             onToggleAutoMode={toggleAutoMode}
@@ -677,8 +659,6 @@
             {classGenerating}
             selected={selectedArtifact}
             onSelect={reviewArtifact}
-            onSequenceFeedbackSubmit={submitSequenceFeedback}
-            sequenceFeedbackSubmitting={busy}
             sequenceMethodApprovalAvailable={canApproveSequenceMethodProposals}
             onSequenceMethodApproval={approveSequenceMethodProposals}
             onFileSelect={(path) => (selectedSourcePath = path)}

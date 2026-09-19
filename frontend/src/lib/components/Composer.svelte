@@ -10,7 +10,6 @@
     busy,
     context,
     autoMode,
-    targetRequired = false,
     onSend,
     onAction,
     onToggleAutoMode
@@ -20,7 +19,6 @@
     busy: boolean;
     context?: { stage: string; artifact_stage?: string; element_ref?: string } | null;
     autoMode: boolean;
-    targetRequired?: boolean;
     onSend: (text: string, extra?: Record<string, unknown>) => Promise<void>;
     onAction: (action: string, extra?: Record<string, unknown>) => Promise<void>;
     onToggleAutoMode: () => void;
@@ -104,7 +102,7 @@
 
   async function submit() {
     const value = text.trim();
-    if (!value || busy || targetRequired || !messageInput) return;
+    if (!value || busy || !messageInput) return;
     text = '';
     await onSend(value, messageInput.payload);
   }
@@ -215,9 +213,7 @@
   {#if context}
     <div class="mb-2 flex items-center gap-2 px-1 text-[11px] text-[#5e6159]">
       <Paperclip size={12} />
-      {#if targetRequired}
-        Select one or more use-case targets and enter their feedback in the sequence diagram panel.
-      {:else if context.element_ref}
+      {#if context.element_ref}
         Feedback targets <code>{context.element_ref}</code> only; trace-linked artifacts may be updated.
       {:else}
         Feedback references the {context.artifact_stage ?? context.stage} artifact
@@ -230,14 +226,12 @@
       onkeydown={keydown}
       rows="2"
       class="max-h-40 min-h-14 w-full resize-none border-0 bg-transparent px-2 py-2 text-sm leading-6 outline-none placeholder:text-[#999b93]"
-      placeholder={targetRequired
-        ? 'Use the targeted feedback form in the sequence diagram panel'
-        : messageInput
+      placeholder={messageInput
           ? questionText || messageInput.label || 'Enter a response'
           : messageChoices.length
             ? 'Choose one of the answers above'
             : 'No message action is currently available'}
-      disabled={busy || targetRequired || !messageInput}
+      disabled={busy || !messageInput}
     ></textarea>
     <div class="flex items-center justify-between px-1 pb-1">
       <span class="text-[10px] text-[#a0a199]">Enter to send · Shift+Enter for a new line</span>
@@ -255,7 +249,7 @@
         >
           <Zap size={14} />
         </Button>
-        <Button size="icon" onclick={submit} disabled={busy || targetRequired || !messageInput || !text.trim()} aria-label="Send message">
+        <Button size="icon" onclick={submit} disabled={busy || !messageInput || !text.trim()} aria-label="Send message">
           <ArrowUp size={16} />
         </Button>
       </div>

@@ -3,7 +3,6 @@
   import { Dialog } from 'bits-ui';
   import type { ArtifactDocument, ArtifactTraceResponse, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, SequenceDiagramSummary, WorkspaceCommand, WorkspaceEvent } from '$lib/types';
   import { getArtifactFile, getArtifactTrace, getFileArtifactVersions, getLiveImplementationFile, getSequenceDiagrams, getVersions } from '$lib/api';
-  import { errorMessage } from '$lib/utils';
   import ArtifactVisualization from '$lib/components/ArtifactVisualization.svelte';
   import ArtifactNavigator from '$lib/components/ArtifactNavigator.svelte';
   import DraggableDiagramViewport from '$lib/components/DraggableDiagramViewport.svelte';
@@ -14,6 +13,7 @@
   import { Badge } from '$lib/components/ui/badge';
   import { artifactLabels, artifactPresent, diagramArtifactTypes, requirementsArtifactTypes } from '$lib/artifacts';
   import { projectTestingRun } from '$lib/testing-results';
+  import { isAutomaticRepairActive } from '$lib/repair-presentation';
 
   let {
     appId,
@@ -27,8 +27,6 @@
     classGenerating = false,
     selected,
     onSelect,
-    onSequenceFeedbackSubmit,
-    sequenceFeedbackSubmitting = false,
     sequenceMethodApprovalAvailable = false,
     onSequenceMethodApproval,
     onFileSelect,
@@ -46,10 +44,6 @@
     classGenerating?: boolean;
     selected: string;
     onSelect: (stage: string) => void;
-    onSequenceFeedbackSubmit?: (
-      entries: Array<{ useCaseId: string; feedback: string }>
-    ) => void | Promise<void>;
-    sequenceFeedbackSubmitting?: boolean;
     sequenceMethodApprovalAvailable?: boolean;
     onSequenceMethodApproval?: () => void;
     onFileSelect?: (path: string) => void;
@@ -77,8 +71,6 @@
   let expandedSequence = $state<SequenceDiagramSummary | null>(null);
   let sequenceLoadVersion = 0;
   let sequenceImageEpoch = $state(0);
-  let sequenceFeedbackTargetIds = $state<string[]>([]);
-  let sequenceFeedbackDrafts = $state<Record<string, string>>({});
   let trace = $state<ArtifactTraceResponse | null>(null);
   let traceRefs = $state<string[]>([]);
   let selectedArtifactTraceRef = $state('');
@@ -101,6 +93,7 @@
     )
   );
   let validation = $derived(document?.validation?.[selected]);
+  let automaticRepairActive = $derived(isAutomaticRepairActive(command));
   let deploymentMetadata = $derived(document?.artifact_metadata?.deployment_diagram);
   let deploymentTargets = $derived(deploymentMetadata?.targets ?? []);
   // The sequence artifact itself changes when feedback is applied, even when
@@ -132,6 +125,7 @@
     events
       .filter(
         (event) =>
+          event.kind !== 'error' &&
           event.stage ===
           (selected === 'TESTING_RESULTS'
             ? 'testing'
@@ -219,7 +213,7 @@
         if (currentAppId !== appId || currentSelection !== selected || tab !== 'evidence') return;
         traceRefs = [];
         selectedArtifactTraceRef = '';
-        traceError = errorMessage(error);
+        traceError = 'Linked trace is unavailable.';
       });
   });
 
@@ -231,7 +225,7 @@
     const loader = fileArtifacts[selected] ? getFileArtifactVersions : getVersions;
     loader(appId, selected)
       .then((result) => (versions = result.versions))
-      .catch((error) => (versionsError = errorMessage(error)));
+      .catch(() => (versionsError = 'Version history is unavailable.'));
   });
 
   $effect(() => {
@@ -250,16 +244,14 @@
       .then((result) => {
         if (loadVersion !== sequenceLoadVersion) return;
         sequenceDiagrams = result.diagrams;
-        const available = new Set(result.diagrams.map((diagram) => diagram.use_case_id));
-        sequenceFeedbackTargetIds = sequenceFeedbackTargetIds.filter((id) => available.has(id));
         // Deliberately advance after every accepted fetch.  The list is keyed
         // by use_case_id, so without this token Svelte can retain an existing
         // <img> whose URL still points at a pre-feedback rendering.
         sequenceImageEpoch += 1;
       })
-      .catch((error) => {
+      .catch(() => {
         if (loadVersion !== sequenceLoadVersion) return;
-        sequenceError = errorMessage(error);
+        sequenceError = 'Sequence diagrams are unavailable right now.';
       })
       .finally(() => {
         if (loadVersion === sequenceLoadVersion) sequenceLoading = false;
@@ -282,9 +274,9 @@
         if (requestVersion !== traceRequestVersion) return;
         trace = result;
       })
-      .catch((error) => {
+      .catch(() => {
         if (requestVersion !== traceRequestVersion) return;
-        traceError = errorMessage(error);
+        traceError = 'Linked trace is unavailable.';
       })
       .finally(() => {
         if (requestVersion === traceRequestVersion) traceLoading = false;
@@ -343,13 +335,13 @@
       ) return;
       fileContent = response.content;
       loadedFileKey = expectedKey || `${requestSelection}:${path}:${response.sha256}`;
-    } catch (error) {
+    } catch {
       if (
         requestVersion !== fileRequestVersion ||
         requestSelection !== selected ||
         path !== selectedFile
       ) return;
-      fileError = errorMessage(error);
+      fileError = 'Source preview is unavailable.';
       fileContent = '';
       loadedFileKey = '';
     } finally {
@@ -415,34 +407,6 @@
   function expandDiagram(diagram: SequenceDiagramSummary | null = null) {
     expandedSequence = diagram;
     diagramExpanded = true;
-  }
-
-  function toggleSequenceFeedbackTarget(useCaseId: string) {
-    sequenceFeedbackTargetIds = sequenceFeedbackTargetIds.includes(useCaseId)
-      ? sequenceFeedbackTargetIds.filter((id) => id !== useCaseId)
-      : [...sequenceFeedbackTargetIds, useCaseId];
-  }
-
-  function updateSequenceFeedback(useCaseId: string, feedback: string) {
-    sequenceFeedbackDrafts = { ...sequenceFeedbackDrafts, [useCaseId]: feedback };
-  }
-
-  function selectedSequenceFeedbackEntries() {
-    return sequenceFeedbackTargetIds.map((useCaseId) => ({
-      useCaseId,
-      feedback: (sequenceFeedbackDrafts[useCaseId] ?? '').trim()
-    }));
-  }
-
-  function canSubmitSequenceFeedback() {
-    const entries = selectedSequenceFeedbackEntries();
-    return entries.length > 0 && entries.every((entry) => Boolean(entry.feedback));
-  }
-
-  function submitSequenceFeedback() {
-    const entries = selectedSequenceFeedbackEntries();
-    if (!canSubmitSequenceFeedback() || sequenceFeedbackSubmitting) return;
-    void onSequenceFeedbackSubmit?.(entries);
   }
 
   function diagramImageUrl(stage: string) {
@@ -620,50 +584,14 @@
             {#if sequenceLoading}
               <p class="rounded-lg bg-[#f8f8f5] p-6 text-center text-xs text-[#85877e]">Loading per-use-case diagrams...</p>
             {:else if sequenceError}
-              <p class="rounded-lg bg-[#f8f8f5] p-6 text-center text-xs text-[#9a4139]">{sequenceError}</p>
+              <p class="rounded-lg bg-[#f8f8f5] p-6 text-center text-xs text-[#85877e]">{sequenceError}</p>
             {:else if sequenceDiagrams.length === 0}
               <p class="rounded-lg bg-[#f8f8f5] p-6 text-center text-xs text-[#85877e]">No use-case sequence diagrams are available.</p>
             {:else}
-              <section class="mb-3 rounded-lg border border-[#cfe2d6] bg-[#f5fbf7] p-3 text-xs" aria-label="Sequence feedback target">
-                <strong class="block text-[#24553d]">Targeted sequence feedback</strong>
-                <p class="mt-1 leading-5 text-[#4e6d5b]">Select one or more UC cards, enter a separate instruction for each, then apply them together. Untargeted sequence feedback is disabled.</p>
-                <div class="mt-3 space-y-2">
-                  {#each sequenceDiagrams as diagram (diagram.use_case_id)}
-                    <div class="rounded-md border border-[#d4e5d9] bg-white p-2">
-                      <label class="flex cursor-pointer items-center gap-2 font-semibold text-[#305a44]">
-                        <input
-                          type="checkbox"
-                          checked={sequenceFeedbackTargetIds.includes(diagram.use_case_id)}
-                          onchange={() => toggleSequenceFeedbackTarget(diagram.use_case_id)}
-                        />
-                        {diagram.use_case_name && diagram.use_case_name !== diagram.use_case_id
-                          ? `${diagram.use_case_id} · ${diagram.use_case_name}`
-                          : diagram.use_case_id}
-                      </label>
-                      {#if sequenceFeedbackTargetIds.includes(diagram.use_case_id)}
-                        <textarea
-                          class="focus-ring mt-2 min-h-16 w-full resize-y rounded-md border border-[#c9ddd0] px-2 py-1.5 text-xs leading-5"
-                          value={sequenceFeedbackDrafts[diagram.use_case_id] ?? ''}
-                          oninput={(event) => updateSequenceFeedback(diagram.use_case_id, event.currentTarget.value)}
-                          placeholder={`Feedback for ${diagram.use_case_id}`}
-                          disabled={sequenceFeedbackSubmitting}
-                        ></textarea>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-                <button
-                  class="focus-ring mt-3 rounded-md bg-[#24553d] px-3 py-1.5 text-[11px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                  onclick={submitSequenceFeedback}
-                  disabled={!canSubmitSequenceFeedback() || sequenceFeedbackSubmitting || !onSequenceFeedbackSubmit}
-                >
-                  Apply feedback to {sequenceFeedbackTargetIds.length || 'selected'} UC{sequenceFeedbackTargetIds.length === 1 ? '' : 's'}
-                </button>
-              </section>
-              {#if validation?.findings?.length}
+              {#if !automaticRepairActive && validation?.findings?.length}
                 <div class="mb-3 rounded-lg border border-[#e3c98b] bg-[#fff8e7] px-3 py-2 text-xs leading-5 text-[#755b24]" role="status">
                   <strong>Review required.</strong> {validation.findings.length} semantic finding{validation.findings.length === 1 ? '' : 's'} remain; rendered cards are drafts, not approved sequence contracts.
-                  Use the targeted feedback form above to revise one or more selected UC cards.
+                  Use a revision request to address the affected use cases.
                 </div>
               {/if}
               {#if validation?.method_proposals?.length}
@@ -723,6 +651,11 @@
       </details>
       {/if}
     {:else if tab === 'validation'}
+      {#if automaticRepairActive}
+        <div class="border-b border-[#e0e1da] bg-white p-3 text-xs text-[#5f6a61]" role="status">
+          Validation is being repaired automatically.
+        </div>
+      {:else}
       <div class="border-b border-[#e0e1da] bg-white p-3">
         <div class="mb-4 flex items-center gap-2">
           <ShieldCheck size={17} class="text-[#2d7354]" />
@@ -764,6 +697,7 @@
           </p>
         {/if}
       </div>
+      {/if}
     {:else if tab === 'changes'}
       <div class="divide-y divide-[#e1e1db]">
         {#if versionsError}<p class="text-xs text-[#9a4139]">{versionsError}</p>{/if}
@@ -817,8 +751,8 @@
           {/each}
         </div>
       {:else if selectedTraceRef && traceError}
-        <div class="border-b border-[#e3c2bd] bg-[#fff5f3] px-3 py-2 text-xs text-[#8b3d36]" role="status">
-          Could not load the linked trace: {traceError}
+        <div class="border-b border-[#e1e1db] bg-[#f8f8f5] px-3 py-2 text-xs text-[#65675f]" role="status">
+          {traceError}
         </div>
         <div class="divide-y divide-[#e1e1db]">
           {#each relatedEvents as event}
@@ -888,7 +822,7 @@
                 <LoaderCircle size={16} class="animate-spin" /> Loading source…
               </div>
             {:else if fileError}
-              <p class="m-4 rounded-md border border-[#8e4a42] bg-[#3b2623] p-3 text-xs text-[#ffb8ae]">{fileError}</p>
+              <p class="m-4 rounded-md bg-white/5 p-3 text-xs text-[#b9c8bd]">{fileError}</p>
             {:else}
               <ReadOnlySourceViewer path={selectedFile} value={fileContent} />
             {/if}

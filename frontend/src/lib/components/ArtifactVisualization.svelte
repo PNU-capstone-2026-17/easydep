@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Braces, CircleDot, Database, Route, UsersRound } from '@lucide/svelte';
   import { Badge } from '$lib/components/ui/badge';
+  import { apiOperationInputTypes, apiOperationResponses } from '$lib/api-spec-display';
 
   type DataObject = Record<string, any>;
 
@@ -227,11 +228,28 @@
         <div class="space-y-2">
           {#each Object.entries(object(rawPath)).filter(([method]) => httpMethods.has(method.toLowerCase())) as [method, rawOperation]}
             {@const operation = object(rawOperation)}
+            {@const inputTypes = apiOperationInputTypes(operation)}
+            {@const responses = apiOperationResponses(operation)}
             <div class="flex gap-3 rounded-lg bg-[#f6f6f3] p-2.5">
               <Badge tone="accent">{method.toUpperCase()}</Badge>
               <div class="min-w-0">
                 <p class="text-xs font-medium">{operation.summary ?? operation.operationId ?? 'Endpoint'}</p>
                 {#if operation.description}<p class="mt-1 text-[11px] leading-5 text-[#74776e]">{operation.description}</p>{/if}
+                <dl class="mt-2 grid gap-x-3 gap-y-1 text-[10px] leading-4 text-[#656960] sm:grid-cols-[4.5rem_1fr]">
+                  <dt class="font-semibold text-[#4c514a]">Input type</dt>
+                  <dd>{inputTypes.length ? inputTypes.join(', ') : 'None'}</dd>
+                  <dt class="font-semibold text-[#4c514a]">Status / output type</dt>
+                  <dd class="flex flex-wrap gap-1.5">
+                    {#each responses as response (response.status)}
+                      <span class="inline-flex items-center gap-1 rounded bg-white px-1.5 py-0.5">
+                        <span class="font-mono font-semibold">{response.status}</span>
+                        <span>{response.outputType ?? 'No response body'}</span>
+                      </span>
+                    {:else}
+                      <span>None</span>
+                    {/each}
+                  </dd>
+                </dl>
               </div>
             </div>
           {/each}
