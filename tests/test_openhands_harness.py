@@ -488,7 +488,7 @@ def test_restricted_owner_applies_only_an_explicit_read_evidence_boundary(
         )
         classified = classify_harness_error_text(rejected[0].text)
         assert classified is not None
-        assert classified.retryable is False
+        assert classified.retryable is True
     finally:
         conversation.close()
 

@@ -60,7 +60,9 @@ from .provider import (
 from .task_check import (
     consume_successful_task_check,
     has_successful_task_check,
+    is_infrastructure_task_check_failure,
     register_task_check_tool,
+    run_task_check,
 )
 from .upstream_gap_tool import (
     UpstreamGap,
@@ -156,6 +158,7 @@ def effective_task_prompt_sha256(
         ).hexdigest()
     identity = json.dumps(
         {
+            'completionMode': str(task.get('completion_mode') or 'agent'),
             "promptSha256": base,
             "dependencies": dependencies,
             "integrationEvidenceSha256": evidence_sha256,
@@ -204,6 +207,10 @@ _SANDBOX_TOOLS_REGISTRATION_LOCK = threading.Lock()
 
 class OwnerConversationIncomplete(WorkspaceVerificationError):
     """An owner stopped at an SDK execution boundary, not a source-code gate."""
+
+
+def _is_infrastructure_verification_failure(error: WorkspaceVerificationError) -> bool:
+    return is_infrastructure_task_check_failure(str(error))
 
 
 def run_openhands_conversation(conversation: object) -> None:
@@ -406,6 +413,53 @@ class NoActionResponseGuard:
         )
         if self.consecutive_count < self.threshold or self._conversation is None:
             return
+        self.triggered = True
+        self._conversation.state.execution_status = ConversationExecutionStatus.STUCK
+
+
+class SuccessfulTaskCheckGuard:
+    """Stop the owner loop after a passing canonical check.
+
+    ``run_task_check`` records its passing evidence before emitting the
+    observation. Marking the conversation stuck at that point routes through
+    the existing finish-recovery message instead of allowing post-check
+    exploration to consume the remaining owner iterations.
+    """
+
+    def __init__(
+        self,
+        sandbox: Path,
+        task_type: str,
+        allowed_write_paths: list[str],
+        verification_profile: dict[str, object] | None = None,
+    ) -> None:
+        self.sandbox = sandbox
+        self.task_type = task_type
+        self.allowed_write_paths = allowed_write_paths
+        self.verification_profile = verification_profile
+        self.triggered = False
+        self._conversation: object | None = None
+
+    def bind(self, conversation: object) -> None:
+        self._conversation = conversation
+
+    def __call__(self, event: object) -> None:
+        if self.triggered or self._conversation is None:
+            return
+        if getattr(event, "tool_name", None) != "run_task_check":
+            return
+        observation = getattr(event, "observation", None)
+        if observation is None or getattr(observation, "is_error", True):
+            return
+        if not has_successful_task_check(
+            self.sandbox,
+            self.task_type,
+            self.allowed_write_paths,
+            self.verification_profile,
+        ):
+            return
+        from openhands.sdk.conversation.state import ConversationExecutionStatus
+
         self.triggered = True
         self._conversation.state.execution_status = ConversationExecutionStatus.STUCK
 
@@ -863,6 +917,74 @@ def _task_execution_scope(
     )
 
 
+def _complete_verified_task_without_agent(
+    run_root: Path,
+    task: dict[str, object],
+    task_id: str,
+    task_type: str,
+    required_paths: list[str],
+    verification: dict[str, object],
+    started: float,
+) -> dict[str, object]:
+    '''Persist successful canonical verification without creating a conversation.'''
+
+    missing_outputs = missing_required_outputs(run_root, required_paths)
+    if missing_outputs:
+        raise WorkspaceVerificationError(
+            {
+                'command': ['required-task-outputs'],
+                'exitCode': 1,
+                'stdout': '',
+                'stderr': 'Missing required outputs: ' + ', '.join(missing_outputs),
+                'testResults': '',
+            }
+        )
+    execution_dir = run_root / 'reports' / 'agent-executions'
+    attempt = execution_attempt(run_root, task_id)
+    journal = EventJournal(
+        execution_dir / f'{task_id}.attempt-{attempt:03d}.events.jsonl'
+    )
+    initial_verification = {'status': 'PASSED', 'evidence': verification}
+    result: dict[str, object] = {
+        'taskId': task_id,
+        'taskType': task_type,
+        'owner': str(task.get('owner') or ''),
+        'promptSha256': task.get('prompt_sha256'),
+        'effectiveModel': None,
+        'changedFiles': [],
+        'outputFiles': required_paths,
+        'verification': verification,
+        'tools': [],
+        'durationMs': int((time.monotonic() - started) * 1000),
+        'eventCount': 0,
+        'toolCounts': {},
+        'eventJournal': str(journal.path.relative_to(run_root)).replace('\\', '/'),
+        'rawResponse': '',
+        'conversationId': None,
+        'conversationCheckpoint': None,
+        'resumedConversation': False,
+        'executionStatus': 'finished',
+        'terminationReason': None,
+        'maxConsecutiveNoActionResponses': 0,
+        'stuckRecoveryUsed': False,
+        'finishRecoveryUsed': False,
+        'harnessErrorCounts': {},
+        'harnessProgress': None,
+        'workspacePreflight': None,
+        'harnessManifest': None,
+        'canaryResultId': None,
+        'endpointRetries': None,
+        'conversationStats': None,
+        'completionPath': 'verify-only',
+        'agentInvoked': False,
+        'initialVerification': initial_verification,
+        'status': 'SUCCEEDED',
+    }
+    write_execution_result(execution_dir, task_id, attempt, result)
+    shutil.copyfile(journal.path, execution_dir / f'{task_id}.events.jsonl')
+    return result
+
+
 def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     """Run one OpenHands conversation and keep EasyDep at the safety boundary."""
 
@@ -904,10 +1026,15 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         else "restricted"
     )
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
-    bounded_evidence = task_type == "integration-implementation" or isinstance(
-        context.get("behaviorCapsule"), dict
-    )
-    if owner_task and bounded_evidence:
+    behavior_capsule = isinstance(context.get("behaviorCapsule"), dict)
+    initial_verification: dict[str, object] | None = None
+    completion_path = 'agent'
+    precheck_sandbox: Path | None = None
+    bounded_evidence = task_type in {
+        "backend-implementation",
+        "integration-implementation",
+    } or behavior_capsule
+    if owner_task and (task_type == "integration-implementation" or behavior_capsule):
         source_refs = [
             value
             for value in task.get("source_refs", task.get("sourceRefs", []))
@@ -936,6 +1063,61 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     execution_attempt(run_root, task_id),
                     admission_started,
                 )
+    if (
+        task.get('completion_mode', 'agent') == 'verify-or-repair'
+        and task_type == 'integration-implementation'
+        and not demo_skip_validation_enabled()
+    ):
+        precheck_started = time.monotonic()
+        raw_profile = task.get('verification_profile')
+        precheck_profile = (
+            dict(raw_profile)
+            if isinstance(raw_profile, dict) and raw_profile
+            else None
+        )
+        precheck_sandbox = prepare_agent_workspace(
+            run_root,
+            task,
+            preserve_failed_edits=True,
+            persistent=True,
+            requires_owner_terminal=owner_tool_mode == 'terminal',
+        )
+        passed, diagnosis = run_task_check(
+            precheck_sandbox,
+            task_type,
+            editable_paths,
+            precheck_profile,
+        )
+        if passed:
+            verification = consume_successful_task_check(
+                precheck_sandbox,
+                task_type,
+                editable_paths,
+                precheck_profile,
+            )
+            if verification is not None:
+                cleanup_agent_workspace(precheck_sandbox, run_root=run_root)
+                return _complete_verified_task_without_agent(
+                    run_root,
+                    task,
+                    task_id,
+                    task_type,
+                    required_paths,
+                    verification,
+                    precheck_started,
+                )
+            diagnosis = 'TASK CHECK PASSED BUT ITS EVIDENCE COULD NOT BE REUSED'
+        if is_infrastructure_task_check_failure(diagnosis):
+            cleanup_agent_workspace(precheck_sandbox, run_root=run_root)
+            raise OwnerConversationIncomplete({
+                'command': ['run_task_check'],
+                'exitCode': 1,
+                'stdout': '',
+                'stderr': diagnosis,
+                'testResults': '',
+            })
+        initial_verification = {'status': 'FAILED', 'diagnosis': diagnosis}
+        completion_path = 'repair-agent'
     if bounded_evidence:
         owner_tool_mode = "restricted"
     connection = openhands_connection()
@@ -949,7 +1131,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         raise RuntimeError("OpenHands live mode prerequisites are missing: " + ", ".join(missing))
 
     requires_owner_terminal = owner_task and owner_tool_mode == "terminal"
-    sandbox = prepare_agent_workspace(
+    sandbox = precheck_sandbox or prepare_agent_workspace(
         run_root,
         task,
         preserve_failed_edits=True,
@@ -964,6 +1146,12 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     if not isinstance(prompt_file, str) or not (run_root / prompt_file).is_file():
         prompt_file = str(task["prompt_file"])
     prompt = (run_root / prompt_file).read_text(encoding="utf-8")
+    if initial_verification is not None:
+        prompt += (
+            '\n\n## Initial canonical verification\n\n'
+            + str(initial_verification['diagnosis'])
+            + '\nRepair only the reported failure, then run run_task_check once.\n'
+        )
     upstream_gap_source_refs = (
         [
             value
@@ -984,7 +1172,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         if isinstance(verification_profile, dict) and verification_profile
         else None
     )
-    if owner_task and bounded_evidence:
+    # A single backend owner has no later slice whose markers need protecting.
+    # Keep the legacy operation path defensive for imported/old runs, but do
+    # not make the current owner loop reconstruct cross-slice state.
+    if task_type == "backend-operation" and bounded_evidence:
         verification_profile = _with_preserved_implementation_markers(
             run_root,
             editable_paths,
@@ -1018,7 +1209,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 *writable_files,
             }
         )
-        if task_type == "integration-implementation"
+        if bounded_evidence
         else None
     )
     owner_system_context = ""
@@ -1056,6 +1247,16 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     attempt = execution_attempt(run_root, task_id)
     journal = EventJournal(execution_dir / f"{task_id}.attempt-{attempt:03d}.events.jsonl")
     no_action_guard = NoActionResponseGuard() if harness_task else None
+    successful_task_check_guard = (
+        SuccessfulTaskCheckGuard(
+            sandbox,
+            task_type,
+            editable_paths,
+            verification_profile,
+        )
+        if owner_task
+        else None
+    )
     harness_guard = HarnessErrorGuard() if harness_task else None
     progress_tracker = HarnessProgressTracker(sandbox) if harness_task else None
     stuck_recovery_used = False
@@ -1125,6 +1326,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             callbacks=[
                 journal,
                 *([no_action_guard] if no_action_guard else []),
+                *(
+                    [successful_task_check_guard]
+                    if successful_task_check_guard
+                    else []
+                ),
                 *([harness_guard] if harness_guard else []),
                 *([progress_tracker] if progress_tracker else []),
             ],
@@ -1152,6 +1358,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         )
         if no_action_guard is not None:
             no_action_guard.bind(conversation)
+        if successful_task_check_guard is not None:
+            successful_task_check_guard.bind(conversation)
         if harness_guard is not None:
             harness_guard.bind(conversation)
         if progress_tracker is not None:
@@ -1330,12 +1538,12 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     "unauthorizedChanges": unauthorized,
                 }
             )
-        verification = (
-            None
-            if owner_task
-            else consume_successful_task_check(
-                sandbox, task_type, editable_paths, verification_profile
-            )
+        # Restricted owners run the same deterministic check through
+        # ``run_task_check``. Reuse that evidence after FinishTool so the outer
+        # coordinator does not execute compileJava a second time. Terminal
+        # owners have no cached check, so the fallback remains authoritative.
+        verification = consume_successful_task_check(
+            sandbox, task_type, editable_paths, verification_profile
         ) or verify_agent_workspace(sandbox, task_type, editable_paths, verification_profile)
     except Exception as error:
         if conversation is not None:
@@ -1397,6 +1605,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             deterministic_termination = provider_failure_reason
         interrupted = owner_task and (
             isinstance(error, OwnerConversationIncomplete)
+            or (
+                isinstance(error, WorkspaceVerificationError)
+                and _is_infrastructure_verification_failure(error)
+            )
             or (
                 not isinstance(error, WorkspaceVerificationError)
                 and deterministic_termination
@@ -1521,6 +1733,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             else None
         ),
         "conversationStats": _conversation_stats_snapshot(conversation),
+        'completionPath': completion_path,
+        'agentInvoked': True,
+        'initialVerification': initial_verification,
         "status": "SUCCEEDED",
     }
     write_execution_result(execution_dir, task_id, attempt, result)
@@ -1889,8 +2104,8 @@ def create_openhands_conversation(
                 return FileEditorObservation.from_text(
                     text=render_harness_error(
                         "READ_OUTSIDE_TASK_EVIDENCE",
-                        "The path is not part of this behavior task's implementation context. Report the missing context instead of reading more files.",
-                        retryable=False,
+                        "The path is outside the bounded implementation evidence. Use the supplied contract and edit now, or report the missing context.",
+                        retryable=True,
                         workspace=str(self.logical_workspace),
                         requestedPath=str(target),
                     ),
@@ -2006,7 +2221,7 @@ def create_openhands_conversation(
                     text=render_harness_error(
                         "READ_OUTSIDE_TASK_EVIDENCE",
                         "Search only one explicitly listed evidence file. Report the missing implementation context instead of broadening discovery.",
-                        retryable=False,
+                        retryable=True,
                         workspace=str(self.logical_workspace),
                         requestedPath=str(target),
                     ),

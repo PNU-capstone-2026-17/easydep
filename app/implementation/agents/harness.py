@@ -186,8 +186,8 @@ def classify_harness_error_text(text: str) -> HarnessError | None:
     if "READ_OUTSIDE_TASK_EVIDENCE" in text:
         return HarnessError(
             "READ_OUTSIDE_TASK_EVIDENCE",
-            False,
-            "The requested read was outside the behavior task implementation context.",
+            True,
+            "The requested read was outside the bounded implementation evidence.",
         )
     if "WRITE_OUTSIDE_OWNER_SCOPE" in text or "outside the assigned implementation roots" in text.casefold():
         return HarnessError(

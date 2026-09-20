@@ -363,11 +363,13 @@ def task_verification_command(
         # 실행해 같은 jar packaging을 연속으로 두 번 하지 않는다.
         command = [*executable, "test", "--build-cache"]
     elif task_type == "backend-implementation":
-        focused_test_classes = _focused_test_classes(verification_profile)
-        command = [*executable, "test"]
-        for test_class in focused_test_classes:
-            command.extend(["--tests", test_class])
-        command.append("--build-cache")
+        # Backend implementation is a single production owner.  Its first
+        # verification gate must prove that the edited main source compiles;
+        # scenario tests are authored and exercised by the final integration
+        # gate.  In particular, do not derive a test selector from planner
+        # metadata: that made implementation readiness depend on an agent
+        # inventing a JUnit file before it had edited production source.
+        command = [*executable, "compileJava", "--build-cache"]
     else:
         test_names = sorted(
             {
@@ -385,29 +387,6 @@ def task_verification_command(
             command.append("compileJava")
         command.append("--build-cache")
     return command
-
-
-def _focused_test_classes(
-    verification_profile: dict[str, object] | None,
-) -> list[str]:
-    """Turn planner-owned Java test paths into exact Gradle class selectors."""
-
-    paths = (verification_profile or {}).get("focusedTestPaths")
-    if not isinstance(paths, list):
-        return []
-    classes: set[str] = set()
-    for value in paths:
-        if not isinstance(value, str):
-            continue
-        normalized = value.replace("\\", "/")
-        marker = "/src/test/java/"
-        _prefix, separator, relative = normalized.partition(marker)
-        if not separator or not relative.endswith(".java"):
-            continue
-        class_name = relative.removesuffix(".java").replace("/", ".")
-        if class_name and all(part.isidentifier() for part in class_name.split(".")):
-            classes.add(class_name)
-    return sorted(classes)
 
 
 def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:

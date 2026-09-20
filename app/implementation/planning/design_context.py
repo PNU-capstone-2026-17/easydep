@@ -10,6 +10,7 @@ from urllib.parse import unquote
 from app.artifact_trace import TraceRef
 from app.artifact_trace_projection import project_artifact_trace
 from app.config import settings
+from app.design.contracts.api_spec import ApiSpecModel
 from app.design.schemas.class_model import BCEModel
 from app.design.schemas.sequence_model import SequenceCollection
 from app.llm_connection import build_openhands_llm_connection
@@ -23,6 +24,7 @@ from ..domain.implementation_ir import (
 from ..domain.models import JobSpec
 from ..generation.frontend_scaffold import operation_ids
 from ..generation.java_scaffold import controller_body_marker
+from ..generation.operation_contracts import build_generated_operation_contracts
 from .frontend_contracts import GeneratedClientContracts, GeneratedClientOperation
 from .method_projection import MethodProjection, MethodProjectionResult, project_method_calls
 
@@ -63,6 +65,9 @@ class TaskSpec:
     # Testing feedback 작업만 사용한다. 실패 당시 고정한 OpenAPI·case 등을 같은
     # run_task_check에 넘겨 수리 전후 검사가 달라지지 않게 한다.
     verification_profile: dict[str, object] = field(default_factory=dict)
+    # Most tasks always invoke their implementation agent. Integration can first
+    # reuse its canonical check and invoke the agent only when a repair is needed.
+    completion_mode: str = 'agent'
 
     def __post_init__(self) -> None:
         if self.required_output_paths is None:
@@ -81,7 +86,7 @@ class _UseCaseBundle:
 
 
 def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
-    """Materialize backend evidence, then plan bounded observable behaviors."""
+    """Materialize one cohesive backend owner task from generated evidence."""
     package_path = spec.base_package.replace(".", "/")
     java_root = run_root / "application" / "src" / "main" / "java" / package_path
     ir = build_implementation_ir(spec, run_root)
@@ -106,15 +111,9 @@ def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec
         for path in sorted((java_root / "bce").rglob("*.java"))
     ]
     owner_task = _build_backend_owner_task(
-        spec, run_root, ir, output, package_path, bce_paths, bundle, persist=False
+        spec, run_root, ir, output, package_path, bce_paths, bundle
     )
-    tasks = _build_backend_behavior_tasks(
-        spec, run_root, output, package_path, bundle, owner_task
-    )
-    _validate_backend_behavior_plan(
-        run_root, output, package_path, bundle, tasks
-    )
-    return tasks
+    return [owner_task]
 
 
 def _is_work_component(component: ComponentIR) -> bool:
@@ -140,9 +139,6 @@ def _build_backend_owner_task(
     """전체 backend 계약과 owner 범위를 하나의 작업으로 만든다."""
     label = ", ".join(bundle.use_case_ids) or "common"
     task_id = "implement-backend-application"
-    test_path = (
-        f"application/src/test/java/{package_path}/application/impl/BackendApplicationTest.java"
-    )
     controls = [item.name for item in bundle.components if item.stereotype.casefold() == "control"]
     entity_components = [
         item for item in bundle.components if item.stereotype.casefold() == "entity"
@@ -173,7 +169,6 @@ def _build_backend_owner_task(
                 for item in gateways
             ),
             *entity_implementation_sources,
-            test_path,
         }
     )
     # persistence 골격은 LLM 작업보다 먼저 생성되고 이후 작업이 수정하지 않는다. 관련
@@ -190,9 +185,7 @@ def _build_backend_owner_task(
     dependency_source_paths = [path for path in entity_sources if (run_root / path).is_file()]
     owner_roots = [
         f"application/src/main/java/{package_path}",
-        f"application/src/test/java/{package_path}",
         "application/src/main/resources",
-        "application/src/test/resources",
     ]
     owner_files = [
         path
@@ -221,6 +214,13 @@ def _build_backend_owner_task(
     # 쓰는 Control·Entity·Gateway 계약만 전달한다.
     component_names = {
         item.name for item in bundle.components if item.stereotype.casefold() != "boundary"
+    }
+    bce_model = BCEModel.model_validate_json(
+        spec.inputs["bceModel"].read_text(encoding="utf-8")
+    )
+    bce_declaration_names = {
+        *component_names,
+        *(item.name for item in bce_model.DataTypes),
     }
     controller_paths = [run_root / path for path in required if "/adapter/in/web/" in path]
     scaffolds = render_source_contracts(run_root, controller_paths)
@@ -256,14 +256,30 @@ def _build_backend_owner_task(
             "useCaseSpec",
         },
     )
-    method_projection = project_method_calls(
-        bce_model=BCEModel.model_validate_json(
-            spec.inputs["bceModel"].read_text(encoding="utf-8")
-        ),
-        sequence_model=SequenceCollection.model_validate_json(
-            spec.inputs["sequenceModel"].read_text(encoding="utf-8")
-        ),
+    sequence_model = SequenceCollection.model_validate_json(
+        spec.inputs["sequenceModel"].read_text(encoding="utf-8")
     )
+    method_projection = project_method_calls(
+        bce_model=bce_model,
+        sequence_model=sequence_model,
+    )
+    completion_markers: dict[str, set[str]] = {}
+    for contract in build_generated_operation_contracts(
+        bce_model=bce_model,
+        sequence_model=sequence_model,
+        api_model=ApiSpecModel.model_validate_json(
+            spec.inputs["apiModel"].read_text(encoding="utf-8")
+        ),
+        base_package=spec.base_package,
+    ).contracts:
+        if contract.writable_source and contract.completion_marker:
+            completion_markers.setdefault(contract.writable_source, set()).add(
+                contract.completion_marker
+            )
+    required_absent_markers = [
+        {"path": path, "markers": sorted(markers)}
+        for path, markers in sorted(completion_markers.items())
+    ]
     method_contexts = _materialize_method_contexts(
         run_root,
         output,
@@ -274,8 +290,8 @@ def _build_backend_owner_task(
         endpoints=list(bundle.endpoints),
         design_inputs=design_inputs,
     )
-    # The application tree is already copied into every agent sandbox. Keep only a small set of
-    # starting paths in the index; do not copy or enumerate the whole Java tree as read sources.
+    # The application tree is already copied into every agent sandbox. Keep only the generated
+    # declarations named by the typed BCE model; do not enumerate unrelated Java sources.
     source_paths = sorted(
         dict.fromkeys(
             path
@@ -285,7 +301,7 @@ def _build_backend_owner_task(
                 *entity_sources,
                 *[
                     path
-                    for name in component_names
+                    for name in bce_declaration_names
                     for path in bce_paths
                     if Path(path).stem == name
                 ],
@@ -294,6 +310,26 @@ def _build_backend_owner_task(
         )
     )
     source_index_path = output / f"{task_id}.source-index.json"
+    generated_operation_contracts_path = run_root / "reports/generated-operation-contracts.json"
+    generated_operation_contracts = (
+        _relative(run_root, generated_operation_contracts_path)
+        if generated_operation_contracts_path.is_file()
+        else None
+    )
+    generated_source_paths = sorted(dict.fromkeys([*source_paths, *required]))
+    read_evidence_paths = sorted(
+        dict.fromkeys(
+            [
+                _relative(run_root, source_index_path),
+                *generated_source_paths,
+                *(
+                    [generated_operation_contracts]
+                    if generated_operation_contracts is not None
+                    else []
+                ),
+            ]
+        )
+    )
     source_index_path.write_text(
         json.dumps(
             {
@@ -302,6 +338,11 @@ def _build_backend_owner_task(
                 "startingSourcePaths": source_paths,
                 "designInputs": design_inputs,
                 "methodContexts": method_contexts,
+                **(
+                    {"generatedOperationContractsPath": generated_operation_contracts}
+                    if generated_operation_contracts is not None
+                    else {}
+                ),
                 "hintsOnly": True,
             },
             ensure_ascii=False,
@@ -321,18 +362,21 @@ def _build_backend_owner_task(
             path.relative_to(run_root).as_posix() for path in controller_paths if path.is_file()
         ],
         "controllerBodyMarkers": controller_markers,
-        "readSourcePaths": sorted(
-            dict.fromkeys(
-                [
-                    _relative(run_root, source_index_path),
-                    *(str(item["path"]) for item in method_contexts),
-                    *design_inputs.values(),
-                ]
-            )
-        ),
+        "generatedSourcePaths": generated_source_paths,
+        "requiredOutputPaths": required,
+        "verification": {
+            "tool": "run_task_check",
+            "policy": "run once after the edit batch; finish when it passes",
+        },
+        "readSourcePaths": read_evidence_paths,
         "sourceIndexPath": _relative(run_root, source_index_path),
         "methodContextRoot": _relative(run_root, output / "method-context"),
         "designInputs": design_inputs,
+        **(
+            {"generatedOperationContractsPath": generated_operation_contracts}
+            if generated_operation_contracts is not None
+            else {}
+        ),
     }
     deployment_context = _deployment_context(spec, component_names)
     if deployment_context:
@@ -341,26 +385,33 @@ def _build_backend_owner_task(
     prompt = (
         f"""# Backend application owner: {spec.name}
 
-Complete the generated backend implementation and its JUnit scenarios. Start with the existing
-Control service and test shells; their typed calls are already projected from the sequence model.
+Complete the generated backend implementation from the generated source and operation contract.
+Use the exact writable outputs below as the implementation boundary.
 
 - Preserve every generated BCE/API public declaration. Implement marked BCE Entity bodies without
   changing their public signatures; keep API, persistence projections, repositories, and migrations frozen.
-- Resolve every `EASYDEP-IMPLEMENT` and named Controller marker with contracted behavior and
-  meaningful assertions. Do not replace them with empty, demo, or always-passing behavior.
-- Before repository-wide search, batch-read each marker's `Context` path and its listed source
-  paths. The marker ID maps directly to `method-context/<ID>.json`.
+- Resolve every `EASYDEP-IMPLEMENT` and named Controller marker with contracted behavior. Do not
+  replace them with empty, demo, or always-passing behavior.
+- Start with the generated source files listed under `Generated source` and the generated operation
+  contract sidecar. Treat that sidecar as read-only factual evidence for operation signatures,
+  collaborators, endpoint bindings, and completion markers.
 - Use existing repositories for persistent behavior and constructor injection for Spring beans.
 - Generated web Controllers already call their typed Control binding; do not duplicate HTTP or
   Boundary adapters.
-- Read the smallest method context needed for a marker. Read a frozen design input only when the
-  local context exposes a real contract gap.
-- Source-index, method-context, and RTM references are navigation hints, never read or edit limits.
+- RTM, source references, and frozen design records are on-demand navigation hints only. Keep the
+  initial read focused on generated source and the operation contract.
+- After one edit batch, run the canonical `run_task_check` once. Inspect its concrete diagnostic
+  before any correction, and finish when it passes.
 - Use English for source comments, tests, validation messages, documentation, and user-visible text.
 
-## On-demand implementation context
-- Source index: `{_relative(run_root, source_index_path)}`
-- Method contexts: `{_relative(run_root, output / "method-context")}`
+## Generated source
+{chr(10).join(f"- `{path}`" for path in generated_source_paths) or "- none"}
+
+## Generated operation contract
+- `{generated_operation_contracts or "not available"}`
+
+## On-demand navigation hints
+- Source index (only when a concrete contract gap remains): `{_relative(run_root, source_index_path)}`
 - Controller markers: {", ".join(controller_markers) or "none"}
 """
         "\n## Backend owner roots\n"
@@ -389,774 +440,22 @@ Control service and test shells; their typed calls are already projected from th
         depends_on=[],
         requirement_ids=_artifact_ids(requirements),
         use_case_ids=list(bundle.use_case_ids),
-        required_test_paths=[test_path],
+        required_test_paths=[],
         source_refs=[
+            *(f"use_case:{value}" for value in bundle.use_case_ids),
+            *(f"use_case_spec:{value}" for value in bundle.use_case_ids),
             *_operation_source_refs(spec, set(bundle.use_case_ids)),
             *_workload_source_refs(deployment_context),
         ],
         allowed_write_roots=owner_roots,
+        verification_profile={"requiredAbsentMarkers": required_absent_markers},
     )
-    return task
-
-
-def _build_backend_behavior_tasks(
-    spec: JobSpec,
-    run_root: Path,
-    output: Path,
-    package_path: str,
-    bundle: _UseCaseBundle,
-    owner_task: TaskSpec,
-) -> list[TaskSpec]:
-    """Build bounded work units from exact UC/API connectivity."""
-
-    source_index = _read_json(
-        output / "implement-backend-application.source-index.json"
-    )
-    raw_entries = source_index.get("methodContexts", [])
-    method_entries = [
-        (entry, _read_json(run_root / str(entry["path"])))
-        for entry in raw_entries
-        if isinstance(entry, dict) and isinstance(entry.get("path"), str)
-    ] if isinstance(raw_entries, list) else []
-    requirements, use_cases, _sources = _all_requirement_artifacts(spec)
-    use_cases_by_id = {
-        str(value.get("use_case_id") or value.get("id")): value
-        for value in use_cases
-        if value.get("use_case_id") or value.get("id")
-    }
-    controller_paths = [
-        path
-        for path in source_index.get("startingSourcePaths", [])
-        if isinstance(path, str)
-        if "/adapter/in/web/" in path and (run_root / path).is_file()
-    ]
-    if not controller_paths and (run_root / owner_task.context_file).is_file():
-        owner_context = _read_json(run_root / owner_task.context_file)
-        controller_paths = [
-            path
-            for path in owner_context.get("controllerPaths", [])
-            if isinstance(path, str) and (run_root / path).is_file()
-        ]
-    entity_names = {
-        item.name
-        for item in bundle.components
-        if item.stereotype.casefold() == "entity"
-    }
-    bce_model = _read_json(spec.inputs.get("bceModel"))
-    components = _backend_behavior_components(
-        bundle.use_case_ids,
-        list(bundle.endpoints),
-    )
-    tasks: list[TaskSpec] = []
-
-    for use_case_ids, api_operation_ids in components:
-        identity = json.dumps(
-            [use_case_ids, api_operation_ids],
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
-        digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
-        task_id = f"implement-backend-behavior-{digest}"
-        test_path = (
-            f"application/src/test/java/{package_path}/"
-            f"application/impl/Behavior{digest}Test.java"
-        )
-        selected_endpoints = [
-            endpoint
-            for endpoint in bundle.endpoints
-            if str(endpoint.get("operation_id") or endpoint.get("operationId") or "")
-            in api_operation_ids
-        ]
-        selected_methods = [
-            (entry, context)
-            for entry, context in method_entries
-            if {
-                str(value)
-                for value in entry.get("refs", [])
-                if isinstance(value, str)
-            }
-            & {
-                *(f"use_case:{value}" for value in use_case_ids),
-                *(f"api:{value}" for value in api_operation_ids),
-            }
-        ]
-        source_paths: set[str] = set()
-        read_dependency_paths: set[str] = set()
-        completion_markers: list[dict[str, object]] = []
-        endpoint_contracts: list[dict[str, object]] = []
-        for endpoint in selected_endpoints:
-            endpoint_contracts.append(
-                {
-                    key: endpoint[key]
-                    for key in (
-                        "operation_id",
-                        "operationId",
-                        "method",
-                        "path",
-                        "path_params",
-                        "query_params",
-                        "request_schema",
-                        "responses",
-                        "control_binding",
-                        "scenario_step_refs",
-                        "use_case_ids",
-                    )
-                    if key in endpoint
-                }
-            )
-            marker = controller_body_marker(
-                str(endpoint.get("method") or ""),
-                str(endpoint.get("path") or ""),
-            )
-            for controller_path in controller_paths:
-                controller_source = (run_root / controller_path).read_text(
-                    encoding="utf-8"
-                )
-                if marker in controller_source:
-                    read_dependency_paths.update(
-                        _controller_contract_paths(
-                            run_root, package_path, controller_path, endpoint
-                        )
-                    )
-                if marker in controller_source:
-                    completion_markers.append(
-                        {"path": controller_path, "markers": [marker]}
-                    )
-
-        direct_methods: list[dict[str, object]] = []
-        typed_method_metadata: list[dict[str, object]] = []
-        for entry, method_context in selected_methods:
-            paths = [
-                str(value)
-                for value in method_context.get(
-                    "sourcePaths", entry.get("sourcePaths", [])
-                )
-                if isinstance(value, str) and (run_root / value).is_file()
-            ]
-            method = method_context.get("method")
-            stable_id = str(
-                method.get("stable_id") if isinstance(method, dict) else ""
-            )
-            candidates = [
-                f"EASYDEP-IMPLEMENT: complete {stable_id}",
-                f"EASYDEP-IMPLEMENT:{stable_id}",
-            ]
-            method_markers: list[dict[str, object]] = []
-            if stable_id:
-                for path in paths:
-                    source = (run_root / path).read_text(encoding="utf-8")
-                    present = [marker for marker in candidates if marker in source]
-                    if present:
-                        method_markers.append({"path": path, "markers": present})
-            if not method_markers:
-                continue
-
-            source_paths.update(paths)
-            completion_markers.extend(method_markers)
-            slices = [
-                method_slice
-                for method_slice in method_context.get("slices", [])
-                if isinstance(method_slice, dict)
-                and {
-                    str(value) for value in method_slice.get("use_case_ids", [])
-                }
-                & set(use_case_ids)
-            ]
-            if isinstance(method, dict):
-                typed_method_metadata.append(method)
-            for method_slice in slices:
-                if not isinstance(method_slice, dict):
-                    continue
-                for call in method_slice.get("outgoing", []):
-                    if not isinstance(call, dict):
-                        continue
-                    target = call.get("target")
-                    if isinstance(target, dict):
-                        typed_method_metadata.append(target)
-            direct_methods.append(
-                {
-                    "method": method_context.get("method", {}),
-                    "stepRefs": sorted(
-                        {
-                            str(value)
-                            for method_slice in slices
-                            if isinstance(method_slice, dict)
-                            for value in method_slice.get("step_refs", [])
-                            if isinstance(value, str)
-                        }
-                    ),
-                    "directCalls": [
-                        call
-                        for method_slice in slices
-                        if isinstance(method_slice, dict)
-                        for call in method_slice.get("outgoing", [])
-                        if isinstance(call, dict)
-                    ],
-                    "sourcePaths": paths,
-                }
-            )
-
-        selected_use_cases = [
-            {
-                key: use_cases_by_id[use_case_id][key]
-                for key in (
-                    "use_case_id",
-                    "id",
-                    "name",
-                    "requirement_ids",
-                    "nfr_ids",
-                    "preconditions",
-                    "trigger",
-                    "main_scenario",
-                    "extensions",
-                    "success_guarantee",
-                    "minimal_guarantee",
-                )
-                if key in use_cases_by_id[use_case_id]
-            }
-            for use_case_id in use_case_ids
-            if use_case_id in use_cases_by_id
-        ]
-        requirements_by_id = {
-            str(requirement.get("id")): requirement
-            for requirement in requirements
-            if isinstance(requirement.get("id"), str) and requirement.get("id")
-        }
-        requirement_ids = sorted(
-            {
-                value
-                for use_case in selected_use_cases
-                for field in ("requirement_ids", "nfr_ids")
-                for value in use_case.get(field, [])
-                if isinstance(value, str) and value
-            }
-        )
-        selected_requirements = [
-            {
-                key: requirements_by_id[requirement_id][key]
-                for key in ("id", "type", "text")
-                if requirements_by_id[requirement_id].get(key) is not None
-            }
-            for requirement_id in requirement_ids
-            if requirement_id in requirements_by_id
-        ]
-        design_evidence, design_class_refs = _backend_behavior_design_evidence(
-            bce_model,
-            use_case_ids=set(use_case_ids),
-            endpoints=selected_endpoints,
-            method_metadata=typed_method_metadata,
-        )
-        typed_dependency_paths = _backend_behavior_typed_dependency_paths(
-            run_root,
-            package_path,
-            entity_names,
-            bce_model,
-            typed_method_metadata,
-        )
-        read_paths = sorted(
-            {
-                *source_paths,
-                *read_dependency_paths,
-                *typed_dependency_paths,
-            }
-        )
-        editable_paths = _without_immutable_paths(
-            sorted(
-                {
-                    test_path,
-                    *(
-                        path
-                        for path in source_paths
-                        if path in owner_task.allowed_write_paths
-                    ),
-                    *(
-                        path
-                        for path in typed_dependency_paths
-                        if "/bce/" in path and Path(path).stem in entity_names
-                    ),
-                    *(
-                        str(item["path"])
-                        for item in completion_markers
-                        if isinstance(item.get("path"), str)
-                    ),
-                }
-            ),
-            owner_task.immutable_paths,
-        )
-        context = {
-            "schemaVersion": "implementation-context/v1alpha3",
-            "taskId": task_id,
-            "taskType": "backend-implementation",
-            "dependsOn": [],
-            "useCaseIds": use_case_ids,
-            "apiOperationIds": api_operation_ids,
-            "behaviorCapsule": {
-                "useCases": selected_use_cases,
-                "requirements": selected_requirements,
-                "endpoints": endpoint_contracts,
-                "directMethods": direct_methods,
-                "designEvidence": design_evidence,
-            },
-            "readSourcePaths": read_paths,
-            "completionMarkers": completion_markers,
-            "requiredTestPath": test_path,
-        }
-        context_path = output / f"{task_id}.context.json"
-        context_path.write_text(
-            json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-        prompt = f"""# Backend observable behavior: {", ".join(use_case_ids)}
-
-Implement this one API-to-result behavior using { _relative(run_root, context_path) }.
-
-- Preserve generated public BCE/API and persistence declarations: never change or delete an existing public signature. The runtime lists the authoritative writable files separately from `completionMarkers`; within those files, adding only the smallest constructor, accessor, or helper declaration needed is permitted. If a legal implementation requires changing an existing public signature or editing outside that runtime list, call `report_upstream_gap`.
-- Implement only the listed scenarios, endpoint bindings, direct calls, and markers.
-- A direct call with `generation: "hint"` is advisory, not a mandatory architecture. Satisfy the observable capsule/API through the simplest conventional path; do not add a static/global/service-locator solely to realize a hint.
-- Choose one legal conventional implementation and edit it; do not enumerate alternatives or delay the edit for theoretical choices.
-- Read this context first. Its behavior capsule and linked design evidence already passed this
-  Implementation subtask's semantic preflight; do not re-decide product meaning.
-- Treat read-only dependencies as ready integration contracts and compose their existing APIs.
-  Do not spend turns designing nicer repository, API, or framework abstractions. After reading
-  the writable files and directly referenced dependencies once, make the first edit and use
-  verification failures to discover any missing mechanics instead of rereading or browsing.
-- If reading the generated source reveals a concrete contradiction with the frozen capsule that
-  makes the listed behavior impossible without changing an immutable declaration, call
-  `report_upstream_gap` with one supplied `source_ref`. Otherwise choose ordinary private wiring
-  and framework mechanics yourself.
-- Otherwise start from the writable implementation files. Use `readSourcePaths` as starting
-  points, then inspect application source only as needed for existing types, wiring, or test
-  conventions. Read access does not expand the behavior or write scope.
-- Group `completionMarkers` by unique path and read each path once before editing. These markers
-  identify required bodies, not the complete writable-file list. Resolve
-  each assigned marker only from the behavior capsule:
-  - `EASYDEP_CONTROLLER_BODY_REQUIRED:<METHOD>:<PATH>` maps to the endpoint with the same
-    HTTP method and path; implement that endpoint's `control_binding`.
-  - `EASYDEP-IMPLEMENT...<stable_id>` maps to the direct method whose
-    `method.stable_id` is the same; implement only that generated operation body.
-- Replace only those assigned main-source markers in one edit batch. You may add private
-  wiring or helpers needed to use existing application contracts, but preserve completed
-  behavior and every unassigned generated body or marker, including in shared files.
-- Then create the focused test at `requiredTestPath` for the resulting source and run
-  `run_task_check` once. Finish when it passes.
-- Do not infer behavior from names or unrelated features.
-- Use English for source comments, tests, validation messages, and user-visible text.
-
-API operations: {", ".join(api_operation_ids)}
-Application: {spec.name}
-"""
-        prompt_path = output / f"{task_id}.prompt.md"
-        prompt_path.write_text(prompt, encoding="utf-8")
-
-        source_refs = sorted(
-            {
-                *(f"use_case:{value}" for value in use_case_ids),
-                *(f"use_case_spec:{value}" for value in use_case_ids),
-                *(f"api:{value}" for value in api_operation_ids),
-                *_operation_source_refs(spec, set(use_case_ids)),
-                *design_class_refs,
-            }
-        )
-        current_main_sources = {
-            path
-            for path in editable_paths
-            if path.startswith("application/src/main/java/")
-        }
-        focused_test_paths = {test_path}
-        for previous_task in tasks:
-            previous_main_sources = {
-                path
-                for path in previous_task.allowed_write_paths
-                if path.startswith("application/src/main/java/")
-            }
-            if current_main_sources.intersection(previous_main_sources):
-                focused_test_paths.update(previous_task.required_test_paths)
-
-        task = TaskSpec(
-            task_id=task_id,
-            control="observable behavior " + ", ".join(use_case_ids),
-            prompt_file=_relative(run_root, prompt_path),
-            context_file=_relative(run_root, context_path),
-            allowed_write_paths=editable_paths,
-            required_output_paths=editable_paths,
-            immutable_paths=list(owner_task.immutable_paths),
-            source_artifacts=dict(owner_task.source_artifacts),
-            prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-            llm=llm_config(spec),
-            owner="backend",
-            task_type="backend-implementation",
-            depends_on=[],
-            requirement_ids=requirement_ids,
-            use_case_ids=use_case_ids,
-            required_test_paths=[test_path],
-            source_refs=source_refs,
-            allowed_write_roots=[],
-            verification_profile={
-                "requiredAbsentMarkers": completion_markers,
-                # Shared source is edited sequentially. A later slice must also
-                # preserve every earlier slice that touched the same source.
-                "focusedTestPaths": sorted(focused_test_paths),
-            },
-        )
-        (output / f"{task_id}.task.json").write_text(
+    if persist:
+        (output / f"{task.task_id}.task.json").write_text(
             json.dumps(task.to_dict(), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        tasks.append(task)
-    return tasks
-
-
-def _backend_behavior_components(
-    use_case_ids: tuple[str, ...], endpoints: list[dict[str, object]]
-) -> list[tuple[list[str], list[str]]]:
-    """Connected components of the exact use-case/API-operation graph."""
-
-    known_use_cases = set(use_case_ids)
-    graph: dict[str, set[str]] = {}
-    operation_use_cases: dict[str, set[str]] = {}
-    for endpoint in endpoints:
-        operation_id = str(
-            endpoint.get("operation_id") or endpoint.get("operationId") or ""
-        )
-        if not operation_id:
-            continue
-        for use_case_id in _use_case_ids(endpoint) & known_use_cases:
-            graph.setdefault(use_case_id, set()).add(operation_id)
-            operation_use_cases.setdefault(operation_id, set()).add(use_case_id)
-
-    result: list[tuple[list[str], list[str]]] = []
-    visited: set[str] = set()
-    for start in sorted(graph, key=_use_case_sort_key):
-        if start in visited:
-            continue
-        current_use_cases: set[str] = set()
-        current_operations: set[str] = set()
-        pending = [start]
-        while pending:
-            use_case_id = pending.pop()
-            if use_case_id in current_use_cases:
-                continue
-            current_use_cases.add(use_case_id)
-            for operation_id in graph[use_case_id]:
-                current_operations.add(operation_id)
-                pending.extend(operation_use_cases[operation_id] - current_use_cases)
-        visited.update(current_use_cases)
-        result.append(
-            (
-                sorted(current_use_cases, key=_use_case_sort_key),
-                sorted(current_operations),
-            )
-        )
-    return result
-
-
-def _validate_backend_behavior_plan(
-    run_root: Path,
-    output: Path,
-    package_path: str,
-    bundle: _UseCaseBundle,
-    tasks: list[TaskSpec],
-) -> None:
-    """Reject an incomplete behavior plan instead of silently omitting evidence."""
-
-    planned_use_cases = {value for task in tasks for value in task.use_case_ids}
-    planned_refs = {value for task in tasks for value in task.source_refs}
-    expected_operations = {
-        str(endpoint.get("operation_id") or endpoint.get("operationId") or "")
-        for endpoint in bundle.endpoints
-    } - {""}
-    missing_use_cases = set(bundle.use_case_ids) - planned_use_cases
-    missing_operations = {
-        f"api:{operation_id}"
-        for operation_id in expected_operations
-        if f"api:{operation_id}" not in planned_refs
-    }
-    if missing_use_cases or missing_operations:
-        raise ValueError(
-            "Backend observable-behavior plan omitted design evidence: "
-            + ", ".join(
-                [
-                    *(f"use_case:{value}" for value in sorted(missing_use_cases)),
-                    *sorted(missing_operations),
-                ]
-            )
-        )
-
-    source_index = _read_json(
-        output / "implement-backend-application.source-index.json"
-    )
-    entries = source_index.get("methodContexts", [])
-    remaining_markers: list[tuple[str, set[str]]] = []
-    if isinstance(entries, list):
-        for entry in entries:
-            if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
-                continue
-            context = _read_json(run_root / str(entry["path"]))
-            method = context.get("method")
-            if not isinstance(method, dict):
-                continue
-            stable_id = str(method.get("stable_id") or entry.get("stableId") or "")
-            class_name = str(method.get("class_name") or "")
-            stereotype = str(method.get("stereotype") or "")
-            target = (
-                f"application/src/main/java/{package_path}/application/impl/"
-                f"{class_name}Service.java"
-                if stereotype.casefold() == "control"
-                else f"application/src/main/java/{package_path}/bce/{class_name}.java"
-            )
-            target_path = run_root / target
-            markers = (
-                f"EASYDEP-IMPLEMENT: complete {stable_id}",
-                f"EASYDEP-IMPLEMENT:{stable_id}",
-            )
-            if not stable_id or not target_path.is_file() or not any(
-                marker in target_path.read_text(encoding="utf-8") for marker in markers
-            ):
-                continue
-            refs = {
-                str(value)
-                for value in context.get("refs", [])
-                if isinstance(value, str)
-                and (value.startswith("use_case:") or value.startswith("api:"))
-            }
-            remaining_markers.append((stable_id, refs))
-            if not refs or refs.isdisjoint(planned_refs):
-                raise ValueError(
-                    "Backend implementation marker has no planned behavior evidence: "
-                    f"{stable_id} ({', '.join(sorted(refs)) or 'no use_case/api refs'})"
-                )
-    if not tasks and (expected_operations or remaining_markers):
-        raise ValueError(
-            "Backend behavior planning found implementation evidence but no behavior tasks"
-        )
-
-
-def _backend_behavior_typed_dependency_paths(
-    run_root: Path,
-    package_path: str,
-    entity_names: set[str],
-    bce_model: dict[str, object],
-    methods: list[dict[str, object]],
-) -> list[str]:
-    """Return one-hop generated declarations named by direct typed contracts."""
-
-    classes = [
-        item
-        for item in bce_model.get("Classes", [])
-        if isinstance(item, dict) and isinstance(item.get("className"), str)
-    ]
-    data_types = [
-        item
-        for item in bce_model.get("DataTypes", [])
-        if isinstance(item, dict) and isinstance(item.get("name"), str)
-    ]
-    declared_names = {
-        str(item["className"]) for item in classes
-    } | {str(item["name"]) for item in data_types}
-    selected_names = _typed_component_names(methods, declared_names)
-    entity_fields = {
-        str(item["className"]): item.get("fields", []) for item in classes
-    }
-    direct_selected_entities = selected_names & entity_names
-    selected_names.update(
-        _typed_component_names(
-            [
-                {"fields": entity_fields.get(name, [])}
-                for name in direct_selected_entities
-            ],
-            declared_names,
-        )
-    )
-
-    java_root = f"application/src/main/java/{package_path}"
-    candidates = [f"{java_root}/bce/{name}.java" for name in selected_names]
-    selected_entities = selected_names & entity_names
-    candidates.extend(
-        f"{java_root}/persistence/{kind}/{name}{suffix}.java"
-        for name in selected_entities
-        for kind, suffix in (("entity", "Entity"), ("repository", "Repository"))
-    )
-    return sorted({path for path in candidates if (run_root / path).is_file()})
-
-
-def _backend_behavior_design_evidence(
-    bce_model: dict[str, object],
-    *,
-    use_case_ids: set[str],
-    endpoints: list[dict[str, object]],
-    method_metadata: list[dict[str, object]],
-) -> tuple[dict[str, object], list[str]]:
-    """Project already-selected class and one-hop records without semantic inference."""
-
-    def records(model: dict[str, object], key: str) -> list[dict[str, object]]:
-        values = model.get(key)
-        return [item for item in values if isinstance(item, dict)] if isinstance(values, list) else []
-
-    classes = [item for item in records(bce_model, "Classes") if item.get("className")]
-    classes_by_name = {str(item["className"]): item for item in classes}
-    selected_names = {
-        str(item["className"])
-        for item in classes
-        if _use_case_ids(item) & use_case_ids
-    }
-    selected_names.update(
-        str(binding["control"])
-        for endpoint in endpoints
-        if isinstance(binding := endpoint.get("control_binding"), dict)
-        and isinstance(binding.get("control"), str)
-        and binding["control"]
-    )
-    selected_names.update(
-        name
-        for endpoint in endpoints
-        for name in (
-            endpoint.get("source_classes")
-            if isinstance(endpoint.get("source_classes"), list)
-            else []
-        )
-        if isinstance(name, str) and name
-    )
-    selected_names.update(
-        _typed_component_names(method_metadata, set(classes_by_name))
-    )
-    selected_names.intersection_update(classes_by_name)
-
-    relationships = records(bce_model, "Relationships")
-    selected_relationships = [
-        item
-        for item in relationships
-        if {str(item.get("source") or ""), str(item.get("target") or "")}
-        & selected_names
-        and {str(item.get("source") or ""), str(item.get("target") or "")}
-        <= classes_by_name.keys()
-    ]
-    selected_names.update(
-        name
-        for item in selected_relationships
-        for name in (str(item["source"]), str(item["target"]))
-    )
-
-    return (
-        {
-            "Classes": [
-                item for name, item in classes_by_name.items() if name in selected_names
-            ],
-            "Relationships": selected_relationships,
-        },
-        [f"class_diagram:{name}" for name in sorted(selected_names)],
-    )
-
-
-def _typed_component_names(
-    metadata: list[dict[str, object]], known_names: set[str]
-) -> set[str]:
-    """Match only exact generated type identifiers; do not infer from prose."""
-
-    values: list[str] = []
-    for item in metadata:
-        for key in ("class_name", "return_type"):
-            value = item.get(key)
-            if isinstance(value, str):
-                values.append(value)
-        parameters = item.get("parameters", [])
-        if isinstance(parameters, list):
-            for parameter in parameters:
-                if isinstance(parameter, dict) and isinstance(parameter.get("type"), str):
-                    values.append(str(parameter["type"]))
-                elif (
-                    isinstance(parameter, (list, tuple))
-                    and len(parameter) > 1
-                    and isinstance(parameter[1], str)
-                ):
-                    values.append(parameter[1])
-        fields = item.get("fields", [])
-        if isinstance(fields, list):
-            values.extend(value for value in fields if isinstance(value, str))
-    return {
-        token
-        for value in values
-        for token in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", value)
-        if token in known_names
-    }
-
-
-def _controller_contract_paths(
-    run_root: Path,
-    package_path: str,
-    controller_path: str,
-    endpoint: dict[str, object],
-) -> list[str]:
-    """Return the exact generated contracts needed to implement one adapter marker."""
-
-    java_root = f"application/src/main/java/{package_path}"
-    candidates = [controller_path]
-    controller_source = (run_root / controller_path).read_text(encoding="utf-8")
-    candidates.extend(_implemented_interface_paths(run_root, controller_source))
-
-    request_schema = endpoint.get("request_schema") or endpoint.get("requestSchema")
-    schema_names = [request_schema]
-    responses = endpoint.get("responses", [])
-    response_schema_names: list[object] = []
-    if isinstance(responses, list):
-        response_schema_names.extend(
-            response.get("schema_name") or response.get("schemaName")
-            for response in responses
-            if isinstance(response, dict)
-        )
-    schema_names.extend(response_schema_names)
-    candidates.extend(
-        f"{java_root}/api/model/{schema_name}.java"
-        for schema_name in schema_names
-        if isinstance(schema_name, str) and schema_name
-    )
-    binding = endpoint.get("control_binding") or endpoint.get("controlBinding")
-    if isinstance(binding, dict) and isinstance(binding.get("control"), str):
-        control = str(binding["control"])
-        candidates.append(f"{java_root}/bce/{control}.java")
-
-    return list(
-        dict.fromkeys(
-            path for path in candidates if (run_root / path).is_file()
-        )
-    )
-
-
-def _implemented_interface_paths(run_root: Path, source: str) -> list[str]:
-    """Resolve explicitly declared Java interfaces without filename conventions."""
-
-    declaration = re.search(
-        r"\bpublic\s+(?:final\s+)?class\s+[A-Za-z_$][A-Za-z0-9_$]*"
-        r"[^\{]*?\bimplements\s+(?P<interfaces>[^\{]+)\{",
-        source,
-        re.DOTALL,
-    )
-    if declaration is None:
-        return []
-    imports = {
-        value.rsplit(".", 1)[-1]: value
-        for value in re.findall(
-            r"(?m)^\s*import\s+([A-Za-z_$][A-Za-z0-9_$.]*)\s*;",
-            source,
-        )
-    }
-    paths: list[str] = []
-    for raw_name in declaration.group("interfaces").split(","):
-        name = raw_name.strip().split("<", 1)[0].strip()
-        qualified = imports.get(name, name if "." in name else "")
-        if not qualified:
-            continue
-        relative = "application/src/main/java/" + qualified.replace(".", "/") + ".java"
-        if (run_root / relative).is_file():
-            paths.append(relative)
-    return paths
-
-
-def _http_status(value: object) -> int | None:
-    try:
-        status = int(str(value))
-    except (TypeError, ValueError):
-        return None
-    return status if 100 <= status <= 599 else None
-
+    return task
 
 def _component_use_case_ids(spec: JobSpec) -> dict[str, set[str]]:
     classes = _read_json(spec.inputs.get("bceModel")).get("Classes", [])
@@ -1298,16 +597,10 @@ def generate_frontend_tasks(
     )
     required = [
         "application/frontend/src/App.tsx",
-        "application/frontend/src/api.ts",
         "application/frontend/src/styles.css",
     ]
-    allowed = _work_unit_editable_paths(
-        run_root,
-        required,
-        ["application/frontend"],
-    )
     allowed = _without_immutable_paths(
-        allowed,
+        list(required),
         ["application/frontend/src/generated"],
     )
     task_id = "implement-frontend-application"
@@ -1362,9 +655,12 @@ def generate_frontend_tasks(
 Complete the React application using the exact generated-client calls already wired in
 `application/frontend/src/api.ts`.
 
+- Treat `application/frontend/src/api.ts` as read-only connector evidence owned by the integration task.
 - Preserve `{client_contracts.import_root}` and use `apiCalls`; never hand-write HTTP calls or paths.
 - Start with the compact client index. Read an operation context only when implementing that
   operation; do not recursively inventory the workspace unless an unresolved contract requires it.
+- Once the compact index and relevant operation contexts define the implementation, the next action is the first source edit.
+- Do not inspect generated-client runtime bodies, README files, or package/build metadata without a concrete task-check diagnosis.
 - Resolve every `EASYDEP-IMPLEMENT` marker. Read only the smallest relevant frozen design input if
   an operation context exposes a contract gap.
 - Source-index and RTM references are navigation hints, never read or edit limits.
@@ -1379,7 +675,7 @@ Complete the React application using the exact generated-client calls already wi
 - Exact call skeleton: `{_relative(run_root, call_skeleton_path)}`
 - Compact index: `{_relative(run_root, client_index_path)}`
 """
-    prompt += "\n## Frontend owner root\n- `application/frontend`"
+    prompt += "\n## Frontend owner root\n- `application/frontend/src`"
     prompt += render_allowed_output_rules(required)
     prompt_path = output / "frontend-application.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
@@ -1391,6 +687,7 @@ Complete the React application using the exact generated-client calls already wi
         allowed_write_paths=allowed,
         required_output_paths=required,
         immutable_paths=[
+            "application/frontend/src/api.ts",
             "application/frontend/src/generated",
         ],
         source_artifacts={
@@ -1410,7 +707,7 @@ Complete the React application using the exact generated-client calls already wi
             *(f"api:{operation_id}" for operation_id in operations),
             *_workload_source_refs(deployment_context),
         ],
-        allowed_write_roots=["application/frontend"],
+        allowed_write_roots=["application/frontend/src"],
     )
     (output / "frontend-application.task.json").write_text(
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1469,6 +766,7 @@ def generate_vertical_integration_task(
     ]
     runtime_evidence_candidates = [
         "application/src/main/resources/application.yml",
+        "application/frontend/package.json",
         "application/frontend/.env.example",
         "application/deployment/runtime/compose.yaml",
         "application/deployment/runtime/.env.example",
@@ -1481,12 +779,15 @@ def generate_vertical_integration_task(
         path for path in runtime_evidence_candidates if (run_root / path).is_file()
     ]
     immutable = sorted(
-        {
+        (
+            {
             str(path)
             for task in owner_tasks
             for path in task.get("immutable_paths", [])
             if isinstance(path, str)
-        }
+            }
+            - set(writable_config_candidates)
+        )
         | {"application/frontend/src/generated"}
     )
     writable = _without_immutable_paths(writable_config, immutable)
@@ -1613,6 +914,7 @@ mechanics for one representative happy path after the backend and frontend owner
         use_case_ids=batch_use_cases,
         source_refs=source_refs,
         allowed_write_roots=[],
+        completion_mode='verify-or-repair',
     )
     (output / f"{task_id}.task.json").write_text(
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1694,9 +996,13 @@ def _deployment_context(spec: JobSpec, names: set[str]) -> dict[str, object]:
         return {}
     workload_ids = {str(item.get("id") or "") for item in workloads}
     return {
+        "generatedApplicationCount": len(generated),
         "workloads": [
             {
                 "id": item.get("id"),
+                "artifact": {
+                    "kind": str((item.get("artifact") or {}).get("kind") or ""),
+                },
                 "interfaces": list(item.get("interfaces") or []),
                 # 설정값 자체(특히 secret)는 코드 task가 소비하지 않는다.
                 "configuration": [

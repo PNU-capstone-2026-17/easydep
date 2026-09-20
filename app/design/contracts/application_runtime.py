@@ -9,6 +9,34 @@ _SECURITY_WORDS = re.compile(
     r"\b(?:authenticat(?:e|ed|ion)|authoriz(?:e|ed|ation))\b|인증|인가|접근\s*권한",
     re.IGNORECASE,
 )
+_EXPLICIT_NO_AUTH = re.compile(
+    r"\b(?:shall|must|do|does)\s+not\s+(?:require|need)\s+(?:any\s+)?"
+    r"(?:authentication|authorization)\b"
+    r"|\b(?:authentication|authorization)\s+is\s+not\s+(?:required|needed)\b"
+    r"|\bno\s+(?:authentication|authorization)\s+(?:is\s+)?(?:required|needed)\b"
+    r"|(?<!not\s)(?<!never\s)\b(?:allow|allows|permit|permits)\s+(?:all\s+)?"
+    r"(?:requests?|access|use)\s+without\s+(?:authentication|authorization)\b"
+    r"|\b(?:access|requests?|use)\s+without\s+(?:authentication|authorization)\s+"
+    r"(?:is|are)\s+(?:allowed|permitted)\b"
+    r"|(?:인증|인가)(?:을|를|이|가|은|는)?\s*(?:요구|필요(?:로)?)하지\s*않"
+    r"|(?:인증|인가)(?:이|가|은|는)?\s*필요(?:가)?\s*없"
+    r"|(?:인증|인가)(?:이|가|은|는)?\s*요구되지\s*않"
+    r"|(?:인증|인가)\s*없이\s*(?:모든\s*)?(?:요청|접근|이용|사용)(?:을|이|은)?\s*"
+    r"(?:허용(?:한다|된다|해야\s*한다)|가능(?:하다|해야\s*한다)|할\s*수\s*있)",
+    re.IGNORECASE,
+)
+_STATEMENT_BOUNDARY = re.compile(r"(?:[.!?;。！？；]+|\r?\n+)\s*")
+
+
+def _has_positive_security_statement(text: str) -> bool:
+    """Keep positive security evidence while ignoring explicit no-auth statements."""
+
+    statements = (item.strip() for item in _STATEMENT_BOUNDARY.split(text))
+    return any(
+        _SECURITY_WORDS.search(_EXPLICIT_NO_AUTH.sub("", statement))
+        for statement in statements
+        if statement
+    )
 
 
 def application_security_source_refs(
@@ -34,7 +62,9 @@ def application_security_source_refs(
     refs = ["apiSpec:security"] if api_security else []
     requirements = refined_requirements if isinstance(refined_requirements, list) else []
     for index, item in enumerate(requirements):
-        if not isinstance(item, dict) or not _SECURITY_WORDS.search(str(item.get("text") or "")):
+        if not isinstance(item, dict) or not _has_positive_security_statement(
+            str(item.get("text") or "")
+        ):
             continue
         requirement_id = str(item.get("id") or item.get("draft_ref") or index + 1)
         refs.append(f"requirement:{requirement_id}")

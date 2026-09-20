@@ -49,6 +49,10 @@ from .java_scaffold import (
 from .method_skeleton import (
     render_backend_method_skeletons,
 )
+from .operation_contracts import (
+    build_generated_operation_contracts,
+    write_generated_operation_contracts,
+)
 from .persistence_scaffold import (
     PERSISTENCE_SCAFFOLDER_VERSION,
     render_persistence_scaffold,
@@ -256,6 +260,7 @@ class PrototypeOrchestrator:
                 self._compile(application)
 
             self._generate_openapi_controllers(application)
+            self._write_operation_contracts(staging)
             self._set_status("PLANNING", "Planning implementation tasks and dependencies.")
             self.manifest.implementation_tasks = []
             self.manifest.agent_execution = write_execution_plan(
@@ -783,6 +788,31 @@ class PrototypeOrchestrator:
             "source": "generated-openapi-interface",
         }
 
+    def _write_operation_contracts(self, staging: Path) -> None:
+        """Persist typed generator facts after BCE/service/controller scaffolds exist."""
+        bce_model = BCEModel.model_validate_json(
+            self.spec.inputs["bceModel"].read_text(encoding="utf-8")
+        )
+        sequence_model = SequenceCollection.model_validate_json(
+            self.spec.inputs["sequenceModel"].read_text(encoding="utf-8")
+        )
+        api_model = ApiSpecModel.model_validate_json(
+            self.spec.inputs["apiModel"].read_text(encoding="utf-8")
+        )
+        path = write_generated_operation_contracts(
+            staging,
+            build_generated_operation_contracts(
+                bce_model=bce_model,
+                sequence_model=sequence_model,
+                api_model=api_model,
+                base_package=self.spec.base_package,
+            ),
+        )
+        self._sink().tools["generated-operation-contracts"] = {
+            "schema": "easydep-generated-operation-contracts/v1",
+            "path": str(path.relative_to(staging)).replace("\\", "/"),
+        }
+
     def _generate_frontend(self, application: Path) -> None:
         openapi = json.loads(self.spec.inputs["openapi"].read_text(encoding="utf-8"))
         frontend = application / "frontend"
@@ -868,6 +898,7 @@ tasks.withType(Test).configureEach {{ useJUnitPlatform() }}
 
     def _write_runtime_configuration(self, application: Path) -> None:
         """운영 DB와 test DB처럼 선택 여지가 없는 Spring 설정을 미리 만든다."""
+        datasource_required = _requires_application_datasource(self.spec)
         security_required = _requires_application_security(self.spec)
         production_security = (
             "  security:\n"
@@ -880,15 +911,20 @@ tasks.withType(Test).configureEach {{ useJUnitPlatform() }}
         )
         resources = application / "src" / "main" / "resources"
         resources.mkdir(parents=True, exist_ok=True)
-        application_config = (
-            "server:\n"
-            "  port: 8000\n"
-            "spring:\n"
+        datasource = (
             "  datasource:\n"
             "    url: ${SPRING_DATASOURCE_URL}\n"
             "    username: ${SPRING_DATASOURCE_USERNAME}\n"
             "    password: ${SPRING_DATASOURCE_PASSWORD}\n"
-            "  jpa:\n"
+            if datasource_required
+            else ""
+        )
+        application_config = (
+            "server:\n"
+            "  port: 8000\n"
+            "spring:\n"
+            + datasource
+            + "  jpa:\n"
             "    open-in-view: false\n"
             + production_security
             + "management:\n"
@@ -1244,6 +1280,53 @@ def _requires_application_security(spec: JobSpec) -> bool:
     return application_security_required(
         openapi if isinstance(openapi, dict) else {}, requirements
     )
+
+
+def _requires_application_datasource(spec: JobSpec) -> bool:
+    """Return whether the admitted design declares an application database.
+
+    The deployment bundle is the normalized storage/runtime contract.  Its
+    generated-application workload explicitly carries persistent storage and
+    datasource bindings when a database is part of the admitted design.  A
+    legacy job without that bundle keeps the existing ERD-based behavior.
+    """
+    bundle_path = spec.inputs.get("deploymentBundle")
+    if bundle_path and bundle_path.is_file():
+        try:
+            bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            bundle = None
+        graph = bundle.get("workloadGraph") if isinstance(bundle, dict) else None
+        workloads = graph.get("workloads") if isinstance(graph, dict) else None
+        generated = [
+            item
+            for item in workloads or []
+            if isinstance(item, dict)
+            and isinstance(item.get("artifact"), dict)
+            and item["artifact"].get("kind") == "generatedApplication"
+        ]
+        if generated:
+            datasource_names = {
+                "SPRING_DATASOURCE_URL",
+                "SPRING_DATASOURCE_USERNAME",
+                "SPRING_DATASOURCE_PASSWORD",
+            }
+            return any(
+                any(
+                    isinstance(storage, dict)
+                    and str(storage.get("persistence") or "").casefold() == "persistent"
+                    for storage in item.get("storage") or []
+                )
+                or any(
+                    isinstance(configuration, dict)
+                    and str(configuration.get("name") or "") in datasource_names
+                    for configuration in item.get("configuration") or []
+                )
+                for item in generated
+            )
+
+    erd_path = spec.inputs.get("erdBceModel")
+    return bool(erd_path and erd_path.is_file())
 
 
 def sha256_file(path: Path) -> str:

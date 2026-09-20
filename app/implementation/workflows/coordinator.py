@@ -15,11 +15,8 @@ from app.metrics import langsmith as langsmith_metrics
 
 from ..agents.runtime import (
     OwnerConversationIncomplete,
-    _persist_admission_gap,
     effective_task_prompt_sha256,
     execute_openhands_task,
-    execution_attempt,
-    preflight_behavior_task,
     write_execution_plan,
 )
 from ..agents.verification.build import WorkspaceVerificationError, verify_run_workspace
@@ -83,7 +80,6 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     if erd_model_path is not None:
         plan_persistence_tasks(spec, run_root)
     plan_backend_owner_task(spec, run_root)
-    _admit_planned_backend_tasks(run_root)
     plan_frontend_tasks(spec, run_root)
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = _read_json(manifest_path)
@@ -101,53 +97,6 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     build_rtm_traceability_map(spec, run_root)
     apply_repair_directives(run_root)
     return reconcile_workflow_state(run_root)
-
-
-def _task_source_refs(task: dict[str, object]) -> list[str]:
-    return [
-        value
-        for value in task.get("source_refs", task.get("sourceRefs", []))
-        if isinstance(value, str) and value
-    ]
-
-
-def _admit_planned_backend_tasks(run_root: Path) -> None:
-    """Run the bounded behavior readiness gate before OpenHands is planned.
-
-    This intentionally follows the persisted backend TaskSpec rather than
-    reconstructing capsule inputs from design artifacts.  A single gap blocks
-    the run just as the sequential owner executor would, leaving RTM to route
-    the returned source reference to its actual upstream owner.
-    """
-
-    manifest = _read_json(run_root / "reports" / "run-manifest.json")
-    for task in manifest.get("implementation_tasks", []):
-        if not isinstance(task, dict) or task.get("task_type") not in {
-            "backend-implementation",
-            "backend-operation",
-        }:
-            continue
-        context_file = task.get("context_file", task.get("contextFile"))
-        if not isinstance(context_file, str):
-            continue
-        context = _read_json(run_root / context_file)
-        if not isinstance(context.get("behaviorCapsule"), dict):
-            continue
-        task_id = str(task.get("task_id") or "")
-        if not task_id:
-            continue
-        started = time.monotonic()
-        gap = preflight_behavior_task(run_root, task, context, _task_source_refs(task))
-        if gap is not None:
-            _persist_admission_gap(
-                run_root,
-                task,
-                task_id,
-                gap,
-                execution_attempt(run_root, task_id),
-                started,
-            )
-            return
 
 
 def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
@@ -719,22 +668,28 @@ def _regression_owner_task_id(
     run_root: Path,
     evidence: dict[str, object],
 ) -> str:
-    """Map the primary JUnit failure to the slice that owns its exact test."""
+    """Return an unambiguous implementation owner for backend regression repair.
 
-    test_results = str(evidence.get("testResults") or "")
-    primary_test = test_results.split(":", 1)[0].strip()
+    The backend phase now has one production owner.  Older runs may still
+    report an explicit task id, which is safe to honor; parsing a JUnit class
+    name to rediscover a historical slice is not, because test files are no
+    longer part of the implementation ownership contract.
+    """
+
+    for key in ("failedTaskId", "failed_task_id", "taskId", "task_id"):
+        value = evidence.get(key)
+        if isinstance(value, str) and value:
+            return value
     manifest = _read_json(run_root / "reports" / "run-manifest.json")
-    for task in manifest.get("implementation_tasks", []):
-        if not isinstance(task, dict) or task.get("task_type") != "backend-implementation":
-            continue
-        for path in task.get("required_test_paths", []):
-            normalized = str(path).replace("\\", "/")
-            _prefix, marker, relative = normalized.partition("/src/test/java/")
-            if not marker or not relative.endswith(".java"):
-                continue
-            class_name = relative.removesuffix(".java").replace("/", ".")
-            if primary_test.startswith(class_name + "."):
-                return str(task["task_id"])
+    owners = [
+        task
+        for task in manifest.get("implementation_tasks", [])
+        if isinstance(task, dict)
+        and task.get("task_type") in {"backend-implementation", "backend-operation"}
+        and task.get("task_id")
+    ]
+    if len(owners) == 1:
+        return str(owners[0]["task_id"])
     return "backend-regression"
 
 

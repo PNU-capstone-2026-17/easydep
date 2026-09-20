@@ -38,6 +38,11 @@ class _SuccessfulCheck:
 
 _SUCCESSFUL_CHECKS: dict[str, _SuccessfulCheck] = {}
 
+# Infrastructure diagnostics do not identify a source repair.
+def is_infrastructure_task_check_failure(output: str) -> bool:
+    normalized = output.casefold()
+    return ('npm' in normalized and 'ci' in normalized and 'timed out' in normalized) or 'enomem' in normalized or 'tar_entry_error' in normalized
+
 
 @dataclass
 class TaskCheckSession:

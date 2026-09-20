@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Callable
 from pathlib import Path
 from textwrap import shorten
@@ -19,7 +20,19 @@ from .upstream_gap_tool import UpstreamGap, UpstreamGapOption
 
 ADMISSION_CHECKPOINT_SCHEMA = "implementation-admission/v1alpha1"
 ADMISSION_VALIDATOR_VERSION = "behavior-admission/v3"
-INTEGRATION_ADMISSION_VALIDATOR_VERSION = "integration-admission/v1"
+INTEGRATION_ADMISSION_VALIDATOR_VERSION = "integration-admission/v2"
+
+_GENERATED_API_BASE_EXPORT = re.compile(
+    r'^exportconstAPI_BASE_URL=\(import\.meta\.env\.VITE_API_BASE_URL\?\?'
+    r'(?P<fallback>"(?:\\.|[^"\\])*")\)\.replace\(/\\/\$/,(?:\'\'|"")\);$'
+)
+_GENERATED_API_CONFIGURATION_BINDING = re.compile(
+    r"^\s*const\s+[A-Za-z_$][A-Za-z0-9_$]*\s*=\s*"
+    r"new\s+[A-Za-z_$][A-Za-z0-9_$]*\s*\(\s*"
+    r"new\s+Configuration\s*\(\s*\{\s*basePath\s*:\s*API_BASE_URL\s*\}\s*\)"
+    r"\s*\)\s*;\s*$",
+    re.MULTILINE,
+)
 
 
 class AdmissionOption(BaseModel):
@@ -136,6 +149,15 @@ change, choose NEEDS_INPUT. A build or test pass is not semantic evidence. Retur
 requested structured decision. For NEEDS_INPUT, give one concise root gap using exactly one
 allowed source reference and return an empty options list; downstream RTM authority is not part of
 this evidence. For IMPLEMENT, source_ref must be empty.
+When payload.deliveryContract is present, it is deterministic delivery evidence. In particular,
+frontendMode=integrated, apiBaseMode=sameOriginRelative, and supplier=browserDocumentOrigin mean
+that an empty or origin-relative VITE_API_BASE_URL is an effective value: browser requests use the
+document origin and do not need a separate host supplier, frontend workload, connection, or CORS
+binding. A null HTTP interface port with portBinding=runtime is expected late binding, not missing
+upstream meaning; the implementation and final runtime-binding check determine the numeric port.
+Do not extend this rule to a separate frontend, multiple generated application workloads, an
+absolute or scheme-relative API base, a missing HTTP interface, or evidence that contradicts the
+delivery contract.
 The source_ref is an RTM routing key, not the path where evidence was observed. Copy exactly one
 complete string verbatim from payload.sourceRefs; never return an evidenceFiles[].path. For a
 runtime or deployment mapping ambiguity or contradiction, prefer an available workload:* source
@@ -478,18 +500,136 @@ def prepare_integration_admission_payload(
     for path in paths:
         if not (root / path).is_file():
             raise ValueError(f"Missing integration admission evidence: {path}")
-    return {
+    evidence_files = [
+        {
+            "path": path,
+            "content": (root / path).read_bytes().decode("utf-8"),
+        }
+        for path in paths
+    ]
+    payload: dict[str, object] = {
         "traceEvidence": context.get("traceEvidence"),
         "deployment": context.get("deployment"),
-        "evidenceFiles": [
-            {
-                "path": path,
-                "content": (root / path).read_bytes().decode("utf-8"),
-            }
-            for path in paths
-        ],
+        "evidenceFiles": evidence_files,
         "sourceRefs": _semantic_source_refs(source_refs),
     }
+    delivery_contract = _integrated_same_origin_delivery_contract(
+        context.get("deployment"), evidence_files
+    )
+    if delivery_contract is not None:
+        payload["deliveryContract"] = delivery_contract
+    return payload
+
+
+def _integrated_same_origin_delivery_contract(
+    deployment: object,
+    evidence_files: list[dict[str, str]],
+) -> dict[str, object] | None:
+    """Describe the one topology where an empty browser API base is a supplier.
+
+    The fact is deliberately absent for separate or ambiguous delivery. The LLM still
+    performs semantic admission; this only prevents it from treating an explicit browser
+    document-origin route and a runtime-bound port as missing configuration.
+    """
+
+    if not isinstance(deployment, dict):
+        return None
+    if deployment.get("generatedApplicationCount") != 1:
+        return None
+    workloads = deployment.get("workloads")
+    if not isinstance(workloads, list) or len(workloads) != 1:
+        return None
+    workload = workloads[0]
+    if not isinstance(workload, dict):
+        return None
+    artifact = workload.get("artifact")
+    if not isinstance(artifact, dict) or artifact.get("kind") != "generatedApplication":
+        return None
+    interfaces = workload.get("interfaces")
+    if not isinstance(interfaces, list):
+        return None
+    http_interfaces = [
+        item
+        for item in interfaces
+        if isinstance(item, dict)
+        and str(item.get("protocol") or "").lower() in {"http", "https"}
+        and item.get("exposure") == "public"
+    ]
+    if len(http_interfaces) != 1:
+        return None
+
+    evidence = {item["path"]: item["content"] for item in evidence_files}
+    package_text = evidence.get("application/frontend/package.json")
+    if package_text is None:
+        return None
+    try:
+        package = json.loads(package_text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(package, dict):
+        return None
+    env_text = evidence.get("application/frontend/.env.example")
+    config_text = evidence.get("application/frontend/src/config.ts", "")
+    api_text = evidence.get("application/frontend/src/api.ts", "")
+    if env_text is None:
+        return None
+    fallback = _generated_api_base_fallback(config_text)
+    if fallback is None or not _is_origin_relative_base(fallback):
+        return None
+    if _GENERATED_API_CONFIGURATION_BINDING.search(api_text) is None:
+        return None
+    api_base = _dotenv_value(env_text, "VITE_API_BASE_URL")
+    if api_base is None or not _is_origin_relative_base(api_base):
+        return None
+
+    interface = http_interfaces[0]
+    workload_id = str(workload.get("id") or "").strip()
+    interface_id = str(interface.get("id") or "").strip()
+    if not workload_id or not interface_id:
+        return None
+    port = interface.get("port")
+    contract: dict[str, object] = {
+        "frontendMode": "integrated",
+        "apiBaseMode": "sameOriginRelative",
+        "supplier": "browserDocumentOrigin",
+        "workloadRef": f"workload:{workload_id}",
+        "httpInterfaceId": interface_id,
+        "portBinding": "runtime" if port is None else "declared",
+    }
+    if port is not None:
+        contract["port"] = port
+    return contract
+
+
+def _dotenv_value(content: str, name: str) -> str | None:
+    prefix = f"{name}="
+    for raw_line in content.splitlines():
+        line = raw_line.strip()
+        if not line.startswith(prefix):
+            continue
+        value = line[len(prefix) :].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+            value = value[1:-1]
+        return value
+    return None
+
+
+def _generated_api_base_fallback(content: str) -> str | None:
+    """Read only the generated one-statement API base export; reject other TS."""
+
+    normalized = re.sub(r"\s+", "", content)
+    match = _GENERATED_API_BASE_EXPORT.fullmatch(normalized)
+    if match is None:
+        return None
+    try:
+        fallback = json.loads(match.group("fallback"))
+    except json.JSONDecodeError:
+        return None
+    return fallback if isinstance(fallback, str) else None
+
+
+def _is_origin_relative_base(value: str) -> bool:
+    return value == "" or (value.startswith("/") and not value.startswith("//"))
 
 
 def admit_integration_evidence(

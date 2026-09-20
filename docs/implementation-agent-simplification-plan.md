@@ -1,7 +1,7 @@
 # 구현 에이전트 단순화 및 재검증 계획
 
 - 작성일: 2026-09-19
-- 상태: 개선 방향 확정, 구현 전 검토 기준
+- 상태: 구조 개선 및 기존 checkpoint 전체 owner 완료, fresh 전체 기준선은 미완료
 - 대상: 구현 단계의 작업 계획, OpenHands 실행, 작업별 검증, 최종 통합 검증과 Testing 인계
 - 참고 이력: `archive/dev-local-demo-20260916`
 
@@ -273,3 +273,79 @@ READY
 
 이 문서는 과거 개선을 모두 폐기하자는 뜻이 아니다. 검증·승격·선택적 재실행처럼 효과가 확인된
 경계는 유지하되, 코딩 에이전트보다 복잡해진 준비 절차를 줄이는 기준으로 사용한다.
+
+## 9. 2026-09-19 적용 결과
+
+이번 변경에서는 특정 UC나 클래스에 대한 보정을 추가하지 않고 다음 공통 경계를 반영했다.
+
+- scaffold 생성 뒤 `reports/generated-operation-contracts.json`을 저장한다. 이 sidecar는 typed
+  BCE 모델, 시퀀스 method projection과 API 저장 모델에서 public operation, 실제 구현 source,
+  생성자 의존성, collaborator signature, API 입출력 연결과 completion marker를 기록한다.
+- backend 계획은 UC/API 연결요소별 작업 대신 `implement-backend-application` 단일 owner 하나를
+  만든다. 테스트 source는 이 owner의 쓰기 범위와 필수 산출물에서 제외한다.
+- 구현 owner는 JUnit을 먼저 만들지 않는다. 작업 중 검증은 `compileJava --build-cache`와 기존의
+  기계적 marker·공개 계약 검사만 사용한다.
+- owner가 `run_task_check`를 성공시킨 경우 같은 검사를 outer runtime에서 다시 실행하지 않는다.
+  저장된 성공 증거가 없을 때만 outer verifier가 fallback으로 실행한다.
+- 구현 시작 전 behavior admission은 새 planning 경로에서 제거했다. integration admission과
+  구현 중 명시적으로 보고된 upstream gap 처리는 유지한다.
+- JUnit classname으로 과거 UC slice 소유자를 역추적하지 않는다. 명시적 task ID가 없으면 단일
+  backend owner에게만 회귀 실패를 돌리고, 소유자가 여러 개라면 통합 실패로 남긴다.
+- 비활성 UC/API slice planner와 그 전용 helper 759줄, obsolete slice 전략 테스트 694줄을
+  제거했다. source index, method context, frontend·integration planning의 공용 helper는 유지했다.
+
+### 9.1. 로컬 검증 결과
+
+변경 범위에 대응하는 26개 focused test가 통과했다. 확인 범위는 다음과 같다.
+
+- 단일 backend owner 계획과 production-only 쓰기 범위
+- typed operation sidecar와 FQCN·endpoint binding 직렬화
+- method projection 유지
+- backend 작업 검증의 compile-only 명령 선택
+- workflow planning, 최종 backend regression 1회와 feedback repair routing
+- 동일 source 실패 재실행 차단과 성공한 task-check 재사용
+- 성공 checkpoint 재사용과 후보 승격 경계
+
+전체 회귀 테스트는 실행하지 않았다. 이번 변경과 무관한 전체 suite 실행은 계획의 검증 비용 축소
+원칙에 맞지 않으므로, 직접 영향을 받는 테스트만 선택했다.
+
+### 9.2. fresh 실행 준비와 남은 검증
+
+새 앱 `eebd54c4-a37a-4b2b-908e-6c4d7b57e2d9`에서 command
+`9eda0565-c536-4245-9f83-4cab17bb1e1b`, job
+`b23a358cc0e2428683a4328a7801e523`, run `run_d01116d7cae1`으로 실제 구현을 시작했다.
+모델은 Cloudflare Workers AI의 `@cf/zai-org/glm-5.3-flash`였다. Docker 권한 거부만 발생한
+환경 전용 실행은 모델·계획 효과를 판단할 수 없으므로 이 비교에서 제외한다.
+
+backend owner는 성공했다. 32개 이벤트(15개 tool action)에서 첫 production 수정은 시작 후 약
+115초인 2026-09-19T17:37:14Z에 `CalculatorServiceService.java`에 적용됐다. action 구성은
+`file_editor` 11회(읽기 10회, `str_replace` 1회), `grep` 2회, `run_task_check` 1회,
+`finish` 1회였고 owner 총 소요 시간은 296,005ms였다. `compileJava --build-cache`는 exit code 0,
+81,848ms로 통과했다. 읽기 범위를 벗어난 evidence 경계 오류 2회 뒤 즉시 수정으로 진행했으며,
+재시도·stuck recovery는 없었다.
+
+이는 이전 baseline의 backend owner가 125개 이벤트와 61개 읽기 action 동안 production 수정이나
+검증을 하지 못한 경우보다 명확히 개선됐다. 다만 prompt-only 축소만으로 탐색 확장이 완전히
+사라지지는 않았다. 같은 run의 frontend owner는 관찰 종료 시점에 raw design input과 generated
+runtime까지 확장해 읽었고, 63개 이벤트 뒤 production 수정과 `npm run build` 성공(exit code 0)을
+냈지만 아직 task finish 전이었다. 따라서 이 결과는 backend의 첫 수정과 compile 성공은 확인하지만,
+모든 owner에서 읽기 확장을 일반적으로 억제했다는 증거는 아니다.
+
+관찰 종료 시 전체 workflow/job은 여전히 `RUNNING`(backend `SUCCEEDED`, frontend `RUNNING`,
+integration `PENDING`)이었다. frontend가 최대 iteration 또는 no-action 종료에 도달하기를 무기한
+기다리지 않았으며, 남은 owner별 종료 지연은 별도 실행 경계 문제로 기록한다.
+
+### 9.3. 2026-09-20 기존 checkpoint 재개 결과
+
+기존 앱 `7f386e24-98e1-4c62-92c6-3e770b90c954`, job
+`5eaae0fe78ac48f1a37212feba0297b9`, run `run_f7f9032f23bf`의 checkpoint만 재개했다. 새 job,
+run 또는 E2E는 만들지 않고 기존 command의 retry로 backend, frontend, integration을 모두
+완료했으며 integration은 attempt 3에서 성공했다.
+
+- isolated precheck와 해당 job의 `node_modules`는 오염되지 않았고, owner-labeled runner는
+  0개로 확인했다.
+- 재개 뒤 container lifecycle과 이 작업이 시작한 서버·프로세스를 정리했다.
+- focused tests, Ruff, diff check가 통과했다.
+
+이는 기존 checkpoint의 전체 owner 완료와 재개·정리 경계를 확인한 결과다. 보존 후보와 기존
+checkpoint를 사용했으므로, 7절의 fresh 전체 기준선 또는 fresh implementation 성공 증거는 아니다.

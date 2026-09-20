@@ -580,6 +580,24 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     assert "todo" in prompt.casefold() and "placeholder" in prompt.casefold()
     assert "Contracted pages" not in prompt
     assert "application/frontend/src/pages/OrdersPage.tsx" not in task.required_output_paths
+    assert task.allowed_write_paths == [
+        "application/frontend/src/App.tsx",
+        "application/frontend/src/styles.css",
+    ]
+    assert task.allowed_write_roots == ["application/frontend/src"]
+    assert task.immutable_paths == [
+        "application/frontend/src/api.ts",
+        "application/frontend/src/generated",
+    ]
+    assert not {
+        "application/frontend/index.html",
+        "application/frontend/package.json",
+        "application/frontend/README.md",
+        "application/frontend/tsconfig.json",
+        "application/frontend/vite.config.ts",
+    }.intersection(task.allowed_write_paths)
+    assert "the next action is the first source edit" in prompt
+    assert "without a concrete task-check diagnosis" in prompt
     assert set(context["operationContextPaths"]) == {
         item["contextPath"] for item in index["operations"]
     }

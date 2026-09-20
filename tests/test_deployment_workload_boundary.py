@@ -184,6 +184,34 @@ def test_generate_workload_graph_uses_one_name_only_proposal() -> None:
     }
 
 
+def test_no_auth_requirement_does_not_add_security_runtime_bindings() -> None:
+    graph = generate_workload_graph(
+        "UC1: A user opens the public calculator.",
+        {"openapi": "3.1.0", "paths": {"/calculator": {"get": {}}}},
+        refined_requirements=[
+            {
+                "id": "R-NO-AUTH",
+                "text": "The system shall not require authentication for any request.",
+            }
+        ],
+        capability_contract={"capabilities": []},
+        resource_intake={"provider": "aws"},
+        class_model={"Classes": []},
+        sequence_model={"Diagrams": []},
+        erd_model={"Classes": []},
+        deployment_planning_facts=[{"id": "fact-public"}],
+        proposal_call=lambda _messages, _schema: {
+            "components": [{"id": "application", "name": "Calculator"}]
+        },
+    )
+
+    configuration_names = {
+        item.name for item in graph.workloads[0].configuration
+    }
+    assert "SPRING_SECURITY_USER_NAME" not in configuration_names
+    assert "SPRING_SECURITY_USER_PASSWORD" not in configuration_names
+
+
 def test_single_vm_file_database_contract_reaches_diagram_and_iac(
     tmp_path: Path,
 ) -> None:

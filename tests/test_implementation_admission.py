@@ -32,6 +32,15 @@ def test_prompt_treats_runtime_transport_as_implementation_only_after_semantics(
     assert "domain matching rule itself is not specified" in prompt
 
 
+def test_integration_prompt_accepts_only_explicit_integrated_same_origin_delivery() -> None:
+    prompt = admission._INTEGRATION_SYSTEM_PROMPT
+
+    assert "payload.deliveryContract" in prompt
+    assert "supplier=browserDocumentOrigin" in prompt
+    assert "portBinding=runtime" in prompt
+    assert "Do not extend this rule to a separate frontend" in prompt
+
+
 def test_implement_admission_uses_admission_connection_and_low_budget(monkeypatch) -> None:
     calls = []
     connection = SimpleNamespace(model="@cf/zai-org/glm-5.3-flash")
@@ -242,6 +251,145 @@ def test_integration_preflight_hashes_exact_file_evidence_without_persisting_it(
     assert admission.preflight_semantic_integration(tmp_path, task, context, refs) is None
     assert len(payloads) == 2
     assert checkpoint_path.read_text(encoding="utf-8") != first_checkpoint
+
+
+def _write_frontend_routing_evidence(root: Path, api_base: str) -> list[str]:
+    files = {
+        "application/frontend/package.json": '{"name":"frontend"}\n',
+        "application/frontend/.env.example": f"VITE_API_BASE_URL={api_base}\n",
+        "application/frontend/src/config.ts": (
+            'export const API_BASE_URL=(import.meta.env.VITE_API_BASE_URL??"")'
+            ".replace(/\\/$/,'');\n"
+        ),
+        "application/frontend/src/api.ts": (
+            "const defaultApi = new DefaultApi("
+            "new Configuration({ basePath: API_BASE_URL }));\n"
+        ),
+    }
+    for relative, content in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    return list(files)
+
+
+def _single_generated_http_deployment(count: int = 1) -> dict[str, object]:
+    return {
+        "generatedApplicationCount": count,
+        "workloads": [
+            {
+                "id": "application",
+                "artifact": {"kind": "generatedApplication"},
+                "interfaces": [
+                    {
+                        "id": "http",
+                        "protocol": "http",
+                        "exposure": "public",
+                        "port": None,
+                    }
+                ],
+            }
+        ],
+        "connections": [],
+    }
+
+
+def test_integration_payload_declares_integrated_relative_same_origin_supplier(
+    tmp_path: Path,
+) -> None:
+    paths = _write_frontend_routing_evidence(tmp_path, "")
+    context = {
+        "readSourcePaths": paths,
+        "deployment": _single_generated_http_deployment(),
+    }
+
+    payload = admission.prepare_integration_admission_payload(
+        tmp_path,
+        {"task_id": "integration", "depends_on": []},
+        context,
+        ["workload:application"],
+    )
+
+    assert payload["deliveryContract"] == {
+        "frontendMode": "integrated",
+        "apiBaseMode": "sameOriginRelative",
+        "supplier": "browserDocumentOrigin",
+        "workloadRef": "workload:application",
+        "httpInterfaceId": "http",
+        "portBinding": "runtime",
+    }
+
+
+@pytest.mark.parametrize(
+    ("generated_count", "api_base"),
+    [(2, ""), (1, "https://api.example.test"), (1, "//api.example.test")],
+)
+def test_integration_payload_does_not_auto_admit_ambiguous_or_cross_origin_delivery(
+    tmp_path: Path,
+    generated_count: int,
+    api_base: str,
+) -> None:
+    paths = _write_frontend_routing_evidence(tmp_path, api_base)
+    context = {
+        "readSourcePaths": paths,
+        "deployment": _single_generated_http_deployment(generated_count),
+    }
+
+    payload = admission.prepare_integration_admission_payload(
+        tmp_path,
+        {"task_id": "integration", "depends_on": []},
+        context,
+        ["workload:application"],
+    )
+
+    assert "deliveryContract" not in payload
+
+
+def test_integration_payload_rejects_token_only_absolute_api_base_export(
+    tmp_path: Path,
+) -> None:
+    paths = _write_frontend_routing_evidence(tmp_path, "")
+    (tmp_path / "application/frontend/src/config.ts").write_text(
+        "const hint=import.meta.env.VITE_API_BASE_URL;\n"
+        'export const API_BASE_URL="https://api.example.test";\n',
+        encoding="utf-8",
+    )
+
+    payload = admission.prepare_integration_admission_payload(
+        tmp_path,
+        {"task_id": "integration", "depends_on": []},
+        {
+            "readSourcePaths": paths,
+            "deployment": _single_generated_http_deployment(),
+        },
+        ["workload:application"],
+    )
+
+    assert "deliveryContract" not in payload
+
+
+def test_integration_payload_rejects_token_only_absolute_configuration_binding(
+    tmp_path: Path,
+) -> None:
+    paths = _write_frontend_routing_evidence(tmp_path, "")
+    (tmp_path / "application/frontend/src/api.ts").write_text(
+        "const hint = API_BASE_URL;\n"
+        'const defaultApi = new DefaultApi(new Configuration({'
+        ' basePath: "https://api.example.test" }));\n',
+        encoding="utf-8",
+    )
+
+    payload = admission.prepare_integration_admission_payload(
+        tmp_path,
+        {"task_id": "integration", "depends_on": []},
+        {
+            "readSourcePaths": paths,
+            "deployment": _single_generated_http_deployment(),
+        },
+        ["workload:application"],
+    )
+
+    assert "deliveryContract" not in payload
 
 
 def test_demo_skip_preserves_missing_integration_evidence_error(monkeypatch, tmp_path: Path) -> None:

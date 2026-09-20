@@ -70,6 +70,83 @@ def _recorded_commands(orchestrator: PrototypeOrchestrator) -> list[list[str]]:
     return commands
 
 
+def _write_deployment_bundle(path: Path, *, persistent: bool) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "easydep-deployment-diagram",
+                "workloadGraph": {
+                    "workloads": [
+                        {
+                            "id": "application",
+                            "artifact": {"kind": "generatedApplication"},
+                            "storage": (
+                                [
+                                    {
+                                        "id": "workload-data",
+                                        "persistence": "persistent",
+                                        "mountPath": "/var/lib/easydep/data",
+                                    }
+                                ]
+                                if persistent
+                                else []
+                            ),
+                            "configuration": (
+                                [
+                                    {
+                                        "name": "SPRING_DATASOURCE_URL",
+                                        "kind": "value",
+                                    }
+                                ]
+                                if persistent
+                                else []
+                            ),
+                        }
+                    ]
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_runtime_configuration_omits_datasource_for_stateless_deployment(
+    tmp_path: Path,
+) -> None:
+    orchestrator = _orchestrator(tmp_path)
+    bundle = tmp_path / "deployment-bundle.json"
+    _write_deployment_bundle(bundle, persistent=False)
+    orchestrator.spec.inputs["deploymentBundle"] = bundle
+
+    application = tmp_path / "application"
+    orchestrator._write_runtime_configuration(application)
+
+    config = (application / "src/main/resources/application.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "datasource:" not in config
+    assert "SPRING_DATASOURCE_" not in config
+
+
+def test_runtime_configuration_keeps_datasource_for_persistent_deployment(
+    tmp_path: Path,
+) -> None:
+    orchestrator = _orchestrator(tmp_path)
+    bundle = tmp_path / "deployment-bundle.json"
+    _write_deployment_bundle(bundle, persistent=True)
+    orchestrator.spec.inputs["deploymentBundle"] = bundle
+
+    application = tmp_path / "application"
+    orchestrator._write_runtime_configuration(application)
+
+    config = (application / "src/main/resources/application.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "SPRING_DATASOURCE_URL" in config
+    assert "SPRING_DATASOURCE_USERNAME" in config
+    assert "SPRING_DATASOURCE_PASSWORD" in config
+
+
 def test_gradle_compile_uses_posix_workdir_and_workspace_volume(tmp_path: Path) -> None:
     orchestrator = _orchestrator(tmp_path)
     commands = _recorded_commands(orchestrator)
