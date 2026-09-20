@@ -298,6 +298,7 @@ class ImplementationWorker:
         self._active_jobs: set[str] = set()
         self._warmup_lock = threading.Lock()
         self._warmup_started = False
+        self.client.reconcile_orphaned_containers(self._live_lease_job_ids())
         self._recover_pending_jobs()
 
     def create_job(self, app_id: str, design: dict[str, Any], base_package: str, allow_assumptions: bool) -> dict[str, Any]:
@@ -1426,6 +1427,23 @@ class ImplementationWorker:
                 self.executor.submit(
                     langsmith_metrics.bind_context(self._plan), record["job_id"]
                 )
+
+    def _live_lease_job_ids(self) -> set[str]:
+        """현재 살아 있는 서버 lease가 가리키는 job ID만 반환한다."""
+        live: set[str] = set()
+        for path in self.settings.work_root.glob("*/execution-lease.json"):
+            try:
+                lease = json.loads(path.read_text(encoding="utf-8"))
+                owner_pid = int(lease.get("ownerPid", -1))
+                token = lease.get("token")
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+                # An incomplete lease may be mid-write during restart. Keep its
+                # container until the normal claim path can resolve it safely.
+                live.add(path.parent.name)
+                continue
+            if isinstance(token, str) and token and _pid_is_alive(owner_pid):
+                live.add(path.parent.name)
+        return live
 
     def _read(self, job_id: str) -> dict[str, Any]:
         """작업 상태 JSON을 읽으며 파일이 없으면 :class:`JobNotFound`를 발생시킨다."""

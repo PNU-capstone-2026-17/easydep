@@ -24,7 +24,9 @@ from app.llm_connection import llm_subprocess_environment
 
 from ..config import ImplementationSettings
 from ..runtime.linux_runner_transport import (
+    cleanup_runner_containers,
     configured_runner_image,
+    reconcile_orphaned_runner_containers,
     runner_command,
     to_container_path,
 )
@@ -376,7 +378,13 @@ class PrototypeClient:
                 environment=environment,
                 llm_environment=llm_environment,
             )
-            return self._call_command(command, job_path.parent.name, environment)
+            try:
+                return self._call_command(command, job_path.parent.name, environment)
+            finally:
+                cleanup_runner_containers(
+                    job_id=job_path.parent.name,
+                    run_id=run_root.name,
+                )
         return self._call(args, job_path.parent.name)
 
     def warmup_runtime(self) -> dict[str, Any]:
@@ -393,16 +401,23 @@ class PrototypeClient:
         with self._process_lock:
             process = self._processes.get(job_id)
         if process is None or process.poll() is not None:
+            cleanup_runner_containers(job_id=job_id)
             return False
         self._terminate_process_tree(process)
+        cleanup_runner_containers(job_id=job_id)
         return True
 
     def cancel_all(self) -> None:
         """서버 종료 시 이 client가 시작한 모든 하위 프로세스를 종료한다."""
         with self._process_lock:
-            processes = list(self._processes.values())
-        for process in processes:
+            processes = list(self._processes.items())
+        for job_id, process in processes:
             self._terminate_process_tree(process)
+            cleanup_runner_containers(job_id=job_id)
+
+    def reconcile_orphaned_containers(self, valid_job_ids: set[str] | None = None) -> None:
+        """서버 시작 시 유효 lease가 없는 EasyDep runner만 정리한다."""
+        reconcile_orphaned_runner_containers(valid_job_ids or set())
 
     def terminate_orphaned_process(self, job_id: str) -> bool:
         """이전 서버가 남긴 해당 Job의 하위 프로세스 tree만 종료한다.
@@ -417,9 +432,11 @@ class PrototypeClient:
             pid = int(value["pid"])
         except (OSError, ValueError, KeyError, json.JSONDecodeError):
             marker.unlink(missing_ok=True)
+            cleanup_runner_containers(job_id=job_id)
             return False
         if not _process_is_alive(pid):
             marker.unlink(missing_ok=True)
+            cleanup_runner_containers(job_id=job_id)
             return False
         if os.name == "nt":
             subprocess.run(
@@ -435,6 +452,7 @@ class PrototypeClient:
             except OSError:
                 pass
         marker.unlink(missing_ok=True)
+        cleanup_runner_containers(job_id=job_id)
         return True
 
     def _process_marker_path(self, job_id: str) -> Path:

@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from app.implementation.runtime.linux_runner_transport import (
     RUNNER_TOFU_CACHE_PATH,
     RUNNER_TOFU_CACHE_VOLUME,
     configured_runner_image,
+    reconcile_orphaned_runner_containers,
     runner_command,
     to_container_path,
     to_host_path,
@@ -153,6 +155,44 @@ def test_runner_command_labels_the_experiment_session(tmp_path: Path):
 
     assert "easydep.owner=member-runner" in command
     assert "easydep.experiment-session=session-123" in command
+
+
+def test_runner_command_labels_run_workflow_root(tmp_path: Path):
+    _, container_job = _runner_job(tmp_path)
+    run_root = "/easydep-workspace/.easydep/implementation-runs/job-1/generated/runs/run_abc"
+    command = runner_command(
+        image="runner:test",
+        repository_root=tmp_path,
+        operation="cli",
+        arguments=["run-workflow", run_root, container_job, "--retry-failed"],
+        environment={},
+        llm_environment={},
+    )
+
+    assert "easydep.job-id=job-1" in command
+    assert "easydep.run-id=run_abc" in command
+
+
+def test_reconciliation_preserves_owner_only_legacy_container(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_docker(arguments: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(arguments)
+        if arguments[:2] == ["ps", "-aq"]:
+            return subprocess.CompletedProcess(arguments, 0, "legacy-container\n", "")
+        if arguments[0] == "inspect":
+            return subprocess.CompletedProcess(arguments, 0, "\n", "")
+        raise AssertionError(f"legacy owner-only container was cleaned: {arguments}")
+
+    monkeypatch.setattr(
+        "app.implementation.runtime.linux_runner_transport._docker_run",
+        fake_docker,
+    )
+    reconcile_orphaned_runner_containers(set())
+
+    assert len(calls) == 2
 
 
 def test_runner_command_rejects_job_references_outside_job_directory(tmp_path: Path):

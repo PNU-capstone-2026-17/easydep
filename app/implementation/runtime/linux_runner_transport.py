@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import subprocess
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 
@@ -49,6 +51,82 @@ RUNTIME_ENVIRONMENT = (
 # under this canonical name.  Keep the list next to the Docker transport so
 # both the runner entrypoint and autonomous tool adapter use the same boundary.
 LLM_CREDENTIAL_ENVIRONMENT = ("API_KEY",)
+RUNNER_OWNER_LABEL = "easydep.owner=member-runner"
+RUNNER_JOB_LABEL = "easydep.job-id"
+RUNNER_RUN_LABEL = "easydep.run-id"
+_DOCKER_LABEL_VALUE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+
+
+def _docker_label_value(value: object) -> str | None:
+    candidate = str(value or "")
+    return candidate if _DOCKER_LABEL_VALUE.fullmatch(candidate) else None
+
+
+def _docker_run(arguments: list[str]) -> subprocess.CompletedProcess[str] | None:
+    try:
+        return subprocess.run(
+            ["docker", *arguments],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _owned_container_ids(*, job_id: str | None = None, run_id: str | None = None) -> list[str]:
+    filters = ["--filter", f"label={RUNNER_OWNER_LABEL}"]
+    for key, value in ((RUNNER_JOB_LABEL, job_id), (RUNNER_RUN_LABEL, run_id)):
+        safe_value = _docker_label_value(value) if value is not None else None
+        if value is not None and safe_value is None:
+            return []
+        if safe_value:
+            filters.extend(["--filter", f"label={key}={safe_value}"])
+    result = _docker_run(["ps", "-aq", *filters])
+    if result is None or result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def cleanup_runner_containers(
+    *,
+    job_id: str | None = None,
+    run_id: str | None = None,
+    container_ids: Iterable[str] | None = None,
+) -> None:
+    """Stop and remove only owner-labelled member runner containers."""
+    if container_ids is None and job_id is None and run_id is None:
+        return
+    ids = list(container_ids) if container_ids is not None else _owned_container_ids(
+        job_id=job_id, run_id=run_id
+    )
+    for container_id in ids:
+        if not _docker_label_value(container_id):
+            continue
+        _docker_run(["stop", "-t", "10", container_id])
+        _docker_run(["rm", container_id])
+
+
+def reconcile_orphaned_runner_containers(valid_job_ids: set[str]) -> None:
+    """Remove owned containers not connected to a live leased job."""
+    for container_id in _owned_container_ids():
+        result = _docker_run(
+            [
+                "inspect",
+                "--format",
+                '{{index .Config.Labels "easydep.job-id"}}',
+                container_id,
+            ]
+        )
+        if result is None or result.returncode != 0:
+            continue
+        job_id = result.stdout.strip()
+        if not job_id or job_id in valid_job_ids:
+            continue
+        cleanup_runner_containers(container_ids=[container_id])
 
 
 def _job_root_for_arguments(
@@ -157,7 +235,7 @@ def runner_command(
         "--security-opt",
         "no-new-privileges:true",
         "--label",
-        "easydep.owner=member-runner",
+        RUNNER_OWNER_LABEL,
         "-v",
         f"{application_source}:{CONTAINER_WORKSPACE.as_posix()}/app:ro",
         # 컨테이너가 끝나도 Gradle 배포본과 Maven dependency를 남긴다. 구현 Job마다
@@ -199,6 +277,25 @@ def runner_command(
         command.extend(
             ["-e", f"{OWNER_CONTROL_ROOT_ENV}={container_job_root.as_posix()}"]
         )
+        job_label = _docker_label_value(job_root.name)
+        if job_label:
+            command[command.index("-v") : command.index("-v")] = [
+                "--label",
+                f"{RUNNER_JOB_LABEL}={job_label}",
+            ]
+    run_argument = (
+        runner_arguments[1]
+        if len(runner_arguments) > 1 and runner_arguments[0] == "run-workflow"
+        else None
+    )
+    if run_argument:
+        run_candidate = Path(to_host_path(run_argument, root))
+        run_label = _docker_label_value(run_candidate.name)
+        if run_label and run_candidate.name.startswith("run_"):
+            command[command.index("-v") : command.index("-v")] = [
+                "--label",
+                f"{RUNNER_RUN_LABEL}={run_label}",
+            ]
     experiment_session = environment.get("EASYDEP_EXPERIMENT_SESSION", "").strip()
     if experiment_session:
         volume_index = command.index("-v")
