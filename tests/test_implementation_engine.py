@@ -20,13 +20,10 @@ from app.implementation.agents.runtime import (
     SuccessfulTaskCheckGuard,
     _conversation_needs_finish_recovery,
     _conversation_terminal_failure,
-    _is_harness_task,
-    _is_owner_task,
     _owner_continuation_required,
     _owner_message_required,
     _owner_workspace_guidance,
     _task_execution_scope,
-    _with_preserved_implementation_markers,
     create_openhands_conversation,
 )
 from app.implementation.agents.task_check import (
@@ -34,7 +31,10 @@ from app.implementation.agents.task_check import (
     consume_successful_task_check,
     run_task_check,
 )
-from app.implementation.agents.upstream_gap_tool import UPSTREAM_GAP_TOOL_NAME, UpstreamGap
+from app.implementation.agents.upstream_gap_tool import (
+    UPSTREAM_GAP_TOOL_NAME,
+    UpstreamGap,
+)
 from app.implementation.agents.verification.build import (
     WorkspaceVerificationError,
     read_gradle_test_failures,
@@ -1031,7 +1031,7 @@ def test_bounded_owner_upstream_gap_after_recovery_preserves_candidate(
     )
     task_path.write_text(json.dumps(task), encoding="utf-8")
     context_path = run / task["context_file"]
-    context_path.write_text(json.dumps({"behaviorCapsule": {}}), encoding="utf-8")
+    context_path.write_text(json.dumps({"readSourcePaths": []}), encoding="utf-8")
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
     monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     monkeypatch.setattr(
@@ -1110,88 +1110,6 @@ def test_bounded_owner_upstream_gap_after_recovery_preserves_candidate(
     assert result["upstreamGap"]["sourceRef"] == "UC-12"
     assert result["candidateEvidence"]["changedFiles"] == [source_path]
     assert source.read_text(encoding="utf-8") == "class OrderService {}"
-
-
-def test_explicit_unresolved_projection_is_admitted_before_openhands(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run, task_id, _source_path, _source = _write_minimal_agent_task(tmp_path)
-    task_path = run / "reports/implementation-tasks/order.task.json"
-    task = json.loads(task_path.read_text(encoding="utf-8"))
-    task.update(
-        {
-            "task_type": "backend-implementation",
-            "owner": "backend",
-            "source_refs": [
-                "operation:OrderService::placeOrder(orderId:String)",
-                "use_case:UC-12",
-            ],
-        }
-    )
-    task_path.write_text(json.dumps(task), encoding="utf-8")
-    context_path = run / task["context_file"]
-    context_path.write_text(
-        json.dumps(
-            {
-                "useCaseIds": ["UC-12"],
-                "behaviorCapsule": {
-                    "directMethods": [
-                        {
-                            "method": {
-                                "operation_id": "OrderService::placeOrder(orderId:String)"
-                            },
-                            "directCalls": [
-                                {
-                                    "call_id": "UC-12::call:2",
-                                    "arguments": [
-                                        {
-                                            "parameter": "orderId",
-                                            "expression": None,
-                                            "reason": "unresolved_call_parameter",
-                                        }
-                                    ],
-                                }
-                            ],
-                        }
-                    ]
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
-
-    expected_gap = UpstreamGap(
-        summary="Direct-call argument 'orderId' is unresolved (unresolved_call_parameter).",
-        source_ref="operation:OrderService::placeOrder(orderId:String)",
-    )
-    with (
-        patch(
-            "app.implementation.agents.runtime.preflight_semantic_behavior",
-            return_value=expected_gap,
-        ) as semantic_admission,
-        patch(
-            "app.implementation.agents.runtime.openhands_connection",
-            side_effect=AssertionError("admission gate must run before OpenHands"),
-        ),
-    ):
-        result = execute_openhands_task(run, task_id)
-
-    admission_context = semantic_admission.call_args.args[2]
-    assert admission_context["behaviorCapsule"]["preflightFindings"] == [
-        expected_gap.as_result()
-    ]
-    assert result["status"] == "NEEDS_INPUT"
-    assert result["terminationReason"] == "UPSTREAM_GAP"
-    assert result["upstreamGap"] == {
-        "summary": "Direct-call argument 'orderId' is unresolved (unresolved_call_parameter).",
-        "sourceRef": "operation:OrderService::placeOrder(orderId:String)",
-    }
-    assert result["eventCount"] == 0
-    assert result["toolCounts"] == {}
-    assert result["candidateEvidence"] == {"changedFiles": []}
 
 
 def test_verify_or_repair_passes_before_openhands_connection(
@@ -1282,11 +1200,6 @@ def test_verify_or_repair_npm_infrastructure_failure_skips_openhands(
     ('task_type', 'owner', 'preflight_name'),
     [
         (
-            'backend-implementation',
-            'backend',
-            'app.implementation.agents.runtime.preflight_behavior_task',
-        ),
-        (
             'integration-implementation',
             'implementation',
             'app.implementation.agents.runtime.preflight_semantic_integration',
@@ -1314,9 +1227,7 @@ def test_semantic_admission_is_rejected_before_openhands(
     (run / "reports/run-manifest.json").write_text(
         json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
     )
-    context = {"behaviorCapsule": {"useCases": [{"use_case_id": "UC-12"}]}}
-    if task_type == "integration-implementation":
-        context["readSourcePaths"] = []
+    context = {"readSourcePaths": []}
     (run / task["context_file"]).write_text(json.dumps(context), encoding="utf-8")
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
     monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
@@ -1347,11 +1258,6 @@ def test_semantic_admission_is_rejected_before_openhands(
     ("task_type", "owner", "preflight_name"),
     [
         (
-            "backend-implementation",
-            "backend",
-            "app.implementation.agents.runtime.preflight_behavior_task",
-        ),
-        (
             "integration-implementation",
             "implementation",
             "app.implementation.agents.runtime.preflight_semantic_integration",
@@ -1379,9 +1285,7 @@ def test_demo_skip_avoids_semantic_admission_and_upstream_gap_tool(
     (run / "reports/run-manifest.json").write_text(
         json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
     )
-    context = {"behaviorCapsule": {"useCases": [{"use_case_id": "UC-12"}]}}
-    if task_type == "integration-implementation":
-        context["readSourcePaths"] = []
+    context = {"readSourcePaths": []}
     (run / task["context_file"]).write_text(json.dumps(context), encoding="utf-8")
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
     monkeypatch.setenv("EASYDEP_DEMO_SKIP_VALIDATION", "true")
@@ -1713,46 +1617,6 @@ def test_successful_retry_promotes_changes_preserved_from_failed_sandbox(
     assert {source_path, helper_path} <= set(result["changedFiles"])
 
 
-def test_backend_behavior_rejects_removed_unassigned_marker_in_shared_source(
-    tmp_path: Path,
-) -> None:
-    """A behavior task must keep another slice's marker in a shared Java file."""
-    source_path = "application/src/main/java/example/OrderService.java"
-    source = tmp_path / source_path
-    source.parent.mkdir(parents=True)
-    assigned = "EASYDEP-IMPLEMENT:assigned"
-    unassigned = "EASYDEP-IMPLEMENT:unassigned"
-    source.write_text(
-        f"class OrderService {{ // {assigned}\n    // {unassigned}\n}}",
-        encoding="utf-8",
-    )
-    profile = _with_preserved_implementation_markers(
-        tmp_path,
-        [source_path],
-        {
-            "requiredAbsentMarkers": [
-                {"path": source_path, "markers": [assigned]}
-            ]
-        },
-    )
-    source.write_text(
-        "class OrderService { void assigned() {} }",
-        encoding="utf-8",
-    )
-
-    with pytest.raises(WorkspaceVerificationError) as raised:
-        verify_agent_workspace(
-            tmp_path,
-            "backend-implementation",
-            [source_path],
-            profile,
-        )
-
-    assert raised.value.evidence["missingPreservedMarkers"] == [
-        {"path": source_path, "marker": unassigned}
-    ]
-
-
 def test_verified_candidate_deletion_is_promoted(tmp_path: Path) -> None:
     run, task_id, source_path, _source = _write_minimal_agent_task(tmp_path)
     task_path = run / "reports/implementation-tasks/order.task.json"
@@ -2058,11 +1922,6 @@ def test_successful_task_check_guard_stops_post_check_owner_exploration(
 
     assert guard.triggered is True
     assert conversation.state.execution_status is ConversationExecutionStatus.STUCK
-
-
-def test_legacy_backend_operation_is_harnessed_but_not_owner_completion_guard() -> None:
-    assert _is_harness_task("backend-operation") is True
-    assert _is_owner_task("backend-operation") is False
 
 
 def test_successful_task_check_guard_ignores_failed_check_event(
@@ -3821,7 +3680,6 @@ def test_repair_uses_a_small_prompt_and_restores_the_accepted_source(
     context_path.write_text(
         json.dumps(
             {
-                "behaviorCapsule": {"useCases": [{"use_case_id": "UC1"}]},
                 "readSourcePaths": [source_path],
             }
         ),

@@ -30,7 +30,6 @@ from ..runtime.linux_runner_transport import (
 from ..workflows.repair import active_repair_for_task
 from .admission import (
     integration_evidence_paths,
-    preflight_semantic_behavior,
     preflight_semantic_integration,
     prepare_integration_admission_payload,
 )
@@ -172,8 +171,7 @@ def effective_task_prompt_sha256(
 # Operation-marker conversations use the same verified tool harness but do not
 # persist the old conversation. A retry starts a fresh, short conversation over
 # the preserved candidate source instead of nudging a read-only loop forever.
-MARKER_TURN_ITERATIONS = 16
-HARNESS_TASK_TYPES = OWNER_TASK_TYPES | {"backend-operation"}
+HARNESS_TASK_TYPES = OWNER_TASK_TYPES
 OWNER_CONTINUATION_MESSAGE = (
     "Continue from the current candidate; do not restart repository discovery. Run the "
     "canonical verification command now, inspect only its concrete compiler or test failures, "
@@ -523,7 +521,7 @@ def _owner_workspace_guidance(
                 "- No terminal is available. Do not invent shell or repository-browser tools.",
             ]
         )
-    if task_type in {"backend-implementation", "backend-operation"}:
+    if task_type == "backend-implementation":
         common.extend(
             [
                 "- Backend project root: `application`.",
@@ -655,135 +653,6 @@ def _candidate_application_changes(sandbox: Path, run_root: Path) -> set[str]:
             snapshot_files(sandbox / "application"),
         )
     }
-
-
-def _explicit_projection_gap(
-    context: dict[str, object], source_refs: list[str]
-) -> UpstreamGap | None:
-    """Find one explicitly unresolved direct-call argument in bounded evidence."""
-
-    capsule = context.get("behaviorCapsule")
-    if not isinstance(capsule, dict) or not isinstance(
-        direct_methods := capsule.get("directMethods"), list
-    ):
-        return None
-    allowed_refs = set(source_refs)
-    for method_entry in direct_methods:
-        if not isinstance(method_entry, dict):
-            continue
-        method = method_entry.get("method")
-        operation_ref = (
-            f"operation:{method.get('operation_id')}"
-            if isinstance(method, dict) and method.get("operation_id")
-            else None
-        )
-        direct_calls = method_entry.get("directCalls")
-        if not isinstance(direct_calls, list):
-            continue
-        for direct_call in direct_calls:
-            if not isinstance(direct_call, dict):
-                continue
-            arguments = direct_call.get("arguments")
-            if not isinstance(arguments, list):
-                continue
-            for argument in arguments:
-                if not isinstance(argument, dict):
-                    continue
-                expression = argument.get("expression")
-                reason = argument.get("reason")
-                if expression is not None or not isinstance(reason, str) or not reason.strip():
-                    continue
-                call_id = direct_call.get("call_id")
-                use_case_ref = (
-                    f"use_case:{call_id.split('::', 1)[0]}"
-                    if isinstance(call_id, str) and "::" in call_id
-                    else None
-                )
-                source_ref = next(
-                    (
-                        ref
-                        for ref in (operation_ref, use_case_ref)
-                        if ref is not None and ref in allowed_refs
-                    ),
-                    None,
-                )
-                if source_ref is None:
-                    continue
-                parameter = argument.get("parameter")
-                label = str(parameter).strip() if parameter else "argument"
-                return UpstreamGap(
-                    summary=(
-                        f"Direct-call argument '{label}' is unresolved "
-                        f"({reason.strip()})."
-                    )[:500],
-                    source_ref=source_ref,
-                )
-    return None
-
-
-def preflight_behavior_task(
-    run_root: Path,
-    task: dict[str, object],
-    context: dict[str, object],
-    source_refs: list[str],
-) -> UpstreamGap | None:
-    """Run deterministic and cached semantic readiness checks once."""
-
-    if demo_skip_validation_enabled():
-        return None
-    projection_gap = _explicit_projection_gap(context, source_refs)
-    if projection_gap is None:
-        return preflight_semantic_behavior(run_root, task, context, source_refs)
-    capsule = context.get("behaviorCapsule")
-    if not isinstance(capsule, dict):
-        return projection_gap
-    admission_context = {
-        **context,
-        "behaviorCapsule": {
-            **capsule,
-            "preflightFindings": [projection_gap.as_result()],
-        },
-    }
-    return preflight_semantic_behavior(
-        run_root, task, admission_context, source_refs
-    )
-
-
-def _with_preserved_implementation_markers(
-    run_root: Path,
-    editable_paths: list[str],
-    verification_profile: dict[str, object] | None,
-) -> dict[str, object]:
-    """Protect shared-file markers that belong to later behavior slices."""
-
-    profile = dict(verification_profile or {})
-    assigned = {
-        marker
-        for contract in profile.get("requiredAbsentMarkers", [])
-        if isinstance(contract, dict)
-        for marker in contract.get("markers", [])
-        if isinstance(marker, str) and marker
-    }
-    preserved: list[dict[str, object]] = []
-    for relative in editable_paths:
-        normalized = relative.replace("\\", "/")
-        source = run_root / normalized
-        if "/src/main/java/" not in f"/{normalized}" or not source.is_file():
-            continue
-        markers = sorted(
-            set(
-                re.findall(
-                    r"EASYDEP-IMPLEMENT(?:: complete |:)[A-Za-z0-9_.:-]+",
-                    source.read_text(encoding="utf-8"),
-                )
-            )
-            - assigned
-        )
-        if markers:
-            preserved.append({"path": normalized, "markers": markers})
-    if preserved:
-        profile["requiredPreservedMarkers"] = preserved
-    return profile
 
 
 def _persist_admission_gap(
@@ -1026,33 +895,26 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         else "restricted"
     )
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
-    behavior_capsule = isinstance(context.get("behaviorCapsule"), dict)
     initial_verification: dict[str, object] | None = None
     completion_path = 'agent'
     precheck_sandbox: Path | None = None
     bounded_evidence = task_type in {
         "backend-implementation",
         "integration-implementation",
-    } or behavior_capsule
-    if owner_task and (task_type == "integration-implementation" or behavior_capsule):
+    }
+    if owner_task and task_type == "integration-implementation":
         source_refs = [
             value
             for value in task.get("source_refs", task.get("sourceRefs", []))
             if isinstance(value, str) and value
         ]
-        integration_payload = (
-            prepare_integration_admission_payload(run_root, task, context, source_refs)
-            if task_type == "integration-implementation"
-            else None
+        integration_payload = prepare_integration_admission_payload(
+            run_root, task, context, source_refs
         )
         if not demo_skip_validation_enabled():
             admission_started = time.monotonic()
-            admission_gap = (
-                preflight_semantic_integration(
-                    run_root, task, context, source_refs, payload=integration_payload
-                )
-                if task_type == "integration-implementation"
-                else preflight_behavior_task(run_root, task, context, source_refs)
+            admission_gap = preflight_semantic_integration(
+                run_root, task, context, source_refs, payload=integration_payload
             )
             if admission_gap is not None:
                 return _persist_admission_gap(
@@ -1172,15 +1034,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         if isinstance(verification_profile, dict) and verification_profile
         else None
     )
-    # A single backend owner has no later slice whose markers need protecting.
-    # Keep the legacy operation path defensive for imported/old runs, but do
-    # not make the current owner loop reconstruct cross-slice state.
-    if task_type == "backend-operation" and bounded_evidence:
-        verification_profile = _with_preserved_implementation_markers(
-            run_root,
-            editable_paths,
-            verification_profile,
-        )
     evidence_paths = (
         integration_evidence_paths(run_root, task, context)
         if task_type == "integration-implementation"
@@ -1340,11 +1193,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 if owner_task and bounded_evidence
                 else OWNER_TURN_ITERATIONS
                 if owner_task
-                else (
-                    MARKER_TURN_ITERATIONS
-                    if task_type == "backend-operation"
-                    else MAX_AGENT_TURN_ITERATIONS
-                )
+                else MAX_AGENT_TURN_ITERATIONS
             ),
             reasoning_effort=reasoning_effort,
             native_owner_tools=harness_task,

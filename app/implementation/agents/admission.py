@@ -19,7 +19,6 @@ from app.llm_connection import build_admission_llm_connection
 from .upstream_gap_tool import UpstreamGap, UpstreamGapOption
 
 ADMISSION_CHECKPOINT_SCHEMA = "implementation-admission/v1alpha1"
-ADMISSION_VALIDATOR_VERSION = "behavior-admission/v3"
 INTEGRATION_ADMISSION_VALIDATOR_VERSION = "integration-admission/v2"
 
 _GENERATED_API_BASE_EXPORT = re.compile(
@@ -56,81 +55,6 @@ class BehaviorAdmission(BaseModel):
     source_ref: str
     options: list[AdmissionOption] = Field(default_factory=list, max_length=3)
 
-
-_SYSTEM_PROMPT = """You are the semantic preflight for a bounded implementation subtask.
-Judge whether the behavior contract is implementable, not source-code quality. Return only
-the requested structured decision.
-
-Choose NEEDS_INPUT only when implementation still requires a semantic choice:
-1. A required policy, public outcome, authorization rule, or caller-visible mapping is
-   unspecified, so implementation would invent behavior; or
-2. The capsule does not decide the semantic source or trust boundary of a needed value -- for
-   example, whether it is caller-controlled input, trusted platform context, persisted state,
-   a prior-call result, or an internal operation result; or
-3. The persistence behavior or caller-visible API contract itself still needs a choice.
-
-A condition label is not a decision source by itself. A step that says to validate,
-check, or verify a named rule only names the required rule; it does not declare what
-data or operation decides it. Likewise, an outcome label is not a public mapping
-without a return value or exception selector. Two reasonable implementations that
-would produce different user-visible behavior are evidence of such a missing link.
-A status or outcome list declares possible outputs, not the operands or decision source
-that selects one. Never infer a semantic source, trust boundary, or policy from a framework,
-default, naming convention, or "standard" context. A prose declaration counts only when it
-explicitly states the source and trust semantics; a condition or precondition label alone
-does not. An upstream contract statement that a named value or state is authenticated,
-trusted, platform-provided, or persisted is an explicit semantic source/trust declaration;
-it does not also need a method parameter or context accessor.
-For calibration, an authenticated current principal is trusted context, while a principal ID
-supplied by the caller is caller-controlled input. A bare actor or condition establishes
-neither source.
-
-Choose IMPLEMENT when the required policy and outcomes are explicit and the capsule identifies
-the semantic source and trust boundary, even if the exact framework/runtime transport is not
-specified. Selecting a parameter, context accessor, dependency-injection binding, or repository
-plumbing is implementation work when that choice does not alter caller control, public behavior,
-authorization, persistence semantics, or the API contract. Uncertainty about source files,
-constructor wiring, or repository implementation is not evidence of a behavior gap. Do not
-infer a business rule from a type's existence or defer a missing decision criterion to source
-discovery.
-The capsule's designEvidence is natural-language evidence, not a completeness proof. Choose
-NEEDS_INPUT when a required domain state, relationship, or semantic source is absent from the
-linked design and implementation would have to choose an upstream business rule, identifier
-mapping, external supplier, or immutable declaration. Do not require an ontology, exhaustive
-state list, or proof that every runtime detail is declared; private accessors, DI, repository
-plumbing, and role-token mapping remain implementation choices when they preserve the declared
-meaning. A trusted contextual value declares where that value comes from; it does not by itself
-declare how domain records are assigned, owned, visible, eligible, or otherwise related to it.
-When the required result is relative to a contextual value, choose NEEDS_INPUT unless the linked
-contracts and design evidence declare a relation, match key, or semantic source from which that
-selection can be implemented. An operation name alone is not such a declaration when the linked
-data and dependencies cannot evaluate the relation. If designEvidence is absent entirely, treat
-the capsule as a legacy context and do not infer a gap merely from that absence. Any
-preflightFindings are deterministic evidence to resolve in this same decision, not a separate
-decision. When NEEDS_INPUT is appropriate, provide two or three mutually exclusive options when
-the missing choice can be presented naturally. Each option needs a stable id, short label,
-description, and requested_effect describing the upstream change it would cause.
-Report at most one root ambiguity concisely, using exactly one allowed source reference.
-Every option must be resolvable by revising that same source reference. Options for an API,
-operation, or class reference must preserve the already-declared use-case behavior and policy;
-do not offer a choice that instead changes a requirement or another upstream target.
-Each option must also be independently executable within that source element and the elements
-already declared in designEvidence. Do not make an option depend on an undeclared class,
-relationship endpoint, API field, or policy. If an alternative needs another authority target,
-do not present it as a local option for the current source reference.
-The source reference identifies the first contract that must change:
-- Use a use_case_spec reference when the required behavior, policy, value-source meaning,
-  trust boundary, or domain matching rule itself is not specified.
-- When that meaning is already stated but the API, class operation, sequence call, or state
-  contract lacks only a carrier for it, use the closest api or operation reference instead.
-  Do not route mere runtime wiring to the use-case specification.
-- When linked BCE design evidence lacks a required state or relationship, use the closest
-  exact class reference available as the source reference.
-- Use an api reference only when the unresolved choice belongs to the caller-visible HTTP
-  request or response. Use an operation reference when trusted server context or an internal
-  call is required but its semantic source or trust boundary is not declared.
-For IMPLEMENT, source_ref must be empty.
-"""
 
 _INTEGRATION_SYSTEM_PROMPT = """You are the semantic preflight for one bounded integration implementation task.
 The supplied evidence boundary is complete. Trace required runtime meanings to backend
@@ -385,54 +309,6 @@ def _admit_payload(
         summary=summary,
         source_ref=admission.source_ref,
         options=tuple(options),
-    )
-
-
-def admit_behavior_capsule(
-    context: dict[str, object],
-    source_refs: list[str],
-    *,
-    proposal_call: Callable[..., dict[str, Any]] = parse_structured,
-) -> UpstreamGap | None:
-    """Admit a behavior capsule or return its single bounded upstream gap."""
-
-    payload = {
-        "behaviorCapsule": context.get("behaviorCapsule"),
-        "sourceRefs": _semantic_source_refs(source_refs),
-    }
-    return _admit_payload(
-        payload,
-        source_refs,
-        system_prompt=_SYSTEM_PROMPT,
-        operation="implementation-admission",
-        proposal_call=proposal_call,
-    )
-
-
-def preflight_semantic_behavior(
-    run_root: Path,
-    task: dict[str, object],
-    context: dict[str, object],
-    source_refs: list[str],
-) -> UpstreamGap | None:
-    """Return a cached or new behavior gap before starting OpenHands."""
-
-    if demo_skip_validation_enabled():
-        return None
-    if not any(ref.startswith("use_case_spec:") for ref in source_refs):
-        return None
-    payload = {
-        "behaviorCapsule": context.get("behaviorCapsule"),
-        "sourceRefs": _semantic_source_refs(source_refs),
-    }
-    return _preflight_admission(
-        run_root,
-        task,
-        source_refs,
-        payload=payload,
-        system_prompt=_SYSTEM_PROMPT,
-        validator_version=ADMISSION_VALIDATOR_VERSION,
-        admission_call=lambda: admit_behavior_capsule(context, source_refs),
     )
 
 

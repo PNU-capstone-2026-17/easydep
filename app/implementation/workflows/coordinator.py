@@ -50,7 +50,6 @@ PHASES = (
         (),
         {
             "backend-implementation",
-            "backend-operation",
             "control",
             "testing-static",
             "testing-package",
@@ -685,7 +684,7 @@ def _regression_owner_task_id(
         task
         for task in manifest.get("implementation_tasks", [])
         if isinstance(task, dict)
-        and task.get("task_type") in {"backend-implementation", "backend-operation"}
+        and task.get("task_type") == "backend-implementation"
         and task.get("task_id")
     ]
     if len(owners) == 1:

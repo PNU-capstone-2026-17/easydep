@@ -349,3 +349,13 @@ run 또는 E2E는 만들지 않고 기존 command의 retry로 backend, frontend,
 
 이는 기존 checkpoint의 전체 owner 완료와 재개·정리 경계를 확인한 결과다. 보존 후보와 기존
 checkpoint를 사용했으므로, 7절의 fresh 전체 기준선 또는 fresh implementation 성공 증거는 아니다.
+
+### 9.4. 2026-09-20 legacy 경로 정리
+
+새 planner가 생성하지 않는 `backend-operation` 및 `behaviorCapsule`의 호환 실행, admission, repair
+분기와 전용 테스트를 제거했다. current `backend-implementation`, integration admission, generic Testing
+SUT repair, owner checkpoint, `requiredAbsentMarkers` 검증은 유지했다. current-path focused test 10개와
+backend owner의 upstream-gap candidate 보존 테스트가 통과했고, 순 삭제량은 약 700 LOC 이상이다.
+
+과거에 영속된 legacy task는 재개하지 않으며 fresh run이 필요하다. 이 정리에서는 새 E2E를 실행하지
+않았다.

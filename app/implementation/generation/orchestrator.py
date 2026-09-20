@@ -1190,7 +1190,7 @@ def plan_backend_owner_task(spec: JobSpec, run_root: Path) -> None:
         if any(
             isinstance(task, dict)
             and task.get("task_type")
-            in {"backend-implementation", "backend-operation"}
+            == "backend-implementation"
             for task in manifest.get("implementation_tasks", [])
         ):
             # Completed markers disappear from source. Replanning from that
@@ -1204,7 +1204,6 @@ def plan_backend_owner_task(spec: JobSpec, run_root: Path) -> None:
             "use-case",
             "wiring",
             "backend-implementation",
-            "backend-operation",
         },
     )
 
@@ -1218,7 +1217,7 @@ def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> None:
         task
         for task in manifest.get("implementation_tasks", [])
         if isinstance(task, dict)
-        and task.get("task_type") in {"backend-implementation", "backend-operation"}
+        and task.get("task_type") == "backend-implementation"
     ]
     if not backend_tasks:
         raise ValueError("Frontend planning requires a persisted backend task plan.")

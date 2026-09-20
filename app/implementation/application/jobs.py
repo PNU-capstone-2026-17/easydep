@@ -753,8 +753,7 @@ class ImplementationWorker:
             owner_task_id,
         )
         conversation_checkpoint = persistence_dir / conversation_id.hex / "base_state.json"
-        legacy_operation = owner_task.get("task_type") == "backend-operation"
-        if not legacy_operation and not conversation_checkpoint.is_file():
+        if not conversation_checkpoint.is_file():
             raise InvalidJobState(
                 f"Implementation owner {owner} has no reusable OpenHands conversation "
                 "checkpoint; start a new implementation run instead."

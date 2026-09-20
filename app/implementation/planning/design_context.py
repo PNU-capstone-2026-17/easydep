@@ -725,7 +725,7 @@ def generate_vertical_integration_task(
     backend_tasks = [
         task
         for task in prior_tasks
-        if task.get("task_type") in {"backend-implementation", "backend-operation"}
+        if task.get("task_type") == "backend-implementation"
     ]
     frontend_tasks = [
         task for task in prior_tasks if task.get("task_type") == "frontend-implementation"

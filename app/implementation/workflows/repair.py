@@ -277,20 +277,8 @@ def apply_repair_directives(run_root: Path) -> None:
             immutable = "\n".join(
                 f"- `{path}`" for path in task.get("immutable_paths", [])
             ) or "- None"
-            context_file = task.get("context_file")
-            context_path = (
-                run_root / context_file if isinstance(context_file, str) else None
-            )
-            task_context = (
-                _read_json(context_path)
-                if context_path is not None and context_path.is_file()
-                else {}
-            )
-            bounded_behavior = isinstance(task_context.get("behaviorCapsule"), dict)
             restricted_tools = (
-                bounded_behavior
-                or task.get("task_type") == "backend-operation"
-                or str(
+                str(
                     task.get("owner_tool_mode")
                     or settings.implementation_owner_tool_mode
                 )
@@ -314,23 +302,12 @@ def apply_repair_directives(run_root: Path) -> None:
                     "After editing, rerun the relevant build or test in the terminal. Inspect "
                     "its concrete failure and continue repairing in this conversation. "
                 )
-            if bounded_behavior:
-                hint_scope = (
-                    "These paths are trace evidence, not extra read permission. Use a path "
-                    "only when the task context already lists it.\n\n"
-                )
-            else:
-                hint_scope = (
-                    "These paths come from failure evidence and traceability. They are "
-                    "investigation hints, not an exhaustive list of relevant source.\n\n"
-                )
+            hint_scope = (
+                "These paths come from failure evidence and traceability. They are "
+                "investigation hints, not an exhaustive list of relevant source.\n\n"
+            )
             completion_instruction = (
                 verification_instruction
-                + (
-                    "If it names unlisted source, report missing implementation context. "
-                    if bounded_behavior
-                    else ""
-                )
                 + "When it passes, call FinishTool immediately; do not end with a plain-text "
                 "summary.\n"
             )
