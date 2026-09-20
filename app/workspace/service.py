@@ -1174,7 +1174,11 @@ class WorkspaceService:
 
         if design_result.get("status") not in {"completed", "need_feedback"}:
             return
-        latest = repository.latest_command(app_id)
+        latest = repository.latest_command(
+            app_id,
+            stage="design",
+            status="AWAITING_INPUT",
+        )
         if (
             latest is None
             or latest.get("stage") != "design"
@@ -1214,9 +1218,15 @@ class WorkspaceService:
         result = command.get("result")
         shaped_result = dict(result) if isinstance(result, dict) else {}
         conversation = shaped_result.get("conversation")
+        completed_reply = (
+            command.get("status") == "COMPLETED"
+            and isinstance(conversation, dict)
+            and conversation.get("reply") is not None
+            and bool(payload.get("action_id"))
+        )
         if (
             isinstance(conversation, dict)
-            and conversation.get("clarification")
+            and (conversation.get("clarification") or completed_reply)
         ):
             # Rebuild from the referenced workflow command even when an older
             # clarification saved a partial action list. A prior server version
@@ -1491,6 +1501,7 @@ class WorkspaceService:
                     [target.ref for target in targets],
                     tools=ProjectTools(app_id),
                     context=build_conversation_context(app_id),
+                    sealed_targets=True,
                 )
                 if isinstance(interpretation, Clarification):
                     return self._feedback_question_clarification(
@@ -1538,7 +1549,7 @@ class WorkspaceService:
                 change_type=decision.normalized_meaning.change_type,
             )
             tools = ProjectTools(app_id)
-            selected = tools.validate_targets(
+            selected = tools.validate_revision_selections(
                 [target.model_dump(mode="json") for target in decision.authoritative_targets]
             )
             if not selected.get("valid"):

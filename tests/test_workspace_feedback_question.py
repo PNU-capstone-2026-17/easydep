@@ -109,6 +109,14 @@ def _plan() -> RevisionPlan:
 class _Tools:
     valid = True
 
+    def validate_revision_selections(self, targets):
+        return {
+            'valid': self.valid,
+            'valid_refs': [
+                item['ref'] if isinstance(item, dict) else item for item in targets
+            ],
+        }
+
     def __init__(self, app_id: str) -> None:
         assert app_id == "app-1"
 
@@ -296,6 +304,55 @@ def test_free_text_answer_uses_existing_normalizer_and_same_decision(monkeypatch
     assert payload["feedback_decision"]["answer_mode"] == "free_text"
     assert payload["feedback_decision"]["raw_answer"] == raw_answer
     assert payload["feedback_decision"]["status"] == "NORMALIZED"
+
+
+def test_free_text_question_seals_the_supplied_authority(monkeypatch) -> None:
+    source = _source_command()
+    observed: dict[str, Any] = {}
+    raw_answer = 'Keep the student on a waiting list instead.'
+    monkeypatch.setattr(repository, 'latest_command', lambda *_args, **_kwargs: source)
+    monkeypatch.setattr(repository, 'get_command', lambda *_args, **_kwargs: source)
+    monkeypatch.setattr(workspace_module, 'ProjectTools', _Tools)
+    monkeypatch.setattr(workspace_module, 'plan_revision', lambda *_args: _plan())
+    monkeypatch.setattr(workspace_module, 'validate_plan', lambda *_args: True)
+
+    def interpret(_text, refs, **kwargs):
+        observed['refs'] = refs
+        observed['sealed_targets'] = kwargs.get('sealed_targets')
+        revision = RevisionInterpretation(
+            targets=['use_case_spec:UC1'],
+            semantic_scope='contract',
+            requested_effect=raw_answer,
+        )
+        return CommandIntent(
+            intent='revise',
+            targets=list(revision.targets),
+            instruction=raw_answer,
+            revision=revision,
+        )
+
+    monkeypatch.setattr(
+        workspace_module.conversation_agent,
+        'interpret_revision',
+        interpret,
+    )
+    request = dict(offered_actions(source)[1].payload)
+    request['text'] = raw_answer
+
+    service = WorkspaceService()
+    try:
+        action, payload, stage = service._prepare_conversational_message(
+            'app-1', action='message', payload=request, stage=None
+        )
+    finally:
+        service.shutdown()
+
+    assert (action, stage) == ('message', 'requirements')
+    assert observed == {
+        'refs': ['use_case_spec:UC1'],
+        'sealed_targets': True,
+    }
+    assert payload['feedback_decision']['status'] == 'NORMALIZED'
 
 
 def test_ambiguous_free_text_keeps_the_original_question_actions(monkeypatch) -> None:

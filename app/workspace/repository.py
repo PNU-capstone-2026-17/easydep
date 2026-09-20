@@ -176,6 +176,7 @@ def latest_command(
     *,
     exclude_command_id: str | None = None,
     stage: str | None = None,
+    status: str | None = None,
 ) -> dict[str, Any] | None:
     """앱의 가장 최근 command를 조회한다.
 
@@ -187,6 +188,8 @@ def latest_command(
             query = query.where(WorkspaceCommand.command_id != exclude_command_id)
         if stage:
             query = query.where(WorkspaceCommand.stage == stage)
+        if status:
+            query = query.where(WorkspaceCommand.status == status)
         row = session.scalar(query.order_by(WorkspaceCommand.created_at.desc()).limit(1))
         return command_dict(row) if row is not None else None
 

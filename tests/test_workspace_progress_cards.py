@@ -1,5 +1,5 @@
-from datetime import UTC, datetime
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 from app.workspace import repository
@@ -110,7 +110,7 @@ def test_refresh_projection_uses_one_durable_snapshot_and_preserves_testing_term
 
 
 def test_legacy_payload_write_preserves_the_progress_namespace(monkeypatch) -> None:
-    created_at = datetime(2026, 9, 19, 0, 0)
+    created_at = datetime(2026, 9, 19, 0, 0, tzinfo=UTC)
     row = SimpleNamespace(
         app_id="app-1",
         command_id="command-1",
@@ -166,3 +166,25 @@ def test_terminal_command_rejects_late_durable_patch(monkeypatch) -> None:
     assert repository.publish_progress_cards(
         "app-1", command_id="command-1", stage="testing", cards=[_card(status="running")]
     ) == {}
+
+
+def test_latest_command_can_filter_by_stage_and_status(monkeypatch) -> None:
+    captured = {}
+
+    class Session:
+        def scalar(self, query):
+            captured["query"] = query
+            return None
+
+    @contextmanager
+    def fake_scope():
+        yield Session()
+
+    monkeypatch.setattr(repository, "session_scope", fake_scope)
+
+    assert repository.latest_command(
+        "app-1", stage="design", status="AWAITING_INPUT"
+    ) is None
+    sql = str(captured["query"].compile(compile_kwargs={"literal_binds": True}))
+    assert "workspace_commands.stage = 'design'" in sql
+    assert "workspace_commands.status = 'AWAITING_INPUT'" in sql

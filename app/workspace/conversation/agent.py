@@ -253,6 +253,7 @@ class ConversationAgent:
         *,
         tools: ProjectTools,
         context: ConversationContext | None = None,
+        sealed_targets: bool = False,
     ) -> CommandIntent | Clarification:
         """Interpret semantics for UI-selected targets without reclassifying the command."""
 
@@ -266,6 +267,14 @@ class ConversationAgent:
                 )
             except KeyError:
                 continue
+        if sealed_targets:
+            return self._select_revision(
+                text,
+                exact_candidates,
+                tools,
+                context=context,
+                evidence=[],
+            )
         named_candidates = self._exact_catalog_candidates(text, tools)
         search_context = self._revision_search_context(
             [text],

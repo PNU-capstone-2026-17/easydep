@@ -1256,6 +1256,102 @@ def test_presented_legacy_clarification_restores_testing_retry(monkeypatch) -> N
     }
 
 
+def test_presented_completed_reply_restores_current_design_gate_actions(monkeypatch) -> None:
+    gate = {
+        "command_id": "design-gate",
+        "app_id": "app-1",
+        "action": "advance",
+        "stage": "design",
+        "status": "COMPLETED",
+        "payload": {},
+        "result": {"message": "Design completed."},
+    }
+    informational = {
+        "command_id": "informational-reply",
+        "app_id": "app-1",
+        "action": "message",
+        "stage": "design",
+        "status": "COMPLETED",
+        "payload": {
+            "action_id": "design-gate",
+            "_conversation_actions": [
+                {
+                    "action": "message",
+                    "label": "Ask about deployment options",
+                    "payload": {"action_id": "design-gate"},
+                }
+            ],
+        },
+        "result": {
+            "kind": "reply",
+            "conversation": {"reply": {"text": "Design is ready."}},
+        },
+    }
+    monkeypatch.setattr(
+        repository,
+        "get_command",
+        lambda command_id: gate if command_id == "design-gate" else None,
+    )
+    service = WorkspaceService()
+    try:
+        presented = service.present_command("app-1", informational)
+    finally:
+        service.shutdown()
+
+    assert [item["action"] for item in presented["result"]["actions"]] == [
+        "message",
+        "start_implementation",
+    ]
+    assert all(
+        item["payload"]["action_id"] == "design-gate"
+        for item in presented["result"]["actions"]
+    )
+
+
+def test_presented_reply_does_not_borrow_actions_without_same_app_lineage(monkeypatch) -> None:
+    informational = {
+        "command_id": "informational-reply",
+        "app_id": "app-1",
+        "action": "message",
+        "stage": "design",
+        "status": "COMPLETED",
+        "payload": {
+            "action_id": "other-app-gate",
+            "_conversation_actions": [
+                {
+                    "action": "message",
+                    "label": "Ask about deployment options",
+                    "payload": {"action_id": "other-app-gate"},
+                }
+            ],
+        },
+        "result": {
+            "kind": "reply",
+            "conversation": {"reply": {"text": "No current gate."}},
+        },
+    }
+    monkeypatch.setattr(
+        repository,
+        "get_command",
+        lambda _command_id: {
+            "command_id": "other-app-gate",
+            "app_id": "other-app",
+            "stage": "design",
+            "status": "COMPLETED",
+            "payload": {},
+            "result": {"message": "Other app."},
+        },
+    )
+    service = WorkspaceService()
+    try:
+        presented = service.present_command("app-1", informational)
+    finally:
+        service.shutdown()
+
+    assert [item["action"] for item in presented["result"]["actions"]] == ["message"]
+    assert presented["result"]["actions"][0]["payload"]["action_id"] == "other-app-gate"
+
+
 def test_initial_workspace_request_accepts_provider_and_region_without_budget(
     monkeypatch,
 ) -> None:
@@ -2069,7 +2165,7 @@ def test_completed_deployment_configuration_finishes_workspace_wait(
     monkeypatch.setattr(
         repository,
         "latest_command",
-        lambda _app_id: {
+        lambda _app_id, **_filters: {
             "command_id": "design-command",
             "app_id": "app-1",
             "stage": "design",
@@ -2102,6 +2198,72 @@ def test_completed_deployment_configuration_finishes_workspace_wait(
         "start_implementation",
     ]
     assert events[0][1]["metadata"]["progress_event"] == "commandStateChanged"
+
+
+def test_deployment_sizing_finds_waiting_gate_after_informational_message(
+    monkeypatch,
+) -> None:
+    updates = []
+    calls = []
+
+    def latest(_app_id, **filters):
+        calls.append(filters)
+        return {
+            "command_id": "design-gate",
+            "app_id": "app-1",
+            "stage": "design",
+            "status": "AWAITING_INPUT",
+            "payload": {},
+            "result": {"deployment_configuration_required": True},
+        }
+
+    monkeypatch.setattr(repository, "latest_command", latest)
+    monkeypatch.setattr(
+        repository,
+        "update_command",
+        lambda command_id, **changes: updates.append((command_id, changes)),
+    )
+    monkeypatch.setattr(repository, "append_progress_event", lambda *args, **kwargs: None)
+    monkeypatch.setattr(repository, "now", lambda: "now")
+    service = WorkspaceService()
+    try:
+        service.sync_deployment_configuration("app-1", {"status": "completed"})
+    finally:
+        service.shutdown()
+
+    assert calls == [{"stage": "design", "status": "AWAITING_INPUT"}]
+    assert updates[0][0] == "design-gate"
+    assert updates[0][1]["status"] == "COMPLETED"
+
+
+def test_deployment_sizing_ignores_non_deployment_waiting_design_gate(
+    monkeypatch,
+) -> None:
+    updates = []
+    monkeypatch.setattr(
+        repository,
+        "latest_command",
+        lambda _app_id, **_filters: {
+            "command_id": "class-gate",
+            "app_id": "app-1",
+            "stage": "design",
+            "status": "AWAITING_INPUT",
+            "payload": {},
+            "result": {"current_stage": "class_diagram"},
+        },
+    )
+    monkeypatch.setattr(
+        repository,
+        "update_command",
+        lambda command_id, **changes: updates.append((command_id, changes)),
+    )
+    service = WorkspaceService()
+    try:
+        service.sync_deployment_configuration("app-1", {"status": "completed"})
+    finally:
+        service.shutdown()
+
+    assert updates == []
 
 
 def test_design_findings_without_an_artifact_require_revision() -> None:

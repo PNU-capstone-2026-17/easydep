@@ -633,6 +633,49 @@ def test_shared_operation_step_refs_are_union_of_selected_insertions() -> None:
     assert interpretation.patch_intents[0].step_refs == ["UC3:main:4", "UC5:main:3"]
 
 
+def test_sealed_revision_targets_do_not_expand_to_strong_text_matches() -> None:
+    authority_ref = 'sequence_diagram:UC-INCIDENT'
+    outside_ref = 'api_spec:IncidentAcknowledgement'
+
+    def propose(schema, messages):
+        assert schema.__name__ == 'RevisionInterpretation'
+        assert authority_ref in messages[-1].content
+        assert outside_ref not in messages[-1].content
+        return schema(
+            targets=[outside_ref],
+            semantic_scope='contract',
+            requested_effect='Rename IncidentAcknowledgement to IncidentReceipt.',
+            change_type='rename',
+        )
+
+    class SealedTools(FakeTools):
+        def search_elements(self, _query):
+            raise AssertionError('sealed targets must not trigger candidate search')
+
+        def resolve_exact_elements(self, _text):
+            raise AssertionError('sealed targets must not trigger exact-match expansion')
+
+    tools = SealedTools()
+    tools.matches = [
+        {
+            'ref': outside_ref,
+            'label': 'IncidentAcknowledgement',
+            'owner': 'design',
+            'editable': True,
+        }
+    ]
+
+    result = ConversationAgent(propose).interpret_revision(
+        'Rename IncidentAcknowledgement to IncidentReceipt.',
+        [authority_ref],
+        tools=tools,
+        sealed_targets=True,
+    )
+
+    assert isinstance(result, Clarification)
+    assert ('read_element', authority_ref) in tools.calls
+
+
 def test_exact_identifier_resolution_is_not_limited_to_class_operations() -> None:
     schema_ref = "api_spec:IncidentAcknowledgement"
 
