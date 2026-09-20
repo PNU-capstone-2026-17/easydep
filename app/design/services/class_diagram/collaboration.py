@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model, model_validator
 
 from app.config import settings
 from app.design.schemas.class_model import BCEModel, Collaboration, canonical_call_id
@@ -63,6 +63,9 @@ with other Entities, but do not call a Control or Boundary directly. The Boundar
 class used by a root must not appear again inside that root. Cover all
 required steps inside the matching actor entry. The same operation may be used
 in more than one root. Do not return ids, step refs, values, or bindings.
+For a root and all of its descendants, choose only that actorEntry's
+eligibleReceiverOperationIds. Do not move an operation from another actor entry
+into this root, even when it is semantically related to the same use case.
 If the supplied operations contain Entity behavior for durable domain information
 used by this execution, call that Entity behavior from Control. Read-only stored
 data is still Entity behavior. When no Entity operation is supplied for the
@@ -172,6 +175,24 @@ def _use_case_operations(
     }
 
 
+def _eligible_operation_ids_by_group(
+    groups: tuple[ExecutionGroup, ...],
+    operations: dict[str, dict[str, Any]],
+) -> tuple[frozenset[str], ...]:
+    """Return the finite operation set that can cover each actor-entry flow."""
+
+    return tuple(
+        frozenset(
+            operation_id
+            for operation_id, operation in operations.items()
+            if set(group.required_step_ids) & {
+                text(ref) for ref in operation.get("stepRefs") or []
+            }
+        )
+        for group in groups
+    )
+
+
 def _use_case_payload(
     index: ScenarioIndex, model: dict[str, Any], use_case: UseCase,
 ) -> dict[str, Any]:
@@ -182,6 +203,7 @@ def _use_case_payload(
         for step in index.use_case(use_case_id).steps
     }
     required = {ref for group in groups for ref in group.required_step_ids}
+    eligible_by_group = _eligible_operation_ids_by_group(groups, operations)
     return {
         "collaborationId": use_case.id,
         "actorEntries": [
@@ -189,8 +211,9 @@ def _use_case_payload(
                 "actorStepRef": group.actor_step,
                 "actor": group.entry_actor,
                 "requiredStepRefs": list(group.required_step_ids),
+                "eligibleReceiverOperationIds": sorted(eligible_by_group[ordinal]),
             }
-            for group in groups
+            for ordinal, group in enumerate(groups)
         ],
         "steps": [
             {"id": step_id, "sentence": step_by_id[step_id].sentence}
@@ -214,6 +237,50 @@ def _use_case_payload(
     }
 
 
+def _entry_scoped_plan_schema(
+    operation_ids: tuple[str, ...],
+    eligible_by_group: tuple[frozenset[str], ...],
+) -> type[CallPlanProposal]:
+    """Build a flat-plan schema that rejects cross-entry operation choices.
+
+    Calls deliberately remain a single ordered forest. Their actor-entry ownership
+    is determined from roots and parent chains, exactly as materialization does, so
+    a plan-only repair cannot make an otherwise valid operation cover a different
+    actor entry merely because the use case has several related flows.
+    """
+
+    finite_call = _finite_schema(
+        "FiniteEntryScopedUseCaseCall",
+        __base__=ProposedCall,
+        receiver_operation_id=(
+            Literal.__getitem__(operation_ids), Field(alias="receiverOperationId"),
+        ),
+    )
+    root_count = len(eligible_by_group)
+
+    class EntryScopedCallPlan(CallPlanProposal):
+        calls: list[finite_call] = Field(min_length=root_count)  # type: ignore[valid-type]
+
+        @model_validator(mode="after")
+        def enforce_actor_entry_operation_scope(self) -> EntryScopedCallPlan:
+            try:
+                _, assignments = _root_assignments(self, root_count)
+            except ValueError:
+                # Keep structural-plan findings on the existing materialization path.
+                # This schema gate owns only cross-entry operation selection.
+                return self
+            for position, call in enumerate(self.calls, start=1):
+                group = assignments[position]
+                if call.receiver_operation_id not in eligible_by_group[group]:
+                    raise ValueError(
+                        "receiverOperationId must belong to the actor entry resolved "
+                        f"for calls[{position - 1}]"
+                    )
+            return self
+
+    return EntryScopedCallPlan
+
+
 def propose_call_plan(
     index: ScenarioIndex,
     model: BCEModel,
@@ -233,17 +300,11 @@ def propose_call_plan(
     operation_ids = tuple(item["operationId"] for item in payload["receiverOperations"])
     if not operation_ids:
         raise ValueError(f"use case has no receiver operations: {use_case.id}")
-    finite_call = _finite_schema(
-        "FiniteUseCaseCall",
-        __base__=ProposedCall,
-        receiver_operation_id=(
-            Literal.__getitem__(operation_ids), Field(alias="receiverOperationId"),
-        ),
-    )
-    finite_plan = _finite_schema(
-        "FiniteUseCaseCallPlan",
-        __base__=CallPlanProposal,
-        calls=(list[finite_call], Field(min_length=len(payload["actorEntries"]))),  # type: ignore[valid-type]
+    groups = _groups(index, use_case)
+    operations = _use_case_operations(index, model.model_dump(by_alias=True), use_case)
+    finite_plan = _entry_scoped_plan_schema(
+        operation_ids,
+        _eligible_operation_ids_by_group(groups, operations),
     )
     parsed = parse_structured(
         [
@@ -404,6 +465,23 @@ def _field_matches_parameter(parameter: str, owner_type: str, field: str) -> boo
     return expected in {normalize(field), normalize(owner_type + field)}
 
 
+def _requires_named_provenance(parameter_name: str, target_type: str) -> bool:
+    """Keep opaque identifiers from binding by type alone."""
+
+    normalized_name = "".join(
+        character for character in parameter_name.casefold() if character.isalnum()
+    )
+    normalized_type = "".join(
+        character for character in target_type.casefold() if character.isalnum()
+    )
+    return (
+        types_compatible(target_type, "UUID")
+        or normalized_name.endswith("id")
+        or normalized_type.endswith("id")
+        or "identity" in normalized_type
+    )
+
+
 def _is_boundary_control_handoff(
     calls: list[dict[str, Any]],
     call_index: int,
@@ -445,6 +523,7 @@ def _binding_candidates(
     fields_by_type = structured_field_types(model)
     candidates: list[str] = []
     named_sources: dict[str, list[tuple[str, str]]] = {}
+    renamed_handoff_sources: list[str] = []
 
     def add_named(source_name: str, source_type: str, source_ref: str) -> None:
         named_sources.setdefault(source_name.casefold(), []).append((source_type, source_ref))
@@ -452,7 +531,8 @@ def _binding_candidates(
     if is_root and actor_step:
         candidates.append(f"{actor_step}#{name}")
     ancestors = _ancestors(calls, call_index)
-    for ancestor in ancestors:
+    boundary_handoff = _is_boundary_control_handoff(calls, call_index, operations)
+    for ancestor_position, ancestor in enumerate(ancestors):
         operation = operations[text(ancestor.get("receiverOperationId"))]
         for source in operation.get("parameters") or []:
             if not isinstance(source, dict):
@@ -461,10 +541,16 @@ def _binding_candidates(
             source_type = text(source.get("type"))
             source_ref = f"{ancestor['callId']}#{source_name}"
             add_named(source_name, source_type, source_ref)
-            if _field_matches_parameter(name, "", source_name) and types_compatible(
-                source_type, target_type
-            ):
+            compatible = types_compatible(source_type, target_type)
+            if _field_matches_parameter(name, "", source_name) and compatible:
                 candidates.append(source_ref)
+            elif (
+                ancestor_position == 0
+                and boundary_handoff
+                and compatible
+                and not _requires_named_provenance(name, target_type)
+            ):
+                renamed_handoff_sources.append(source_ref)
             for field_path in fields_by_type.get(source_type, {}):
                 projected = projected_field_type(source_type, field_path, fields_by_type)
                 field_ref = f"{source_ref}.{field_path}"
@@ -473,6 +559,8 @@ def _binding_candidates(
                     candidates.append(field_ref)
                 elif types_compatible(optional_inner_type(projected), target_type):
                     candidates.append(field_ref + ".unwrap")
+    if not candidates:
+        candidates.extend(renamed_handoff_sources)
     # 하나의 유스케이스가 여러 사용자 입력으로 나뉘면 뒤 입력에서 앞 입력의 값을
     # 다시 사용할 수 있다. 예를 들어 첫 요청에서 받은 주문 ID를 다음 선택 요청 뒤의
     # Control 호출에 전달하는 경우다. 이전 root의 입력 중 이름과 타입이 모두 맞는
@@ -544,7 +632,7 @@ def _binding_candidates(
             candidates.append(derived_value_source(target_type, mappings))
     if not candidates and runtime_value_source(target_type):
         candidates.append(runtime_value_source(target_type))
-    if not candidates and _is_boundary_control_handoff(calls, call_index, operations):
+    if not candidates and boundary_handoff:
         candidates.extend(
             source.source_ref
             for source in trusted_context_sources(
@@ -604,6 +692,7 @@ def select_ambiguous_bindings(
     fields: dict[str, tuple[Any, Any]] = {}
     choices: list[dict[str, Any]] = []
     locations: dict[str, str] = {}
+    candidate_groups: dict[frozenset[str], list[str]] = {}
     for position, (parameter, candidates) in enumerate(sorted(ambiguous.items()), start=1):
         field_name = f"choice{position}"
         values = tuple(dict.fromkeys(candidates))
@@ -623,9 +712,29 @@ def select_ambiguous_bindings(
             ],
         })
         locations[field_name] = parameter
-    schema = _finite_schema(
+        candidate_groups.setdefault(frozenset(values), []).append(field_name)
+    uniqueness_groups = tuple(
+        tuple(field_names)
+        for candidate_set, field_names in candidate_groups.items()
+        if len(field_names) >= 2 and len(candidate_set) >= len(field_names)
+    )
+    finite_choices = _finite_schema(
         "FiniteBindingChoices", __config__=ConfigDict(extra="forbid"), **fields,
     )
+
+    class BindingChoices(finite_choices):
+        @model_validator(mode="after")
+        def require_distinct_sources_for_symmetric_choices(self) -> BindingChoices:
+            for field_names in uniqueness_groups:
+                selected = [getattr(self, field_name) for field_name in field_names]
+                if len(set(selected)) != len(selected):
+                    raise ValueError(
+                        "sourceRef selections must be unique when parameters have "
+                        "the same finite candidate set"
+                    )
+            return self
+
+    schema = BindingChoices
     parsed = parse_structured(
         [
             {"role": "system", "content": BINDING_PROMPT},

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram import collaboration, service
@@ -18,10 +19,116 @@ from tests.class_design_fixtures import (
     call_plan,
     combined_unit_proposal,
     inventory_proposal,
+    multiple_entry_use_case,
     operation_fragment,
     patch_class_design_parser,
     single_use_case,
 )
+
+
+def test_call_plan_schema_rejects_cross_actor_entry_operation(monkeypatch):
+    """A plan repair may not move a valid operation into another actor entry."""
+
+    index = build_scenario_index(multiple_entry_use_case())
+    use_case = index.use_case("UC1")
+    model = BCEModel.model_validate({
+        "Classes": [
+            {
+                "className": "RequestBoundary",
+                "stereotype": "Boundary",
+                "use_case_ids": ["UC1"],
+                "operations": [
+                    {
+                        "operationId": "ignored",
+                        "name": "submit",
+                        "parameters": [],
+                        "returnType": "void",
+                        "stepRefs": ["UC1:main:1"],
+                    },
+                    {
+                        "operationId": "ignored",
+                        "name": "requestReceipt",
+                        "parameters": [],
+                        "returnType": "void",
+                        "stepRefs": ["UC1:main:3"],
+                    },
+                ],
+            },
+            {
+                "className": "RequestControl",
+                "stereotype": "Control",
+                "use_case_ids": ["UC1"],
+                "operations": [
+                    {
+                        "operationId": "ignored",
+                        "name": "process",
+                        "parameters": [],
+                        "returnType": "void",
+                        "stepRefs": ["UC1:main:2"],
+                    },
+                    {
+                        "operationId": "ignored",
+                        "name": "deliverReceipt",
+                        "parameters": [],
+                        "returnType": "void",
+                        "stepRefs": ["UC1:main:4"],
+                    },
+                ],
+            },
+        ],
+        "DataTypes": [],
+        "Relationships": [],
+        "Collaborations": [],
+    })
+    valid_plan = {
+        "calls": [
+            {"receiverOperationId": "RequestBoundary::submit()", "parentCallIndex": None},
+            {"receiverOperationId": "RequestControl::process()", "parentCallIndex": 1},
+            {"receiverOperationId": "RequestBoundary::requestReceipt()", "parentCallIndex": None},
+            {"receiverOperationId": "RequestControl::deliverReceipt()", "parentCallIndex": 3},
+        ],
+    }
+
+    def fake_parse(messages, schema, **_kwargs):
+        payload = json.loads(messages[-1]["content"])
+        assert payload["actorEntries"] == [
+            {
+                "actorStepRef": "UC1:main:1",
+                "actor": "Member",
+                "requiredStepRefs": ["UC1:main:1", "UC1:main:2"],
+                "eligibleReceiverOperationIds": [
+                    "RequestBoundary::submit()",
+                    "RequestControl::process()",
+                ],
+            },
+            {
+                "actorStepRef": "UC1:main:3",
+                "actor": "Member",
+                "requiredStepRefs": ["UC1:main:3", "UC1:main:4"],
+                "eligibleReceiverOperationIds": [
+                    "RequestBoundary::requestReceipt()",
+                    "RequestControl::deliverReceipt()",
+                ],
+            },
+        ]
+        schema.model_validate(valid_plan)
+        invalid_plan = {
+            "calls": [
+                *valid_plan["calls"][:3],
+                {
+                    "receiverOperationId": "RequestControl::process()",
+                    "parentCallIndex": 3,
+                },
+            ],
+        }
+        with pytest.raises(ValidationError, match="actor entry resolved"):
+            schema.model_validate(invalid_plan)
+        return valid_plan
+
+    monkeypatch.setattr(collaboration, "parse_structured", fake_parse)
+    assert collaboration.propose_call_plan(index, model, use_case).model_dump(
+        by_alias=True,
+    ) == valid_plan
 
 
 def test_vertical_service_persists_calls_and_derives_parameter_provenance(monkeypatch):
@@ -579,6 +686,141 @@ def test_scalar_parameter_can_use_same_typed_request_fields_with_different_names
     )
 
     assert result.calls[1].argument_bindings[0].source_ref == expected_candidates[0]
+
+
+def test_boundary_handoff_can_select_renamed_compatible_inputs(monkeypatch):
+    """Actor-facing values remain finite candidates after a Control rename."""
+
+    index = build_scenario_index(single_use_case())
+    model = BCEModel.model_validate({
+        "Classes": [
+            {
+                "className": "CalculatorBoundary",
+                "stereotype": "Boundary",
+                "use_case_ids": ["UC1"],
+                "operations": [{
+                    "operationId": "ignored",
+                    "name": "calculate",
+                    "parameters": [
+                        {"name": "firstValue", "type": "BigDecimal"},
+                        {"name": "secondValue", "type": "BigDecimal"},
+                        {"name": "operation", "type": "OperationType"},
+                    ],
+                    "returnType": "CalculationResult",
+                    "stepRefs": ["UC1:main:1"],
+                }],
+            },
+            {
+                "className": "CalculationControl",
+                "stereotype": "Control",
+                "use_case_ids": ["UC1"],
+                "operations": [{
+                    "operationId": "ignored",
+                    "name": "executeOperation",
+                    "parameters": [
+                        {"name": "operand1", "type": "BigDecimal"},
+                        {"name": "operand2", "type": "BigDecimal"},
+                        {"name": "operationType", "type": "OperationType"},
+                    ],
+                    "returnType": "CalculationResult",
+                    "stepRefs": ["UC1:main:2"],
+                }],
+            },
+        ],
+        "DataTypes": [
+            {
+                "name": "OperationType",
+                "kind": "enumeration",
+                "fields": [],
+                "values": ["ADD", "SUBTRACT", "MULTIPLY", "DIVIDE"],
+            },
+            {
+                "name": "CalculationResult",
+                "kind": "valueObject",
+                "fields": ["value : BigDecimal"],
+                "values": [],
+            },
+        ],
+        "Relationships": [],
+        "Collaborations": [],
+    })
+    plan = CallPlanProposal.model_validate({
+        "calls": [
+            {
+                "receiverOperationId": (
+                    "CalculatorBoundary::calculate(firstValue:BigDecimal,"
+                    "secondValue:BigDecimal,operation:OperationType)"
+                ),
+                "parentCallIndex": None,
+            },
+            {
+                "receiverOperationId": (
+                    "CalculationControl::executeOperation(operand1:BigDecimal,"
+                    "operand2:BigDecimal,operationType:OperationType)"
+                ),
+                "parentCallIndex": 1,
+            },
+        ],
+    })
+    first = "UC1::call:1#firstValue"
+    second = "UC1::call:1#secondValue"
+
+    def select_source(_use_case, ambiguous, parameter_types):
+        assert ambiguous == {
+            "UC1::call:2#operand1": [first, second],
+            "UC1::call:2#operand2": [first, second],
+        }
+        assert parameter_types == {
+            "UC1::call:2#operand1": "BigDecimal",
+            "UC1::call:2#operand2": "BigDecimal",
+        }
+        return {
+            "UC1::call:2#operand1": first,
+            "UC1::call:2#operand2": second,
+        }
+
+    monkeypatch.setattr(collaboration, "select_ambiguous_bindings", select_source)
+    result = collaboration.materialize(index, model, index.use_case("UC1"), plan)
+
+    assert {
+        binding.parameter: binding.source_ref
+        for binding in result.calls[1].argument_bindings
+    } == {
+        "operand1": first,
+        "operand2": second,
+        "operationType": "UC1::call:1#operation",
+    }
+
+
+def test_binding_selection_rejects_duplicate_symmetric_sources(monkeypatch):
+    """Symmetric finite choices must retain distinct operand provenance."""
+
+    first = "UC1::call:1#firstValue"
+    second = "UC1::call:1#secondValue"
+    ambiguous = {
+        "UC1::call:2#operand1": [first, second],
+        "UC1::call:2#operand2": [second, first],
+    }
+
+    def fake_parse(_messages, schema, **_kwargs):
+        with pytest.raises(ValidationError, match="sourceRef selections must be unique"):
+            schema.model_validate({"choice1": first, "choice2": first})
+        return {"choice1": first, "choice2": second}
+
+    monkeypatch.setattr(collaboration, "parse_structured", fake_parse)
+    index = build_scenario_index(single_use_case())
+
+    assert collaboration.select_ambiguous_bindings(
+        index.use_case("UC1"),
+        ambiguous,
+        {
+            "UC1::call:2#operand1": "BigDecimal",
+            "UC1::call:2#operand2": "BigDecimal",
+        },
+    ) == {
+        "UC1::call:2#operand1": first,
+        "UC1::call:2#operand2": second,
+    }
 
 
 def test_binding_candidates_require_matching_names_for_ancestor_uuid_values():
