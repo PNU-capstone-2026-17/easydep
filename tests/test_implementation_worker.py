@@ -720,6 +720,15 @@ def test_implementation_checkpoint_keeps_deployment_file_mandatory_in_demo(
         "_latest_versions",
         lambda *_args: {item: object() for item in available},
     )
+    monkeypatch.setattr(
+        checkpoint_module.artifact_repository,
+        "load_state",
+        lambda _app_id: {
+            "extracted_bce_classes": {
+                "Classes": [{"className": "Order", "stereotype": "Entity"}]
+            }
+        },
+    )
 
     for value in (None, "true"):
         if value is None:
@@ -731,6 +740,106 @@ def test_implementation_checkpoint_keeps_deployment_file_mandatory_in_demo(
             match=r"^The selected checkpoint is incomplete: DEPLOYMENT_FILE$",
         ):
             checkpoint_module.create_checkpoint_branch("source-app", "implementation")
+
+
+def test_stateless_design_checkpoint_does_not_require_erd(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Source:
+        def __init__(self) -> None:
+            self.requirements_text = ""
+            self.resource_constraints_text = ""
+            self.deployment_preferences: dict[str, object] = {}
+            self.requirements_gated = False
+
+    class Session:
+        @staticmethod
+        def scalar(_statement: object) -> object:
+            return Source()
+
+        @staticmethod
+        def add(_value: object) -> None:
+            return None
+
+        @staticmethod
+        def add_all(_values: object) -> None:
+            return None
+
+        @staticmethod
+        def flush() -> None:
+            return None
+
+    @contextmanager
+    def fake_session_scope():
+        yield Session()
+
+    available = set(checkpoint_module._REQUIRED_TYPES["design"])
+    available.remove("ERD")
+    monkeypatch.setattr(checkpoint_module, "session_scope", fake_session_scope)
+    monkeypatch.setattr(
+        checkpoint_module,
+        "_latest_versions",
+        lambda *_args: {
+            item: type(
+                "Artifact",
+                (),
+                {
+                    "content": "{}",
+                    "files": [],
+                    "syntax_valid": True,
+                    "syntax_errors": [],
+                    "origin": "generated",
+                },
+            )()
+            for item in available
+        },
+    )
+    monkeypatch.setattr(
+        checkpoint_module.artifact_repository,
+        "load_state",
+        lambda _app_id: {"extracted_bce_classes": {"Classes": []}},
+    )
+
+    result = checkpoint_module.create_checkpoint_branch("source-app", "design")
+
+    assert result["checkpoint_stage"] == "design"
+
+
+def test_persistent_design_checkpoint_still_requires_erd(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class Session:
+        @staticmethod
+        def scalar(_statement: object) -> object:
+            return object()
+
+    @contextmanager
+    def fake_session_scope():
+        yield Session()
+
+    available = set(checkpoint_module._REQUIRED_TYPES["design"])
+    available.remove("ERD")
+    monkeypatch.setattr(checkpoint_module, "session_scope", fake_session_scope)
+    monkeypatch.setattr(
+        checkpoint_module,
+        "_latest_versions",
+        lambda *_args: {item: object() for item in available},
+    )
+    monkeypatch.setattr(
+        checkpoint_module.artifact_repository,
+        "load_state",
+        lambda _app_id: {
+            "extracted_bce_classes": {
+                "Classes": [{"className": "Order", "stereotype": "Entity"}]
+            }
+        },
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"^The selected checkpoint is incomplete: ERD$",
+    ):
+        checkpoint_module.create_checkpoint_branch("source-app", "design")
 
 
 def test_job_execution_lease_rejects_a_second_process(

@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import json
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -37,6 +38,7 @@ from app.db.models import (
     WorkspaceCommand,
 )
 from app.db.session import session_scope
+from app.design.services.persistence_scope import erd_disposition
 from app.repositories import artifact_repository
 
 from .contracts import CheckpointStage, RestartStage
@@ -88,15 +90,20 @@ def checkpoint_options(app_id: str) -> dict[str, list[dict[str, Any]]]:
         if session.get(App, app_id) is None:
             raise artifact_repository.AppNotFound(app_id)
         available = set(_latest_versions(session, app_id))
+    state = artifact_repository.load_state(app_id)
 
     branch = [
-        _option(stage.value, set(required).issubset(available))
+        _option(
+            stage.value,
+            set(_required_types_for_checkpoint(stage, state)).issubset(available),
+        )
         for stage, required in _REQUIRED_TYPES.items()
     ]
     rerun = [
         _option(
             stage.value,
-            previous is None or set(_REQUIRED_TYPES[previous]).issubset(available),
+            previous is None
+            or set(_required_types_for_checkpoint(previous, state)).issubset(available),
         )
         for stage, previous in _PREVIOUS_STAGE.items()
     ]
@@ -129,10 +136,11 @@ def _clone(
 
     target_app_id = str(uuid.uuid4())
     copied_types = _COPIED_TYPES.get(completed_stage, ())
-    required_types = _REQUIRED_TYPES.get(completed_stage, ())
     implementation_job_id = (
         uuid.uuid4().hex if completed_stage == CheckpointStage.IMPLEMENTATION else None
     )
+    state = artifact_repository.load_state(source_app_id)
+    required_types = _required_types_for_checkpoint(completed_stage, state)
     version_ids: dict[str, int] = {}
 
     with session_scope() as session:
@@ -270,6 +278,22 @@ def _latest_versions(session: Any, app_id: str) -> dict[str, ArtifactVersion]:
         .order_by(ArtifactVersion.artifact_type, ArtifactVersion.version_no)
     ).all()
     return {row.artifact_type: row for row in rows}
+
+
+def _required_types_for_checkpoint(
+    stage: CheckpointStage | str | None,
+    state: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """Return required artifacts, omitting ERD only for non-persistent designs."""
+
+    required = tuple(_REQUIRED_TYPES.get(stage, ()))
+    if stage in {CheckpointStage.DESIGN, CheckpointStage.IMPLEMENTATION}:
+        class_model = state.get("extracted_bce_classes")
+        if erd_disposition(
+            class_model if isinstance(class_model, Mapping) else {}, state
+        ) == "not_applicable":
+            return tuple(item for item in required if item != TYPE_ERD)
+    return required
 
 
 def _copy_content(source: ArtifactVersion, job_id: str | None) -> str:
