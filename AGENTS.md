@@ -24,6 +24,13 @@
 - PowerShell의 `Get-Content`, `Set-Content`, `Out-File`로 해당 산출물을 다룰 때에는 `-Encoding UTF8`을 명시한다. 기본 CP949에 의존하지 않는다.
 - 산출물 저장 뒤 콘솔 출력에서만 `UnicodeEncodeError`가 발생했다면 전체 단계를 재실행하지 않는다. 저장된 산출물의 존재와 완결성을 먼저 확인하고 실패한 출력·요약 작업만 UTF-8로 재개한다.
 
+## 로그·대형 JSON 조사
+
+- 로그나 대형 JSON을 조사하기 전에는 먼저 파일 크기를 확인한다.
+- `Get-Content` 전체 결과를 파이프해 `Select-Object -Last` 또는 `ConvertTo-Json`으로 넘기지 않는다. 반드시 `-Tail`·`-TotalCount`, DB projection, 또는 streaming parser를 사용한다.
+- 조사 명령에는 유한한 timeout과 출력 제한을 두고, 명령 종료 후 자신이 만든 프로세스가 남지 않았는지 확인한다.
+- 자원 이상 징후가 보이면 새 조사를 시작하기 전에 먼저 자신이 시작한 조사 프로세스를 중단한다.
+
 ## 임시 파일과 브라우저 프로필
 
 - Chrome·Edge 등 브라우저 자동화의 `user-data-dir`이나 패키지 캐시처럼 파일을 대량 생성하는 경로를 저장소 안에 만들지 않는다.

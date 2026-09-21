@@ -7,7 +7,14 @@ from app.design.services.sequence_diagram.projection import SequenceCollection
 from app.implementation.generation.method_skeleton import (
     render_backend_method_skeletons,
 )
-from app.implementation.planning.method_projection import project_method_calls
+from app.implementation.planning.method_projection import (
+    CallProjection,
+    MethodProjection,
+    MethodProjectionResult,
+    MethodRef,
+    MethodSlice,
+    project_method_calls,
+)
 
 
 def _bce() -> BCEModel:
@@ -401,3 +408,93 @@ def test_renders_compile_safe_service_calls() -> None:
     leaf = files["com/example/app/application/impl/LookupControlService.java"]
     assert "EASYDEP-IMPLEMENT:" in leaf
     assert "method-context/" not in leaf
+
+
+def test_hint_entity_target_injects_only_matching_persistence_repository() -> None:
+    bce = BCEModel.model_validate(
+        {
+            "Classes": [
+                {
+                    "className": "OrderControl",
+                    "stereotype": "Control",
+                    "operations": [{"operationId": "ignored", "name": "load"}],
+                },
+                {
+                    "className": "Order",
+                    "stereotype": "Entity",
+                    "operations": [{"operationId": "ignored", "name": "listAll"}],
+                },
+            ],
+            "DataTypes": [],
+            "Relationships": [],
+            "Collaborations": [],
+        }
+    )
+    control_operation = bce.Classes[0].operations[0]
+    entity_operation = bce.Classes[1].operations[0]
+    control = MethodRef("OrderControl", "Control", control_operation.operation_id, "load", "load", (), "void")
+    entity = MethodRef("Order", "Entity", entity_operation.operation_id, "list", "listAll", (), "void")
+    hint = CallProjection(
+        "call-1", entity, (), None, (), "hint", ("target_is_not_generated_spring_dependency",)
+    )
+    projection = MethodProjectionResult(
+        (MethodProjection(control, (MethodSlice(("UC1",), "root", "", control, (hint,), "void", (), ()),), "hint", ()),),
+        (),
+    )
+
+    source = render_backend_method_skeletons(
+        bce,
+        projection,
+        "com.example.orders",
+        persistence_repositories={
+            "Order": "com.example.orders.persistence.repository.OrderRepository"
+        },
+    )["com/example/orders/application/impl/OrderControlService.java"]
+
+    assert "import com.example.orders.persistence.repository.OrderRepository;" in source
+    assert "private final OrderRepository orderRepository;" in source
+    assert "OrderControlService(OrderRepository orderRepository)" in source
+    assert "orderRepository.listAll" not in source
+    assert "private final Order order;" not in source
+
+
+def test_non_persistence_hint_reason_does_not_inject_repository() -> None:
+    bce = BCEModel.model_validate(
+        {
+            "Classes": [
+                {
+                    "className": "OrderControl",
+                    "stereotype": "Control",
+                    "operations": [{"operationId": "ignored", "name": "load"}],
+                },
+                {
+                    "className": "Order",
+                    "stereotype": "Entity",
+                    "operations": [{"operationId": "ignored", "name": "listAll"}],
+                },
+            ],
+            "DataTypes": [],
+            "Relationships": [],
+            "Collaborations": [],
+        }
+    )
+    control_operation = bce.Classes[0].operations[0]
+    entity_operation = bce.Classes[1].operations[0]
+    control = MethodRef("OrderControl", "Control", control_operation.operation_id, "load", "load", (), "void")
+    entity = MethodRef("Order", "Entity", entity_operation.operation_id, "list", "listAll", (), "void")
+    hint = CallProjection("call-1", entity, (), None, (), "hint", ("argument_contract_mismatch",))
+    projection = MethodProjectionResult(
+        (MethodProjection(control, (MethodSlice(("UC1",), "root", "", control, (hint,), "void", (), ()),), "hint", ()),),
+        (),
+    )
+
+    source = render_backend_method_skeletons(
+        bce,
+        projection,
+        "com.example.orders",
+        persistence_repositories={
+            "Order": "com.example.orders.persistence.repository.OrderRepository"
+        },
+    )["com/example/orders/application/impl/OrderControlService.java"]
+
+    assert "OrderRepository" not in source

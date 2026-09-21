@@ -25,8 +25,9 @@
 - 값 객체는 Java `record`, enum은 Java `enum`으로 만든다.
 - Boundary와 Control은 메서드 모양을 선언하는 `interface`로 만든다.
 - Entity는 설계에 있는 필드와 메서드를 가진 `class`로 만든다.
-- Entity 필드만 보고 생성자나 getter/setter를 자동으로 만들지 않는다. 접근 메서드도 클래스
-  설계에 operation으로 적힌 경우에만 한 번 생성한다.
+- Entity 필드만 보고 생성자나 getter/setter를 자동으로 만들지 않는다. 단, matching ERD Entity가
+  있는 BCE Entity는 결정론적으로 full-value constructor와 getter를 생성하며, 그 외 접근 메서드는
+  클래스 설계에 operation으로 적힌 경우에만 한 번 생성한다.
 - 내용이 아직 없는 Entity 메서드는 안정 ID가 포함된 `EASYDEP-IMPLEMENT` 예외를 넣는다.
   묵시적인 `null`이나 빈 성공으로 동작을 꾸미지 않으며, 백엔드 구현 작업이 task context를
   기준으로 공개 signature를 보존한 채 본문을 완성한다.

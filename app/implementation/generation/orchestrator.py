@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -55,6 +56,7 @@ from .operation_contracts import (
 )
 from .persistence_scaffold import (
     PERSISTENCE_SCAFFOLDER_VERSION,
+    persistence_repository_fqcns,
     render_persistence_scaffold,
 )
 
@@ -67,6 +69,8 @@ OPTIONAL_DESIGN_INPUTS = (
 IMPLEMENTATION_PIPELINE_VERSION = "0.7.0-sequence-local-skeleton"
 OPENAPI_GENERATOR_IMAGE = "openapitools/openapi-generator-cli:v7.24.0"
 GRADLE_GENERATOR_IMAGE = "gradle:8.14.2-jdk21"
+_SWAGGER_OPERATION_IMPORT = "import io.swagger.v3.oas.annotations.Operation;"
+_SWAGGER_OPERATION_ANNOTATION = re.compile(r"(?m)^(?P<indent>[ \t]*)@Operation\b")
 # A Docker bind mount can keep a directory handle open for a short time after
 # the container process has exited on Windows.  Retrying only the documented
 # sharing/access-denied errors keeps an immutable run promotion safe while
@@ -83,6 +87,30 @@ PROGRESS_SCHEMA = "easydep-implementation-progress/v1alpha1"
 # implementation input below one fixed container root so BCE, OpenAPI, and
 # Gradle all use the same portable contract.
 CONTAINER_WORKSPACE = PurePosixPath("/workspace")
+
+
+def _normalize_openapi_operation_import_conflicts(application: Path) -> None:
+    """Keep generated API sources compilable when a model is named ``Operation``."""
+
+    java_root = application / "src" / "main" / "java"
+    for api_path in sorted(java_root.rglob("*Api.java")):
+        source = api_path.read_text(encoding="utf-8")
+        if _SWAGGER_OPERATION_IMPORT not in source:
+            continue
+        operation_imports = {
+            match.group(1)
+            for match in re.finditer(r"(?m)^import\s+([^;]+\.Operation);\s*$", source)
+        }
+        if len(operation_imports) < 2:
+            continue
+        normalized = source.replace(_SWAGGER_OPERATION_IMPORT + "\n", "")
+        normalized = _SWAGGER_OPERATION_ANNOTATION.sub(
+            r"\g<indent>@io.swagger.v3.oas.annotations.Operation",
+            normalized,
+        )
+        api_path.write_text(normalized, encoding="utf-8", newline="\n")
+
+
 def load_job(path: Path) -> JobSpec:
     job_path = path.resolve()
     data = json.loads(job_path.read_text(encoding="utf-8"))
@@ -631,10 +659,20 @@ class PrototypeOrchestrator:
             bce_model=scaffold.bce_model,
             sequence_model=sequence_model,
         )
+        persistence_repositories = (
+            persistence_repository_fqcns(
+                scaffold.erd_bce_model,
+                self.spec.base_package,
+                logical_model=read_json("erdLogicalModel"),
+            )
+            if scaffold.erd_bce_model is not None
+            else {}
+        )
         method_files = render_backend_method_skeletons(
             scaffold.bce_model,
             method_projection,
             self.spec.base_package,
+            persistence_repositories=persistence_repositories,
         )
         for relative, content in method_files.items():
             target = java_root / relative
@@ -728,6 +766,7 @@ class PrototypeOrchestrator:
         evidence = self._run_command(
             "openapi-generator", command, self.spec.workspace_root
         )
+        _normalize_openapi_operation_import_conflicts(application)
         missing_operation_ids: set[str] = set()
         for line in (evidence.stdout + evidence.stderr).splitlines():
             if "Empty operationId found" in line:
@@ -799,6 +838,11 @@ class PrototypeOrchestrator:
         api_model = ApiSpecModel.model_validate_json(
             self.spec.inputs["apiModel"].read_text(encoding="utf-8")
         )
+        persistence_repositories = persistence_repository_fqcns(
+            BCEModel.model_validate_json(self.spec.inputs["erdBceModel"].read_text(encoding="utf-8")),
+            self.spec.base_package,
+            logical_model=json.loads(self.spec.inputs["erdLogicalModel"].read_text(encoding="utf-8")),
+        ) if self.spec.inputs.get("erdBceModel") else {}
         path = write_generated_operation_contracts(
             staging,
             build_generated_operation_contracts(
@@ -806,6 +850,7 @@ class PrototypeOrchestrator:
                 sequence_model=sequence_model,
                 api_model=api_model,
                 base_package=self.spec.base_package,
+                persistence_repositories=persistence_repositories,
             ),
         )
         self._sink().tools["generated-operation-contracts"] = {
@@ -1222,11 +1267,23 @@ def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> None:
     if not backend_tasks:
         raise ValueError("Frontend planning requires a persisted backend task plan.")
     frontend_tasks = generate_frontend_tasks(spec, run_root)
+    inherited_llm = next(
+        (
+            task.get("llm")
+            for task in sorted(backend_tasks, key=lambda item: str(item.get("task_id") or ""))
+            if isinstance(task.get("llm"), dict)
+        ),
+        None,
+    )
+    if isinstance(inherited_llm, dict):
+        frontend_tasks = [replace(task, llm=dict(inherited_llm)) for task in frontend_tasks]
     integration_task = generate_vertical_integration_task(
         spec,
         run_root,
         [*backend_tasks, *(task.to_dict() for task in frontend_tasks)],
     )
+    if isinstance(inherited_llm, dict):
+        integration_task = replace(integration_task, llm=dict(inherited_llm))
     _merge_implementation_tasks(
         run_root,
         [*frontend_tasks, integration_task],

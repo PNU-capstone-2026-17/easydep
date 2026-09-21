@@ -21,13 +21,33 @@ PERSISTENCE_SCAFFOLDER_VERSION = "1.5.0"
 _FIELD = re.compile(r"^\s*[+#~\-]?\s*(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(?P<type>.+?)\s*$")
 _JAVA_IMPORTS = {
     "BigDecimal": "java.math.BigDecimal",
+    "BigInteger": "java.math.BigInteger",
+    "Instant": "java.time.Instant",
     "LocalDate": "java.time.LocalDate",
     "LocalDateTime": "java.time.LocalDateTime",
     "LocalTime": "java.time.LocalTime",
+    "OffsetDateTime": "java.time.OffsetDateTime",
+    "ZonedDateTime": "java.time.ZonedDateTime",
+    "Collection": "java.util.Collection",
     "List": "java.util.List",
     "Optional": "java.util.Optional",
+    "Set": "java.util.Set",
     "UUID": "java.util.UUID",
 }
+
+
+def persistence_repository_fqcns(
+    model: BCEModel,
+    base_package: str,
+    *,
+    logical_model: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Return repository types for exactly the Entity set rendered by persistence."""
+
+    return {
+        entity.class_name: f"{base_package}.persistence.repository.{entity.class_name}Repository"
+        for entity in _persistence_entities(model, logical_model)
+    }
 # MySQL과 테스트용 H2가 공통으로 문법 토큰으로 해석하는 대표적인 SQL 단어다. ERD의
 # Java 필드 이름은 바꾸지 않고, 실제 DDL/JPA 열 이름에 ``_value``를 붙여 두 DB에서 같은
 # 이름으로 조회되게 한다. DB별 인용 부호와 대소문자 규칙에 의존하지 않는다.

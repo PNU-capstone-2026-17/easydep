@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -140,6 +141,27 @@ def test_implementation_job_uses_only_root_environment_llm_settings(tmp_path: Pa
     connection = build_openhands_llm_connection()
     assert llm_config(spec)["model"] == connection.model
     assert llm_config(spec)["baseUrl"] == connection.base_url
+
+
+def test_implementation_reasoning_setting_declares_medium_default() -> None:
+    assert Settings.model_fields["implementation_reasoning_effort"].default == "medium"
+
+
+@pytest.mark.parametrize("reasoning_effort", ["medium", "high"])
+def test_implementation_llm_config_keeps_explicit_reasoning_setting(
+    monkeypatch: pytest.MonkeyPatch,
+    reasoning_effort: str,
+) -> None:
+    monkeypatch.setattr(settings, "implementation_reasoning_effort", reasoning_effort)
+
+    config = llm_config(
+        SimpleNamespace(
+            agent_temperature=0.2,
+            agent_max_output_tokens=1024,
+        )
+    )
+
+    assert config["reasoningEffort"] == reasoning_effort
 
 
 def test_specialized_models_override_only_their_own_connections() -> None:

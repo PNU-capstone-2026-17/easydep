@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from app.design.schemas.class_model import BCEModel, ClassOperation
 
 from ..planning.method_projection import MethodProjection, MethodProjectionResult
@@ -12,6 +14,8 @@ def render_backend_method_skeletons(
     model: BCEModel,
     projection: MethodProjectionResult,
     base_package: str,
+    *,
+    persistence_repositories: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """Render one Spring service per Control without inventing call bindings."""
 
@@ -28,11 +32,15 @@ def render_backend_method_skeletons(
     ):
         methods = [projected.get(item.operation_id) for item in control.operations]
         dependencies = _dependencies(methods)
+        repository_dependencies = _repository_dependencies(
+            methods, persistence_repositories or {}
+        )
         source = _render_service(
             control.class_name,
             control.operations,
             methods,
             dependencies,
+            repository_dependencies,
             declared_types,
             base_package,
         )
@@ -59,11 +67,36 @@ def _dependencies(
     )
 
 
+def _repository_dependencies(
+    methods: list[MethodProjection | None],
+    persistence_repositories: Mapping[str, str],
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                persistence_repositories[call.target.class_name]
+                for method in methods
+                if method is not None
+                for item in method.slices
+                for call in item.outgoing
+                if (
+                    call.generation == "hint"
+                    and call.target is not None
+                    and call.target.stereotype == "Entity"
+                    and "target_is_not_generated_spring_dependency" in call.reasons
+                    and call.target.class_name in persistence_repositories
+                )
+            }
+        )
+    )
+
+
 def _render_service(
     class_name: str,
     operations: list[ClassOperation],
     methods: list[MethodProjection | None],
     dependencies: tuple[str, ...],
+    repository_dependencies: tuple[str, ...],
     declared_types: set[str],
     base_package: str,
 ) -> str:
@@ -76,6 +109,7 @@ def _render_service(
         "import java.util.*;",
         "",
         f"import {base_package}.bce.*;",
+        *(f"import {dependency};" for dependency in repository_dependencies),
         "import org.springframework.stereotype.Service;",
         "",
         "@Service",
@@ -83,13 +117,32 @@ def _render_service(
     ]
     for dependency in dependencies:
         lines.append(f"    private final {dependency} {_field_name(dependency)};")
-    if dependencies:
+    for dependency in repository_dependencies:
+        repository = dependency.rsplit(".", 1)[-1]
+        lines.append(f"    private final {repository} {_field_name(repository)};")
+    if dependencies or repository_dependencies:
         parameters = ", ".join(
             f"{dependency} {_field_name(dependency)}" for dependency in dependencies
+        )
+        parameters = ", ".join(
+            item
+            for item in (
+                parameters,
+                *(
+                    f"{dependency.rsplit('.', 1)[-1]} "
+                    f"{_field_name(dependency.rsplit('.', 1)[-1])}"
+                    for dependency in repository_dependencies
+                ),
+            )
+            if item
         )
         lines.extend(["", f"    public {class_name}Service({parameters}) {{"])
         for dependency in dependencies:
             field = _field_name(dependency)
+            lines.append(f"        this.{field} = {field};")
+        for dependency in repository_dependencies:
+            repository = dependency.rsplit(".", 1)[-1]
+            field = _field_name(repository)
             lines.append(f"        this.{field} = {field};")
         lines.append("    }")
     for operation, method in zip(operations, methods, strict=True):

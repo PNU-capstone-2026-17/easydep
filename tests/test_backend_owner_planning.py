@@ -4,14 +4,11 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
-from app.implementation.agents.verification.build import (
-    WorkspaceVerificationError,
-    verify_agent_workspace,
-)
 from app.implementation.domain.models import JobSpec
-from app.implementation.planning.design_context import generate_backend_owner_tasks
+from app.implementation.planning.design_context import (
+    _backend_source_task_id,
+    generate_backend_owner_tasks,
+)
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -109,7 +106,37 @@ def _plan(root: Path, *, generated_operation_contracts: bool = False):
     if generated_operation_contracts:
         contracts = run / "reports/generated-operation-contracts.json"
         contracts.parent.mkdir(parents=True)
-        _write_json(contracts, {"schemaVersion": "generated-operation-contracts/v1"})
+        _write_json(
+            contracts,
+            {
+                "schemaVersion": "generated-operation-contracts/v1",
+                "contracts": [
+                    {
+                        "operationId": "place-order",
+                        "writableSource": (
+                            "application/src/main/java/com/example/orders/application/impl/"
+                            "OrderControlService.java"
+                        ),
+                        "interactionHints": [
+                            {
+                                "owner": "Order",
+                                "method": "listAll",
+                                "reason": "target_is_not_generated_spring_dependency",
+                            }
+                        ],
+                        "completionMarker": "EASYDEP-IMPLEMENT: complete place-order",
+                    },
+                    {
+                        "operationId": "other-operation",
+                        "writableSource": (
+                            "application/src/main/java/com/example/orders/bce/Order.java"
+                        ),
+                        "completionMarker": None,
+                    },
+                    "not-a-contract",
+                ],
+            },
+        )
     with patch(
         "app.implementation.planning.design_context.llm_config",
         return_value={"model": "test-model"},
@@ -124,17 +151,20 @@ def test_backend_plan_persists_one_cohesive_owner_without_focused_test_contract(
 
     assert len(tasks) == 1
     task = tasks[0]
-    assert task.task_id == "implement-backend-application"
+    assert task.task_id == (
+        "implement-backend-com-example-orders-application-impl-ordercontrolservice"
+    )
     assert task.owner == "backend"
     assert task.task_type == "backend-implementation"
     assert task.required_test_paths == []
     assert {"use_case:UC1", "use_case_spec:UC1"} <= set(task.source_refs)
     assert all("/src/test/" not in path for path in task.required_output_paths or [])
-    assert task.allowed_write_roots == [
-        "application/src/main/java/com/example/orders",
-        "application/src/main/resources",
+    assert task.allowed_write_paths == [
+        "application/src/main/java/com/example/orders/application/impl/"
+        "OrderControlService.java",
     ]
-    assert (run / "reports/implementation-tasks/implement-backend-application.task.json").is_file()
+    assert task.allowed_write_roots == []
+    assert (run / f"reports/implementation-tasks/{task.task_id}.task.json").is_file()
 
     context = json.loads((run / task.context_file).read_text(encoding="utf-8"))
     assert context["taskId"] == task.task_id
@@ -156,11 +186,14 @@ def test_backend_plan_persists_one_cohesive_owner_without_focused_test_contract(
         "tool": "run_task_check",
         "policy": "run once after the edit batch; finish when it passes",
     }
-    assert not {
+    method_context_paths = {
         str(item["path"])
         for item in source_index["methodContexts"]
         if isinstance(item, dict) and isinstance(item.get("path"), str)
-    }.intersection(context["readSourcePaths"])
+    }
+    assert method_context_paths.isdisjoint(context["readSourcePaths"])
+    assert context["methodContextRoot"] not in context["readSourcePaths"]
+    assert context["sourceIndexPath"] not in context["readSourcePaths"]
     assert not set(context["designInputs"].values()).intersection(
         context["readSourcePaths"]
     )
@@ -174,11 +207,178 @@ def test_backend_owner_includes_an_existing_generated_operation_contract_sidecar
     task = tasks[0]
     context = json.loads((run / task.context_file).read_text(encoding="utf-8"))
     source_index = json.loads((run / context["sourceIndexPath"]).read_text(encoding="utf-8"))
-    sidecar = "reports/generated-operation-contracts.json"
+    sidecar = f"reports/implementation-tasks/{task.task_id}.operation-contracts.json"
     assert source_index["generatedOperationContractsPath"] == sidecar
     assert context["generatedOperationContractsPath"] == sidecar
     assert sidecar in context["readSourcePaths"]
+    assert "reports/generated-operation-contracts.json" not in context["readSourcePaths"]
+    assert json.loads((run / sidecar).read_text(encoding="utf-8")) == {
+        "schemaVersion": "generated-operation-contracts/v1",
+        "contracts": [
+                    {
+                        "operationId": "place-order",
+                "writableSource": (
+                    "application/src/main/java/com/example/orders/application/impl/"
+                    "OrderControlService.java"
+                ),
+                "interactionHints": [
+                    {
+                        "owner": "Order",
+                        "method": "listAll",
+                        "reason": "target_is_not_generated_spring_dependency",
+                    }
+                ],
+                "completionMarker": "EASYDEP-IMPLEMENT: complete place-order",
+            }
+        ],
+    }
     assert sidecar in (run / task.prompt_file).read_text(encoding="utf-8")
+
+
+def test_backend_owner_includes_only_imported_frozen_java_dependencies(
+    tmp_path: Path,
+) -> None:
+    spec, run = _spec_and_run(tmp_path)
+    java_root = run / "application/src/main/java/com/example/orders"
+    sources = {
+        "api/OrderApi.java": """
+            package com.example.orders.api;
+            import com.example.orders.api.model.PlaceOrderRequest;
+            public interface OrderApi {
+                void placeOrder(PlaceOrderRequest request);
+            }
+        """,
+        "api/model/PlaceOrderRequest.java": """
+            package com.example.orders.api.model;
+            import com.example.orders.api.model.OrderItem;
+            public record PlaceOrderRequest(OrderItem item) {}
+        """,
+        "api/model/OrderItem.java": """
+            package com.example.orders.api.model;
+            public record OrderItem(String id) {}
+        """,
+        "api/UnrelatedApi.java": """
+            package com.example.orders.api;
+            import com.example.orders.api.model.UnrelatedModel;
+            public interface UnrelatedApi {
+                UnrelatedModel load();
+            }
+        """,
+        "api/model/UnrelatedModel.java": """
+            package com.example.orders.api.model;
+            public record UnrelatedModel(String value) {}
+        """,
+        "adapter/in/web/OrderApiController.java": """
+            package com.example.orders.adapter.in.web;
+            import com.example.orders.api.OrderApi;
+            public final class OrderApiController implements OrderApi {}
+        """,
+    }
+    for relative, source in sources.items():
+        path = java_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+
+    with patch(
+        "app.implementation.planning.design_context.llm_config",
+        return_value={"model": "test-model"},
+    ):
+        task = next(
+            item
+            for item in generate_backend_owner_tasks(spec, run)
+            if item.required_output_paths
+            == [
+                "application/src/main/java/com/example/orders/adapter/in/web/"
+                "OrderApiController.java"
+            ]
+        )
+
+    context = json.loads((run / task.context_file).read_text(encoding="utf-8"))
+    readable = set(context["readSourcePaths"])
+    assert {
+        "application/src/main/java/com/example/orders/api/OrderApi.java",
+        "application/src/main/java/com/example/orders/api/model/PlaceOrderRequest.java",
+        "application/src/main/java/com/example/orders/api/model/OrderItem.java",
+    } <= readable
+    assert {
+        "application/src/main/java/com/example/orders/api/UnrelatedApi.java",
+        "application/src/main/java/com/example/orders/api/model/UnrelatedModel.java",
+    }.isdisjoint(readable)
+
+
+def test_backend_owner_controller_retains_endpoint_contract_and_requires_body_marker(
+    tmp_path: Path,
+) -> None:
+    spec, run = _spec_and_run(tmp_path)
+    controller_path = (
+        run
+        / "application/src/main/java/com/example/orders/adapter/in/web/OrderApiController.java"
+    )
+    controller_path.parent.mkdir(parents=True, exist_ok=True)
+    controller_marker = "EASYDEP_CONTROLLER_BODY_REQUIRED:POST:/orders"
+    controller_path.write_text(
+        f'throw new UnsupportedOperationException("{controller_marker}");\n',
+        encoding="utf-8",
+    )
+    api_path = run / "application/src/main/java/com/example/orders/api/OrderApi.java"
+    api_path.parent.mkdir(parents=True, exist_ok=True)
+    api_path.write_text("public interface OrderApi {}\n", encoding="utf-8")
+    (run / "reports").mkdir(parents=True, exist_ok=True)
+    _write_json(
+        run / "reports/generated-operation-contracts.json",
+        {
+            "schemaVersion": "generated-operation-contracts/v1",
+            "contracts": [
+                {
+                    "operationId": "place-order",
+                    "writableSource": (
+                        "application/src/main/java/com/example/orders/application/impl/"
+                        "OrderControlService.java"
+                    ),
+                    "endpoints": [{"method": "POST", "path": "/orders"}],
+                    "completionMarker": "EASYDEP-IMPLEMENT: complete place-order",
+                },
+                {
+                    "operationId": "other-operation",
+                    "writableSource": (
+                        "application/src/main/java/com/example/orders/bce/Order.java"
+                    ),
+                    "endpoints": [{"method": "GET", "path": "/orders"}],
+                },
+            ],
+        },
+    )
+
+    with patch(
+        "app.implementation.planning.design_context.llm_config",
+        return_value={"model": "test-model"},
+    ):
+        task = next(
+            item
+            for item in generate_backend_owner_tasks(spec, run)
+            if item.required_output_paths == [
+                "application/src/main/java/com/example/orders/adapter/in/web/"
+                "OrderApiController.java"
+            ]
+        )
+
+    sidecar = run / f"reports/implementation-tasks/{task.task_id}.operation-contracts.json"
+    assert json.loads(sidecar.read_text(encoding="utf-8"))["contracts"] == [
+        {
+            "operationId": "place-order",
+            "writableSource": (
+                "application/src/main/java/com/example/orders/application/impl/"
+                "OrderControlService.java"
+            ),
+            "endpoints": [{"method": "POST", "path": "/orders"}],
+            "completionMarker": "EASYDEP-IMPLEMENT: complete place-order",
+        }
+    ]
+    assert {
+        "path": "application/src/main/java/com/example/orders/adapter/in/web/"
+        "OrderApiController.java",
+        "markers": [controller_marker],
+    } in task.verification_profile["requiredAbsentMarkers"]
 
 
 def test_backend_owner_includes_generated_bce_enum_declaration(tmp_path: Path) -> None:
@@ -222,41 +422,44 @@ def test_backend_owner_requires_its_generated_completion_markers_to_be_absent(
         "// EASYDEP-IMPLEMENT: complete confirm-order\\n",
         encoding="utf-8",
     )
+    reports = run / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        reports / "generated-operation-contracts.json",
+        {
+            "schemaVersion": "generated-operation-contracts/v1",
+            "contracts": [
+                {
+                    "operationId": "place-order",
+                    "writableSource": (
+                        "application/src/main/java/com/example/orders/application/impl/"
+                        "OrderControlService.java"
+                    ),
+                    "completionMarker": "EASYDEP-IMPLEMENT: complete place-order",
+                },
+                {
+                    "operationId": "confirm-order",
+                    "writableSource": source_path,
+                    "completionMarker": None,
+                },
+            ],
+        },
+    )
 
     with patch(
         "app.implementation.planning.design_context.llm_config",
         return_value={"model": "test-model"},
     ):
-        task = generate_backend_owner_tasks(spec, run)[0]
+        tasks = generate_backend_owner_tasks(spec, run)
 
-    assert task.verification_profile == {
-        "requiredAbsentMarkers": [
-            {
-                "path": (
-                    "application/src/main/java/com/example/orders/application/impl/"
-                    "OrderControlService.java"
-                ),
-                "markers": [
-                    "EASYDEP-IMPLEMENT: complete OrderControl::place(id:String)"
-                ],
-            },
-            {
-                "path": source_path,
-                "markers": ["EASYDEP-IMPLEMENT: complete confirm-order"],
-            }
-        ]
-    }
-    with pytest.raises(WorkspaceVerificationError) as raised:
-        verify_agent_workspace(
-            run,
-            task.task_type,
-            task.allowed_write_paths,
-            task.verification_profile,
-        )
-    assert raised.value.evidence["command"] == ["implementation-marker-contract"]
-    assert raised.value.evidence["remainingMarkers"] == [
-        {"path": source_path, "marker": "EASYDEP-IMPLEMENT: complete confirm-order"}
-    ]
+    domain = next(item for item in tasks if item.owner == "backend" and not any(
+        "/adapter/in/web/" in path for path in item.required_output_paths or []
+    ))
+    assert source_path not in (domain.required_output_paths or [])
+    assert {
+        "path": "application/src/main/java/com/example/orders/application/impl/OrderControlService.java",
+        "markers": ["EASYDEP-IMPLEMENT: complete OrderControl::place(id:String)"],
+    } in domain.verification_profile["requiredAbsentMarkers"]
 
 
 def test_backend_owner_plan_is_deterministic_across_equivalent_runs(tmp_path: Path) -> None:
@@ -269,3 +472,14 @@ def test_backend_owner_plan_is_deterministic_across_equivalent_runs(tmp_path: Pa
     ]
     assert [task.required_test_paths for task in first] == [[]]
     assert [task.required_test_paths for task in second] == [[]]
+    multi_source = [
+        "application/src/main/java/com/example/orders/application/impl/OrderControlService.java",
+        "application/src/main/java/com/example/orders/bce/Order.java",
+    ]
+    assert _backend_source_task_id(multi_source) == _backend_source_task_id(
+        list(reversed(multi_source))
+    )
+    assert _backend_source_task_id(multi_source).startswith(
+        "implement-backend-domain-core-"
+    )
+    assert len(_backend_source_task_id(multi_source)) <= 48

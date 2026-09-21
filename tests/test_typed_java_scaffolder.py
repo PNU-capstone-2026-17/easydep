@@ -23,6 +23,7 @@ from app.implementation.generation.java_scaffold import (
     render_openapi_controller_scaffold,
 )
 from app.implementation.generation.persistence_scaffold import (
+    persistence_repository_fqcns,
     render_persistence_scaffold,
 )
 
@@ -153,6 +154,7 @@ def test_renders_only_explicit_bce_contracts() -> None:
     # 정확히 한 번만 출력되므로 과거의 중복 Java signature가 다시 생기지 않는다.
     assert entity.count("public Integer getQuantity()") == 1
     assert "getPayload()" not in entity
+    assert "public Order(" not in entity
     assert "setQuantity(" not in entity
     assert entity.count("// EASYDEP-IMPLEMENT: complete ") == 2
     assert entity.count('throw new UnsupportedOperationException("EASYDEP-IMPLEMENT:') == 2
@@ -208,6 +210,49 @@ def test_same_input_produces_identical_files() -> None:
     assert render_java_scaffold(request) == render_java_scaffold(request)
 
 
+def test_erd_backed_entity_has_value_constructor_and_non_duplicate_getters() -> None:
+    payload = _payload()
+    payload["erdBceModel"] = {
+        "Classes": [
+            {
+                "className": "Order",
+                "stereotype": "Entity",
+                "identifier": ["id"],
+                "fields": [
+                    "id : string",
+                    "quantity : integer",
+                    "price : decimal",
+                    "payload : bytes[]",
+                    "status : OrderStatus",
+                ],
+                "operations": [],
+            }
+        ],
+        "DataTypes": [
+            {"name": "OrderStatus", "kind": "enumeration", "values": ["PENDING"]}
+        ],
+        "Relationships": [],
+        "Collaborations": [],
+    }
+
+    entity = _source(
+        render_java_scaffold(JavaScaffoldInput.model_validate(payload)), "Order"
+    )
+
+    assert (
+        "public Order(String id, Integer quantity, BigDecimal price, byte[] payload, "
+        "OrderStatus status)"
+    ) in entity
+    assert "this.status = status;" in entity
+    assert "public String getId()" in entity
+    assert "public BigDecimal getPrice()" in entity
+    assert "public byte[] getPayload()" in entity
+    assert "public OrderStatus getStatus()" in entity
+    assert entity.count("public Integer getQuantity()") == 1
+    assert "@Component" not in entity
+    assert "Repository" not in entity
+
+
 def test_erd_entities_generate_persistence_without_an_llm_mapper() -> None:
     """ERD의 확정 필드만으로 JPA·Repository·migration을 바로 만든다."""
     model = BCEModel.model_validate(_payload()["bceModel"])
@@ -231,6 +276,9 @@ def test_erd_entities_generate_persistence_without_an_llm_mapper() -> None:
     assert "price DECIMAL(19,4)" in migration
     assert all("BcePersistenceMapper" not in path for path in files)
     assert files == render_persistence_scaffold(model, "com.example.orders")
+    assert persistence_repository_fqcns(model, "com.example.orders") == {
+        "Order": "com.example.orders.persistence.repository.OrderRepository"
+    }
 
 
 def test_persistence_uses_erd_surrogate_and_foreign_keys() -> None:

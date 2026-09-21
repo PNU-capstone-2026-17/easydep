@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,7 +14,7 @@ from app.design.contracts.api_spec import ApiSpecModel
 from app.design.schemas.class_model import BCEModel
 from app.design.schemas.sequence_model import SequenceCollection
 
-from ..planning.method_projection import project_method_calls
+from ..planning.method_projection import CallProjection, project_method_calls
 from .java_scaffold import java_method_name, java_type
 
 
@@ -31,6 +33,16 @@ class CollaboratorContract(BaseModel):
     method: str
     arguments: list[OperationParameterContract] = Field(default_factory=list)
     return_type: str = Field(alias="returnType")
+
+
+class OperationInteractionHint(BaseModel):
+    """A typed sequence interaction that is informative but not generated wiring."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    target: CollaboratorContract
+    generation: Literal["hint"] = "hint"
+    reasons: list[str] = Field(default_factory=list)
 
 
 class EndpointInputBinding(BaseModel):
@@ -78,6 +90,9 @@ class GeneratedOperationContract(BaseModel):
         default_factory=list, alias="constructorDependencies"
     )
     collaborators: list[CollaboratorContract] = Field(default_factory=list)
+    interaction_hints: list[OperationInteractionHint] = Field(
+        default_factory=list, alias="interactionHints"
+    )
     endpoints: list[EndpointContract] = Field(default_factory=list)
     completion_marker: str | None = Field(default=None, alias="completionMarker")
 
@@ -98,10 +113,19 @@ def build_generated_operation_contracts(
     api_model: ApiSpecModel,
     base_package: str,
     application_prefix: str = "application",
+    persistence_repositories: Mapping[str, str] | None = None,
 ) -> GeneratedOperationContracts:
     """Build contracts only from typed design/projection inputs; omit unknown facts."""
     projection = project_method_calls(bce_model=bce_model, sequence_model=sequence_model)
     projected = {item.method.operation_id: item for item in projection.methods}
+    outgoing_by_use_case_and_call_id: dict[tuple[str, str], list[CallProjection]] = {}
+    for method in sorted(projection.methods, key=lambda item: item.method.operation_id):
+        for slice_ in sorted(method.slices, key=lambda item: item.incoming_call_id):
+            for use_case_id in sorted(slice_.use_case_ids):
+                for call in sorted(slice_.outgoing, key=lambda item: item.call_id):
+                    outgoing_by_use_case_and_call_id.setdefault(
+                        (use_case_id, call.call_id), []
+                    ).append(call)
     endpoints_by_operation: dict[str, list[EndpointContract]] = {}
     for endpoint in api_model.Endpoints:
         binding = endpoint.control_binding
@@ -167,48 +191,65 @@ def build_generated_operation_contracts(
             projected_method = projected.get(operation.operation_id)
             collaborators: list[CollaboratorContract] = []
             collaborator_keys: set[tuple[object, ...]] = set()
+            interaction_hints: list[OperationInteractionHint] = []
+            interaction_hint_keys: set[tuple[object, ...]] = set()
             dependencies: set[str] = set()
             if projected_method:
                 for slice_ in projected_method.slices:
                     for call in slice_.outgoing:
-                        if call.generation != "code" or call.target is None:
+                        if call.target is None:
                             continue
                         target = call.target
                         owner_fqcn = _owner_fqcn(target.stereotype, target.class_name, base_package)
+                        collaborator = CollaboratorContract(
+                            owner=target.class_name,
+                            ownerFqcn=owner_fqcn,
+                            method=java_method_name(target.name),
+                            arguments=[
+                                OperationParameterContract(
+                                    name=item.parameter,
+                                    type=_bce_fqcn(
+                                        java_type(item.expected_type, declared_types=declared),
+                                        base_package,
+                                        declared,
+                                    ),
+                                )
+                                for item in call.arguments
+                            ],
+                            returnType=_bce_fqcn(
+                                java_type(target.return_type, declared_types=declared),
+                                base_package,
+                                declared,
+                            ),
+                        )
                         dependency_key = (
                             owner_fqcn,
-                            java_method_name(target.name),
+                            collaborator.method,
                             target.return_type,
                         )
-                        dependencies.add(owner_fqcn)
-                        if dependency_key in collaborator_keys:
-                            continue
-                        collaborator_keys.add(dependency_key)
-                        collaborators.append(
-                            CollaboratorContract(
-                                owner=target.class_name,
-                                ownerFqcn=_owner_fqcn(
-                                    target.stereotype, target.class_name, base_package
-                                ),
-                                method=java_method_name(target.name),
-                                arguments=[
-                                    OperationParameterContract(
-                                        name=item.parameter,
-                                        type=_bce_fqcn(
-                                            java_type(item.expected_type, declared_types=declared),
-                                            base_package,
-                                            declared,
-                                        ),
-                                    )
-                                    for item in call.arguments
-                                ],
-                                returnType=_bce_fqcn(
-                                    java_type(target.return_type, declared_types=declared),
-                                    base_package,
-                                    declared,
-                                ),
+                        if call.generation == "code":
+                            dependencies.add(owner_fqcn)
+                            if dependency_key in collaborator_keys:
+                                continue
+                            collaborator_keys.add(dependency_key)
+                            collaborators.append(collaborator)
+                        elif call.generation == "hint" and owner.stereotype == "Control":
+                            if (
+                                "target_is_not_generated_spring_dependency" in call.reasons
+                                and target.stereotype == "Entity"
+                                and target.class_name in (persistence_repositories or {})
+                            ):
+                                dependencies.add(persistence_repositories[target.class_name])
+                            hint_key = (*dependency_key, *call.reasons)
+                            if hint_key in interaction_hint_keys:
+                                continue
+                            interaction_hint_keys.add(hint_key)
+                            interaction_hints.append(
+                                OperationInteractionHint(
+                                    target=collaborator,
+                                    reasons=list(call.reasons),
+                                )
                             )
-                        )
             marker = f"EASYDEP-IMPLEMENT: complete {operation.stable_id or operation.operation_id}"
             rendered_void_body = bool(
                 projected_method
@@ -218,6 +259,23 @@ def build_generated_operation_contracts(
                     call.generation == "code" and call.target is not None
                     for slice_ in projected_method.slices
                     for call in slice_.outgoing
+                )
+            )
+            entity_has_executable_inbound = bool(
+                projected_method
+                and projected_method.generation == "code"
+                and any(
+                    not (
+                        producers := [
+                            producer
+                            for use_case_id in slice_.use_case_ids
+                            for producer in outgoing_by_use_case_and_call_id.get(
+                                (use_case_id, slice_.incoming_call_id), []
+                            )
+                        ]
+                    )
+                    or any(producer.generation == "code" for producer in producers)
+                    for slice_ in projected_method.slices
                 )
             )
             contracts.append(
@@ -238,10 +296,11 @@ def build_generated_operation_contracts(
                         sorted(dependencies) if owner.stereotype == "Control" else []
                     ),
                     collaborators=collaborators,
+                    interactionHints=interaction_hints,
                     endpoints=endpoints_by_operation.get(operation.operation_id, []),
                     completionMarker=(
                         marker
-                        if owner.stereotype == "Entity"
+                        if (owner.stereotype == "Entity" and entity_has_executable_inbound)
                         or (owner.stereotype == "Control" and not rendered_void_body)
                         else None
                     ),

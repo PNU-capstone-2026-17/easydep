@@ -12,6 +12,7 @@ import threading
 import time
 import uuid
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -178,27 +179,63 @@ OWNER_CONTINUATION_MESSAGE = (
     "fix them, rerun verification, and call finish when it passes."
 )
 OWNER_STUCK_RECOVERY_MESSAGE = (
-    "Your last response made no observable progress. Do not reread an inspected file, run a "
-    "broad grep, restart analysis, or enumerate alternatives. If a listed writable file has not "
-    "been inspected, read only that file once; otherwise apply the simplest legal edit from the "
-    "analysis within the listed writable files now. For an existing file call file_editor with "
+    "Your last response made no observable progress. Do not restate the task, restart analysis, "
+    "or enumerate alternatives. Choose one already inspected writable target and apply its "
+    "simplest legal edit now. If no inspected writable target can be edited, report the missing "
+    "evidence concisely. For an existing file call file_editor with "
     'command="str_replace", old_str, and new_str; never use command="edit" or old_string/'
     "new_string. Then run canonical verification."
 )
 OWNER_GAP_RECOVERY_MESSAGE = (
     "Your last response made no observable progress. Do not reread an inspected file, run a "
-    "broad grep, restart analysis, or enumerate alternatives. If the legal implementation "
-    "requires changing an existing public signature or editing outside the listed writable "
-    "files, call report_upstream_gap now with one supplied source_ref. If a listed writable file "
-    "has not been inspected, read only that file once; otherwise apply the simplest legal edit "
-    'from the analysis now using command="str_replace", old_str, and new_str for an existing '
-    'file; never use command="edit" or old_string/new_string. Then run canonical verification.'
+    "broad grep, restart analysis, or enumerate alternatives. A missing collaborator or wiring "
+    "entry alone is not an upstream gap; choose conventional wiring in the writable component "
+    "when declared public behavior and existing dependency APIs permit it. Call "
+    "report_upstream_gap with one supplied source_ref only when required public input, output, "
+    "or externally visible behavior is absent or contradictory, so no legal implementation "
+    "exists without inventing product meaning. Otherwise apply the simplest legal edit now "
+    'using command="str_replace", old_str, and new_str for an existing file; never use '
+    'command="edit" or old_string/new_string. Then run canonical verification.'
 )
 OWNER_FINISH_RECOVERY_MESSAGE = (
     "The verification command has already been run, but this conversation was not completed. "
     "Do not summarize the work or run another command. Call the FinishTool now to mark this "
     "task complete."
 )
+OWNER_INITIAL_ACTION_MESSAGE = (
+    "Start with one writable source that contains an assigned completion marker. Perform the "
+    "first legal file_editor edit from its local declarations and assigned task behavior. If a "
+    "concrete implementation need remains, consult only the listed operation contract and declared "
+    "dependency sources. Interaction hints are behavioral evidence; use them to understand delegated "
+    "behavior, but do not inject dependencies or alter BCE ownership solely because of a hint."
+)
+
+
+def _owner_evidence_boundary_message(required_test_paths: object) -> str:
+    """Render owner-only prompt text; it does not change execution policy."""
+
+    paths = [
+        value
+        for value in required_test_paths if isinstance(value, str) and value
+    ] if isinstance(required_test_paths, list) else []
+    boundary = (
+        "The listed writable task files, additional writable roots, and supplied read evidence "
+        "are the complete boundary. Do not guess or probe unlisted file or directory paths."
+    )
+    if paths:
+        return (
+            boundary
+            + "\nFocused test paths are supplied:\n"
+            + "\n".join(f"- `{path}`" for path in paths)
+            + "\nUse only these focused test paths for test evidence."
+        )
+    return (
+        boundary
+        + "\nNo focused test is supplied. Do not search test directories; use only the "
+        "provided verification and completion requirements."
+    )
+
+
 _SANDBOX_TOOLS_REGISTERED = False
 _SANDBOX_TOOLS_REGISTRATION_LOCK = threading.Lock()
 
@@ -477,8 +514,8 @@ def _owner_workspace_guidance(
     common = [
         "## EasyDep implementation workspace",
         "",
-        "- Agent: Implementation. Upstream Requirements and Design are admitted and frozen for this task; broad validation belongs to the Testing agent.",
-        "- Current state: EXECUTE. Implement the admitted behavior in the declared write scope; do not reopen product or architecture decisions.",
+        "- Agent: Implementation. Requirements, caller-visible APIs, and observable behavior are admitted constraints for this task; broad validation belongs to the Testing agent.",
+        "- Current state: EXECUTE. Implement the admitted product behavior in the declared write scope and choose conventional implementation mechanics where generated design hints are incomplete.",
         f"- Complete workspace: `{logical_workspace}`. For file_editor, use absolute paths rooted at this directory.",
         '- For an existing file, file_editor uses command="str_replace" with old_str and new_str. For a new file, it uses command="create" with file_text. command="edit" and old_string/new_string are invalid.',
         "- Preserve generated public declarations: never change or delete an existing public signature. Within the assigned write scope (files or roots), adding only the smallest constructor, accessor, or helper declaration needed is permitted.",
@@ -492,19 +529,19 @@ def _owner_workspace_guidance(
     if bounded_evidence:
         common.extend(
             [
-                "- Read the task context before source code and treat its declared behavior as authoritative.",
-                "- Do not invent missing behavior or search for a workaround to an unresolved contract; call report_upstream_gap when no legal implementation is declared.",
-                "- A direct call with generation: hint is advisory, not a mandatory architecture. Satisfy observable behavior and API through the simplest conventional path; do not add a static/global/service-locator solely to realize a hint.",
-                "- Treat read-only dependency declarations as ready integration contracts. Compose their existing APIs from writable code; do not spend turns designing better dependency APIs or seek ownership merely to refactor them.",
-                "- Once the task context, writable files, and directly referenced dependency declarations have been read, edit before any broader search. Do not reread unchanged files; let canonical verification identify any remaining mechanics.",
+                "- Requirements, caller-visible APIs, and observable behavior are hard constraints. Preserve generated public signatures and compile boundaries when a legal implementation exists.",
+                "- Generated class, sequence, RTM, collaborator, and wiring details are implementation hints; they may be incomplete.",
+                "- Start with one writable source containing an assigned completion marker. Make its first legal edit from local declarations and assigned task behavior. If a concrete implementation need remains, consult only the listed operation contract and declared dependency sources. Interaction hints are behavioral evidence; use them to understand delegated behavior, but do not inject dependencies or alter BCE ownership solely because of a hint.",
+                "- Read the listed contract or declared dependencies only for that concrete need. Do not reread unchanged files; let canonical verification identify remaining mechanics.",
+                "- A missing collaborator or wiring entry alone is not an upstream gap. When declared public behavior and existing dependency APIs are sufficient, choose conventional wiring in the writable component.",
+                "- Report an upstream gap only when required public input, output, or externally visible behavior is absent or contradictory, leaving no legal implementation without inventing product meaning.",
                 "- Preserve shared work and every generated body or implementation marker not assigned to this task.",
             ]
         )
     else:
         common.extend(
             [
-                "- Source locations and RTM references are investigation hints, not a required edit list.",
-                "- Start from generated skeletons and their local context; open raw design inputs only for a concrete contract gap.",
+                "- Start from generated skeletons and their local context; use only the listed operation contract and declared dependency sources when a concrete contract gap remains.",
             ]
         )
     if owner_tool_mode == "terminal":
@@ -786,6 +823,98 @@ def _task_execution_scope(
     )
 
 
+
+@dataclass(frozen=True)
+class OwnerAccessContract:
+    """Resolve the bounded owner workspace access surface once per task."""
+
+    writable_files: list[str]
+    writable_roots: list[str]
+    immutable_paths: list[str]
+    read_hints: list[str]
+    readable_files: list[str] | None
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        sandbox: Path,
+        run_root: Path,
+        task: dict[str, object],
+        context: dict[str, object],
+        task_type: str,
+        editable_paths: list[str],
+        editable_roots: list[str],
+        immutable: list[str],
+        bounded_evidence: bool,
+    ) -> OwnerAccessContract:
+        sandbox_root = sandbox.resolve()
+
+        def resolve_inside(value: str) -> Path:
+            candidate = (sandbox / value).resolve()
+            if not candidate.is_relative_to(sandbox_root):
+                raise RuntimeError("Task access path escapes the sandbox.")
+            return candidate
+
+        writable_files = [str(resolve_inside(path)) for path in editable_paths]
+        writable_roots = [str(resolve_inside(root)) for root in editable_roots]
+        immutable_paths = [str(resolve_inside(path)) for path in immutable]
+        immutable_resolved = {Path(path) for path in immutable_paths}
+        immutable_exact = {path for path in immutable_resolved if path.is_file()}
+        if any(
+            writable == immutable_path or immutable_path in writable.parents
+            for writable in map(Path, writable_files)
+            for immutable_path in immutable_resolved
+        ):
+            raise RuntimeError("Task access contract overlaps writable and immutable files.")
+        if not bounded_evidence:
+            return cls(
+                writable_files=writable_files,
+                writable_roots=writable_roots,
+                immutable_paths=immutable_paths,
+                read_hints=[],
+                readable_files=None,
+            )
+
+        evidence_paths = (
+            integration_evidence_paths(run_root, task, context)
+            if task_type == "integration-implementation"
+            else context.get("readSourcePaths", [])
+        )
+        read_hints = [
+            str(candidate)
+            for value in evidence_paths
+            if isinstance(value, str)
+            and (candidate := resolve_inside(value)).is_file()
+        ]
+        context_file = task.get("context_file")
+        if not isinstance(context_file, str):
+            raise TypeError("Bounded task access requires a context file.")
+        context_path = resolve_inside(context_file)
+        if not context_path.is_file():
+            raise RuntimeError("Bounded task context file is missing.")
+        readable_files = sorted(
+            {
+                str(context_path),
+                *read_hints,
+                *writable_files,
+                *(str(path) for path in immutable_exact),
+            }
+        )
+        if not {Path(path) for path in writable_files}.issubset(
+            {Path(path) for path in readable_files}
+        ):
+            raise RuntimeError("Bounded task writable files must be readable.")
+        if not immutable_exact.issubset({Path(path) for path in readable_files}):
+            raise RuntimeError("Existing immutable task files must be readable.")
+        return cls(
+            writable_files=writable_files,
+            writable_roots=writable_roots,
+            immutable_paths=immutable_paths,
+            read_hints=read_hints,
+            readable_files=readable_files,
+        )
+
 def _complete_verified_task_without_agent(
     run_root: Path,
     task: dict[str, object],
@@ -1008,6 +1137,15 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     if not isinstance(prompt_file, str) or not (run_root / prompt_file).is_file():
         prompt_file = str(task["prompt_file"])
     prompt = (run_root / prompt_file).read_text(encoding="utf-8")
+    if owner_task:
+        prompt += (
+            "\n\n## First action\n\n"
+            + OWNER_INITIAL_ACTION_MESSAGE
+            + "\n\n## Evidence boundary\n\n"
+            + _owner_evidence_boundary_message(
+                task.get("required_test_paths", task.get("requiredTestPaths", []))
+            )
+        )
     if initial_verification is not None:
         prompt += (
             '\n\n## Initial canonical verification\n\n'
@@ -1034,37 +1172,22 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         if isinstance(verification_profile, dict) and verification_profile
         else None
     )
-    evidence_paths = (
-        integration_evidence_paths(run_root, task, context)
-        if task_type == "integration-implementation"
-        else context.get("readSourcePaths", [])
+    access_contract = OwnerAccessContract.build(
+        sandbox=sandbox,
+        run_root=run_root,
+        task=task,
+        context=context,
+        task_type=task_type,
+        editable_paths=editable_paths,
+        editable_roots=editable_roots,
+        immutable=immutable,
+        bounded_evidence=bounded_evidence,
     )
-    sandbox_root = sandbox.resolve()
-    read_hints = [
-        str((sandbox / value).resolve())
-        for value in evidence_paths
-        if isinstance(value, str)
-        and (sandbox / value).resolve().is_relative_to(sandbox_root)
-        and (sandbox / value).exists()
-    ]
-    writable_files = [str((sandbox / path).resolve()) for path in editable_paths]
-    writable_roots = [str((sandbox / root).resolve()) for root in editable_roots]
-    immutable_absolute = [str((sandbox / path).resolve()) for path in immutable]
-    # The owner works in an isolated task workspace and still has a strict write
-    # scope.  Let it inspect that workspace like a normal coding agent: the RTM-
-    # derived paths are starting hints, while existing source and wiring provide
-    # implementation mechanics that cannot be usefully duplicated in the capsule.
-    readable_files = (
-        sorted(
-            {
-                str((sandbox / str(task["context_file"])).resolve()),
-                *read_hints,
-                *writable_files,
-            }
-        )
-        if bounded_evidence
-        else None
-    )
+    writable_files = access_contract.writable_files
+    writable_roots = access_contract.writable_roots
+    immutable_absolute = access_contract.immutable_paths
+    read_hints = access_contract.read_hints
+    readable_files = access_contract.readable_files
     owner_system_context = ""
     if harness_task:
         owner_system_context = _owner_workspace_guidance(
@@ -1837,8 +1960,43 @@ def create_openhands_conversation(
         if message is not None:
             raise FunctionCallValidationError(message) from error
 
+    def _completion_has_no_assistant_output(response: object) -> bool:
+        response_get = getattr(response, "get", None)
+        if not callable(response_get):
+            return False
+        choices = response_get("choices")
+        if not isinstance(choices, list) or not choices:
+            return False
+        choice_get = getattr(choices[0], "get", None)
+        if not callable(choice_get):
+            return False
+        message = choice_get("message")
+        message_get = getattr(message, "get", None)
+        if not callable(message_get):
+            return False
+        return not any(
+            message_get(field)
+            for field in (
+                "content",
+                "tool_calls",
+                "function_call",
+                "reasoning_content",
+                "reasoning",
+                "refusal",
+            )
+        )
+
     class ProviderToolValidationLLM(LLM):
         """Route narrow provider 400s into the matching safe SDK recovery."""
+
+        def _validate_chat_response(self, response, **kwargs):
+            validated = super()._validate_chat_response(response, **kwargs)
+            if _completion_has_no_assistant_output(validated):
+                raise LLMNoResponseError(
+                    "PROVIDER_EMPTY_RESPONSE_TRANSIENT: provider returned an empty "
+                    "assistant completion before dispatching a tool"
+                )
+            return validated
 
         async def acompletion(self, *args, **kwargs):
             try:
@@ -2065,22 +2223,34 @@ def create_openhands_conversation(
                     include_pattern=action.include,
                     is_error=True,
                 )
-            if self.readable_files is not None and target not in self.readable_files:
-                return GrepObservation.from_text(
-                    text=render_harness_error(
-                        "READ_OUTSIDE_TASK_EVIDENCE",
-                        "Search only one explicitly listed evidence file. Report the missing implementation context instead of broadening discovery.",
-                        retryable=True,
-                        workspace=str(self.logical_workspace),
-                        requestedPath=str(target),
-                    ),
-                    matches=[],
-                    pattern=action.pattern,
-                    search_path=str(target),
-                    include_pattern=action.include,
-                    is_error=True,
-                )
             if self.readable_files is not None:
+                candidates = (
+                    [target]
+                    if target in self.readable_files
+                    else sorted(
+                        path
+                        for path in self.readable_files
+                        if supplied is not None
+                        and target.is_dir()
+                        and path.is_file()
+                        and path.is_relative_to(target)
+                    )
+                )
+                if not candidates:
+                    return GrepObservation.from_text(
+                        text=render_harness_error(
+                            "READ_OUTSIDE_TASK_EVIDENCE",
+                            "Search only the supplied implementation evidence. Report missing context instead of broadening discovery.",
+                            retryable=True,
+                            workspace=str(self.logical_workspace),
+                            requestedPath=str(target),
+                        ),
+                        matches=[],
+                        pattern=action.pattern,
+                        search_path=str(target),
+                        include_pattern=action.include,
+                        is_error=True,
+                    )
                 try:
                     pattern = re.compile(action.pattern, re.IGNORECASE)
                 except re.error as error:
@@ -2092,10 +2262,13 @@ def create_openhands_conversation(
                         include_pattern=action.include,
                         is_error=True,
                     )
+                matches = []
                 try:
-                    matched = pattern.search(
-                        target.read_text(encoding="utf-8", errors="ignore")
-                    )
+                    for candidate in candidates:
+                        if pattern.search(
+                            candidate.read_text(encoding="utf-8", errors="ignore")
+                        ):
+                            matches.append(candidate)
                 except OSError as error:
                     return GrepObservation.from_text(
                         text=str(error),
@@ -2107,8 +2280,8 @@ def create_openhands_conversation(
                     )
                 return self._build_observation(
                     action,
-                    target.parent,
-                    [target] if matched else [],
+                    target if target.is_dir() else target.parent,
+                    matches,
                 )
             return super().__call__(action, conversation)
 

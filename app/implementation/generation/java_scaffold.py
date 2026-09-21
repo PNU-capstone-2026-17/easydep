@@ -190,16 +190,22 @@ def render_java_scaffold(scaffold: JavaScaffoldInput) -> dict[str, str]:
     }
     for component in sorted(scaffold.bce_model.Classes, key=lambda item: item.class_name):
         _require_identifier(component.class_name, "className")
-        if component.stereotype == "Entity" and component.class_name in erd_entities:
+        persistence_backed = (
+            component.stereotype == "Entity" and component.class_name in erd_entities
+        )
+        if persistence_backed:
             erd_component = erd_entities[component.class_name]
             component = component.model_copy(
                 update={
                     "fields": list(erd_component.fields),
                     "identifier": list(erd_component.identifier),
                 }
-            )
+        )
         files[f"{package_path}/{component.class_name}.java"] = _render_component(
-            package_name, component, declared_types
+            package_name,
+            component,
+            declared_types,
+            persistence_backed=persistence_backed,
         )
     return dict(sorted(files.items()))
 
@@ -843,7 +849,11 @@ def _render_data_type(package_name: str, data_type: DataType, declared_types: se
 
 
 def _render_component(
-    package_name: str, component: AcceptedBCEClass, declared_types: set[str]
+    package_name: str,
+    component: AcceptedBCEClass,
+    declared_types: set[str],
+    *,
+    persistence_backed: bool = False,
 ) -> str:
     """BCE class를 설계에 있는 필드와 operation만 가진 최소 Java 선언으로 만든다."""
     signatures: set[str] = set()
@@ -889,6 +899,28 @@ def _render_component(
     ]
     for name, field_type in fields:
         lines.append(f"    private {field_type} {name};")
+    declared_accessors = {
+        java_method_name(operation.name)
+        for operation in component.operations
+        if not operation.parameters
+    }
+    if persistence_backed and fields:
+        parameters = ", ".join(f"{field_type} {name}" for name, field_type in fields)
+        lines.extend(["", f"    public {component.class_name}({parameters}) {{"])
+        lines.extend(f"        this.{name} = {name};" for name, _field_type in fields)
+        lines.append("    }")
+        for name, field_type in fields:
+            accessor = f"get{name[:1].upper()}{name[1:]}"
+            if accessor in declared_accessors:
+                continue
+            lines.extend(
+                [
+                    "",
+                    f"    public {field_type} {accessor}() {{",
+                    f"        return {name};",
+                    "    }",
+                ]
+            )
     for operation, (declaration, _return_type) in zip(
         component.operations, methods, strict=True
     ):

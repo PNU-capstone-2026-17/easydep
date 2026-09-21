@@ -341,6 +341,12 @@ def test_restricted_owner_uses_the_minimal_tools_and_custom_prompt(tmp_path: Pat
         assert agent.system_prompt.strip() == owner_prompt_path().read_text(encoding="utf-8").strip()
         prompt = conversation.state.events[0].system_prompt.text
         assert "a short path below `/work`" in prompt
+        assert "Requirements, caller-visible APIs, and observable behavior are hard constraints" in prompt
+        assert "one writable source containing an assigned completion marker" in prompt
+        assert "local declarations and assigned task behavior" in prompt
+        assert "missing collaborator or wiring entry alone is not an upstream gap" in prompt
+        assert "required public input, output, or externally visible behavior" in prompt
+        assert "Upstream Requirements and Design are admitted and frozen" not in prompt
         assert "PULL_REQUESTS" not in prompt
         assert agent.llm.timeout == 300
         assert agent.llm.num_retries == 3
@@ -434,10 +440,15 @@ def test_restricted_owner_applies_only_an_explicit_read_evidence_boundary(
     tmp_path: Path,
 ) -> None:
     evidence = tmp_path / "application/evidence/Allowed.java"
+    forbidden_sibling = tmp_path / "application/evidence/ForbiddenSibling.java"
     unrelated = tmp_path / "application/unrelated/Other.java"
     evidence.parent.mkdir(parents=True)
     unrelated.parent.mkdir(parents=True)
     evidence.write_text("class Allowed { String needle; }\n", encoding="utf-8")
+    forbidden_sibling.write_text(
+        "class ForbiddenSibling { String needle; }\n",
+        encoding="utf-8",
+    )
     unrelated.write_text("class Other { String needle; }\n", encoding="utf-8")
     connection = LlmConnection(
         provider="openrouter",
@@ -468,6 +479,12 @@ def test_restricted_owner_applies_only_an_explicit_read_evidence_boundary(
         )
         assert allowed_view.is_error is False
         assert allowed_grep.is_error is False
+        allowed_directory_grep = agent._tools["grep"].executor(
+            GrepAction(pattern="needle", path=str(evidence.parent.resolve()))
+        )
+        assert allowed_directory_grep.is_error is False
+        assert "Allowed.java" in allowed_directory_grep.text
+        assert "ForbiddenSibling.java" not in allowed_directory_grep.text
 
         rejected = [
             agent._tools["file_editor"].executor(
@@ -476,8 +493,11 @@ def test_restricted_owner_applies_only_an_explicit_read_evidence_boundary(
             agent._tools["grep"].executor(
                 GrepAction(pattern="needle", path=str(unrelated.resolve()))
             ),
+            agent._tools["file_editor"].executor(
+                FileEditorAction(command="view", path=str(evidence.parent.resolve()))
+            ),
             agent._tools["grep"].executor(
-                GrepAction(pattern="needle", path=str(evidence.parent.resolve()))
+                GrepAction(pattern="needle", path=str(unrelated.parent.resolve()))
             ),
             agent._tools["grep"].executor(GrepAction(pattern="needle")),
         ]
@@ -548,6 +568,73 @@ def test_provider_output_parse_failure_enters_the_safe_sdk_retry_type(
 
         with pytest.raises(LLMNoResponseError, match="PROVIDER_OUTPUT_PARSE_TRANSIENT"):
             agent.llm._transport_call(messages=[])
+    finally:
+        conversation.close()
+
+
+@pytest.mark.parametrize(
+    ("response", "empty"),
+    [
+        (
+            {"choices": [{"message": {"content": None, "tool_calls": []}}]},
+            True,
+        ),
+        (
+            {"choices": [{"message": {"content": "implemented", "tool_calls": []}}]},
+            False,
+        ),
+        (
+            {
+                "choices": [
+                    {"message": {"content": None, "tool_calls": [{"id": "call-1"}]}}
+                ]
+            },
+            False,
+        ),
+        (
+            {
+                "choices": [
+                    {"message": {"content": None, "reasoning_content": "inspect"}}
+                ]
+            },
+            False,
+        ),
+    ],
+)
+def test_empty_successful_completion_enters_sdk_retry_type(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    response: dict[str, object],
+    empty: bool,
+) -> None:
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        LlmConnection(
+            provider="cloudflare",
+            api_key="validation-only-key",
+            base_url="https://example.invalid/v1",
+            model="openai/gpt-oss-120b",
+            litellm_provider="openai",
+        ),
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+    )
+    base_llm = type(agent.llm).__mro__[1]
+    monkeypatch.setattr(
+        base_llm,
+        "_validate_chat_response",
+        lambda _self, result, **_kwargs: result,
+    )
+    try:
+        from openhands.sdk.llm.exceptions import LLMNoResponseError
+
+        if empty:
+            with pytest.raises(
+                LLMNoResponseError,
+                match="PROVIDER_EMPTY_RESPONSE_TRANSIENT",
+            ):
+                agent.llm._validate_chat_response(response)
+        else:
+            assert agent.llm._validate_chat_response(response) is response
     finally:
         conversation.close()
 

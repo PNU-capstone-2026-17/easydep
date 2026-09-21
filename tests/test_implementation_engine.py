@@ -14,13 +14,18 @@ from app.design.services.erd.mapping import build_logical_model
 from app.implementation.agents import execute_openhands_task
 from app.implementation.agents.admission import integration_evidence_paths
 from app.implementation.agents.runtime import (
+    OWNER_GAP_RECOVERY_MESSAGE,
+    OWNER_INITIAL_ACTION_MESSAGE,
+    OWNER_STUCK_RECOVERY_MESSAGE,
     OWNER_TURN_ITERATIONS,
     NoActionResponseGuard,
+    OwnerAccessContract,
     OwnerConversationIncomplete,
     SuccessfulTaskCheckGuard,
     _conversation_needs_finish_recovery,
     _conversation_terminal_failure,
     _owner_continuation_required,
+    _owner_evidence_boundary_message,
     _owner_message_required,
     _owner_workspace_guidance,
     _task_execution_scope,
@@ -55,6 +60,8 @@ from app.implementation.agents.workspace import (
 )
 from app.implementation.delivery.terraform import render_iac
 from app.implementation.domain.models import JobSpec
+from app.implementation.generation.orchestrator import plan_frontend_tasks
+from app.implementation.planning.design_context import TaskSpec
 from app.implementation.runtime.linux_runner_transport import OWNER_CONTROL_ROOT_ENV
 from app.implementation.workflows.completion import audit_run_completion
 from app.implementation.workflows.conformance import (
@@ -85,6 +92,65 @@ class _FakeConversationStats:
         assert mode == "json"
         assert context == {"use_snapshot": True}
         return {"usage": {"promptTokens": 21, "completionTokens": 8}}
+
+
+def test_lazy_frontend_planning_inherits_stable_backend_llm_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    selected_llm = {
+        "provider": "selected-provider",
+        "model": "selected-model",
+        "baseUrl": "https://selected.example/v1",
+        "temperature": 0.17,
+        "maxOutputTokens": 4321,
+        "reasoningEffort": "low",
+    }
+    other_llm = {**selected_llm, "model": "other-model"}
+    backend_tasks = [
+        {"task_id": "z-backend", "task_type": "backend-implementation", "llm": other_llm},
+        {"task_id": "a-backend", "task_type": "backend-implementation", "llm": selected_llm},
+    ]
+    manifest_path = reports / "run-manifest.json"
+    manifest_path.write_text(json.dumps({"implementation_tasks": backend_tasks}), encoding="utf-8")
+
+    def task(task_id: str, task_type: str, owner: str) -> TaskSpec:
+        return TaskSpec(
+            task_id=task_id,
+            control=task_id,
+            prompt_file=f"reports/{task_id}.prompt.md",
+            context_file=f"reports/{task_id}.context.json",
+            allowed_write_paths=[],
+            immutable_paths=[],
+            source_artifacts={},
+            prompt_sha256="test",
+            llm={"model": "fallback"},
+            owner=owner,
+            task_type=task_type,
+        )
+
+    monkeypatch.setattr(
+        "app.implementation.generation.orchestrator.generate_frontend_tasks",
+        lambda _spec, _run: [task("frontend", "frontend-implementation", "frontend")],
+    )
+    monkeypatch.setattr(
+        "app.implementation.generation.orchestrator.generate_vertical_integration_task",
+        lambda _spec, _run, _prior: task("integration", "integration-implementation", "implementation"),
+    )
+
+    plan_frontend_tasks(SimpleNamespace(), run)
+
+    tasks = json.loads(manifest_path.read_text(encoding="utf-8"))["implementation_tasks"]
+    frontend = next(item for item in tasks if item["task_type"] == "frontend-implementation")
+    integration = next(item for item in tasks if item["task_type"] == "integration-implementation")
+    backend = next(item for item in tasks if item["task_id"] == "a-backend")
+    assert frontend["llm"] == selected_llm
+    assert integration["llm"] == selected_llm
+    assert frontend["llm"] is not backend["llm"]
+    assert integration["llm"] is not backend["llm"]
+    assert backend["llm"] == selected_llm
 
 
 def test_final_workspace_verification_publishes_success_report(
@@ -805,6 +871,96 @@ def _write_minimal_agent_task(tmp_path: Path) -> tuple[Path, str, str, Path]:
     (tasks / "order.task.json").write_text(json.dumps(task), encoding="utf-8")
     return run, task_id, source_path, source
 
+
+
+def test_owner_access_contract_bounds_exact_immutable_files(
+    tmp_path: Path,
+) -> None:
+    sandbox = tmp_path / "sandbox"
+    context_file = sandbox / "reports/task.context.json"
+    read_hint = sandbox / "reports/evidence.json"
+    writable = sandbox / "application/OrderService.java"
+    immutable_file = sandbox / "application/GeneratedContract.java"
+    immutable_directory = sandbox / "application/contracts"
+    read_directory = sandbox / "reports/evidence-directory"
+    for path in (context_file, read_hint, writable, immutable_file):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("evidence", encoding="utf-8")
+    immutable_directory.mkdir(parents=True)
+    read_directory.mkdir(parents=True)
+
+    contract = OwnerAccessContract.build(
+        sandbox=sandbox,
+        run_root=sandbox,
+        task={"context_file": "reports/task.context.json"},
+        context={"readSourcePaths": ["reports/evidence.json", "reports/evidence-directory"]},
+        task_type="backend-implementation",
+        editable_paths=["application/OrderService.java"],
+        editable_roots=["application"],
+        immutable=[
+            "application/GeneratedContract.java",
+            "application/contracts",
+            "application/MissingContract.java",
+        ],
+        bounded_evidence=True,
+    )
+
+    assert str(context_file.resolve()) in contract.readable_files
+    assert str(read_hint.resolve()) in contract.readable_files
+    assert str(read_directory.resolve()) not in contract.readable_files
+    assert str(writable.resolve()) in contract.readable_files
+    assert str(immutable_file.resolve()) in contract.readable_files
+    assert str(immutable_directory.resolve()) not in contract.readable_files
+    assert str((sandbox / "application/MissingContract.java").resolve()) not in contract.readable_files
+    with pytest.raises(RuntimeError):
+        OwnerAccessContract.build(
+            sandbox=sandbox,
+            run_root=sandbox,
+            task={"context_file": "reports/task.context.json"},
+            context={},
+            task_type="backend-implementation",
+            editable_paths=["application/GeneratedContract.java"],
+            editable_roots=[],
+            immutable=["application/GeneratedContract.java"],
+            bounded_evidence=True,
+        )
+    with pytest.raises(RuntimeError):
+        OwnerAccessContract.build(
+            sandbox=sandbox,
+            run_root=sandbox,
+            task={"context_file": "reports/task.context.json"},
+            context={},
+            task_type="backend-implementation",
+            editable_paths=["../escape.java"],
+            editable_roots=[],
+            immutable=[],
+            bounded_evidence=True,
+        )
+
+    with pytest.raises(RuntimeError):
+        OwnerAccessContract.build(
+            sandbox=sandbox,
+            run_root=sandbox,
+            task={"context_file": "reports/task.context.json"},
+            context={},
+            task_type="backend-implementation",
+            editable_paths=["application/contracts/Locked.java"],
+            editable_roots=[],
+            immutable=["application/contracts"],
+            bounded_evidence=True,
+        )
+    root_contract = OwnerAccessContract.build(
+        sandbox=sandbox,
+        run_root=sandbox,
+        task={"context_file": "reports/task.context.json"},
+        context={},
+        task_type="backend-implementation",
+        editable_paths=[],
+        editable_roots=["application"],
+        immutable=["application/contracts"],
+        bounded_evidence=True,
+    )
+    assert str((sandbox / "application").resolve()) in root_contract.writable_roots
 
 def test_copy_read_sources_includes_task_context_and_external_source(
     tmp_path: Path,
@@ -1792,11 +1948,18 @@ def test_stuck_after_successful_check_uses_finish_recovery(
     run, task_id, source_path, source = _write_minimal_agent_task(tmp_path)
     task_path = run / "reports/implementation-tasks/order.task.json"
     task = json.loads(task_path.read_text(encoding="utf-8"))
+    immutable_file = "application/src/main/java/com/example/bce/GeneratedContract.java"
+    immutable_directory = "application/src/main/java/com/example/bce/generated"
+    missing_immutable = "application/src/main/java/com/example/bce/MissingContract.java"
+    immutable_source = run / immutable_file
+    immutable_source.parent.mkdir(parents=True, exist_ok=True)
+    immutable_source.write_text("interface GeneratedContract {}", encoding="utf-8")
     task.update(
         {
             "task_type": "backend-implementation",
             "owner": "backend",
             "allowed_write_roots": [Path(source_path).parent.as_posix()],
+            "immutable_paths": [immutable_file, immutable_directory, missing_immutable],
         }
     )
     task_path.write_text(json.dumps(task), encoding="utf-8")
@@ -1883,8 +2046,11 @@ def test_stuck_after_successful_check_uses_finish_recovery(
         [
             str((conversation.sandbox / task["context_file"]).resolve()),
             str((conversation.sandbox / source_path).resolve()),
+            str((conversation.sandbox / immutable_file).resolve()),
         ]
     )
+    assert str((conversation.sandbox / immutable_directory).resolve()) not in conversation_options["readable_files"]
+    assert str((conversation.sandbox / missing_immutable).resolve()) not in conversation_options["readable_files"]
     assert conversation_options["editable_files"] == [
         str((conversation.sandbox / source_path).resolve())
     ]
@@ -2369,18 +2535,60 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
         owner_files=["application/src/main/java/com/example/Order.java"],
         bounded_evidence=True,
     )
-    assert "Read the task context before source code" in bounded
-    assert "call report_upstream_gap when no legal implementation is declared" in bounded
-    assert "generation: hint is advisory" in bounded
-    assert "read-only dependency declarations as ready integration contracts" in bounded
+    assert "Requirements, caller-visible APIs, and observable behavior are hard constraints" in bounded
+    assert "class, sequence, RTM, collaborator, and wiring details" in bounded
+    assert "may be incomplete" in bounded
+    assert "one writable source containing an assigned completion marker" in bounded
+    assert "first legal edit from local declarations and assigned task behavior" in bounded
+    assert "consult only the listed operation contract and declared dependency sources" in bounded
+    assert "Interaction hints are behavioral evidence" in bounded
+    assert "do not inject dependencies or alter BCE ownership solely because of a hint" in bounded
+    assert "missing collaborator or wiring entry alone is not an upstream gap" in bounded
+    assert "existing dependency APIs" in bounded
+    assert "required public input, output, or externally visible behavior" in bounded
+    assert "absent or contradictory" in bounded
     assert "Do not reread unchanged files" in bounded
     assert "implementation marker not assigned to this task" in bounded
     assert "readSourcePaths" not in bounded
     assert "direct-call argument" not in bounded
     assert "effect owners" not in bounded
     assert "assigned main-source markers" not in bounded
-    assert "investigation hints" not in bounded
-    assert "open raw design inputs" not in bounded
+    assert "source indexes" not in bounded
+    assert "raw design inputs" not in bounded
+    assert "unrelated generated files" not in bounded
+
+
+def test_owner_prompt_requires_an_immediate_edit_and_narrow_stuck_recovery() -> None:
+    assert "operation contract" in OWNER_INITIAL_ACTION_MESSAGE
+    assert "one writable source" in OWNER_INITIAL_ACTION_MESSAGE
+    assert "assigned completion marker" in OWNER_INITIAL_ACTION_MESSAGE
+    assert "local declarations and assigned task behavior" in OWNER_INITIAL_ACTION_MESSAGE
+    assert "listed operation contract and declared dependency sources" in OWNER_INITIAL_ACTION_MESSAGE
+    assert "Interaction hints are behavioral evidence" in OWNER_INITIAL_ACTION_MESSAGE
+    assert "do not inject dependencies or alter BCE ownership solely because of a hint" in OWNER_INITIAL_ACTION_MESSAGE
+    assert "first legal file_editor edit" in OWNER_INITIAL_ACTION_MESSAGE
+    assert "Do not restate the task" in OWNER_STUCK_RECOVERY_MESSAGE
+    assert "already inspected writable target" in OWNER_STUCK_RECOVERY_MESSAGE
+    assert "missing evidence concisely" in OWNER_STUCK_RECOVERY_MESSAGE
+    assert "reread" not in OWNER_STUCK_RECOVERY_MESSAGE
+    assert "missing collaborator or wiring entry alone is not an upstream gap" in OWNER_GAP_RECOVERY_MESSAGE
+    assert "required public input, output, or externally visible behavior" in OWNER_GAP_RECOVERY_MESSAGE
+    assert "absent or contradictory" in OWNER_GAP_RECOVERY_MESSAGE
+
+
+def test_owner_evidence_boundary_prompt_handles_empty_and_focused_test_paths() -> None:
+    empty = _owner_evidence_boundary_message([])
+    assert "complete boundary" in empty
+    assert "Do not guess or probe" in empty
+    assert "No focused test is supplied" in empty
+    assert "Do not search test directories" in empty
+
+    focused = _owner_evidence_boundary_message([
+        "application/src/test/java/example/CalculationControlServiceTest.java",
+    ])
+    assert "Focused test paths are supplied" in focused
+    assert "CalculationControlServiceTest.java" in focused
+    assert "Use only these focused test paths" in focused
 
 def test_typed_no_action_response_starts_bounded_recovery() -> None:
     from openhands.sdk.conversation.state import ConversationExecutionStatus
@@ -3123,11 +3331,20 @@ class Order <<Entity>> { - id: UUID }
     integration = next(
         task for task in tasks if task["task_type"] == "integration-implementation"
     )
-    assert len(tasks) == 3
-    assert len(backends) == 1
+    assert len(tasks) == 5
+    assert len(backends) == 3
     assert not any(task["task_id"] == "implement-use-cases-stale-common" for task in tasks)
-    assert [task["task_id"] for task in backends] == ["implement-backend-application"]
-    assert [task["depends_on"] for task in backends] == [[]]
+    controller_backends = [
+        task
+        for task in backends
+        if any("/adapter/in/web/" in path for path in task["required_output_paths"])
+    ]
+    domain_backends = [task for task in backends if task not in controller_backends]
+    assert len(controller_backends) == 2
+    assert len(domain_backends) == 1
+    assert domain_backends[0]["task_id"].startswith("implement-backend-domain-core-")
+    assert len(domain_backends[0]["task_id"]) <= 48
+    assert [task["depends_on"] for task in backends] == [[] for _ in backends]
     assert state["nextRunnableTasks"] == [task["task_id"] for task in backends]
     assert {
         use_case_id
@@ -3277,7 +3494,7 @@ class Order <<Entity>> { - id: UUID }
         json.loads((run / task["context_file"]).read_text(encoding="utf-8"))
         for task in backends
     ]
-    assert [context["useCaseIds"] for context in contexts] == [["UC1", "UC2"]]
+    assert all(context["useCaseIds"] == ["UC1", "UC2"] for context in contexts)
     assert {requirement_id for task in backends for requirement_id in task["requirement_ids"]} == {
         "FR-ORDER",
         "FR-CANCEL",
@@ -3292,7 +3509,7 @@ class Order <<Entity>> { - id: UUID }
     assert _regression_owner_task_id(
         run,
         {"testResults": "OrderApplicationTest.implementsContract: assertion failed"},
-    ) == backends[0]["task_id"]
+    ) == "backend-regression"
     generated_api = {
         "application/src/main/java/com/example/orders/api/OrdersApi.java",
         "application/src/main/java/com/example/orders/api/CancelApi.java",
@@ -3323,11 +3540,7 @@ class Order <<Entity>> { - id: UUID }
         for task in backends
         for path in task["allowed_write_paths"]
     )
-    assert all(task["allowed_write_roots"] for task in backends)
-    assert all(
-        "application/src/main/java/com/example/orders" in task["allowed_write_roots"]
-        for task in backends
-    )
+    assert all(task["allowed_write_roots"] == [] for task in backends)
     assert frontend["allowed_write_roots"] == ["application/frontend/src"]
     assert frontend["allowed_write_paths"] == [
         "application/frontend/src/App.tsx",
@@ -3335,12 +3548,12 @@ class Order <<Entity>> { - id: UUID }
     ]
     assert "application/frontend/src/api.ts" in frontend["immutable_paths"]
     assert "application/frontend/src/api.ts" in integration["allowed_write_paths"]
+    domain_backend = domain_backends[0]
     source_index = json.loads(
-        (
-            run
-            / "reports/implementation-tasks/"
-            "implement-backend-application.source-index.json"
-        ).read_text(encoding="utf-8")
+        (run / domain_backend["context_file"]).read_text(encoding="utf-8")
+    )
+    source_index = json.loads(
+        (run / source_index["sourceIndexPath"]).read_text(encoding="utf-8")
     )
     assert source_index["hintsOnly"] is True
     assert source_index["startingSourcePaths"]

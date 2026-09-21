@@ -111,6 +111,7 @@ def test_interface_and_entity_writable_contract_facts_are_honest():
     assert boundary.completion_marker is None
     entity = next(item for item in result.contracts if item.owner == "Order")
     assert entity.constructor_dependencies == []
+    assert entity.completion_marker is None
 
 
 def test_void_control_with_projected_call_has_no_completion_marker(monkeypatch):
@@ -147,3 +148,185 @@ def test_void_control_with_projected_call_has_no_completion_marker(monkeypatch):
         base_package="com.example.orders",
     )
     assert result.contracts[0].completion_marker is None
+    assert result.contracts[0].interaction_hints == []
+    assert result.contracts[0].constructor_dependencies == ["com.example.orders.bce.Order"]
+    assert result.contracts[0].collaborators[0].method == "touch"
+
+
+def test_control_entity_hint_is_preserved_without_generated_wiring(monkeypatch):
+    bce = BCEModel.model_validate(
+        {
+            "Classes": [
+                {
+                    "className": "OrderControl",
+                    "stereotype": "Control",
+                    "operations": [{"operationId": "ignored", "name": "load"}],
+                },
+                {
+                    "className": "Order",
+                    "stereotype": "Entity",
+                    "operations": [{"operationId": "ignored", "name": "listAll"}],
+                },
+            ],
+            "DataTypes": [],
+            "Relationships": [],
+            "Collaborations": [],
+        }
+    )
+    method = bce.Classes[0].operations[0]
+    ref = MethodRef("OrderControl", "Control", method.operation_id, "load-v1", "load", (), "void")
+    target = MethodRef("Order", "Entity", "Order::listAll()", "list-v1", "listAll", (), "void")
+    call = CallProjection(
+        "call-1",
+        target,
+        (),
+        None,
+        (),
+        "hint",
+        ("target_is_not_generated_spring_dependency",),
+    )
+    slice_ = MethodSlice(("UC-1",), "incoming", "Actor", ref, (call,), "void", (), ())
+    entity_slice = MethodSlice(
+        ("UC-1",), "call-1", "OrderControl", target, (), "void", (), ()
+    )
+    projection = MethodProjectionResult(
+        (
+            MethodProjection(ref, (slice_,), "hint", ()),
+            MethodProjection(target, (entity_slice,), "code", ()),
+        ),
+        (),
+    )
+    monkeypatch.setattr(
+        "app.implementation.generation.operation_contracts.project_method_calls",
+        lambda **_: projection,
+    )
+
+    contracts = build_generated_operation_contracts(
+        bce_model=bce,
+        sequence_model=SequenceCollection.model_validate({"Diagrams": []}),
+        api_model=ApiSpecModel.model_validate({"Endpoints": []}),
+        base_package="com.example.orders",
+    ).contracts
+    contract = next(item for item in contracts if item.owner == "OrderControl")
+    entity = next(item for item in contracts if item.owner == "Order")
+
+    assert contract.constructor_dependencies == []
+    assert contract.collaborators == []
+    assert contract.interaction_hints[0].generation == "hint"
+    assert contract.interaction_hints[0].target.owner == "Order"
+    assert contract.interaction_hints[0].target.method == "listAll"
+    assert contract.interaction_hints[0].reasons == [
+        "target_is_not_generated_spring_dependency"
+    ]
+    assert entity.completion_marker is None
+
+
+def test_entity_root_projection_retains_completion_marker(monkeypatch):
+    bce = BCEModel.model_validate(
+        {
+            "Classes": [
+                {
+                    "className": "Order",
+                    "stereotype": "Entity",
+                    "operations": [{"operationId": "ignored", "name": "rebuild"}],
+                }
+            ],
+            "DataTypes": [],
+            "Relationships": [],
+            "Collaborations": [],
+        }
+    )
+    method = bce.Classes[0].operations[0]
+    ref = MethodRef("Order", "Entity", method.operation_id, "rebuild-v1", "rebuild", (), "void")
+    root_slice = MethodSlice(("UC-1",), "root-call", "", ref, (), "void", (), ())
+    projection = MethodProjectionResult((MethodProjection(ref, (root_slice,), "code", ()),), ())
+    monkeypatch.setattr(
+        "app.implementation.generation.operation_contracts.project_method_calls",
+        lambda **_: projection,
+    )
+
+    contract = build_generated_operation_contracts(
+        bce_model=bce,
+        sequence_model=SequenceCollection.model_validate({"Diagrams": []}),
+        api_model=ApiSpecModel.model_validate({"Endpoints": []}),
+        base_package="com.example.orders",
+    ).contracts[0]
+
+    assert contract.completion_marker == "EASYDEP-IMPLEMENT: complete Order::rebuild()"
+
+
+def test_entity_hint_marker_uses_matching_use_case_for_duplicate_call_id(monkeypatch):
+    bce = BCEModel.model_validate(
+        {
+            "Classes": [
+                {
+                    "className": "OrderControl",
+                    "stereotype": "Control",
+                    "operations": [
+                        {"operationId": "ignored", "name": "codePath"},
+                        {"operationId": "ignored", "name": "hintPath"},
+                    ],
+                },
+                {
+                    "className": "Order",
+                    "stereotype": "Entity",
+                    "operations": [{"operationId": "ignored", "name": "listAll"}],
+                },
+            ],
+            "DataTypes": [],
+            "Relationships": [],
+            "Collaborations": [],
+        }
+    )
+    code_method, hint_method = bce.Classes[0].operations
+    entity_method = bce.Classes[1].operations[0]
+    code_ref = MethodRef(
+        "OrderControl", "Control", code_method.operation_id, "code-v1", "codePath", (), "void"
+    )
+    hint_ref = MethodRef(
+        "OrderControl", "Control", hint_method.operation_id, "hint-v1", "hintPath", (), "void"
+    )
+    entity_ref = MethodRef(
+        "Order", "Entity", entity_method.operation_id, "list-v1", "listAll", (), "void"
+    )
+    code_call = CallProjection("call-1", entity_ref, (), None, (), "code", ())
+    hint_call = CallProjection(
+        "call-1", entity_ref, (), None, (), "hint", ("target_is_not_generated_spring_dependency",)
+    )
+    projection = MethodProjectionResult(
+        (
+            MethodProjection(
+                code_ref,
+                (MethodSlice(("UC-code",), "root-code", "", code_ref, (code_call,), "void", (), ()),),
+                "code",
+                (),
+            ),
+            MethodProjection(
+                hint_ref,
+                (MethodSlice(("UC-hint",), "root-hint", "", hint_ref, (hint_call,), "void", (), ()),),
+                "hint",
+                (),
+            ),
+            MethodProjection(
+                entity_ref,
+                (MethodSlice(("UC-hint",), "call-1", "OrderControl", entity_ref, (), "void", (), ()),),
+                "code",
+                (),
+            ),
+        ),
+        (),
+    )
+    monkeypatch.setattr(
+        "app.implementation.generation.operation_contracts.project_method_calls",
+        lambda **_: projection,
+    )
+
+    contracts = build_generated_operation_contracts(
+        bce_model=bce,
+        sequence_model=SequenceCollection.model_validate({"Diagrams": []}),
+        api_model=ApiSpecModel.model_validate({"Endpoints": []}),
+        base_package="com.example.orders",
+    ).contracts
+
+    entity = next(item for item in contracts if item.owner == "Order")
+    assert entity.completion_marker is None

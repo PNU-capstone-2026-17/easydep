@@ -25,6 +25,7 @@ from ..domain.models import JobSpec
 from ..generation.frontend_scaffold import operation_ids
 from ..generation.java_scaffold import controller_body_marker
 from ..generation.operation_contracts import build_generated_operation_contracts
+from ..generation.persistence_scaffold import persistence_repository_fqcns
 from .frontend_contracts import GeneratedClientContracts, GeneratedClientOperation
 from .method_projection import MethodProjection, MethodProjectionResult, project_method_calls
 
@@ -86,7 +87,7 @@ class _UseCaseBundle:
 
 
 def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec]:
-    """Materialize one cohesive backend owner task from generated evidence."""
+    """Materialize one exact-source backend task for every writable implementation file."""
     package_path = spec.base_package.replace(".", "/")
     java_root = run_root / "application" / "src" / "main" / "java" / package_path
     ir = build_implementation_ir(spec, run_root)
@@ -110,10 +111,22 @@ def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec
         path.relative_to(run_root).as_posix()
         for path in sorted((java_root / "bce").rglob("*.java"))
     ]
-    owner_task = _build_backend_owner_task(
-        spec, run_root, ir, output, package_path, bce_paths, bundle
-    )
-    return [owner_task]
+    required_sources = _backend_writable_sources(ir, package_path, bundle)
+    controller_sources = [path for path in required_sources if "/adapter/in/web/" in path]
+    grouped_sources = [path for path in required_sources if path not in controller_sources]
+    marked_sources = _completion_marked_sources(run_root)
+    if marked_sources is not None:
+        grouped_sources = [path for path in grouped_sources if path in marked_sources]
+    source_groups = [[path] for path in controller_sources]
+    if grouped_sources:
+        source_groups.append(grouped_sources)
+    return [
+        _build_backend_owner_task(
+            spec, run_root, ir, output, package_path, bce_paths, bundle,
+            owned_sources=owned_sources,
+        )
+        for owned_sources in source_groups
+    ]
 
 
 def _is_work_component(component: ComponentIR) -> bool:
@@ -125,36 +138,20 @@ def _is_work_component(component: ComponentIR) -> bool:
     }
 
 
-def _build_backend_owner_task(
-    spec: JobSpec,
-    run_root: Path,
+def _backend_writable_sources(
     ir: ImplementationIR,
-    output: Path,
     package_path: str,
-    bce_paths: list[str],
     bundle: _UseCaseBundle,
-    *,
-    persist: bool = True,
-) -> TaskSpec:
-    """전체 backend 계약과 owner 범위를 하나의 작업으로 만든다."""
-    label = ", ".join(bundle.use_case_ids) or "common"
-    task_id = "implement-backend-application"
-    controls = [item.name for item in bundle.components if item.stereotype.casefold() == "control"]
+) -> list[str]:
+    controls = [
+        item.name for item in bundle.components if item.stereotype.casefold() == "control"
+    ]
     entity_components = [
         item for item in bundle.components if item.stereotype.casefold() == "entity"
     ]
-    entities = [item.name for item in entity_components]
     gateway_kinds = {item.name: item.kind for item in ir.gateways}
     gateways = [item for item in bundle.components if item.name in gateway_kinds]
-    entity_sources = [
-        f"application/src/main/java/{package_path}/bce/{name}.java" for name in entities
-    ]
-    entity_implementation_sources = [
-        f"application/src/main/java/{package_path}/bce/{item.name}.java"
-        for item in entity_components
-        if item.operations
-    ]
-    required = sorted(
+    return sorted(
         {
             *(
                 f"application/src/main/java/{package_path}/application/impl/{name}Service.java"
@@ -168,9 +165,70 @@ def _build_backend_owner_task(
                 _gateway_adapter_path(package_path, item.name, gateway_kinds[item.name])
                 for item in gateways
             ),
-            *entity_implementation_sources,
+            *(
+                f"application/src/main/java/{package_path}/bce/{item.name}.java"
+                for item in entity_components
+                if item.operations
+            ),
         }
     )
+
+
+def _completion_marked_sources(run_root: Path) -> set[str] | None:
+    contract_path = run_root / "reports" / "generated-operation-contracts.json"
+    if not contract_path.is_file():
+        return None
+    payload = _read_json(contract_path)
+    return {
+        str(contract.get("writableSource"))
+        for contract in payload.get("contracts", [])
+        if isinstance(contract, dict)
+        and contract.get("writableSource")
+        and contract.get("completionMarker")
+    }
+
+
+def _backend_source_task_id(source_paths: list[str]) -> str:
+    """Keep task identity stable while making its owned source obvious."""
+
+    ordered_paths = sorted(source_paths)
+    if len(ordered_paths) > 1:
+        digest = hashlib.sha256("\n".join(ordered_paths).encode("utf-8")).hexdigest()[:12]
+        return "implement-backend-domain-core-" + digest
+    source_name = ordered_paths[0].removeprefix(
+        "application/src/main/java/"
+    ).removesuffix(".java")
+    return "implement-backend-" + re.sub(
+        r"[^a-z0-9]+", "-", source_name.casefold()
+    ).strip("-")
+
+
+def _build_backend_owner_task(
+    spec: JobSpec,
+    run_root: Path,
+    ir: ImplementationIR,
+    output: Path,
+    package_path: str,
+    bce_paths: list[str],
+    bundle: _UseCaseBundle,
+    *,
+    owned_sources: list[str],
+    persist: bool = True,
+) -> TaskSpec:
+    label = ", ".join(bundle.use_case_ids) or "common"
+    required = sorted(dict.fromkeys(owned_sources))
+    task_id = _backend_source_task_id(required)
+    entity_components = [
+        item for item in bundle.components if item.stereotype.casefold() == "entity"
+    ]
+    entities = [item.name for item in entity_components]
+    entity_sources = [
+        f"application/src/main/java/{package_path}/bce/{name}.java" for name in entities
+    ]
+    all_required = _backend_writable_sources(ir, package_path, bundle)
+    if any(path not in all_required for path in required):
+        invalid = next(path for path in required if path not in all_required)
+        raise ValueError(f"Backend source is not a writable implementation target: {invalid}")
     # persistence 골격은 LLM 작업보다 먼저 생성되고 이후 작업이 수정하지 않는다. 관련
     # Entity와 Repository는 source index가 가리키는 정확한 파일에서 필요한 선언만 읽는다.
     persistence_sources = [
@@ -183,31 +241,13 @@ def _build_backend_owner_task(
         if (run_root / path).is_file()
     ]
     dependency_source_paths = [path for path in entity_sources if (run_root / path).is_file()]
-    owner_roots = [
-        f"application/src/main/java/{package_path}",
-        "application/src/main/resources",
-    ]
-    owner_files = [
-        path
-        for path in (
-            "application/build.gradle",
-            "application/settings.gradle",
-            "application/gradle.properties",
-        )
-        if (run_root / path).is_file()
-    ]
-    editable = _work_unit_editable_paths(
-        run_root,
-        required,
-        [*owner_roots, *owner_files],
-    )
     immutable_paths = [
+        *(path for path in all_required if path not in required),
         *(path for path in bce_paths if path not in entity_sources),
         f"application/src/main/java/{package_path}/api",
         f"application/src/main/java/{package_path}/persistence",
         "application/src/main/resources/db/migration",
     ]
-    editable = _without_immutable_paths(editable, immutable_paths)
     requirements, use_cases, sources = _all_requirement_artifacts(spec)
     # HTTP Controller는 Boundary adapter를 거치지 않고 typed Control을 직접 호출한다.
     # Boundary가 참조하는 다른 기능 DTO까지 closure에 끌어오지 않고 이번 구현에 실제로
@@ -223,24 +263,41 @@ def _build_backend_owner_task(
         *(item.name for item in bce_model.DataTypes),
     }
     controller_paths = [run_root / path for path in required if "/adapter/in/web/" in path]
-    scaffolds = render_source_contracts(run_root, controller_paths)
+    controller_scaffolds = {
+        path.relative_to(run_root).as_posix(): render_source_contracts(run_root, [path])
+        for path in controller_paths
+        if path.is_file()
+    }
     dependency_source_paths.extend(
         path.relative_to(run_root).as_posix() for path in controller_paths if path.is_file()
     )
+    controller_markers_by_path = {
+        path: sorted(
+            {
+                marker
+                for endpoint in bundle.endpoints
+                for marker in [
+                    controller_body_marker(
+                        str(endpoint.get("method") or ""),
+                        str(endpoint.get("path") or ""),
+                    )
+                ]
+                if endpoint.get("method") and endpoint.get("path")
+                if marker in scaffold
+            }
+        )
+        for path, scaffold in controller_scaffolds.items()
+    }
     controller_markers = sorted(
-        {
-            marker
-            for endpoint in bundle.endpoints
-            for marker in [
-                controller_body_marker(
-                    str(endpoint.get("method") or ""),
-                    str(endpoint.get("path") or ""),
-                )
-            ]
-            if endpoint.get("method") and endpoint.get("path")
-            if marker in scaffolds
-        }
+        marker
+        for markers in controller_markers_by_path.values()
+        for marker in markers
     )
+    owned_controller_markers = {
+        marker
+        for path in required
+        for marker in controller_markers_by_path.get(path, [])
+    }
     design_inputs = _materialize_design_inputs(
         spec,
         run_root,
@@ -271,14 +328,23 @@ def _build_backend_owner_task(
             spec.inputs["apiModel"].read_text(encoding="utf-8")
         ),
         base_package=spec.base_package,
+        persistence_repositories=persistence_repository_fqcns(
+            BCEModel.model_validate_json(spec.inputs["erdBceModel"].read_text(encoding="utf-8")),
+            spec.base_package,
+            logical_model=_read_json(spec.inputs["erdLogicalModel"]),
+        ) if spec.inputs.get("erdBceModel") else {},
     ).contracts:
         if contract.writable_source and contract.completion_marker:
             completion_markers.setdefault(contract.writable_source, set()).add(
                 contract.completion_marker
             )
+    for path in required:
+        if markers := controller_markers_by_path.get(path):
+            completion_markers.setdefault(path, set()).update(markers)
     required_absent_markers = [
         {"path": path, "markers": sorted(markers)}
         for path, markers in sorted(completion_markers.items())
+        if path in required
     ]
     method_contexts = _materialize_method_contexts(
         run_root,
@@ -290,6 +356,18 @@ def _build_backend_owner_task(
         endpoints=list(bundle.endpoints),
         design_inputs=design_inputs,
     )
+    owned_method_contexts = [
+        item
+        for item in method_contexts
+        if isinstance(item, dict)
+        and set(required).intersection(
+            {
+            str(path)
+            for path in item.get("sourcePaths", [])
+            if isinstance(path, str)
+            }
+        )
+    ]
     # The application tree is already copied into every agent sandbox. Keep only the generated
     # declarations named by the typed BCE model; do not enumerate unrelated Java sources.
     source_paths = sorted(
@@ -310,18 +388,53 @@ def _build_backend_owner_task(
         )
     )
     source_index_path = output / f"{task_id}.source-index.json"
-    generated_operation_contracts_path = run_root / "reports/generated-operation-contracts.json"
-    generated_operation_contracts = (
-        _relative(run_root, generated_operation_contracts_path)
-        if generated_operation_contracts_path.is_file()
-        else None
-    )
+    global_operation_contracts_path = run_root / "reports/generated-operation-contracts.json"
+    generated_operation_contracts: str | None = None
+    if global_operation_contracts_path.is_file():
+        global_operation_contracts = json.loads(
+            global_operation_contracts_path.read_text(encoding="utf-8")
+        )
+        task_operation_contracts_path = output / f"{task_id}.operation-contracts.json"
+        task_operation_contracts_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": global_operation_contracts["schemaVersion"],
+                    "contracts": [
+                        contract
+                        for contract in global_operation_contracts["contracts"]
+                        if isinstance(contract, dict)
+                        and (
+                            contract.get("writableSource") in required
+                            or any(
+                                isinstance(endpoint, dict)
+                                and controller_body_marker(
+                                    str(endpoint.get("method") or ""),
+                                    str(endpoint.get("path") or ""),
+                                )
+                                in owned_controller_markers
+                                for endpoint in contract.get("endpoints", [])
+                                if isinstance(contract.get("endpoints", []), list)
+                            )
+                        )
+                    ],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        generated_operation_contracts = _relative(run_root, task_operation_contracts_path)
     generated_source_paths = sorted(dict.fromkeys([*source_paths, *required]))
+    immutable_import_paths = _local_immutable_java_import_closure(
+        run_root,
+        generated_source_paths,
+        immutable_paths,
+    )
     read_evidence_paths = sorted(
         dict.fromkeys(
             [
-                _relative(run_root, source_index_path),
                 *generated_source_paths,
+                *immutable_import_paths,
                 *(
                     [generated_operation_contracts]
                     if generated_operation_contracts is not None
@@ -337,7 +450,7 @@ def _build_backend_owner_task(
                 "taskId": task_id,
                 "startingSourcePaths": source_paths,
                 "designInputs": design_inputs,
-                "methodContexts": method_contexts,
+                "methodContexts": owned_method_contexts,
                 **(
                     {"generatedOperationContractsPath": generated_operation_contracts}
                     if generated_operation_contracts is not None
@@ -383,39 +496,31 @@ def _build_backend_owner_task(
         context["deployment"] = deployment_context
     context_path = output / f"{task_id}.context.json"
     prompt = (
-        f"""# Backend application owner: {spec.name}
+        f"""# Backend source owner: {', '.join(Path(path).stem for path in required)}
 
-Complete the generated backend implementation from the generated source and operation contract.
-Use the exact writable outputs below as the implementation boundary.
+Complete the generated backend implementation for the writable sources below.
 
 - Preserve every generated BCE/API public declaration. Implement marked BCE Entity bodies without
   changing their public signatures; keep API, persistence projections, repositories, and migrations frozen.
-- Resolve every `EASYDEP-IMPLEMENT` and named Controller marker with contracted behavior. Do not
+- Resolve every `EASYDEP-IMPLEMENT` and named Controller marker in that source with contracted behavior. Do not
   replace them with empty, demo, or always-passing behavior.
-- Start with the generated source files listed under `Generated source` and the generated operation
-  contract sidecar. Treat that sidecar as read-only factual evidence for operation signatures,
-  collaborators, endpoint bindings, and completion markers.
+- Start with one writable source under `Generated source`. Make the first legal edit from its local
+  declarations and assigned task behavior before consulting additional evidence.
 - Use existing repositories for persistent behavior and constructor injection for Spring beans.
 - Generated web Controllers already call their typed Control binding; do not duplicate HTTP or
   Boundary adapters.
-- RTM, source references, and frozen design records are on-demand navigation hints only. Keep the
-  initial read focused on generated source and the operation contract.
+- After that first edit, consult only the listed operation contract and declared dependency sources when a concrete implementation need remains. Interaction hints are behavioral evidence; use them to understand delegated behavior, but do not inject dependencies or alter BCE ownership solely because of a hint.
 - After one edit batch, run the canonical `run_task_check` once. Inspect its concrete diagnostic
   before any correction, and finish when it passes.
 - Use English for source comments, tests, validation messages, documentation, and user-visible text.
 
 ## Generated source
-{chr(10).join(f"- `{path}`" for path in generated_source_paths) or "- none"}
+{chr(10).join(f"- `{path}`" for path in required) or "- none"}
 
-## Generated operation contract
-- `{generated_operation_contracts or "not available"}`
-
-## On-demand navigation hints
-- Source index (only when a concrete contract gap remains): `{_relative(run_root, source_index_path)}`
+## On-demand evidence
+- Operation contract (only for a concrete implementation need): `{generated_operation_contracts or "not available"}`
 - Controller markers: {", ".join(controller_markers) or "none"}
 """
-        "\n## Backend owner roots\n"
-        + "\n".join(f"- `{root}`" for root in owner_roots)
         + render_allowed_output_rules(required)
     )
     prompt_path = output / f"{task_id}.prompt.md"
@@ -426,10 +531,10 @@ Use the exact writable outputs below as the implementation boundary.
         prompt_path.write_text(prompt, encoding="utf-8")
     task = TaskSpec(
         task_id=task_id,
-        control=f"use cases {label}",
+        control=f"{', '.join(Path(path).stem for path in required)}: use cases {label}",
         prompt_file=_relative(run_root, prompt_path),
         context_file=_relative(run_root, context_path),
-        allowed_write_paths=editable,
+        allowed_write_paths=required,
         required_output_paths=required,
         immutable_paths=immutable_paths,
         source_artifacts=sources,
@@ -447,7 +552,7 @@ Use the exact writable outputs below as the implementation boundary.
             *_operation_source_refs(spec, set(bundle.use_case_ids)),
             *_workload_source_refs(deployment_context),
         ],
-        allowed_write_roots=owner_roots,
+        allowed_write_roots=[],
         verification_profile={"requiredAbsentMarkers": required_absent_markers},
     )
     if persist:
@@ -1562,6 +1667,62 @@ def _work_unit_editable_paths(
                 path.relative_to(run_root).as_posix() for path in root.rglob("*") if path.is_file()
             )
     return sorted(paths)
+
+
+def _local_immutable_java_import_closure(
+    run_root: Path,
+    seed_paths: list[str],
+    immutable_paths: list[str],
+) -> list[str]:
+    """Return frozen local Java declarations imported by the task's source files."""
+
+    java_root = run_root / "application/src/main/java"
+    if not java_root.is_dir():
+        return []
+    immutable_roots = [
+        path.replace(chr(92), "/").rstrip("/") for path in immutable_paths
+    ]
+    sources: dict[str, str] = {}
+    fqcn_paths: dict[str, str] = {}
+    package_pattern = re.compile(
+        r"(?m)^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*;"
+    )
+    import_pattern = re.compile(
+        r"(?m)^\s*import\s+(?!static\s)"
+        r"([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\s*;"
+    )
+    for source_path in sorted(java_root.rglob("*.java")):
+        relative = source_path.relative_to(run_root).as_posix()
+        source = source_path.read_text(encoding="utf-8")
+        sources[relative] = source
+        package = package_pattern.search(source)
+        if package is not None:
+            fqcn_paths[f"{package.group(1)}.{source_path.stem}"] = relative
+
+    pending = [
+        path.replace(chr(92), "/")
+        for path in seed_paths
+        if path.replace(chr(92), "/") in sources
+    ]
+    visited: set[str] = set()
+    closure: set[str] = set()
+    while pending:
+        relative = pending.pop()
+        if relative in visited:
+            continue
+        visited.add(relative)
+        for imported_type in import_pattern.findall(sources[relative]):
+            dependency = fqcn_paths.get(imported_type)
+            if dependency is None or dependency in visited:
+                continue
+            if not any(
+                dependency == root or dependency.startswith(root + "/")
+                for root in immutable_roots
+            ):
+                continue
+            closure.add(dependency)
+            pending.append(dependency)
+    return sorted(closure)
 
 
 def _without_immutable_paths(paths: list[str], immutable: list[str]) -> list[str]:
