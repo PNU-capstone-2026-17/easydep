@@ -640,6 +640,127 @@ public interface OrdersApi {
     assert "missingValue" not in source
 
 
+def test_controller_projects_list_entity_response_with_matching_fields() -> None:
+    payload = _payload()["bceModel"]
+    payload["Classes"][1]["operations"][0]["parameters"] = []
+    payload["Classes"][1]["operations"][0]["returnType"] = "list<Order>"
+    bce_model = BCEModel.model_validate(payload)
+    api_model = ApiSpecModel.model_validate(
+        {
+            "Endpoints": [
+                {
+                    "interaction_id": "typed interaction",
+                    "method": "GET",
+                    "path": "/orders",
+                    "responses": [
+                        {"status": 200, "schema_name": "Order", "is_array": True}
+                    ],
+                    "control_binding": {
+                        "control": "OrderControl",
+                        "method": "place",
+                        "arguments": [],
+                    },
+                }
+            ],
+            "Schemas": [
+                {
+                    "name": "Order",
+                    "fields": [
+                        {"name": "id", "type": "string", "required": True},
+                        {"name": "quantity", "type": "integer", "required": True},
+                        {"name": "price", "type": "decimal", "required": True},
+                        {"name": "payload", "type": "bytes", "required": True},
+                        {"name": "status", "type": "string", "required": True},
+                    ],
+                }
+            ],
+        }
+    )
+    interface = """package com.example.orders.api;
+import com.example.orders.api.model.Order;
+import java.util.List;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+public interface OrdersApi {
+    @RequestMapping(method = RequestMethod.GET, value = \"/orders\")
+    ResponseEntity<List<Order>> listOrders();
+}
+"""
+
+    _name, source = render_openapi_controller_scaffold(
+        interface,
+        "com.example.orders",
+        api_model=api_model,
+        bce_model=bce_model,
+    )
+
+    assert "private final ObjectMapper objectMapper;" in source
+    assert (
+        "public OrdersApiController(OrderControl orderControl, ObjectMapper objectMapper)"
+        in source
+    )
+    assert ".map(item -> objectMapper.convertValue(item, Order.class)).toList();" in source
+    assert "EASYDEP_CONTROLLER_BODY_REQUIRED" not in source
+
+
+def test_controller_defers_entity_response_with_missing_required_field() -> None:
+    payload = _payload()["bceModel"]
+    payload["Classes"][1]["operations"][0]["parameters"] = []
+    payload["Classes"][1]["operations"][0]["returnType"] = "list<Order>"
+    bce_model = BCEModel.model_validate(payload)
+    api_model = ApiSpecModel.model_validate(
+        {
+            "Endpoints": [
+                {
+                    "interaction_id": "typed interaction",
+                    "method": "GET",
+                    "path": "/orders",
+                    "responses": [
+                        {"status": 200, "schema_name": "Order", "is_array": True}
+                    ],
+                    "control_binding": {
+                        "control": "OrderControl",
+                        "method": "place",
+                        "arguments": [],
+                    },
+                }
+            ],
+            "Schemas": [
+                {
+                    "name": "Order",
+                    "fields": [
+                        {"name": "id", "type": "string", "required": True},
+                        {"name": "missingValue", "type": "string", "required": True},
+                    ],
+                }
+            ],
+        }
+    )
+    interface = """package com.example.orders.api;
+import com.example.orders.api.model.Order;
+import java.util.List;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+public interface OrdersApi {
+    @RequestMapping(method = RequestMethod.GET, value = \"/orders\")
+    ResponseEntity<List<Order>> listOrders();
+}
+"""
+
+    _name, source = render_openapi_controller_scaffold(
+        interface,
+        "com.example.orders",
+        api_model=api_model,
+        bce_model=bce_model,
+    )
+
+    assert "EASYDEP_CONTROLLER_BODY_REQUIRED:GET:/orders" in source
+    assert "ObjectMapper objectMapper" not in source
+    assert "var result =" not in source
+
+
 @pytest.mark.parametrize("bad_name", ["9Order", "Bad-Type", "class"])
 def test_rejects_invalid_java_names(bad_name: str) -> None:
     payload = _payload()

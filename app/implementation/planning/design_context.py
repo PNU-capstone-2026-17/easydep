@@ -112,7 +112,12 @@ def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec
         for path in sorted((java_root / "bce").rglob("*.java"))
     ]
     required_sources = _backend_writable_sources(ir, package_path, bundle)
-    controller_sources = [path for path in required_sources if "/adapter/in/web/" in path]
+    controller_sources = [
+        path
+        for path in required_sources
+        if "/adapter/in/web/" in path
+        and _controller_body_markers_for_source(run_root, path, bundle.endpoints)
+    ]
     grouped_sources = [path for path in required_sources if path not in controller_sources]
     marked_sources = _completion_marked_sources(run_root)
     if marked_sources is not None:
@@ -186,6 +191,31 @@ def _completion_marked_sources(run_root: Path) -> set[str] | None:
         and contract.get("writableSource")
         and contract.get("completionMarker")
     }
+
+
+def _controller_body_markers_for_source(
+    run_root: Path,
+    source_path: str,
+    endpoints: tuple[dict[str, object], ...],
+) -> list[str]:
+    path = run_root / source_path
+    if not path.is_file():
+        return []
+    scaffold = render_source_contracts(run_root, [path])
+    return sorted(
+        {
+            marker
+            for endpoint in endpoints
+            for marker in [
+                controller_body_marker(
+                    str(endpoint.get("method") or ""),
+                    str(endpoint.get("path") or ""),
+                )
+            ]
+            if endpoint.get("method") and endpoint.get("path")
+            if marker in scaffold
+        }
+    )
 
 
 def _backend_source_task_id(source_paths: list[str]) -> str:
@@ -263,30 +293,17 @@ def _build_backend_owner_task(
         *(item.name for item in bce_model.DataTypes),
     }
     controller_paths = [run_root / path for path in required if "/adapter/in/web/" in path]
-    controller_scaffolds = {
-        path.relative_to(run_root).as_posix(): render_source_contracts(run_root, [path])
-        for path in controller_paths
-        if path.is_file()
-    }
     dependency_source_paths.extend(
         path.relative_to(run_root).as_posix() for path in controller_paths if path.is_file()
     )
     controller_markers_by_path = {
-        path: sorted(
-            {
-                marker
-                for endpoint in bundle.endpoints
-                for marker in [
-                    controller_body_marker(
-                        str(endpoint.get("method") or ""),
-                        str(endpoint.get("path") or ""),
-                    )
-                ]
-                if endpoint.get("method") and endpoint.get("path")
-                if marker in scaffold
-            }
+        path.relative_to(run_root).as_posix(): _controller_body_markers_for_source(
+            run_root,
+            path.relative_to(run_root).as_posix(),
+            bundle.endpoints,
         )
-        for path, scaffold in controller_scaffolds.items()
+        for path in controller_paths
+        if path.is_file()
     }
     controller_markers = sorted(
         marker

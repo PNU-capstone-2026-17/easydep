@@ -733,8 +733,52 @@ def _types_are_structurally_compatible(
 
     # BCE Entity는 private 상태와 업무 메서드를 가진다. 필드 이름이 같더라도 일반 DTO처럼
     # 자동 변환할 수 있다고 가정하지 않고 해당 기능 작업이 생성·조회 방식을 정하게 한다.
-    if any(item.class_name == bce_item for item in bce_model.Classes):
-        return False
+    bce_entity = next(
+        (item for item in bce_model.Classes if item.class_name == bce_item),
+        None,
+    )
+    if bce_entity is not None:
+        # Entities are never accepted as request payloads. For responses, their
+        # generated fields and accessors make a deterministic API projection safe
+        # only when the API's required shape is fully represented by the Entity.
+        if direction != "bce-to-api":
+            return False
+        api_schema = next(
+            (item for item in api_model.Schemas if item.name == api_item),
+            None,
+        )
+        if api_schema is None:
+            return False
+        key = (api_item, bce_item, direction)
+        if key in visited:
+            return True
+        visited.add(key)
+        entity_fields = {
+            name: field_type
+            for declaration in bce_entity.fields
+            for name, field_type in [
+                _parse_field(declaration, owner=bce_entity.class_name)
+            ]
+        }
+        for api_field in api_schema.fields:
+            raw_entity_type = entity_fields.get(api_field.name)
+            if raw_entity_type is None:
+                if not api_field.required:
+                    continue
+                return False
+            inner_entity_type, optional = _without_optional(raw_entity_type)
+            if api_field.required and optional:
+                return False
+            if not _types_are_structurally_compatible(
+                api_field.type,
+                inner_entity_type,
+                direction=direction,
+                api_model=api_model,
+                bce_model=bce_model,
+                visited=visited,
+            ):
+                return False
+        return True
 
     api_schema = next(
         (item for item in api_model.Schemas if item.name == api_item),

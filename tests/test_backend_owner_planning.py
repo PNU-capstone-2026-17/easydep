@@ -271,7 +271,9 @@ def test_backend_owner_includes_only_imported_frozen_java_dependencies(
         "adapter/in/web/OrderApiController.java": """
             package com.example.orders.adapter.in.web;
             import com.example.orders.api.OrderApi;
-            public final class OrderApiController implements OrderApi {}
+            public final class OrderApiController implements OrderApi {
+                // EASYDEP_CONTROLLER_BODY_REQUIRED:POST:/orders
+            }
         """,
     }
     for relative, source in sources.items():
@@ -304,6 +306,53 @@ def test_backend_owner_includes_only_imported_frozen_java_dependencies(
         "application/src/main/java/com/example/orders/api/UnrelatedApi.java",
         "application/src/main/java/com/example/orders/api/model/UnrelatedModel.java",
     }.isdisjoint(readable)
+
+
+def test_backend_owner_omits_marker_free_controller_without_empty_task(
+    tmp_path: Path,
+) -> None:
+    spec, run = _spec_and_run(tmp_path)
+    controller = (
+        run
+        / "application/src/main/java/com/example/orders/adapter/in/web/OrderApiController.java"
+    )
+    controller.parent.mkdir(parents=True, exist_ok=True)
+    controller.write_text(
+        "public final class OrderApiController {}\n",
+        encoding="utf-8",
+    )
+    contracts = run / "reports/generated-operation-contracts.json"
+    contracts.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        contracts,
+        {
+            "schemaVersion": "generated-operation-contracts/v1",
+            "contracts": [
+                {
+                    "operationId": "place-order",
+                    "writableSource": (
+                        "application/src/main/java/com/example/orders/application/impl/"
+                        "OrderControlService.java"
+                    ),
+                    "completionMarker": "EASYDEP-IMPLEMENT: complete place-order",
+                }
+            ],
+        },
+    )
+
+    with patch(
+        "app.implementation.planning.design_context.llm_config",
+        return_value={"model": "test-model"},
+    ):
+        tasks = generate_backend_owner_tasks(spec, run)
+
+    assert [task.required_output_paths for task in tasks] == [
+        [
+            "application/src/main/java/com/example/orders/application/impl/"
+            "OrderControlService.java"
+        ]
+    ]
+    assert all(task.required_output_paths for task in tasks)
 
 
 def test_backend_owner_controller_retains_endpoint_contract_and_requires_body_marker(
