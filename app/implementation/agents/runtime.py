@@ -1390,7 +1390,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         if owner_task and _conversation_is_stuck(conversation):
             if no_action_guard is not None:
                 no_action_guard.reset()
-            if (
+            successful_task_check = (
                 harness_task
                 and has_successful_task_check(
                     sandbox,
@@ -1398,17 +1398,15 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     editable_paths,
                     verification_profile,
                 )
-            ):
-                finish_recovery_used = True
-                conversation.send_message(OWNER_FINISH_RECOVERY_MESSAGE)
-            else:
+            )
+            if not successful_task_check:
                 stuck_recovery_used = True
                 conversation.send_message(
                     OWNER_GAP_RECOVERY_MESSAGE
                     if upstream_gap_source_refs is not None
                     else OWNER_STUCK_RECOVERY_MESSAGE
                 )
-            run_openhands_conversation(conversation)
+                run_openhands_conversation(conversation)
         upstream_gap = (
             reported_upstream_gap(agent) if upstream_gap_source_refs is not None else None
         )
@@ -1463,7 +1461,16 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 no_action_guard.reset()
             conversation.send_message(OWNER_FINISH_RECOVERY_MESSAGE)
             run_openhands_conversation(conversation)
-        if _conversation_terminal_failure(conversation):
+        successful_task_check = (
+            harness_task
+            and has_successful_task_check(
+                sandbox,
+                task_type,
+                editable_paths,
+                verification_profile,
+            )
+        )
+        if _conversation_terminal_failure(conversation) and not successful_task_check:
             raise OwnerConversationIncomplete(
                 {
                     "command": ["openhands", "conversation"],

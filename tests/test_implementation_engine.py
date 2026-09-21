@@ -1939,7 +1939,7 @@ def test_terminal_openhands_failure_is_persisted_without_a_fresh_conversation(
     ]
 
 
-def test_stuck_after_successful_check_uses_finish_recovery(
+def test_stuck_after_successful_check_promotes_without_finish_recovery(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1982,10 +1982,7 @@ def test_stuck_after_successful_check_uses_finish_recovery(
 
         def run(self) -> None:
             self.run_count += 1
-            if self.run_count == 1:
-                self.state.execution_status = ConversationExecutionStatus.STUCK
-                return
-            self.state.execution_status = ConversationExecutionStatus.FINISHED
+            self.state.execution_status = ConversationExecutionStatus.STUCK
 
         def close(self) -> None:
             pass
@@ -2033,12 +2030,11 @@ def test_stuck_after_successful_check_uses_finish_recovery(
         result = execute_openhands_task(run, task_id)
 
     assert conversation is not None
-    assert conversation.run_count == 2
-    assert len(conversation.messages) == 2
-    assert "FinishTool now" in conversation.messages[-1]
+    assert conversation.run_count == 1
+    assert len(conversation.messages) == 1
     assert result["stuckRecoveryUsed"] is False
-    assert result["finishRecoveryUsed"] is True
-    assert result["executionStatus"] == "finished"
+    assert result["finishRecoveryUsed"] is False
+    assert result["executionStatus"] == "stuck"
     assert source.read_text(encoding="utf-8") == "class OrderService {}"
     # A bounded backend owner starts from its task context and owned source.
     # Broader evidence remains an explicit handoff instead of an open-ended scan.
