@@ -456,7 +456,7 @@ def test_backend_owner_controller_retains_endpoint_contract_and_requires_body_ma
     } in task.verification_profile["requiredAbsentMarkers"]
 
 
-def test_backend_owner_includes_generated_bce_enum_declaration(tmp_path: Path) -> None:
+def test_backend_owner_excludes_unrelated_generated_bce_enum_declaration(tmp_path: Path) -> None:
     spec, run = _spec_and_run(tmp_path)
     bce_path = spec.inputs["bceModel"]
     bce_model = json.loads(bce_path.read_text(encoding="utf-8"))
@@ -472,9 +472,85 @@ def test_backend_owner_includes_generated_bce_enum_declaration(tmp_path: Path) -
         tasks = generate_backend_owner_tasks(spec, run)
 
     context = json.loads((run / tasks[0].context_file).read_text(encoding="utf-8"))
-    assert "application/src/main/java/com/example/orders/bce/OrderStatus.java" in context[
+    assert "application/src/main/java/com/example/orders/bce/OrderStatus.java" not in context[
         "readSourcePaths"
     ]
+
+
+def test_backend_owner_context_keeps_contract_dependencies_and_direct_imports_only(
+    tmp_path: Path,
+) -> None:
+    spec, run = _spec_and_run(tmp_path)
+    service_path = run / (
+        "application/src/main/java/com/example/orders/application/impl/"
+        "OrderControlService.java"
+    )
+    service_path.parent.mkdir(parents=True, exist_ok=True)
+    service_path.write_text(
+        """package com.example.orders.application.impl;
+import com.example.orders.bce.Order;
+import com.example.orders.persistence.repository.OrderRepository;
+public class OrderControlService {}
+""",
+        encoding="utf-8",
+    )
+    repository_path = run / (
+        "application/src/main/java/com/example/orders/persistence/repository/"
+        "OrderRepository.java"
+    )
+    repository_path.parent.mkdir(parents=True, exist_ok=True)
+    repository_path.write_text("interface OrderRepository {}\n", encoding="utf-8")
+    unrelated = run / "application/src/main/java/com/example/orders/bce/Unrelated.java"
+    unrelated.write_text("class Unrelated {}\n", encoding="utf-8")
+    unrelated_repository = run / (
+        "application/src/main/java/com/example/orders/persistence/repository/"
+        "UnrelatedRepository.java"
+    )
+    unrelated_repository.write_text("interface UnrelatedRepository {}\n", encoding="utf-8")
+    contracts = run / "reports/generated-operation-contracts.json"
+    contracts.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        contracts,
+        {
+            "schemaVersion": "generated-operation-contracts/v1",
+            "contracts": [
+                {
+                    "operationId": "place-order",
+                    "source": "application/src/main/java/com/example/orders/bce/OrderControl.java",
+                    "writableSource": (
+                        "application/src/main/java/com/example/orders/application/impl/"
+                        "OrderControlService.java"
+                    ),
+                    "constructorDependencies": [
+                        "com.example.orders.persistence.repository.OrderRepository"
+                    ],
+                    "collaborators": [
+                        {"ownerFqcn": "com.example.orders.bce.Order"}
+                    ],
+                    "completionMarker": "EASYDEP-IMPLEMENT: complete place-order",
+                }
+            ],
+        },
+    )
+
+    with patch(
+        "app.implementation.planning.design_context.llm_config",
+        return_value={"model": "test-model"},
+    ):
+        task = generate_backend_owner_tasks(spec, run)[0]
+
+    readable = set(
+        json.loads((run / task.context_file).read_text(encoding="utf-8"))["readSourcePaths"]
+    )
+    assert service_path.relative_to(run).as_posix() in readable
+    assert repository_path.relative_to(run).as_posix() in readable
+    assert "application/src/main/java/com/example/orders/bce/Order.java" in readable
+    assert "application/src/main/java/com/example/orders/bce/Unrelated.java" not in readable
+    assert "application/src/main/java/com/example/orders/persistence/repository/UnrelatedRepository.java" not in readable
+    assert task.use_case_ids == ["UC1"]
+    assert task.requirement_ids == ["REQ1"]
+    assert task.source_refs == sorted(set(task.source_refs))
+    assert all("UC2" not in ref and "REQ2" not in ref for ref in task.source_refs)
 
 
 def test_backend_owner_requires_its_generated_completion_markers_to_be_absent(

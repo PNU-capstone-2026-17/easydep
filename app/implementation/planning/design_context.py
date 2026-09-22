@@ -260,16 +260,6 @@ def _build_backend_owner_task(
         raise ValueError(f"Backend source is not a writable implementation target: {invalid}")
     # persistence 골격은 LLM 작업보다 먼저 생성되고 이후 작업이 수정하지 않는다. 관련
     # Entity와 Repository는 source index가 가리키는 정확한 파일에서 필요한 선언만 읽는다.
-    persistence_sources = [
-        path
-        for name in entities
-        for path in (
-            f"application/src/main/java/{package_path}/persistence/entity/{name}Entity.java",
-            f"application/src/main/java/{package_path}/persistence/repository/{name}Repository.java",
-        )
-        if (run_root / path).is_file()
-    ]
-    dependency_source_paths = [path for path in entity_sources if (run_root / path).is_file()]
     immutable_paths = [
         *(path for path in all_required if path not in required),
         *(path for path in bce_paths if path not in entity_sources),
@@ -287,14 +277,7 @@ def _build_backend_owner_task(
     bce_model = BCEModel.model_validate_json(
         spec.inputs["bceModel"].read_text(encoding="utf-8")
     )
-    bce_declaration_names = {
-        *component_names,
-        *(item.name for item in bce_model.DataTypes),
-    }
     controller_paths = [run_root / path for path in required if "/adapter/in/web/" in path]
-    dependency_source_paths.extend(
-        path.relative_to(run_root).as_posix() for path in controller_paths if path.is_file()
-    )
     controller_markers_by_path = {
         path.relative_to(run_root).as_posix(): _controller_body_markers_for_source(
             run_root,
@@ -337,7 +320,7 @@ def _build_backend_owner_task(
         sequence_model=sequence_model,
     )
     completion_markers: dict[str, set[str]] = {}
-    for contract in build_generated_operation_contracts(
+    generated_contracts = build_generated_operation_contracts(
         bce_model=bce_model,
         sequence_model=sequence_model,
         api_model=ApiSpecModel.model_validate_json(
@@ -349,7 +332,8 @@ def _build_backend_owner_task(
             spec.base_package,
             logical_model=_read_json(spec.inputs["erdLogicalModel"]),
         ) if spec.inputs.get("erdBceModel") else {},
-    ).contracts:
+    )
+    for contract in generated_contracts.contracts:
         if contract.writable_source and contract.completion_marker:
             completion_markers.setdefault(contract.writable_source, set()).add(
                 contract.completion_marker
@@ -384,55 +368,70 @@ def _build_backend_owner_task(
             }
         )
     ]
-    # The application tree is already copied into every agent sandbox. Keep only the generated
-    # declarations named by the typed BCE model; do not enumerate unrelated Java sources.
-    source_paths = sorted(
-        dict.fromkeys(
-            path
-            for path in [
-                *dependency_source_paths,
-                *persistence_sources,
-                *entity_sources,
-                *[
-                    path
-                    for name in bce_declaration_names
-                    for path in bce_paths
-                    if Path(path).stem == name
-                ],
-            ]
-            if (run_root / path).is_file()
-        )
+    owned_method_refs = {
+        str(ref)
+        for item in owned_method_contexts
+        for ref in item.get("refs", [])
+        if isinstance(ref, str) and ref
+    }
+    scoped_use_case_ids = sorted(
+        {
+            ref.removeprefix("use_case:")
+            for ref in owned_method_refs
+            if ref.startswith("use_case:")
+        },
+        key=_use_case_sort_key,
+    )
+    scoped_requirement_ids = sorted(
+        {
+            ref.removeprefix("requirement:")
+            for ref in owned_method_refs
+            if ref.startswith("requirement:")
+        }
+    )
+    task_use_case_ids = scoped_use_case_ids or sorted(bundle.use_case_ids, key=_use_case_sort_key)
+    task_requirement_ids = scoped_requirement_ids or _artifact_ids(requirements)
+    task_source_refs = sorted(
+        {
+            *owned_method_refs,
+            *(f"use_case:{value}" for value in task_use_case_ids),
+            *(f"use_case_spec:{value}" for value in task_use_case_ids),
+            *_operation_source_refs(spec, set(task_use_case_ids)),
+            *_workload_source_refs(_deployment_context(spec, component_names)),
+        }
     )
     source_index_path = output / f"{task_id}.source-index.json"
     global_operation_contracts_path = run_root / "reports/generated-operation-contracts.json"
     generated_operation_contracts: str | None = None
+    task_operation_contracts: list[dict[str, object]] = []
     if global_operation_contracts_path.is_file():
         global_operation_contracts = json.loads(
             global_operation_contracts_path.read_text(encoding="utf-8")
         )
         task_operation_contracts_path = output / f"{task_id}.operation-contracts.json"
+        task_operation_contracts = [
+            contract
+            for contract in global_operation_contracts["contracts"]
+            if isinstance(contract, dict)
+            and (
+                contract.get("writableSource") in required
+                or any(
+                    isinstance(endpoint, dict)
+                    and controller_body_marker(
+                        str(endpoint.get("method") or ""),
+                        str(endpoint.get("path") or ""),
+                    )
+                    in owned_controller_markers
+                    for endpoint in contract.get("endpoints", [])
+                    if isinstance(contract.get("endpoints", []), list)
+                )
+            )
+        ]
         task_operation_contracts_path.write_text(
             json.dumps(
                 {
                     "schemaVersion": global_operation_contracts["schemaVersion"],
-                    "contracts": [
-                        contract
-                        for contract in global_operation_contracts["contracts"]
-                        if isinstance(contract, dict)
-                        and (
-                            contract.get("writableSource") in required
-                            or any(
-                                isinstance(endpoint, dict)
-                                and controller_body_marker(
-                                    str(endpoint.get("method") or ""),
-                                    str(endpoint.get("path") or ""),
-                                )
-                                in owned_controller_markers
-                                for endpoint in contract.get("endpoints", [])
-                                if isinstance(contract.get("endpoints", []), list)
-                            )
-                        )
-                    ],
+                    "contracts": task_operation_contracts,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -440,6 +439,21 @@ def _build_backend_owner_task(
             encoding="utf-8",
         )
         generated_operation_contracts = _relative(run_root, task_operation_contracts_path)
+    source_paths = sorted(
+        dict.fromkeys(
+            path
+            for path in [
+                *required,
+                *_scoped_contract_source_paths(
+                    run_root,
+                    required,
+                    task_operation_contracts,
+                    spec.base_package,
+                ),
+            ]
+            if (run_root / path).is_file()
+        )
+    )
     generated_source_paths = sorted(dict.fromkeys([*source_paths, *required]))
     immutable_import_paths = _local_immutable_java_import_closure(
         run_root,
@@ -485,8 +499,8 @@ def _build_backend_owner_task(
         "taskType": "backend-implementation",
         "owner": "backend",
         "dependsOn": [],
-        "requirementIds": _artifact_ids(requirements),
-        "useCaseIds": list(bundle.use_case_ids),
+        "requirementIds": task_requirement_ids,
+        "useCaseIds": task_use_case_ids,
         "controllerPaths": [
             path.relative_to(run_root).as_posix() for path in controller_paths if path.is_file()
         ],
@@ -547,7 +561,7 @@ Complete the generated backend implementation for the writable sources below.
         prompt_path.write_text(prompt, encoding="utf-8")
     task = TaskSpec(
         task_id=task_id,
-        control=f"{', '.join(Path(path).stem for path in required)}: use cases {label}",
+        control=f"{', '.join(Path(path).stem for path in required)}: use cases {', '.join(task_use_case_ids) or label}",
         prompt_file=_relative(run_root, prompt_path),
         context_file=_relative(run_root, context_path),
         allowed_write_paths=required,
@@ -559,15 +573,10 @@ Complete the generated backend implementation for the writable sources below.
         owner="backend",
         task_type="backend-implementation",
         depends_on=[],
-        requirement_ids=_artifact_ids(requirements),
-        use_case_ids=list(bundle.use_case_ids),
+        requirement_ids=task_requirement_ids,
+        use_case_ids=task_use_case_ids,
         required_test_paths=[],
-        source_refs=[
-            *(f"use_case:{value}" for value in bundle.use_case_ids),
-            *(f"use_case_spec:{value}" for value in bundle.use_case_ids),
-            *_operation_source_refs(spec, set(bundle.use_case_ids)),
-            *_workload_source_refs(deployment_context),
-        ],
+        source_refs=task_source_refs,
         allowed_write_roots=[],
         verification_profile={"requiredAbsentMarkers": required_absent_markers},
     )
@@ -1739,6 +1748,55 @@ def _local_immutable_java_import_closure(
             closure.add(dependency)
             pending.append(dependency)
     return sorted(closure)
+
+
+def _scoped_contract_source_paths(
+    run_root: Path,
+    required: list[str],
+    contracts: list[dict[str, object]],
+    base_package: str,
+) -> list[str]:
+    """Return existing project sources named by scoped contracts or owner imports."""
+
+    project_pattern = re.compile(
+        rf"{re.escape(base_package)}(?:\.[A-Za-z_$][\w$]*)+"
+    )
+    import_pattern = re.compile(
+        r"(?m)^\s*import\s+(?!static\s)"
+        r"([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\s*;"
+    )
+    paths: set[str] = set()
+
+    def add_fqcn(value: str) -> None:
+        candidate = (
+            f"application/src/main/java/{value.replace('.', '/')}.java"
+        )
+        if (run_root / candidate).is_file():
+            paths.add(candidate)
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            for item in value.values():
+                visit(item)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, str):
+            for fqcn in project_pattern.findall(value):
+                add_fqcn(fqcn)
+            if value.endswith(".java") and (run_root / value).is_file():
+                paths.add(value)
+
+    for contract in contracts:
+        visit(contract)
+    for relative in required:
+        source = run_root / relative
+        if not source.is_file():
+            continue
+        for imported in import_pattern.findall(source.read_text(encoding="utf-8")):
+            if imported.startswith(f"{base_package}."):
+                add_fqcn(imported)
+    return sorted(paths)
 
 
 def _without_immutable_paths(paths: list[str], immutable: list[str]) -> list[str]:
