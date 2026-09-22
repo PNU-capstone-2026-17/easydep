@@ -127,8 +127,17 @@ def _plan(
     *,
     generated_operation_contracts: bool = False,
     extra_control: bool = False,
+    target_source: str | None = None,
 ):
     spec, run = _spec_and_run(root, extra_control=extra_control)
+    if target_source is not None:
+        target = (
+            run
+            / "application/src/main/java/com/example/orders/application/impl/"
+            "OrderControlService.java"
+        )
+        target.parent.mkdir(parents=True)
+        target.write_text(target_source, encoding="utf-8")
     if generated_operation_contracts:
         contracts = run / "reports/generated-operation-contracts.json"
         contracts.parent.mkdir(parents=True)
@@ -139,6 +148,7 @@ def _plan(
                 "contracts": [
                     {
                         "operationId": "place-order",
+                        "signature": "place(id: String): void",
                         "writableSource": (
                             "application/src/main/java/com/example/orders/application/impl/"
                             "OrderControlService.java"
@@ -228,7 +238,15 @@ def test_backend_plan_persists_one_cohesive_owner_without_focused_test_contract(
 def test_backend_owner_includes_an_existing_generated_operation_contract_sidecar(
     tmp_path: Path,
 ) -> None:
-    tasks, run = _plan(tmp_path, generated_operation_contracts=True)
+    tasks, run = _plan(
+        tmp_path,
+        generated_operation_contracts=True,
+        target_source=(
+            "final class OrderControlService {\n"
+            "  // EASYDEP-IMPLEMENT: complete place-order\n"
+            "}\n"
+        ),
+    )
 
     task = tasks[0]
     context = json.loads((run / task.context_file).read_text(encoding="utf-8"))
@@ -241,8 +259,9 @@ def test_backend_owner_includes_an_existing_generated_operation_contract_sidecar
     assert json.loads((run / sidecar).read_text(encoding="utf-8")) == {
         "schemaVersion": "generated-operation-contracts/v1",
         "contracts": [
-                    {
-                        "operationId": "place-order",
+            {
+                "operationId": "place-order",
+                "signature": "place(id: String): void",
                 "writableSource": (
                     "application/src/main/java/com/example/orders/application/impl/"
                     "OrderControlService.java"
@@ -258,7 +277,16 @@ def test_backend_owner_includes_an_existing_generated_operation_contract_sidecar
             }
         ],
     }
-    assert sidecar in (run / task.prompt_file).read_text(encoding="utf-8")
+    prompt = (run / task.prompt_file).read_text(encoding="utf-8")
+    target_source = (run / task.allowed_write_paths[0]).read_text(encoding="utf-8")
+    assert sidecar in prompt
+    assert "## Implementation work packet" in prompt
+    assert target_source.strip() in prompt
+    assert "EASYDEP-IMPLEMENT" in prompt
+    assert '"operationId": "place-order"' in prompt
+    assert '"signature": "place(id: String): void"' in prompt
+    assert "authentication, build configuration, or migrations" in prompt
+    assert "UnrelatedApi" not in prompt
 
 
 def test_backend_owner_includes_only_imported_frozen_java_dependencies(

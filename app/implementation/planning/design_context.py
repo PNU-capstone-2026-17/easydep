@@ -525,6 +525,14 @@ def _build_backend_owner_task(
     if deployment_context:
         context["deployment"] = deployment_context
     context_path = output / f"{task_id}.context.json"
+    packet_sources = "\n\n".join(
+        f"### `{path}`\n```java\n{(run_root / path).read_text(encoding='utf-8').strip()}\n```"
+        for path in required
+        if (run_root / path).is_file()
+    ) or "- no writable Java source is available"
+    packet_contracts = json.dumps(
+        {"contracts": task_operation_contracts}, ensure_ascii=False, indent=2
+    )
     prompt = (
         f"""# Backend source owner: {', '.join(Path(path).stem for path in required)}
 
@@ -542,7 +550,21 @@ Complete the generated backend implementation for the writable sources below.
 - After that first edit, consult only the listed operation contract and declared dependency sources when a concrete implementation need remains. Interaction hints are behavioral evidence; use them to understand delegated behavior, but do not inject dependencies or alter BCE ownership solely because of a hint.
 - After one edit batch, run the canonical `run_task_check` once. Inspect its concrete diagnostic
   before any correction, and finish when it passes.
+- Do not investigate controllers, authentication, build configuration, or migrations unless the
+  canonical check diagnostic explicitly names one of them.
 - Use English for source comments, tests, validation messages, documentation, and user-visible text.
+
+## Implementation work packet
+
+The writable source and its already-filtered operation contracts are included below. Use them for
+the first edit; broader evidence remains available only for a concrete diagnostic.
+
+{packet_sources}
+
+### Operation contracts
+```json
+{packet_contracts}
+```
 
 ## Generated source
 {chr(10).join(f"- `{path}`" for path in required) or "- none"}
