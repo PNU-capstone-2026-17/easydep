@@ -965,6 +965,94 @@ def test_editor_owner_runs_at_most_one_repair_and_two_checks(
         assert created[0].run_statuses[1].value == "idle"
 
 
+@pytest.mark.parametrize(
+    ("second_run_edits", "check_result", "expected_checks", "error_type"),
+    [
+        (True, (True, "passed"), 1, None),
+        (False, (True, "passed"), 0, OwnerConversationIncomplete),
+        (True, (False, "broken"), 1, WorkspaceVerificationError),
+    ],
+)
+def test_editor_owner_recovers_one_stuck_no_action_turn(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    second_run_edits: bool,
+    check_result: tuple[bool, str],
+    expected_checks: int,
+    error_type: type[Exception] | None,
+) -> None:
+    run, task_id, source_path, _source = _write_minimal_agent_task(tmp_path)
+    _configure_editor_owner_task(run)
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+    monkeypatch.setattr(
+        "app.implementation.agents.runtime.settings.implementation_openhands_canary", False
+    )
+
+    class Conversation:
+        def __init__(self, sandbox: Path) -> None:
+            self.sandbox = sandbox
+            self.run_count = 0
+            self.state = SimpleNamespace(execution_status=None, events=[])
+
+        def send_message(self, _message: str) -> None:
+            pass
+
+        def run(self) -> None:
+            from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+            self.run_count += 1
+            if self.run_count == 1:
+                self.state.execution_status = ConversationExecutionStatus.STUCK
+                return
+            if second_run_edits:
+                (self.sandbox / source_path).write_text(
+                    "class OrderService { int repaired; }", encoding="utf-8"
+                )
+            self.state.execution_status = ConversationExecutionStatus.FINISHED
+
+        def close(self) -> None:
+            pass
+
+    created: list[Conversation] = []
+    check_calls: list[object] = []
+
+    def create(sandbox: Path, *_args, **_kwargs):
+        conversation = Conversation(sandbox)
+        created.append(conversation)
+        return conversation, SimpleNamespace(_tools={})
+
+    def run_check(*_args, **_kwargs):
+        check_calls.append(None)
+        return check_result
+
+    connection = LlmConnection(
+        provider="openrouter",
+        api_key="approved-key",
+        base_url="https://example.invalid/v1",
+        model="openai/gpt-oss-20b",
+        litellm_provider="openrouter",
+    )
+    with ExitStack() as stack:
+        for manager in (
+            patch("app.implementation.agents.runtime.openhands_compatibility", return_value={"pythonCompatible": True, "sdkInstalled": True, "toolsInstalled": True, "apiKeyConfigured": True}),
+            patch("app.implementation.agents.runtime.openhands_connection", return_value=connection),
+            patch("app.implementation.agents.runtime.preflight_owner_workspace", return_value={"passed": True}),
+            patch("app.implementation.agents.runtime.create_openhands_conversation", side_effect=create),
+            patch("app.implementation.agents.runtime.run_task_check", side_effect=run_check),
+            patch("app.implementation.agents.runtime.verify_agent_workspace", return_value={"exitCode": 0}),
+        ):
+            stack.enter_context(manager)
+        if error_type is None:
+            result = execute_openhands_task(run, task_id)
+            assert result["status"] == "SUCCEEDED"
+            assert result["stuckRecoveryUsed"] is True
+        else:
+            with pytest.raises(error_type):
+                execute_openhands_task(run, task_id)
+    assert created[0].run_count == 2
+    assert len(check_calls) == expected_checks
+
+
 
 def test_owner_access_contract_bounds_exact_immutable_files(
     tmp_path: Path,

@@ -219,6 +219,11 @@ EDITOR_REPAIR_MESSAGE = (
     "source below to repair only this diagnosis. Do not search or run verification; the harness "
     "will check exactly once after this repair.\n\n"
 )
+EDITOR_STUCK_RECOVERY_MESSAGE = (
+    "Do not explain or analyze. Immediately use replace_source to replace one supplied source "
+    "with its complete body, or report_upstream_gap only when public behavior is insufficient. "
+    "The harness performs verification."
+)
 
 
 def _owner_evidence_boundary_message(required_test_paths: object) -> str:
@@ -1438,6 +1443,20 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         ):
             conversation.send_message(OWNER_CONTINUATION_MESSAGE)
         run_openhands_conversation(conversation)
+        if (
+            editor_mode
+            and _conversation_is_stuck(conversation)
+            and reported_upstream_gap(agent) is None
+            and not any(
+                path in editable_paths
+                for path in changed_files(before, snapshot_files(sandbox))
+            )
+        ):
+            if no_action_guard is not None:
+                no_action_guard.reset()
+            stuck_recovery_used = True
+            conversation.send_message(EDITOR_STUCK_RECOVERY_MESSAGE)
+            run_openhands_conversation(conversation)
         if editor_mode and reported_upstream_gap(agent) is None:
             first_changes = changed_files(before, snapshot_files(sandbox))
             if not any(path in editable_paths for path in first_changes):
@@ -1456,6 +1475,16 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             if not passed:
                 if is_infrastructure_task_check_failure(diagnosis):
                     raise OwnerConversationIncomplete(
+                        {
+                            "command": ["run_task_check"],
+                            "exitCode": 1,
+                            "stdout": "",
+                            "stderr": diagnosis,
+                            "testResults": "",
+                        }
+                    )
+                if stuck_recovery_used:
+                    raise WorkspaceVerificationError(
                         {
                             "command": ["run_task_check"],
                             "exitCode": 1,
