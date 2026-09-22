@@ -715,6 +715,135 @@ def test_backend_owner_splits_one_source_by_marked_operation_contract(
     tmp_path: Path,
 ) -> None:
     spec, run = _spec_and_run(tmp_path)
+    bce_model = json.loads(spec.inputs["bceModel"].read_text(encoding="utf-8"))
+    bce_model["Classes"][0]["operations"] = [
+        {
+            "operationId": "place-order",
+            "stableId": "op_place",
+            "name": "place",
+            "parameters": [{"name": "id", "type": "String"}],
+            "returnType": "void",
+        },
+        {
+            "operationId": "create-order",
+            "stableId": "op_create",
+            "name": "create",
+            "parameters": [],
+            "returnType": "void",
+        },
+    ]
+    _write_json(spec.inputs["bceModel"], bce_model)
+    _write_json(
+        spec.inputs["requirements"],
+        [
+            {"id": "REQ1", "text": "Place an order"},
+            {"id": "REQ2", "text": "Create an order"},
+        ],
+    )
+    _write_json(
+        spec.inputs["useCaseSpec"],
+        {
+            "useCaseSpecs": [
+                {
+                    "use_case_id": "UC1",
+                    "requirement_ids": ["REQ1"],
+                    "main_scenario": [
+                        {"step_number": 1, "text": "Place scenario only"}
+                    ],
+                },
+                {
+                    "use_case_id": "UC2",
+                    "requirement_ids": ["REQ2"],
+                    "main_scenario": [
+                        {"step_number": 1, "text": "Create scenario only"}
+                    ],
+                },
+            ]
+        },
+    )
+    _write_json(
+        spec.inputs["sequenceModel"],
+        {
+            "Diagrams": [
+                {
+                    "use_case_id": "UC1",
+                    "use_case_name": "Place order",
+                    "Participants": [
+                        {"name": "Actor", "alias": "Actor", "kind": "actor"},
+                        {
+                            "name": "OrderControl",
+                            "alias": "OrderControl",
+                            "kind": "control",
+                            "source_class": "OrderControl",
+                        },
+                    ],
+                    "Messages": [
+                        {
+                            "source": "Actor",
+                            "target": "OrderControl",
+                            "label": "place(id:String)",
+                            "type": "sync",
+                            "use_case_ids": ["UC1"],
+                            "step_ids": ["UC1:main:1"],
+                            "call_id": "place::call:1",
+                            "arguments": [
+                                {
+                                    "parameter": "id",
+                                    "type": "String",
+                                    "source_kind": "input",
+                                    "source_ref": "UC1:main:1#id",
+                                }
+                            ],
+                        },
+                        {
+                            "source": "OrderControl",
+                            "target": "Actor",
+                            "label": "void",
+                            "type": "return",
+                            "use_case_ids": ["UC1"],
+                            "step_ids": ["UC1:main:1"],
+                            "reply_to": "place::call:1",
+                        },
+                    ],
+                },
+                {
+                    "use_case_id": "UC2",
+                    "use_case_name": "Create order",
+                    "Participants": [
+                        {"name": "Actor", "alias": "Actor", "kind": "actor"},
+                        {
+                            "name": "OrderControl",
+                            "alias": "OrderControl",
+                            "kind": "control",
+                            "source_class": "OrderControl",
+                        },
+                    ],
+                    "Messages": [
+                        {
+                            "source": "Actor",
+                            "target": "OrderControl",
+                            "label": "create()",
+                            "type": "sync",
+                            "use_case_ids": ["UC2"],
+                            "step_ids": ["UC2:main:1"],
+                            "call_id": "create::call:1",
+                            "arguments": [],
+                        },
+                        {
+                            "source": "OrderControl",
+                            "target": "Actor",
+                            "label": "void",
+                            "type": "return",
+                            "use_case_ids": ["UC2"],
+                            "step_ids": ["UC2:main:1"],
+                            "reply_to": "create::call:1",
+                        },
+                    ],
+                },
+            ],
+            "MethodProposals": [],
+        },
+    )
     source = (
         "application/src/main/java/com/example/orders/application/impl/"
         "OrderControlService.java"
@@ -764,9 +893,14 @@ def test_backend_owner_splits_one_source_by_marked_operation_contract(
     assert [task.required_output_paths for task in tasks] == [[source], [source]]
     assert [task.depends_on for task in tasks] == [[], [tasks[0].task_id]]
 
-    for task, operation_id, marker in zip(
+    for task, operation_id, stable_id, use_case_id, requirement_id, own_scenario, sibling_scenario, marker in zip(
         tasks,
         ["create-order", "place-order"],
+        ["op_create", "op_place"],
+        ["UC2", "UC1"],
+        ["REQ2", "REQ1"],
+        ["Create scenario only", "Place scenario only"],
+        ["Place scenario only", "Create scenario only"],
         [
             "EASYDEP-IMPLEMENT: complete create-order",
             "EASYDEP-IMPLEMENT: complete place-order",
@@ -784,10 +918,27 @@ def test_backend_owner_splits_one_source_by_marked_operation_contract(
         ]
         context = json.loads((run / task.context_file).read_text(encoding="utf-8"))
         assert context["dependsOn"] == task.depends_on
+        assert context["useCaseIds"] == [use_case_id]
+        assert context["requirementIds"] == [requirement_id]
+        assert all(
+            use_case_id in ref or "UC" not in ref
+            for ref in task.source_refs
+        )
+        source_index = json.loads(
+            (run / context["sourceIndexPath"]).read_text(encoding="utf-8")
+        )
+        assert [item["stableId"] for item in source_index["methodContexts"]] == [stable_id]
         prompt = (run / task.prompt_file).read_text(encoding="utf-8")
         assert "Resolve only the assigned completion marker" in prompt
         assert "stale snapshot" in prompt
         assert operation_id in prompt
+        assert "### Assigned operation behavior" in prompt
+        assert use_case_id in prompt
+        assert requirement_id in prompt
+        assert own_scenario in prompt
+        assert sibling_scenario not in prompt
+        assert "designInputs" not in prompt
+        assert "sourcePaths" not in prompt
 
 
 def test_backend_owner_keeps_controller_only_marker_without_operation_contract(

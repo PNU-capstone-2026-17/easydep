@@ -413,6 +413,14 @@ def _build_backend_owner_task(
             }
         )
     ]
+    if assigned_operation is not None:
+        assigned_identity, assigned_operation_id, _marker = assigned_operation
+        owned_method_contexts = [
+            item
+            for item in owned_method_contexts
+            if item.get("operationId") == assigned_operation_id
+            or item.get("stableId") == assigned_identity
+        ]
     owned_method_refs = {
         str(ref)
         for item in owned_method_contexts
@@ -603,6 +611,17 @@ def _build_backend_owner_task(
         ensure_ascii=False,
         indent=2,
     )
+    packet_assigned_operation_behavior = (
+        "\n### Assigned operation behavior\n```json\n"
+        + json.dumps(
+            _assigned_operation_behavior_packet(run_root, owned_method_contexts),
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n```\n"
+        if assigned_operation is not None
+        else ""
+    )
     marker_instruction = (
         "- Resolve only the assigned completion marker below. Preserve every other marker and "
         "all current edits from preceding tasks; apply a narrow edit instead of restoring or "
@@ -648,6 +667,7 @@ the first edit; broader evidence remains available only for a concrete diagnosti
 ```json
 {packet_contracts}
 ```
+{packet_assigned_operation_behavior}
 
 ## Generated source
 {chr(10).join(f"- `{path}`" for path in required) or "- none"}
@@ -1205,6 +1225,35 @@ def _prompt_operation_contract(contract: dict[str, object]) -> dict[str, object]
         for field in prompt_fields
         if field in contract and contract[field] not in (None, [], {})
     }
+
+
+def _assigned_operation_behavior_packet(
+    run_root: Path, method_contexts: list[dict[str, object]]
+) -> dict[str, object]:
+    """Expose the assigned method's observed behavior without broader design evidence."""
+
+    fields = (
+        "method",
+        "requirements",
+        "scenarioSteps",
+        "apiOperations",
+        "slices",
+        "reasons",
+    )
+    methods: list[dict[str, object]] = []
+    for entry in method_contexts:
+        path = entry.get("path")
+        if not isinstance(path, str) or not path:
+            continue
+        payload = _read_json(run_root / path)
+        method_packet = {
+            field: payload[field]
+            for field in fields
+            if field in payload and payload[field] not in (None, [], {})
+        }
+        if method_packet:
+            methods.append(method_packet)
+    return {"methods": methods}
 
 
 def _completion_marked_operation_contracts_by_source(
