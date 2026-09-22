@@ -12,7 +12,7 @@ from typing import Any, Literal
 
 from app.llm_connection import LlmConnection
 
-HARNESS_POLICY_VERSION = "easydep-openhands-harness/v5"
+HARNESS_POLICY_VERSION = "easydep-openhands-harness/v6"
 OWNER_PROMPT_VERSION = "easydep-owner-prompt/v9"
 WORKSPACE_PATH_VERSION = "easydep-owner-workspace/v3"
 OWNER_TOOL_MODES = frozenset({"editor", "restricted", "terminal"})
