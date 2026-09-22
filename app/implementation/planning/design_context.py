@@ -123,8 +123,7 @@ def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec
     if marked_sources is not None:
         grouped_sources = [path for path in grouped_sources if path in marked_sources]
     source_groups = [[path] for path in controller_sources]
-    if grouped_sources:
-        source_groups.append(grouped_sources)
+    source_groups.extend([[path] for path in grouped_sources])
     return [
         _build_backend_owner_task(
             spec, run_root, ir, output, package_path, bce_paths, bundle,

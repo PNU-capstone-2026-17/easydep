@@ -15,7 +15,11 @@ def _write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value), encoding="utf-8")
 
 
-def _spec_and_run(root: Path) -> tuple[JobSpec, Path]:
+def _spec_and_run(
+    root: Path,
+    *,
+    extra_control: bool = False,
+) -> tuple[JobSpec, Path]:
     run = root / "run"
     package = "com.example.orders"
     package_path = package.replace(".", "/")
@@ -52,6 +56,18 @@ def _spec_and_run(root: Path) -> tuple[JobSpec, Path]:
             "Collaborations": [],
         },
     )
+    if extra_control:
+        bce_payload = json.loads((inputs / "bce.json").read_text(encoding="utf-8"))
+        bce_payload["Classes"].insert(
+            1,
+            {
+                "className": "AuditControl",
+                "stereotype": "Control",
+                "use_case_ids": ["UC1"],
+                "operations": [],
+            },
+        )
+        _write_json(inputs / "bce.json", bce_payload)
     _write_json(inputs / "sequence.json", {"Diagrams": [], "MethodProposals": []})
     _write_json(
         inputs / "api.json",
@@ -75,6 +91,11 @@ def _spec_and_run(root: Path) -> tuple[JobSpec, Path]:
     bce_root = run / "application/src/main/java" / package_path / "bce"
     bce_root.mkdir(parents=True)
     (bce_root / "OrderControl.java").write_text("public interface OrderControl {}\n", encoding="utf-8")
+    if extra_control:
+        (bce_root / "AuditControl.java").write_text(
+            "public interface AuditControl {}\n",
+            encoding="utf-8",
+        )
     (bce_root / "Order.java").write_text("public class Order {}\n", encoding="utf-8")
 
     spec = JobSpec(
@@ -101,8 +122,13 @@ def _spec_and_run(root: Path) -> tuple[JobSpec, Path]:
     return spec, run
 
 
-def _plan(root: Path, *, generated_operation_contracts: bool = False):
-    spec, run = _spec_and_run(root)
+def _plan(
+    root: Path,
+    *,
+    generated_operation_contracts: bool = False,
+    extra_control: bool = False,
+):
+    spec, run = _spec_and_run(root, extra_control=extra_control)
     if generated_operation_contracts:
         contracts = run / "reports/generated-operation-contracts.json"
         contracts.parent.mkdir(parents=True)
@@ -532,3 +558,26 @@ def test_backend_owner_plan_is_deterministic_across_equivalent_runs(tmp_path: Pa
         "implement-backend-domain-core-"
     )
     assert len(_backend_source_task_id(multi_source)) <= 48
+
+
+def test_backend_owner_splits_non_controller_sources_into_single_source_tasks(
+    tmp_path: Path,
+) -> None:
+    tasks, _run = _plan(tmp_path, extra_control=True)
+
+    assert len(tasks) == 2
+    assert all(len(task.required_output_paths or []) == 1 for task in tasks)
+    assert [task.required_output_paths for task in tasks] == [
+        [
+            "application/src/main/java/com/example/orders/application/impl/"
+            "AuditControlService.java"
+        ],
+        [
+            "application/src/main/java/com/example/orders/application/impl/"
+            "OrderControlService.java"
+        ],
+    ]
+    assert [task.task_id for task in tasks] == [
+        "implement-backend-com-example-orders-application-impl-auditcontrolservice",
+        "implement-backend-com-example-orders-application-impl-ordercontrolservice",
+    ]
