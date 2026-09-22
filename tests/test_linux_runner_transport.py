@@ -26,6 +26,7 @@ from app.implementation.runtime.linux_runner_transport import (
 )
 from app.implementation.runtime.member_linux_runner import (
     _clear_llm_credentials_from_environment,
+    _cli,
 )
 
 
@@ -171,6 +172,43 @@ def test_runner_command_labels_run_workflow_root(tmp_path: Path):
 
     assert "easydep.job-id=job-1" in command
     assert "easydep.run-id=run_abc" in command
+
+
+def test_runner_command_labels_run_owner_root(tmp_path: Path):
+    _, container_job = _runner_job(tmp_path)
+    run_root = "/easydep-workspace/.easydep/implementation-runs/job-1/generated/runs/run_abc"
+    command = runner_command(
+        image="runner:test",
+        repository_root=tmp_path,
+        operation="cli",
+        arguments=["run-owner", run_root, container_job, "owner-1"],
+        environment={},
+        llm_environment={},
+    )
+
+    assert "easydep.job-id=job-1" in command
+    assert "easydep.run-id=run_abc" in command
+
+
+def test_member_runner_translates_run_owner_job_path(monkeypatch: pytest.MonkeyPatch):
+    observed: list[object] = []
+    monkeypatch.setattr(
+        "app.implementation.runtime.member_linux_runner._configure_runner_tools", lambda: None
+    )
+    monkeypatch.setattr(
+        "app.implementation.runtime.member_linux_runner._runner_job",
+        lambda path: observed.append(path) or Path("/runner-job.json"),
+    )
+    monkeypatch.setattr(
+        "app.implementation.interfaces.cli.main",
+        lambda arguments: observed.append(arguments) or 0,
+    )
+
+    assert _cli(["run-owner", "/run", "/job.json", "owner-1"]) == 0
+    assert observed == [
+        Path("/job.json"),
+        ["run-owner", "/run", str(Path("/runner-job.json")), "owner-1"],
+    ]
 
 
 def test_reconciliation_preserves_owner_only_legacy_container(

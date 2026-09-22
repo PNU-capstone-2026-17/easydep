@@ -74,19 +74,9 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     if spec.job_type == "FEEDBACK_REVISION":
         apply_repair_directives(run_root)
         return reconcile_workflow_state(run_root)
-    build_implementation_ir(spec, run_root)
-    erd_model_path = spec.inputs.get("erdBceModel")
-    if erd_model_path is not None:
-        plan_persistence_tasks(spec, run_root)
-    plan_backend_owner_task(spec, run_root)
-    plan_frontend_tasks(spec, run_root)
+    tasks = materialize_owner_tasks(run_root, spec)
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = _read_json(manifest_path)
-    tasks = [
-        task
-        for task in manifest.get("implementation_tasks", [])
-        if isinstance(task, dict)
-    ]
     manifest["agent_execution"] = write_execution_plan(
         run_root,
         tasks,
@@ -96,6 +86,24 @@ def plan_workflow(run_root: Path, spec: JobSpec) -> dict[str, object]:
     build_rtm_traceability_map(spec, run_root)
     apply_repair_directives(run_root)
     return reconcile_workflow_state(run_root)
+
+
+def materialize_owner_tasks(run_root: Path, spec: JobSpec) -> list[dict[str, object]]:
+    """Build the current initial-implementation owner task manifest without workflow effects."""
+    run_root = run_root.resolve()
+    if spec.job_type == "FEEDBACK_REVISION":
+        raise ValueError("Owner-task materialization is only available for initial implementation")
+    build_implementation_ir(spec, run_root)
+    if spec.inputs.get("erdBceModel") is not None:
+        plan_persistence_tasks(spec, run_root)
+    plan_backend_owner_task(spec, run_root)
+    plan_frontend_tasks(spec, run_root)
+    manifest = _read_json(run_root / "reports" / "run-manifest.json")
+    return [
+        task
+        for task in manifest.get("implementation_tasks", [])
+        if isinstance(task, dict)
+    ]
 
 
 def reconcile_workflow_state(run_root: Path) -> dict[str, object]:

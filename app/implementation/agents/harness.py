@@ -321,6 +321,7 @@ class HarnessProgressTracker:
 
     workspace: Path
     max_same_read: int = 4
+    max_reads_without_change: int = 16
     initial_source_hash: str = field(init=False)
     source_hash: str = field(init=False)
     initial_files: dict[str, str] = field(init=False, repr=False)
@@ -329,6 +330,8 @@ class HarnessProgressTracker:
     valid_source_changes: int = 0
     repeated_read_counts: dict[str, int] = field(default_factory=dict)
     max_repeated_read: int = 0
+    reads_without_change: int = 0
+    max_reads_without_change_observed: int = 0
     last_failure_fingerprint: str | None = None
     terminal_code: str | None = None
     _conversation: object | None = field(default=None, init=False, repr=False)
@@ -366,6 +369,7 @@ class HarnessProgressTracker:
         if current_hash != self.source_hash:
             self.valid_source_changes += 1
             self.repeated_read_counts.clear()
+            self.reads_without_change = 0
         self.source_hash = current_hash
         self.source_files = current_files
         self.marker_count = markers
@@ -377,6 +381,11 @@ class HarnessProgressTracker:
         )
         if not is_read:
             return
+        self.reads_without_change += 1
+        self.max_reads_without_change_observed = max(
+            self.max_reads_without_change_observed,
+            self.reads_without_change,
+        )
         key = hashlib.sha256(
             f"{current_hash}\0{encoded}".encode()
         ).hexdigest()[:16]
@@ -384,6 +393,15 @@ class HarnessProgressTracker:
         self.repeated_read_counts[key] = count
         self.max_repeated_read = max(self.max_repeated_read, count)
         if count < self.max_same_read or self._conversation is None:
+            if (
+                self.reads_without_change < self.max_reads_without_change
+                or self._conversation is None
+            ):
+                return
+            self.terminal_code = "NO_PROGRESS_READ_BUDGET"
+            from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+            self._conversation.state.execution_status = ConversationExecutionStatus.STUCK
             return
         self.terminal_code = "NO_PROGRESS_REPEAT"
         from openhands.sdk.conversation.state import ConversationExecutionStatus
@@ -404,6 +422,7 @@ class HarnessProgressTracker:
             "unimplementedMarkerCount": self.marker_count,
             "validSourceChanges": self.valid_source_changes,
             "maxRepeatedIdenticalRead": self.max_repeated_read,
+            "maxReadsWithoutSourceChange": self.max_reads_without_change_observed,
             "lastFailureFingerprint": self.last_failure_fingerprint,
         }
 

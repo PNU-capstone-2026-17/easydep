@@ -135,7 +135,7 @@ def _cli(arguments: list[str]) -> int:
     if not arguments:
         raise SystemExit("cli requires an implementation command")
     runner_arguments = list(arguments)
-    if runner_arguments[0] in {"plan-workflow", "run-workflow"}:
+    if runner_arguments[0] in {"plan-workflow", "run-workflow", "run-owner"}:
         if len(runner_arguments) < 3:
             raise SystemExit(f"{runner_arguments[0]} requires run and job paths")
         # job.json의 workspaceRoot는 호스트 절대 경로다. Linux에서 그 문자열을 그대로

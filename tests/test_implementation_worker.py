@@ -1049,6 +1049,72 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
     assert (run_root / "application/frontend/dist/assets").is_dir()
 
 
+@pytest.mark.parametrize("fails", [False, True])
+def test_run_owner_uses_fixed_runner_and_always_cleans_up(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fails: bool
+) -> None:
+    client = PrototypeClient(settings(tmp_path))
+    (tmp_path / "app").mkdir()
+    job_root = tmp_path / ".easydep" / "implementation-runs" / "job"
+    run_root = job_root / "generated" / "runs" / "run_123"
+    job_path = job_root / "job.json"
+    run_root.mkdir(parents=True)
+    job_path.write_text("{}", encoding="utf-8")
+    observed: dict[str, object] = {}
+    cleanups: list[dict[str, str]] = []
+    monkeypatch.setattr(
+        "app.implementation.application.prototype.configured_runner_image",
+        lambda: "runner:test",
+    )
+    monkeypatch.setattr(
+        "app.implementation.application.prototype.cleanup_runner_containers",
+        lambda **kwargs: cleanups.append(kwargs),
+    )
+
+    def fake_call(
+        command: list[str], operation_id: str | None, environment: dict[str, str]
+    ) -> dict[str, object]:
+        observed.update(command=command, operation_id=operation_id, environment=environment)
+        if fails:
+            raise PrototypeExecutionError("runner failed")
+        return {"task_id": "implement-backend"}
+
+    monkeypatch.setattr(client, "_call_command", fake_call)
+
+    if fails:
+        with pytest.raises(PrototypeExecutionError, match="runner failed"):
+            client.run_owner(run_root, job_path, "implement-backend")
+    else:
+        assert client.run_owner(run_root, job_path, "implement-backend") == {
+            "task_id": "implement-backend"
+        }
+
+    command = observed["command"]
+    assert isinstance(command, list)
+    assert command[-5:] == [
+        "cli",
+        "run-owner",
+        "/easydep-workspace/.easydep/implementation-runs/job/generated/runs/run_123",
+        "/easydep-workspace/.easydep/implementation-runs/job/job.json",
+        "implement-backend",
+    ]
+    assert observed["operation_id"] == "job"
+    assert cleanups == [{"job_id": "job", "run_id": "run_123"}]
+
+
+def test_run_owner_rejects_host_execution_when_fixed_runner_is_unconfigured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = PrototypeClient(settings(tmp_path))
+    monkeypatch.setattr(
+        "app.implementation.application.prototype.configured_runner_image", lambda: None
+    )
+    monkeypatch.setattr(client, "_call", lambda *_args: pytest.fail("host CLI must not run"))
+
+    with pytest.raises(PrototypeExecutionError, match="fixed Linux"):
+        client.run_owner(tmp_path / "run", tmp_path / "job.json", "implement-backend")
+
+
 def test_prepare_job_materializes_all_available_design_inputs(tmp_path: Path) -> None:
     client = PrototypeClient(settings(tmp_path))
     path = client.prepare_job(

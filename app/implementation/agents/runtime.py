@@ -521,6 +521,7 @@ def _owner_workspace_guidance(
     owner_tool_mode: str = "terminal",
     *,
     owner_files: list[str] | None = None,
+    read_files: list[str] | None = None,
     bounded_evidence: bool = False,
 ) -> str:
     """Return stable runner facts, not implementation instructions."""
@@ -658,6 +659,17 @@ def _owner_workspace_guidance(
     common.append(
         "- Every path not listed above and not contained by an additional writable root is read-only."
     )
+    if bounded_evidence:
+        common.extend(
+            [
+                "",
+                "Readable evidence files (authoritative exact-file scope):",
+                "- `file_editor` view accepts an exact file path from this list; use `grep` when searching a containing directory.",
+            ]
+        )
+        common.extend(f"- `{path}`" for path in read_files or [])
+        if not read_files:
+            common.append("- none")
     return "\n".join(common)
 
 
@@ -1250,6 +1262,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             editable_roots,
             owner_tool_mode,
             owner_files=editable_paths,
+            read_files=read_hints,
             bounded_evidence=bounded_evidence,
         )
     else:

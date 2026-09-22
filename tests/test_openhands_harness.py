@@ -216,6 +216,44 @@ def test_progress_tracker_stops_an_identical_read_loop(tmp_path: Path) -> None:
     assert conversation.state.execution_status is ConversationExecutionStatus.ERROR
 
 
+def test_progress_tracker_requests_an_edit_after_distinct_read_budget(
+    tmp_path: Path,
+) -> None:
+    from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+    source = tmp_path / "application/App.java"
+    source.parent.mkdir()
+    source.write_text("class App {}\n", encoding="utf-8")
+    tracker = HarnessProgressTracker(tmp_path, max_reads_without_change=3)
+    conversation = SimpleNamespace(
+        state=SimpleNamespace(execution_status=ConversationExecutionStatus.RUNNING)
+    )
+    tracker.bind(conversation)
+
+    event_type = type(
+        "ActionEvent",
+        (),
+        {
+            "tool_name": "file_editor",
+            "model_dump": lambda self, **_kwargs: {
+                "tool_name": "file_editor",
+                "action": {
+                    "command": "view",
+                    "path": f"application/Dependency{self.index}.java",
+                },
+            },
+        },
+    )
+    for index in range(3):
+        event = event_type()
+        event.index = index
+        tracker(event)
+
+    assert tracker.terminal_code == "NO_PROGRESS_READ_BUDGET"
+    assert tracker.snapshot()["maxReadsWithoutSourceChange"] == 3
+    assert conversation.state.execution_status is ConversationExecutionStatus.STUCK
+
+
 def test_progress_tracker_records_nested_observation_failure(tmp_path: Path) -> None:
     (tmp_path / "application").mkdir()
     tracker = HarnessProgressTracker(tmp_path)

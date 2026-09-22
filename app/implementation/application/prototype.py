@@ -387,6 +387,47 @@ class PrototypeClient:
                 )
         return self._call(args, job_path.parent.name)
 
+    def run_owner(
+        self, run_root: Path, job_path: Path, task_id: str
+    ) -> dict[str, Any]:
+        """Run exactly one already-planned owner task through the member runner.
+
+        This is intentionally narrower than :meth:`run_phase`: planning,
+        dependency selection, workflow state changes, and retries all remain
+        outside this transport seam.  The CLI validates the selected task.
+        """
+
+        runner_image = configured_runner_image()
+        if not runner_image:
+            raise PrototypeExecutionError(
+                "run_owner requires the configured fixed Linux implementation runner"
+            )
+        _prepare_runner_output_directories(run_root)
+        container_args = [
+            "run-owner",
+            str(to_container_path(run_root, self.settings.repository_root)),
+            str(to_container_path(job_path, self.settings.repository_root)),
+            task_id,
+        ]
+        llm_environment = llm_subprocess_environment()
+        environment = os.environ.copy()
+        environment.update(llm_environment)
+        command = runner_command(
+            image=runner_image,
+            repository_root=self.settings.repository_root,
+            operation="cli",
+            arguments=container_args,
+            environment=environment,
+            llm_environment=llm_environment,
+        )
+        try:
+            return self._call_command(command, job_path.parent.name, environment)
+        finally:
+            cleanup_runner_containers(
+                job_id=job_path.parent.name,
+                run_id=run_root.name,
+            )
+
     def warmup_runtime(self) -> dict[str, Any]:
         """첫 작업 전에 도구와 공용 dependency cache를 미리 준비한다."""
         from ..generation.warmup import warmup_implementation_runtime

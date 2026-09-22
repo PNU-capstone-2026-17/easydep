@@ -42,6 +42,82 @@ def load_task(run_root: Path, task_id: str) -> dict[str, object]:
     raise ValueError(f"Unknown task: {task_id}")
 
 
+def prompt_file_sha256(path: Path) -> str:
+    """Hash a prompt with the same UTF-8/LF semantics used by ``TaskSpec``."""
+
+    return hashlib.sha256(path.read_text(encoding="utf-8").encode("utf-8")).hexdigest()
+
+
+def load_strict_task(
+    run_root: Path,
+    task_id: str,
+    *,
+    allowed_task_types: frozenset[str] | None = None,
+) -> dict[str, object]:
+    """Load one planned task only when its sidecar and manifest agree exactly.
+
+    The member runner receives paths from a diagnostic boundary.  Requiring a
+    single sidecar and a single matching manifest record prevents an arbitrary
+    or stale task file from being submitted to the owner runtime.
+    """
+
+    root = run_root.resolve()
+    if not task_id.strip():
+        raise ValueError("Task ID is required")
+    task_dir = root / "reports" / "implementation-tasks"
+    matches: list[dict[str, object]] = []
+    for candidate in sorted(task_dir.glob("*.task.json")):
+        try:
+            task = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ValueError(f"Invalid task file: {candidate.name}") from error
+        if isinstance(task, dict) and task.get("task_id") == task_id:
+            matches.append(task)
+    if len(matches) != 1:
+        raise ValueError(f"Expected exactly one task file for {task_id!r}")
+    task = matches[0]
+
+    manifest_path = root / "reports" / "run-manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        records = manifest["implementation_tasks"]
+    except (OSError, KeyError, TypeError, json.JSONDecodeError) as error:
+        raise ValueError("Run manifest has no valid implementation tasks") from error
+    manifest_matches = [
+        record
+        for record in records
+        if isinstance(record, dict) and record.get("task_id") == task_id
+    ]
+    if len(manifest_matches) != 1:
+        raise ValueError(f"Expected exactly one manifest task for {task_id!r}")
+    manifest_task = manifest_matches[0]
+    required_fields = ("task_id", "task_type", "prompt_file", "context_file", "prompt_sha256")
+    if any(not isinstance(task.get(field), str) or not task[field] for field in required_fields):
+        raise ValueError(f"Task sidecar and manifest disagree for {task_id!r}")
+    if json.dumps(task, ensure_ascii=False, sort_keys=True, separators=(",", ":")) != json.dumps(
+        manifest_task, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ):
+        raise ValueError(f"Task sidecar and manifest disagree for {task_id!r}")
+    task_type = str(task["task_type"])
+    if allowed_task_types is not None and task_type not in allowed_task_types:
+        raise ValueError(f"Task {task_id!r} is not an owner task")
+    prompt_path = (root / str(task["prompt_file"])).resolve()
+    try:
+        prompt_path.relative_to(root)
+        prompt_hash = prompt_file_sha256(prompt_path)
+    except (OSError, ValueError) as error:
+        raise ValueError(f"Task prompt is unavailable for {task_id!r}") from error
+    if prompt_hash != task["prompt_sha256"]:
+        raise ValueError(f"Task prompt hash is inconsistent for {task_id!r}")
+    context_path = (root / str(task["context_file"])).resolve()
+    try:
+        context_path.relative_to(root)
+        json.loads(context_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise ValueError(f"Task context is unavailable for {task_id!r}") from error
+    return task
+
+
 def task_base_package(task: dict[str, object]) -> str:
     package_markers = {
         "application", "persistence", "adapter", "integration", "config", "bce", "api"

@@ -73,6 +73,7 @@ from app.implementation.workflows.conformance import (
 from app.implementation.workflows.coordinator import (
     _execute_task_batch,
     _regression_owner_task_id,
+    materialize_owner_tasks,
     plan_workflow,
     reconcile_workflow_state,
     run_workflow,
@@ -93,6 +94,106 @@ class _FakeConversationStats:
         assert mode == "json"
         assert context == {"use_snapshot": True}
         return {"usage": {"promptTokens": 21, "completionTokens": 8}}
+
+
+def test_materialize_owner_tasks_plans_without_workflow_side_effects(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = tmp_path / "run"
+    (run / "reports").mkdir(parents=True)
+    calls: list[str] = []
+    spec = SimpleNamespace(job_type="INITIAL_IMPLEMENTATION", inputs={"erdBceModel": "erd.json"})
+
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.build_implementation_ir",
+        lambda *_args: calls.append("ir"),
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.plan_persistence_tasks",
+        lambda *_args: calls.append("persistence"),
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.plan_backend_owner_task",
+        lambda *_args: calls.append("backend"),
+    )
+
+    def plan_frontend(*_args: object) -> None:
+        calls.append("frontend")
+        (run / "reports" / "run-manifest.json").write_text(
+            json.dumps({"implementation_tasks": [{"task_id": "owner-1"}, "not-a-task"]}),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.plan_frontend_tasks", plan_frontend
+    )
+    for name in (
+        "write_execution_plan",
+        "build_rtm_traceability_map",
+        "apply_repair_directives",
+        "reconcile_workflow_state",
+    ):
+        monkeypatch.setattr(
+            f"app.implementation.workflows.coordinator.{name}",
+            lambda *_args, _name=name: pytest.fail(f"{_name} must not be called"),
+        )
+
+    assert materialize_owner_tasks(run, spec) == [{"task_id": "owner-1"}]
+    assert calls == ["ir", "persistence", "backend", "frontend"]
+
+
+def test_plan_workflow_keeps_materialization_and_workflow_effect_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    (reports / "run-manifest.json").write_text("{}", encoding="utf-8")
+    calls: list[str] = []
+    spec = SimpleNamespace(job_type="INITIAL_IMPLEMENTATION", agent_mode="plan-only")
+    tasks = [{"task_id": "owner-1"}]
+
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.materialize_owner_tasks",
+        lambda *_args: calls.append("materialize") or tasks,
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.write_execution_plan",
+        lambda *_args: calls.append("execution-plan") or {"status": "PLANNED"},
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator._write_json_atomic",
+        lambda *_args: calls.append("write-manifest"),
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.build_rtm_traceability_map",
+        lambda *_args: calls.append("rtm"),
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.apply_repair_directives",
+        lambda *_args: calls.append("repair"),
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.reconcile_workflow_state",
+        lambda *_args: calls.append("reconcile") or {"status": "READY"},
+    )
+
+    assert plan_workflow(run, spec) == {"status": "READY"}
+    assert calls == ["materialize", "execution-plan", "write-manifest", "rtm", "repair", "reconcile"]
+
+
+def test_materialize_owner_tasks_rejects_feedback_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.build_implementation_ir",
+        lambda *_args: pytest.fail("feedback revision must not build owner tasks"),
+    )
+
+    with pytest.raises(ValueError, match="initial implementation"):
+        materialize_owner_tasks(
+            tmp_path / "run", SimpleNamespace(job_type="FEEDBACK_REVISION", inputs={})
+        )
 
 
 def test_lazy_frontend_planning_inherits_stable_backend_llm_snapshot(
@@ -2714,6 +2815,7 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
         tmp_path,
         [],
         owner_files=["application/src/main/java/com/example/Order.java"],
+        read_files=["/work/task/application/src/main/java/com/example/OrderRepository.java"],
         bounded_evidence=True,
     )
     assert "Requirements, caller-visible APIs, and observable behavior are hard constraints" in bounded
@@ -2730,6 +2832,9 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
     assert "absent or contradictory" in bounded
     assert "Do not reread unchanged files" in bounded
     assert "implementation marker not assigned to this task" in bounded
+    assert "Readable evidence files (authoritative exact-file scope)" in bounded
+    assert "/work/task/application/src/main/java/com/example/OrderRepository.java" in bounded
+    assert "use `grep` when searching a containing directory" in bounded
     assert "readSourcePaths" not in bounded
     assert "direct-call argument" not in bounded
     assert "effect owners" not in bounded

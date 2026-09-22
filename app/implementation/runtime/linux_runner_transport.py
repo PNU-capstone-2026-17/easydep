@@ -285,7 +285,8 @@ def runner_command(
             ]
     run_argument = (
         runner_arguments[1]
-        if len(runner_arguments) > 1 and runner_arguments[0] == "run-workflow"
+        if len(runner_arguments) > 1
+        and runner_arguments[0] in {"run-workflow", "run-owner"}
         else None
     )
     if run_argument:

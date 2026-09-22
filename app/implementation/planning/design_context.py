@@ -123,15 +123,40 @@ def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec
     marked_sources = _completion_marked_sources(run_root)
     if marked_sources is not None:
         grouped_sources = [path for path in grouped_sources if path in marked_sources]
-    source_groups = [[path] for path in controller_sources]
-    source_groups.extend([[path] for path in grouped_sources])
-    return [
-        _build_backend_owner_task(
-            spec, run_root, ir, output, package_path, bce_paths, bundle,
-            owned_sources=owned_sources,
-        )
-        for owned_sources in source_groups
+    source_groups: list[tuple[list[str], tuple[str, str] | None]] = [
+        ([path], None) for path in controller_sources
     ]
+    contracts_by_source = _completion_marked_operation_contracts_by_source(run_root)
+    for path in grouped_sources:
+        contracts = contracts_by_source.get(path, [])
+        if len({marker for _identity, _operation_id, marker in contracts}) > 1:
+            source_groups.extend(([path], contract) for contract in contracts)
+        else:
+            source_groups.append(([path], None))
+
+    tasks: list[TaskSpec] = []
+    previous_task_by_source: dict[str, str] = {}
+    for owned_sources, assigned_operation in source_groups:
+        source = owned_sources[0]
+        task = _build_backend_owner_task(
+            spec,
+            run_root,
+            ir,
+            output,
+            package_path,
+            bce_paths,
+            bundle,
+            owned_sources=owned_sources,
+            assigned_operation=assigned_operation,
+            depends_on=(
+                [previous_task_by_source[source]]
+                if source in previous_task_by_source
+                else []
+            ),
+        )
+        tasks.append(task)
+        previous_task_by_source[source] = task.task_id
+    return tasks
 
 
 def _is_work_component(component: ComponentIR) -> bool:
@@ -218,18 +243,26 @@ def _controller_body_markers_for_source(
     )
 
 
-def _backend_source_task_id(source_paths: list[str]) -> str:
+def _backend_source_task_id(
+    source_paths: list[str], operation_identity: str | None = None
+) -> str:
     """Keep task identity stable while making its owned source obvious."""
 
     ordered_paths = sorted(source_paths)
     if len(ordered_paths) > 1:
         digest = hashlib.sha256("\n".join(ordered_paths).encode("utf-8")).hexdigest()[:12]
-        return "implement-backend-domain-core-" + digest
-    source_name = ordered_paths[0].removeprefix(
-        "application/src/main/java/"
-    ).removesuffix(".java")
-    return "implement-backend-" + re.sub(
-        r"[^a-z0-9]+", "-", source_name.casefold()
+        task_id = "implement-backend-domain-core-" + digest
+    else:
+        source_name = ordered_paths[0].removeprefix(
+            "application/src/main/java/"
+        ).removesuffix(".java")
+        task_id = "implement-backend-" + re.sub(
+            r"[^a-z0-9]+", "-", source_name.casefold()
+        ).strip("-")
+    if operation_identity is None:
+        return task_id
+    return task_id + "-operation-" + re.sub(
+        r"[^a-z0-9]+", "-", operation_identity.casefold()
     ).strip("-")
 
 
@@ -243,11 +276,17 @@ def _build_backend_owner_task(
     bundle: _UseCaseBundle,
     *,
     owned_sources: list[str],
+    assigned_operation: tuple[str, str, str] | None = None,
+    depends_on: list[str] | None = None,
     persist: bool = True,
 ) -> TaskSpec:
     label = ", ".join(bundle.use_case_ids) or "common"
     required = sorted(dict.fromkeys(owned_sources))
-    task_id = _backend_source_task_id(required)
+    task_id = _backend_source_task_id(
+        required,
+        operation_identity=assigned_operation[0] if assigned_operation else None,
+    )
+    task_dependencies = list(depends_on or [])
     entity_components = [
         item for item in bundle.components if item.stereotype.casefold() == "entity"
     ]
@@ -342,11 +381,16 @@ def _build_backend_owner_task(
     for path in required:
         if markers := controller_markers_by_path.get(path):
             completion_markers.setdefault(path, set()).update(markers)
-    required_absent_markers = [
-        {"path": path, "markers": sorted(markers)}
-        for path, markers in sorted(completion_markers.items())
-        if path in required
-    ]
+    if assigned_operation is not None:
+        required_absent_markers = [
+            {"path": required[0], "markers": [assigned_operation[2]]}
+        ]
+    else:
+        required_absent_markers = [
+            {"path": path, "markers": sorted(markers)}
+            for path, markers in sorted(completion_markers.items())
+            if path in required
+        ]
     method_contexts = _materialize_method_contexts(
         run_root,
         output,
@@ -415,16 +459,24 @@ def _build_backend_owner_task(
             for contract in global_operation_contracts["contracts"]
             if isinstance(contract, dict)
             and (
-                contract.get("writableSource") in required
-                or any(
-                    isinstance(endpoint, dict)
-                    and controller_body_marker(
-                        str(endpoint.get("method") or ""),
-                        str(endpoint.get("path") or ""),
+                (
+                    contract.get("operationId") == assigned_operation[1]
+                    and contract.get("completionMarker") == assigned_operation[2]
+                    and contract.get("writableSource") in required
+                )
+                if assigned_operation is not None
+                else (
+                    contract.get("writableSource") in required
+                    or any(
+                        isinstance(endpoint, dict)
+                        and controller_body_marker(
+                            str(endpoint.get("method") or ""),
+                            str(endpoint.get("path") or ""),
+                        )
+                        in owned_controller_markers
+                        for endpoint in contract.get("endpoints", [])
+                        if isinstance(contract.get("endpoints", []), list)
                     )
-                    in owned_controller_markers
-                    for endpoint in contract.get("endpoints", [])
-                    if isinstance(contract.get("endpoints", []), list)
                 )
             )
         ]
@@ -466,6 +518,21 @@ def _build_backend_owner_task(
             [
                 *generated_source_paths,
                 *immutable_import_paths,
+                *[
+                    path.relative_to(run_root).as_posix()
+                    for path in sorted(
+                        (
+                            run_root
+                            / "application"
+                            / "src"
+                            / "main"
+                            / "java"
+                            / package_path
+                            / "persistence"
+                        ).rglob("*.java")
+                    )
+                    if path.is_file()
+                ],
                 *(
                     [generated_operation_contracts]
                     if generated_operation_contracts is not None
@@ -499,7 +566,7 @@ def _build_backend_owner_task(
         "taskId": task_id,
         "taskType": "backend-implementation",
         "owner": "backend",
-        "dependsOn": [],
+        "dependsOn": task_dependencies,
         "requirementIds": task_requirement_ids,
         "useCaseIds": task_use_case_ids,
         "controllerPaths": [
@@ -510,7 +577,7 @@ def _build_backend_owner_task(
         "requiredOutputPaths": required,
         "verification": {
             "tool": "run_task_check",
-            "policy": "the editor harness runs the focused check after each editor attempt",
+            "policy": "the owner runs the focused check after an edit batch",
         },
         "readSourcePaths": read_evidence_paths,
         "sourceIndexPath": _relative(run_root, source_index_path),
@@ -532,7 +599,17 @@ def _build_backend_owner_task(
         if (run_root / path).is_file()
     ) or "- no writable Java source is available"
     packet_contracts = json.dumps(
-        {"contracts": task_operation_contracts}, ensure_ascii=False, indent=2
+        {"contracts": [_prompt_operation_contract(item) for item in task_operation_contracts]},
+        ensure_ascii=False,
+        indent=2,
+    )
+    marker_instruction = (
+        "- Resolve only the assigned completion marker below. Preserve every other marker and "
+        "all current edits from preceding tasks; apply a narrow edit instead of restoring or "
+        "overwriting the full source from a stale snapshot."
+        if assigned_operation is not None
+        else "- Resolve every `EASYDEP-IMPLEMENT` and named Controller marker in that source with "
+        "contracted behavior. Do not replace them with empty, demo, or always-passing behavior."
     )
     prompt = (
         f"""# Backend source owner: {', '.join(Path(path).stem for path in required)}
@@ -541,16 +618,21 @@ Complete the generated backend implementation for the writable sources below.
 
 - Preserve every generated BCE/API public declaration. Implement marked BCE Entity bodies without
   changing their public signatures; keep API, persistence projections, repositories, and migrations frozen.
-- Resolve every `EASYDEP-IMPLEMENT` and named Controller marker in that source with contracted behavior. Do not
-  replace them with empty, demo, or always-passing behavior.
-- Start with one writable source under `Generated source`. Make the first legal edit from its local
-  declarations and assigned task behavior before consulting additional evidence.
+{marker_instruction}
+- Generated class, sequence, RTM, collaborator, and wiring evidence may be incomplete. A missing collaborator
+  or wiring entry alone is not an upstream gap when conventional wiring and existing declared dependency APIs
+  make behavior unambiguous within the legal writable surface.
+- If required public input, output, or externally visible behavior is absent or contradictory, call
+  `report_upstream_gap` with one supplied source reference; do not fabricate product meaning.
+- Start with one writable source under `Generated source`. Make the first legal `file_editor` edit from its
+  local declarations and assigned task behavior. If one concrete dependency signature is needed, inspect only
+  that declared read source first; do not spend a turn explaining or broadly exploring.
 - Use existing repositories for persistent behavior and constructor injection for Spring beans.
 - Generated web Controllers already call their typed Control binding; do not duplicate HTTP or
   Boundary adapters.
 - After that first edit, consult only the listed operation contract and declared dependency sources when a concrete implementation need remains. Interaction hints are behavioral evidence; use them to understand delegated behavior, but do not inject dependencies or alter BCE ownership solely because of a hint.
-- The editor harness runs the canonical focused check after your replacement. If it fails, it supplies
-  the exact diagnostic for one repair attempt; do not try to run checks yourself.
+- After an edit batch, call the argument-free `run_task_check` once. Repair only its exact diagnostic and call
+  `FinishTool` as soon as the check passes.
 - Do not investigate controllers, authentication, build configuration, or migrations unless the
   canonical check diagnostic explicitly names one of them.
 - Use English for source comments, tests, validation messages, documentation, and user-visible text.
@@ -572,6 +654,8 @@ the first edit; broader evidence remains available only for a concrete diagnosti
 
 ## On-demand evidence
 - Operation contract (only for a concrete implementation need): `{generated_operation_contracts or "not available"}`
+- Exact generated declarations are listed in the owner workspace guidance. Use `file_editor` only with
+  one of those exact file paths; use `grep` to search a containing directory.
 - Controller markers: {", ".join(controller_markers) or "none"}
 """
         + render_allowed_output_rules(required)
@@ -595,14 +679,14 @@ the first edit; broader evidence remains available only for a concrete diagnosti
         llm=llm_config(spec),
         owner="backend",
         task_type="backend-implementation",
-        depends_on=[],
+        depends_on=task_dependencies,
         requirement_ids=task_requirement_ids,
         use_case_ids=task_use_case_ids,
         required_test_paths=[],
         source_refs=task_source_refs,
         allowed_write_roots=[],
         verification_profile={"requiredAbsentMarkers": required_absent_markers},
-        owner_tool_mode="editor",
+        owner_tool_mode="restricted",
     )
     if persist:
         (output / f"{task.task_id}.task.json").write_text(
@@ -1101,6 +1185,52 @@ def llm_config(spec: JobSpec) -> dict[str, object]:
         "maxOutputTokens": spec.agent_max_output_tokens,
         "reasoningEffort": settings.implementation_reasoning_effort,
     }
+
+
+def _prompt_operation_contract(contract: dict[str, object]) -> dict[str, object]:
+    """Keep first-turn behavior facts; the complete sidecar remains readable on demand."""
+
+    prompt_fields = (
+        "operationId",
+        "signature",
+        "returnType",
+        "constructorDependencies",
+        "collaborators",
+        "interactionHints",
+        "endpoints",
+        "completionMarker",
+    )
+    return {
+        field: contract[field]
+        for field in prompt_fields
+        if field in contract and contract[field] not in (None, [], {})
+    }
+
+
+def _completion_marked_operation_contracts_by_source(
+    run_root: Path,
+) -> dict[str, list[tuple[str, str, str]]]:
+    """Return stable operation identities for sources eligible for a split."""
+
+    contract_path = run_root / "reports" / "generated-operation-contracts.json"
+    if not contract_path.is_file():
+        return {}
+    payload = _read_json(contract_path)
+    contracts_by_source: dict[str, set[tuple[str, str, str]]] = {}
+    for contract in payload.get("contracts", []):
+        if not isinstance(contract, dict):
+            continue
+        source = contract.get("writableSource")
+        operation_id = contract.get("operationId")
+        stable_id = contract.get("stableId")
+        marker = contract.get("completionMarker")
+        if not all(isinstance(value, str) and value for value in (source, operation_id, marker)):
+            continue
+        identity = stable_id if isinstance(stable_id, str) and stable_id else operation_id
+        contracts_by_source.setdefault(source, set()).add(
+            (identity, operation_id, marker)
+        )
+    return {source: sorted(contracts) for source, contracts in contracts_by_source.items()}
 
 
 
