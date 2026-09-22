@@ -31,6 +31,10 @@ from app.implementation.agents.harness import (
     verify_or_store_harness_manifest,
 )
 from app.implementation.agents.runtime import create_openhands_conversation
+from app.implementation.agents.source_replace_tool import (
+    SourceReplaceAction,
+    SourceReplaceExecutor,
+)
 from app.implementation.agents.upstream_gap_tool import (
     UPSTREAM_GAP_TOOL_NAME,
     UpstreamGapAction,
@@ -355,6 +359,46 @@ def test_restricted_owner_uses_the_minimal_tools_and_custom_prompt(tmp_path: Pat
         assert agent.llm.retry_multiplier == 1.0
     finally:
         conversation.close()
+
+
+def test_editor_owner_exposes_only_replace_source_and_finish(tmp_path: Path) -> None:
+    source = tmp_path / "application/src/main/java/example/App.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class App {}", encoding="utf-8")
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        LlmConnection(
+            provider="openrouter",
+            api_key="validation-only-key",
+            base_url="https://example.invalid/v1",
+            model="openai/gpt-oss-20b",
+            litellm_provider="openrouter",
+        ),
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        task_type="backend-implementation",
+        editable_files=[str(source.resolve())],
+        native_owner_tools=True,
+        owner_tool_mode="editor",
+    )
+    try:
+        conversation.send_message("Initialize tools without calling the model.")
+        assert sorted(agent._tools) == ["finish", "replace_source"]
+    finally:
+        conversation.close()
+
+
+def test_replace_source_rejects_empty_and_out_of_scope_paths(tmp_path: Path) -> None:
+    source = tmp_path / "application/App.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class App {}", encoding="utf-8")
+    executor = SourceReplaceExecutor(tmp_path, [str(source)])
+
+    assert executor(SourceReplaceAction(path="application/App.java", source=" ")).is_error
+    assert executor(SourceReplaceAction(path="other.java", source="class Other {}")).is_error
+    assert not executor(
+        SourceReplaceAction(path="application/App.java", source="class App { int x; }")
+    ).is_error
+    assert source.read_text(encoding="utf-8") == "class App { int x; }"
 
 
 def test_openhands_completion_has_one_wall_timeout(

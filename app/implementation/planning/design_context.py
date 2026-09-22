@@ -69,6 +69,7 @@ class TaskSpec:
     # Most tasks always invoke their implementation agent. Integration can first
     # reuse its canonical check and invoke the agent only when a repair is needed.
     completion_mode: str = 'agent'
+    owner_tool_mode: str | None = None
 
     def __post_init__(self) -> None:
         if self.required_output_paths is None:
@@ -509,7 +510,7 @@ def _build_backend_owner_task(
         "requiredOutputPaths": required,
         "verification": {
             "tool": "run_task_check",
-            "policy": "run once after the edit batch; finish when it passes",
+            "policy": "the editor harness runs the focused check after each editor attempt",
         },
         "readSourcePaths": read_evidence_paths,
         "sourceIndexPath": _relative(run_root, source_index_path),
@@ -548,8 +549,8 @@ Complete the generated backend implementation for the writable sources below.
 - Generated web Controllers already call their typed Control binding; do not duplicate HTTP or
   Boundary adapters.
 - After that first edit, consult only the listed operation contract and declared dependency sources when a concrete implementation need remains. Interaction hints are behavioral evidence; use them to understand delegated behavior, but do not inject dependencies or alter BCE ownership solely because of a hint.
-- After one edit batch, run the canonical `run_task_check` once. Inspect its concrete diagnostic
-  before any correction, and finish when it passes.
+- The editor harness runs the canonical focused check after your replacement. If it fails, it supplies
+  the exact diagnostic for one repair attempt; do not try to run checks yourself.
 - Do not investigate controllers, authentication, build configuration, or migrations unless the
   canonical check diagnostic explicitly names one of them.
 - Use English for source comments, tests, validation messages, documentation, and user-visible text.
@@ -601,6 +602,7 @@ the first edit; broader evidence remains available only for a concrete diagnosti
         source_refs=task_source_refs,
         allowed_write_roots=[],
         verification_profile={"requiredAbsentMarkers": required_absent_markers},
+        owner_tool_mode="editor",
     )
     if persist:
         (output / f"{task.task_id}.task.json").write_text(

@@ -12,10 +12,10 @@ from typing import Any, Literal
 
 from app.llm_connection import LlmConnection
 
-HARNESS_POLICY_VERSION = "easydep-openhands-harness/v4"
-OWNER_PROMPT_VERSION = "easydep-owner-prompt/v8"
+HARNESS_POLICY_VERSION = "easydep-openhands-harness/v5"
+OWNER_PROMPT_VERSION = "easydep-owner-prompt/v9"
 WORKSPACE_PATH_VERSION = "easydep-owner-workspace/v3"
-OWNER_TOOL_MODES = frozenset({"restricted", "terminal"})
+OWNER_TOOL_MODES = frozenset({"editor", "restricted", "terminal"})
 PROTOCOL_TOKENS = ("<|channel|>", "<|recipient|>", "<|start|>", "<|end|>")
 HARNESS_ERROR_PREFIX = "EASYDEP_HARNESS_ERROR "
 CANARY_MARKER = "EASYDEP_CANARY_READY"
@@ -417,6 +417,11 @@ def owner_tool_names(
         raise ValueError(f"Unsupported OpenHands owner tool mode: {mode}")
     if mode == "terminal":
         return ("file_editor", "terminal", "finish")
+    if mode == "editor":
+        names = ("replace_source",)
+        if include_upstream_gap:
+            names += ("report_upstream_gap",)
+        return (*names, "finish")
     names = ("file_editor", "grep", "run_task_check")
     if include_upstream_gap:
         names += ("report_upstream_gap",)
@@ -438,6 +443,7 @@ def tool_schema_hash(mode: str, *, include_upstream_gap: bool = False) -> str:
     from openhands.tools.grep import GrepAction
     from openhands.tools.terminal import TerminalAction
 
+    from .source_replace_tool import SourceReplaceAction
     from .task_check_tool import TaskCheckAction
     from .upstream_gap_tool import UpstreamGapAction
 
@@ -448,6 +454,7 @@ def tool_schema_hash(mode: str, *, include_upstream_gap: bool = False) -> str:
         "terminal": TerminalAction,
         "finish": FinishAction,
         "report_upstream_gap": UpstreamGapAction,
+        "replace_source": SourceReplaceAction,
     }
     payload = {
         "tools": {

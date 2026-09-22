@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import uuid
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -870,6 +871,98 @@ def _write_minimal_agent_task(tmp_path: Path) -> tuple[Path, str, str, Path]:
     }
     (tasks / "order.task.json").write_text(json.dumps(task), encoding="utf-8")
     return run, task_id, source_path, source
+
+
+def _configure_editor_owner_task(run: Path) -> None:
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task.update(
+        {
+            "task_type": "backend-implementation",
+            "owner": "backend",
+            "owner_tool_mode": "editor",
+        }
+    )
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+
+
+@pytest.mark.parametrize("checks", [[(True, "passed")], [(False, "broken"), (False, "still broken")]])
+def test_editor_owner_runs_at_most_one_repair_and_two_checks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, checks: list[tuple[bool, str]]
+) -> None:
+    run, task_id, source_path, _source = _write_minimal_agent_task(tmp_path)
+    _configure_editor_owner_task(run)
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+    monkeypatch.setattr(
+        "app.implementation.agents.runtime.settings.implementation_openhands_canary", False
+    )
+
+    class Conversation:
+        def __init__(self, sandbox: Path) -> None:
+            self.sandbox = sandbox
+            self.messages: list[str] = []
+            self.run_count = 0
+            self.run_statuses: list[object] = []
+            self.state = SimpleNamespace(execution_status=None, events=[])
+
+        def send_message(self, message: str) -> None:
+            self.messages.append(message)
+
+        def run(self) -> None:
+            from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+            self.run_statuses.append(self.state.execution_status)
+            self.run_count += 1
+            (self.sandbox / source_path).write_text(
+                f"class OrderService {{ int attempt{self.run_count}; }}", encoding="utf-8"
+            )
+            self.state.execution_status = ConversationExecutionStatus.FINISHED
+
+        def close(self) -> None:
+            pass
+
+    created: list[Conversation] = []
+
+    def create(sandbox: Path, *_args, **_kwargs):
+        conversation = Conversation(sandbox)
+        created.append(conversation)
+        return conversation, SimpleNamespace(_tools={})
+
+    connection = LlmConnection(
+        provider="openrouter",
+        api_key="approved-key",
+        base_url="https://example.invalid/v1",
+        model="openai/gpt-oss-20b",
+        litellm_provider="openrouter",
+    )
+    check_calls: list[object] = []
+
+    def run_check(*_args, **_kwargs):
+        check_calls.append(None)
+        return checks[len(check_calls) - 1]
+
+    check = patch("app.implementation.agents.runtime.run_task_check", side_effect=run_check)
+    context = (
+        patch("app.implementation.agents.runtime.openhands_compatibility", return_value={"pythonCompatible": True, "sdkInstalled": True, "toolsInstalled": True, "apiKeyConfigured": True}),
+        patch("app.implementation.agents.runtime.openhands_connection", return_value=connection),
+        patch("app.implementation.agents.runtime.preflight_owner_workspace", return_value={"passed": True}),
+        patch("app.implementation.agents.runtime.create_openhands_conversation", side_effect=create),
+        check,
+        patch("app.implementation.agents.runtime.verify_agent_workspace", return_value={"exitCode": 0}),
+    )
+    with ExitStack() as stack:
+        for manager in context:
+            stack.enter_context(manager)
+        if len(checks) == 1:
+            result = execute_openhands_task(run, task_id)
+            assert result["status"] == "SUCCEEDED"
+        else:
+            with pytest.raises(WorkspaceVerificationError):
+                execute_openhands_task(run, task_id)
+    assert created[0].run_count == len(checks)
+    assert len(check_calls) == len(checks)
+    if len(checks) == 2:
+        assert created[0].run_statuses[1].value == "idle"
 
 
 

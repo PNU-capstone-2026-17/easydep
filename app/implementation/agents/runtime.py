@@ -57,6 +57,7 @@ from .provider import (
     openhands_compatibility,
     openhands_connection,
 )
+from .source_replace_tool import register_source_replace_tool
 from .task_check import (
     consume_successful_task_check,
     has_successful_task_check,
@@ -208,6 +209,15 @@ OWNER_INITIAL_ACTION_MESSAGE = (
     "concrete implementation need remains, consult only the listed operation contract and declared "
     "dependency sources. Interaction hints are behavioral evidence; use them to understand delegated "
     "behavior, but do not inject dependencies or alter BCE ownership solely because of a hint."
+)
+OWNER_EDITOR_INITIAL_ACTION_MESSAGE = (
+    "Use replace_source now for one supplied writable source. Return its complete UTF-8 "
+    "body; do not search, inspect files, run checks, or use shell commands."
+)
+EDITOR_REPAIR_MESSAGE = (
+    "The editor harness ran the focused check and it failed. Replace the complete current "
+    "source below to repair only this diagnosis. Do not search or run verification; the harness "
+    "will check exactly once after this repair.\n\n"
 )
 
 
@@ -516,13 +526,33 @@ def _owner_workspace_guidance(
         "",
         "- Agent: Implementation. Requirements, caller-visible APIs, and observable behavior are admitted constraints for this task; broad validation belongs to the Testing agent.",
         "- Current state: EXECUTE. Implement the admitted product behavior in the declared write scope and choose conventional implementation mechanics where generated design hints are incomplete.",
-        f"- Complete workspace: `{logical_workspace}`. For file_editor, use absolute paths rooted at this directory.",
-        '- For an existing file, file_editor uses command="str_replace" with old_str and new_str. For a new file, it uses command="create" with file_text. command="edit" and old_string/new_string are invalid.',
+        (
+            f"- Complete workspace: `{logical_workspace}`. For file_editor, use absolute paths rooted at this directory."
+            if owner_tool_mode != "editor"
+            else f"- Complete workspace: `{logical_workspace}`."
+        ),
+        (
+            '- For an existing file, file_editor uses command="str_replace" with old_str and new_str. For a new file, it uses command="create" with file_text. command="edit" and old_string/new_string are invalid.'
+            if owner_tool_mode != "editor"
+            else ""
+        ),
         "- Preserve generated public declarations: never change or delete an existing public signature. Within the assigned write scope (files or roots), adding only the smallest constructor, accessor, or helper declaration needed is permitted.",
         "- Choose one legal conventional implementation and edit it; do not enumerate alternatives or delay the edit for theoretical choices.",
-        "- Batch related source reads into as few tool calls as practical, and use build/test results rather than file counts as completion evidence.",
-        "- After an edit batch, run the canonical verification once. If it fails, inspect that output and its existing diagnostic files before rerunning; do not rerun only to obtain more detail.",
-        "- When canonical verification passes, call the FinishTool immediately. A plain-text summary does not complete the task. Do not disable tests or alter test reporting to hide a failure.",
+        (
+            "- Batch related source reads into as few tool calls as practical, and use build/test results rather than file counts as completion evidence."
+            if owner_tool_mode != "editor"
+            else ""
+        ),
+        (
+            "- After an edit batch, run the canonical verification once. If it fails, inspect that output and its existing diagnostic files before rerunning; do not rerun only to obtain more detail."
+            if owner_tool_mode != "editor"
+            else ""
+        ),
+        (
+            "- When canonical verification passes, call the FinishTool immediately. A plain-text summary does not complete the task. Do not disable tests or alter test reporting to hide a failure."
+            if owner_tool_mode != "editor"
+            else "- Do not disable tests or alter test reporting to hide a failure."
+        ),
         "- Prefer the lowest-cost test level that proves the behavior; avoid restarting a full application context for every assertion.",
         "- Use English for source comments and user-visible text.",
     ]
@@ -544,7 +574,15 @@ def _owner_workspace_guidance(
                 "- Start from generated skeletons and their local context; use only the listed operation contract and declared dependency sources when a concrete contract gap remains.",
             ]
         )
-    if owner_tool_mode == "terminal":
+    if owner_tool_mode == "editor":
+        common.extend(
+            [
+                "- Use replace_source for one complete supplied source body. No file browser, grep, terminal, or model-run verification tool is available.",
+                "- The harness runs the canonical verification after each editor attempt. On a non-infrastructure failure it provides one exact diagnosis for one repair attempt.",
+                "- Call FinishTool after a replacement; a plain-text summary does not complete the task.",
+            ]
+        )
+    elif owner_tool_mode == "terminal":
         common.extend(
             [
                 "- The terminal session preserves `cd` and environment changes between calls.",
@@ -566,11 +604,15 @@ def _owner_workspace_guidance(
                 (
                     f"- Canonical backend verification: `cd {logical_workspace / 'application'} && gradle test --build-cache`."
                     if owner_tool_mode == "terminal"
+                    else "- The editor harness runs canonical backend verification outside the conversation."
+                    if owner_tool_mode == "editor"
                     else "- Canonical backend verification is the argument-free `run_task_check` tool."
                 ),
                 (
                     "- The terminal exports `SPRING_PROFILES_ACTIVE=test` and Gradle uses the shared `GRADLE_USER_HOME` cache."
                     if owner_tool_mode == "terminal"
+                    else "- The harness uses the configured test profile and shared Gradle cache."
+                    if owner_tool_mode == "editor"
                     else "- `run_task_check` uses the configured test profile and shared Gradle cache."
                 ),
             ]
@@ -1019,6 +1061,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         if owner_task
         else "restricted"
     )
+    if owner_tool_mode == "editor" and task_type != "backend-implementation":
+        owner_tool_mode = "restricted"
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
     initial_verification: dict[str, object] | None = None
     completion_path = 'agent'
@@ -1105,8 +1149,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             })
         initial_verification = {'status': 'FAILED', 'diagnosis': diagnosis}
         completion_path = 'repair-agent'
-    if bounded_evidence:
+    if bounded_evidence and task_type != "backend-implementation":
         owner_tool_mode = "restricted"
+    editor_mode = owner_task and owner_tool_mode == "editor"
     connection = openhands_connection()
     compatibility = openhands_compatibility(connection)
     missing = [
@@ -1136,7 +1181,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     if owner_task:
         prompt += (
             "\n\n## First action\n\n"
-            + OWNER_INITIAL_ACTION_MESSAGE
+            + (
+                OWNER_EDITOR_INITIAL_ACTION_MESSAGE
+                if editor_mode
+                else OWNER_INITIAL_ACTION_MESSAGE
+            )
             + "\n\n## Evidence boundary\n\n"
             + _owner_evidence_boundary_message(
                 task.get("required_test_paths", task.get("requiredTestPaths", []))
@@ -1146,7 +1195,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         prompt += (
             '\n\n## Initial canonical verification\n\n'
             + str(initial_verification['diagnosis'])
-            + '\nRepair only the reported failure, then run run_task_check once.\n'
+            + (
+                '\nRepair only the reported failure; the editor harness runs the check.\n'
+                if editor_mode
+                else '\nRepair only the reported failure, then run run_task_check once.\n'
+            )
         )
     upstream_gap_source_refs = (
         [
@@ -1157,7 +1210,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         if (
             owner_task
             and bounded_evidence
-            and owner_tool_mode == "restricted"
+            and owner_tool_mode in {"restricted", "editor"}
             and not demo_skip_validation_enabled()
         )
         else None
@@ -1226,11 +1279,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             editable_paths,
             verification_profile,
         )
-        if owner_task
+        if owner_task and not editor_mode
         else None
     )
     harness_guard = HarnessErrorGuard() if harness_task else None
-    progress_tracker = HarnessProgressTracker(sandbox) if harness_task else None
+    progress_tracker = HarnessProgressTracker(sandbox) if harness_task and not editor_mode else None
     stuck_recovery_used = False
     finish_recovery_used = False
     started = time.monotonic()
@@ -1308,7 +1361,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             ],
             retry_listener=endpoint_retry_recorder,
             max_iterations=(
-                MAX_AGENT_TURN_ITERATIONS
+                4
+                if editor_mode
+                else MAX_AGENT_TURN_ITERATIONS
                 if owner_task and bounded_evidence
                 else OWNER_TURN_ITERATIONS
                 if owner_task
@@ -1383,7 +1438,85 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         ):
             conversation.send_message(OWNER_CONTINUATION_MESSAGE)
         run_openhands_conversation(conversation)
-        if owner_task and _conversation_is_stuck(conversation):
+        if editor_mode and reported_upstream_gap(agent) is None:
+            first_changes = changed_files(before, snapshot_files(sandbox))
+            if not any(path in editable_paths for path in first_changes):
+                raise OwnerConversationIncomplete(
+                    {
+                        "command": ["replace_source"],
+                        "exitCode": 1,
+                        "stdout": "",
+                        "stderr": "Editor conversation made no source change.",
+                        "testResults": "",
+                    }
+                )
+            passed, diagnosis = run_task_check(
+                sandbox, task_type, editable_paths, verification_profile
+            )
+            if not passed:
+                if is_infrastructure_task_check_failure(diagnosis):
+                    raise OwnerConversationIncomplete(
+                        {
+                            "command": ["run_task_check"],
+                            "exitCode": 1,
+                            "stdout": "",
+                            "stderr": diagnosis,
+                            "testResults": "",
+                        }
+                    )
+                current_sources = "\n\n".join(
+                    f"### `{path}`\n```java\n{(sandbox / path).read_text(encoding='utf-8')}\n```"
+                    for path in editable_paths
+                    if (sandbox / path).is_file()
+                )
+                repair_before = snapshot_files(sandbox)
+                from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+                conversation.state.execution_status = ConversationExecutionStatus.IDLE
+                conversation.send_message(
+                    EDITOR_REPAIR_MESSAGE
+                    + "## Current source\n\n"
+                    + current_sources
+                    + "\n\n## Exact diagnosis\n\n"
+                    + diagnosis
+                )
+                run_openhands_conversation(conversation)
+                repair_changes = changed_files(repair_before, snapshot_files(sandbox))
+                if not any(path in editable_paths for path in repair_changes):
+                    raise OwnerConversationIncomplete(
+                        {
+                            "command": ["replace_source"],
+                            "exitCode": 1,
+                            "stdout": "",
+                            "stderr": "Editor repair made no source change.",
+                            "testResults": "",
+                        }
+                    )
+                if reported_upstream_gap(agent) is None:
+                    passed, diagnosis = run_task_check(
+                        sandbox, task_type, editable_paths, verification_profile
+                    )
+                    if not passed:
+                        if is_infrastructure_task_check_failure(diagnosis):
+                            raise OwnerConversationIncomplete(
+                                {
+                                    "command": ["run_task_check"],
+                                    "exitCode": 1,
+                                    "stdout": "",
+                                    "stderr": diagnosis,
+                                    "testResults": "",
+                                }
+                            )
+                        raise WorkspaceVerificationError(
+                            {
+                                "command": ["run_task_check"],
+                                "exitCode": 1,
+                                "stdout": "",
+                                "stderr": diagnosis,
+                                "testResults": "",
+                            }
+                        )
+        if owner_task and not editor_mode and _conversation_is_stuck(conversation):
             if no_action_guard is not None:
                 no_action_guard.reset()
             successful_task_check = (
@@ -1458,7 +1591,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             conversation.send_message(OWNER_FINISH_RECOVERY_MESSAGE)
             run_openhands_conversation(conversation)
         successful_task_check = (
-            harness_task
+            (editor_mode or harness_task)
             and has_successful_task_check(
                 sandbox,
                 task_type,
@@ -2376,18 +2509,33 @@ def create_openhands_conversation(
         read_tool, check_tool = register_canary_tools()
         tools = [Tool(name=read_tool, params={}), Tool(name=check_tool, params={})]
     elif native_owner_tools:
-        tools = [
-            Tool(
-                name=editor_registry_name,
-                params={
-                    "writable_files": editable_files or [],
-                    "writable_roots": editable_roots or [],
-                    "immutable_paths": immutable_paths or [],
-                    "enforce_write_scope": effective_owner_tool_mode != "terminal",
-                    "readable_files": readable_files,
-                },
-            ),
-        ]
+        if effective_owner_tool_mode == "editor":
+            tools = [
+                Tool(
+                    name=register_source_replace_tool(),
+                    params={"allowed_files": editable_files or []},
+                )
+            ]
+            if upstream_gap_source_refs is not None:
+                tools.append(
+                    Tool(
+                        name=register_upstream_gap_tool(),
+                        params={"source_refs": upstream_gap_source_refs},
+                    )
+                )
+        else:
+            tools = [
+                Tool(
+                    name=editor_registry_name,
+                    params={
+                        "writable_files": editable_files or [],
+                        "writable_roots": editable_roots or [],
+                        "immutable_paths": immutable_paths or [],
+                        "enforce_write_scope": effective_owner_tool_mode != "terminal",
+                        "readable_files": readable_files,
+                    },
+                ),
+            ]
         if effective_owner_tool_mode == "restricted":
             task_check_tool_name = register_task_check_tool()
             tools.extend(
@@ -2414,7 +2562,7 @@ def create_openhands_conversation(
                         params={"source_refs": upstream_gap_source_refs},
                     )
                 )
-        elif effective_owner_tool_mode != "terminal":
+        elif effective_owner_tool_mode not in {"editor", "terminal"}:
             raise ValueError(
                 f"Unsupported OpenHands owner tool mode: {effective_owner_tool_mode}"
             )

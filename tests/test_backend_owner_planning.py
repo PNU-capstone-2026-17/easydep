@@ -216,11 +216,12 @@ def test_backend_plan_persists_one_cohesive_owner_without_focused_test_contract(
     assert "batch-read" not in prompt
     assert "method-context" not in prompt
     assert "raw design input" not in prompt
-    assert "run_task_check" in prompt
+    assert "editor harness runs the canonical focused check" in prompt
+    assert task.owner_tool_mode == "editor"
     assert context["requiredOutputPaths"] == task.required_output_paths
     assert context["verification"] == {
         "tool": "run_task_check",
-        "policy": "run once after the edit batch; finish when it passes",
+        "policy": "the editor harness runs the focused check after each editor attempt",
     }
     method_context_paths = {
         str(item["path"])
