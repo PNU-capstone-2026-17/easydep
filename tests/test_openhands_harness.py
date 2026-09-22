@@ -617,6 +617,58 @@ def test_provider_output_parse_failure_enters_the_safe_sdk_retry_type(
 
 
 @pytest.mark.parametrize(
+    ("owner_tool_mode", "expected_tool_choice"),
+    [("editor", "required"), ("restricted", None)],
+)
+def test_cloudflare_chat_transport_requires_tools_only_for_editor_owner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    owner_tool_mode: str,
+    expected_tool_choice: str | None,
+) -> None:
+    source = tmp_path / "application/src/main/java/example/App.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class App {}", encoding="utf-8")
+    conversation, agent = create_openhands_conversation(
+        tmp_path,
+        LlmConnection(
+            provider="cloudflare",
+            api_key="validation-only-key",
+            base_url="https://example.invalid/v1",
+            model="openai/gpt-oss-120b",
+            litellm_provider="openai",
+        ),
+        {"temperature": 0.2, "maxOutputTokens": 1024},
+        task_type="backend-implementation",
+        editable_files=[str(source.resolve())],
+        native_owner_tools=True,
+        owner_tool_mode=owner_tool_mode,
+    )
+    base_llm = type(agent.llm).__mro__[1]
+    captured: list[dict[str, object]] = []
+
+    def capture_sync(_self, **kwargs):
+        captured.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    async def capture_async(_self, **kwargs):
+        captured.append(kwargs)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    try:
+        monkeypatch.setattr(base_llm, "_transport_call", capture_sync)
+        agent.llm._transport_call(messages=[], tools=[{"type": "function"}])
+        monkeypatch.setattr(base_llm, "_atransport_call", capture_async)
+        asyncio.run(agent.llm._atransport_call(messages=[], tools=[{"type": "function"}]))
+        assert [call.get("tool_choice") for call in captured] == [
+            expected_tool_choice,
+            expected_tool_choice,
+        ]
+    finally:
+        conversation.close()
+
+
+@pytest.mark.parametrize(
     ("response", "empty"),
     [
         (

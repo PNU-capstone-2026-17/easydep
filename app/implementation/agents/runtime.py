@@ -2125,6 +2125,13 @@ def create_openhands_conversation(
     class ProviderToolValidationLLM(LLM):
         """Route narrow provider 400s into the matching safe SDK recovery."""
 
+        require_native_tool_choice: bool = False
+
+        def _chat_tool_choice(self, kwargs: dict[str, object]) -> dict[str, object]:
+            if self.require_native_tool_choice and kwargs.get("tools"):
+                return {**kwargs, "tool_choice": "required"}
+            return kwargs
+
         def _validate_chat_response(self, response, **kwargs):
             validated = super()._validate_chat_response(response, **kwargs)
             if _completion_has_no_assistant_output(validated):
@@ -2160,7 +2167,7 @@ def create_openhands_conversation(
 
         def _transport_call(self, **kwargs):
             try:
-                return super()._transport_call(**kwargs)
+                return super()._transport_call(**self._chat_tool_choice(kwargs))
             except Exception as error:
                 if is_provider_output_parse_failure(error):
                     raise LLMNoResponseError(
@@ -2171,7 +2178,7 @@ def create_openhands_conversation(
 
         async def _atransport_call(self, **kwargs):
             try:
-                return await super()._atransport_call(**kwargs)
+                return await super()._atransport_call(**self._chat_tool_choice(kwargs))
             except Exception as error:
                 if is_provider_output_parse_failure(error):
                     raise LLMNoResponseError(
@@ -2485,6 +2492,12 @@ def create_openhands_conversation(
     if retry_listener is not None:
         llm_options["retry_listener"] = retry_listener
     llm_options.update(connection.openhands_options())
+    if (
+        connection.provider == "cloudflare"
+        and native_owner_tools
+        and effective_owner_tool_mode == "editor"
+    ):
+        llm_options["require_native_tool_choice"] = True
     # Cloudflare's OpenAI-compatible endpoint controls thinking with
     # ``reasoning_effort``. OpenHands otherwise keeps its provider-agnostic
     # 200k extended-thinking default on the LLM object even though that is not
