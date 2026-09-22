@@ -1015,8 +1015,10 @@ def test_editor_owner_recovers_one_stuck_no_action_turn(
 
     created: list[Conversation] = []
     check_calls: list[object] = []
+    received_reasoning_efforts: list[str] = []
 
-    def create(sandbox: Path, *_args, **_kwargs):
+    def create(sandbox: Path, *_args, **kwargs):
+        received_reasoning_efforts.append(kwargs["reasoning_effort"])
         conversation = Conversation(sandbox)
         created.append(conversation)
         return conversation, SimpleNamespace(_tools={})
@@ -1045,11 +1047,13 @@ def test_editor_owner_recovers_one_stuck_no_action_turn(
         if error_type is None:
             result = execute_openhands_task(run, task_id)
             assert result["status"] == "SUCCEEDED"
+            assert result["harnessManifest"]["reasoningEffort"] == "low"
             assert result["stuckRecoveryUsed"] is True
         else:
             with pytest.raises(error_type):
                 execute_openhands_task(run, task_id)
     assert created[0].run_count == 2
+    assert received_reasoning_efforts == ["low"]
     assert len(check_calls) == expected_checks
 
 

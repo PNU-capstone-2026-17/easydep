@@ -1311,6 +1311,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             "OPENHANDS_REASONING_EFFORT",
             str(task["llm"].get("reasoningEffort", settings.implementation_reasoning_effort)),
         )
+        if editor_mode:
+            reasoning_effort = "low"
         if harness_task:
             workspace_preflight = preflight_owner_workspace(
                 sandbox,
