@@ -909,7 +909,7 @@ def test_owner_access_contract_bounds_exact_immutable_files(
     assert str(read_hint.resolve()) in contract.readable_files
     assert str(read_directory.resolve()) not in contract.readable_files
     assert str(writable.resolve()) in contract.readable_files
-    assert str(immutable_file.resolve()) in contract.readable_files
+    assert str(immutable_file.resolve()) not in contract.readable_files
     assert str(immutable_directory.resolve()) not in contract.readable_files
     assert str((sandbox / "application/MissingContract.java").resolve()) not in contract.readable_files
     with pytest.raises(RuntimeError):

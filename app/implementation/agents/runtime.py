@@ -860,7 +860,6 @@ class OwnerAccessContract:
         writable_roots = [str(resolve_inside(root)) for root in editable_roots]
         immutable_paths = [str(resolve_inside(path)) for path in immutable]
         immutable_resolved = {Path(path) for path in immutable_paths}
-        immutable_exact = {path for path in immutable_resolved if path.is_file()}
         if any(
             writable == immutable_path or immutable_path in writable.parents
             for writable in map(Path, writable_files)
@@ -898,15 +897,12 @@ class OwnerAccessContract:
                 str(context_path),
                 *read_hints,
                 *writable_files,
-                *(str(path) for path in immutable_exact),
             }
         )
         if not {Path(path) for path in writable_files}.issubset(
             {Path(path) for path in readable_files}
         ):
             raise RuntimeError("Bounded task writable files must be readable.")
-        if not immutable_exact.issubset({Path(path) for path in readable_files}):
-            raise RuntimeError("Existing immutable task files must be readable.")
         return cls(
             writable_files=writable_files,
             writable_roots=writable_roots,
