@@ -8,6 +8,7 @@ FastAPI와 함께 실행되는 PicoWeb JVM 한 개와 내용별 메모리 cache�
 from __future__ import annotations
 
 import atexit
+import ctypes
 import hashlib
 import os
 import shutil
@@ -19,6 +20,7 @@ import urllib.error
 import urllib.request
 import zlib
 from collections import OrderedDict
+from ctypes import wintypes
 from pathlib import Path
 from threading import RLock
 
@@ -42,6 +44,72 @@ PLANTUML_IMAGE = (
 # 켜 두어도 이미지 bytes가 끝없이 쌓이지 않게 제한한다.
 IMAGE_CACHE_CAPACITY = 512
 RENDER_TIMEOUT_SECONDS = 30.0
+
+
+class _WindowsJob:
+    """Own a subprocess tree until this process closes its Job Object handle."""
+
+    def __init__(self, process: subprocess.Popen[bytes]) -> None:
+        if os.name != "nt":
+            raise OSError("Windows Job Objects are only available on Windows.")
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_job = kernel32.CreateJobObjectW
+        create_job.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+        create_job.restype = wintypes.HANDLE
+        self._kernel32 = kernel32
+        self._handle = create_job(None, None)
+        if not self._handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+
+        class BasicLimit(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64),
+                        ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wintypes.DWORD),
+                        ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t),
+                        ("ActiveProcessLimit", wintypes.DWORD),
+                        ("Affinity", ctypes.c_size_t),
+                        ("PriorityClass", wintypes.DWORD),
+                        ("SchedulingClass", wintypes.DWORD)]
+
+        class IoCounters(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_uint64) for name in
+                        ("ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+                         "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+        class ExtendedLimit(ctypes.Structure):
+            _fields_ = [("BasicLimitInformation", BasicLimit),
+                        ("IoInfo", IoCounters),
+                        ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t),
+                        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+        info = ExtendedLimit()
+        info.BasicLimitInformation.LimitFlags = 0x00002000  # KILL_ON_JOB_CLOSE
+        set_info = kernel32.SetInformationJobObject
+        set_info.argtypes = (wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD)
+        set_info.restype = wintypes.BOOL
+        assign = kernel32.AssignProcessToJobObject
+        assign.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+        assign.restype = wintypes.BOOL
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = (wintypes.HANDLE,)
+        close_handle.restype = wintypes.BOOL
+        self._close_handle = close_handle
+        if not set_info(self._handle, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            error = ctypes.WinError(ctypes.get_last_error())
+            self.close()
+            raise error
+        if not assign(self._handle, wintypes.HANDLE(int(process._handle))):
+            error = ctypes.WinError(ctypes.get_last_error())
+            self.close()
+            raise error
+
+    def close(self) -> None:
+        if self._handle:
+            self._close_handle(self._handle)
+            self._handle = None
 
 
 def plantuml_command(*arguments: str) -> list[str]:
@@ -278,6 +346,7 @@ class PlantUmlRenderer:
         self._capacity = max(1, capacity)
         self._images: OrderedDict[tuple[str, str], bytes] = OrderedDict()
         self._process: subprocess.Popen[bytes] | None = None
+        self._job: _WindowsJob | None = None
         self._base_url: str | None = None
         self._state_lock = RLock()
         # PicoWeb 호출과 같은 key의 첫 렌더를 직렬화한다. 렌더가 끝난 뒤에는 위 cache에서
@@ -293,6 +362,13 @@ class PlantUmlRenderer:
         with self._state_lock:
             if self._process is not None and self._process.poll() is None:
                 return True
+            if self._process is not None:
+                self._process = None
+                self._base_url = None
+                stale_job = self._job
+                self._job = None
+                if stale_job is not None:
+                    stale_job.close()
 
             jar = _find_plantuml_jar()
             java = shutil.which("java")
@@ -313,6 +389,16 @@ class PlantUmlRenderer:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+            job = None
+            if os.name == "nt":
+                try:
+                    job = _WindowsJob(process)
+                except OSError as error:
+                    process.kill()
+                    process.wait()
+                    raise RuntimeError(
+                        "Could not attach PlantUML PicoWeb to a Windows Job Object."
+                    ) from error
             base_url = f"http://127.0.0.1:{port}/plantuml"
             deadline = time.monotonic() + 10.0
             while time.monotonic() < deadline:
@@ -323,6 +409,7 @@ class PlantUmlRenderer:
                         f"http://127.0.0.1:{port}/", timeout=0.25,
                     ):
                         self._process = process
+                        self._job = job
                         self._base_url = base_url
                         return True
                 except (OSError, urllib.error.URLError):
@@ -333,21 +420,26 @@ class PlantUmlRenderer:
                 process.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 process.kill()
+            if job is not None:
+                job.close()
             raise RuntimeError("PlantUML PicoWeb renderer did not start within 10 seconds.")
 
     def stop(self) -> None:
         """EasyDep 서버가 종료될 때 이 process가 시작한 JVM만 정리한다."""
         with self._state_lock:
             process = self._process
+            job = self._job
             self._process = None
+            self._job = None
             self._base_url = None
-        if process is None or process.poll() is not None:
-            return
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        if job is not None:
+            job.close()
 
     def render(self, puml_text: str, image_format: str = "png") -> bytes:
         """같은 PlantUML은 cache에서, 새 PlantUML만 계속 실행 중인 JVM에서 렌더링한다."""
