@@ -22,10 +22,21 @@ class GenerationStalled(RuntimeError):
     def __init__(self, unit_id: str, finding: str) -> None:
         self.unit_id = unit_id
         self.finding = finding
+        self.repair_context: dict[str, Any] | None = None
         super().__init__(
             f"valid class-design candidate was not produced for {unit_id}; "
             f"last finding: {finding}"
         )
+
+
+class ClassBindingStalled(GenerationStalled):
+    """A use-case binding stayed unavailable after bounded owning-unit repair."""
+
+    def __init__(
+        self, unit_id: str, finding: str, repair_context: Mapping[str, Any],
+    ) -> None:
+        super().__init__(unit_id, finding)
+        self.repair_context = deepcopy(dict(repair_context))
 
 
 @dataclass

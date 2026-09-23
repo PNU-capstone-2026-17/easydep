@@ -5,7 +5,8 @@ export type CommandStatus =
   | 'AWAITING_INPUT'
   | 'COMPLETED'
   | 'FAILED'
-  | 'INTERRUPTED';
+  | 'INTERRUPTED'
+  | 'CANCELLED';
 
 export type WaitReason = 'review' | 'question' | 'repair' | 'external_wait';
 

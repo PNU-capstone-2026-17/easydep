@@ -26,7 +26,12 @@ from app.design.services.class_diagram.cache import (
     configured_provider_identity,
     record_cache_outcome,
 )
-from app.design.services.class_diagram.models import AcceptedFragment, AcceptedInventory
+from app.design.services.class_diagram.models import (
+    AcceptedFragment,
+    AcceptedInventory,
+    GenerationStalled,
+    RepairBudget,
+)
 from app.design.services.class_diagram.proposals import (
     FeedbackScope,
     InventoryProposal,
@@ -42,7 +47,7 @@ from app.design.services.class_diagram.validation.model import class_name
 from app.design.services.common.structured import parse_structured
 from app.llm_connection import build_llm_connection
 from app.llm_profiles import effective_temperature
-from app.validation import Finding, run_checks
+from app.validation import Finding, RepairAttempt, RepairLedger, run_checks, stable_digest
 
 
 def _inventory_from_model(model: dict[str, Any]) -> dict[str, Any]:
@@ -427,70 +432,118 @@ def _propose_inventory_revision(
 
     LLM 입력은 feedback, target ID, 현재 inventory, 원시 scenario다. 출력은 기존
     ``InventoryProposal``과 같은 전체 교체안이다. target이 있으면 해당 item과 그 item이
-    닿는 구조 관계만 취하고, 나머지는 원본을 보존한 뒤 inventory 검사를 실행한다.
+    닿는 구조 관계만 취하고, 나머지는 원본을 보존한다. 검증 finding이 있으면 유한 수리
+    루프에 보내며 통과한 후보만 반환한다.
     """
 
     current = _inventory_as_proposal(inventory_model)
     # 전체 모양을 받는 이유는 구조 관계와 타입 참조를 한 번에 schema 검증하기 위해서다.
     # 실제 수정 권한은 아래 merge에서 target_ids로 다시 축소된다.
-    parsed = parse_structured(
-        [
-            {"role": "system", "content": inventory.INVENTORY_PROMPT},
-            {"role": "user", "content": json.dumps({
-                "task": "Apply the user feedback to the inventory and return one full replacement inventory.",
-                "feedback": feedback,
-                "targetIds": sorted(target_ids),
-                "currentInventory": current,
-                "scenario": index.raw,
-            }, ensure_ascii=False)},
-        ],
-        InventoryProposal,
-        reasoning_effort=inventory.inventory_reasoning_effort(),
-        max_completion_tokens=inventory.inventory_max_completion_tokens(),
-        operation="InteractionInventoryFeedback",
-        metadata={
-            "executionSlice": "inventory",
-            "candidateCount": len(target_ids) or len(current["items"]),
-        },
-    )
-    proposal = InventoryProposal.model_validate(parsed)
-    if target_ids:
-        # 정상: target A의 새 정의와 A-B 관계는 수용한다.
-        # 실패: 응답이 target 밖 B도 바꿔도 B의 원본을 유지한다.
-        replacement = {item.name: item for item in proposal.items}
-        original = InventoryProposal.model_validate(current)
-        if not target_ids <= {item.name for item in original.items}:
-            raise ValueError("inventory feedback target does not exist")
-        merged_items = [
-            replacement.get(item.name, item) if item.name in target_ids else item
-            for item in original.items
-        ]
-        proposal = InventoryProposal(
-            items=merged_items,
-            Relationships=(
-                proposal.Relationships if any(
-                    relationship.source in target_ids or relationship.target in target_ids
-                    for relationship in proposal.Relationships
-                ) else original.Relationships
-            ),
+    original = InventoryProposal.model_validate(current)
+    original_names = {item.name for item in original.items}
+    if target_ids and not target_ids <= original_names:
+        raise ValueError("inventory feedback target does not exist")
+    baseline = inventory._normalize_inventory(original) if target_ids else None
+    source = {
+        "feedback": feedback,
+        "targetIds": sorted(target_ids),
+        "currentInventory": current,
+        "scenario": index.raw,
+    }
+    messages = [
+        {"role": "system", "content": inventory.INVENTORY_PROMPT},
+        {"role": "user", "content": json.dumps({
+            "task": "Apply the user feedback to the inventory and return one full replacement inventory. Only targetIds are authorized to change; preserve every other item and unrelated relationship.",
+            **source,
+        }, ensure_ascii=False)},
+    ]
+    ledger = RepairLedger()
+    input_digest = stable_digest(source)
+    budget = RepairBudget("inventory")
+    candidate: dict[str, Any] | None = None
+    last_findings: tuple[Finding, ...] = ()
+    attempt = 0
+    while True:
+        operation = "InteractionInventoryFeedback" if attempt == 0 else "InteractionInventoryFeedbackRepair"
+        prompt = messages
+        if candidate is not None:
+            budget.consume("; ".join(ledger.attempts[-1].finding_keys_after))
+            prompt = [
+                *messages,
+                {"role": "user", "content": json.dumps({
+                    "task": "Repair the current feedback candidate. Preserve valid decisions, resolve every finding, and return the complete inventory.",
+                    "candidate": candidate,
+                    "findings": [finding.model_dump(mode="json") for finding in last_findings],
+                    "repairHistory": json.loads(ledger.prompt_context()),
+                }, ensure_ascii=False)},
+            ]
+        parsed = parse_structured(
+            prompt,
+            InventoryProposal,
+            reasoning_effort=inventory.inventory_reasoning_effort(),
+            max_completion_tokens=inventory.inventory_max_completion_tokens(),
+            operation=operation,
+            metadata={
+                "executionSlice": "inventory",
+                "candidateCount": len(target_ids) or len(current["items"]),
+                "semanticRepair": attempt > 0,
+                "repairAttempt": attempt,
+            },
         )
-    # LLM 제안을 저장 모양으로 정규화한 뒤 같은 INVENTORY_CHECKS를 재사용한다. 검증
-    # finding을 다시 LLM에 보내는 추가 loop는 만들지 않고 서비스 경계에 실패를 알린다.
-    candidate = inventory._normalize_inventory(proposal)
-    errors, findings = _inventory_validation_regressions(
-        index,
-        candidate,
-        baseline=(
-            inventory._normalize_inventory(InventoryProposal.model_validate(current))
-            if target_ids
-            else None
-        ),
-    )
-    if errors or findings:
-        raise ValueError("inventory feedback is invalid: " + "; ".join([
-            *errors, *inventory.finding_text(findings),
-        ]))
-    return candidate
+        proposal = InventoryProposal.model_validate(parsed)
+        if target_ids:
+            # 선택된 item만 교체하고 관계 권한도 선택 item의 끝점으로 한정한다.
+            replacement = {item.name: item for item in proposal.items}
+            merged_items = [
+                replacement.get(item.name, item) if item.name in target_ids else item
+                for item in original.items
+            ]
+            replacement_relationships = [
+                relationship for relationship in proposal.Relationships
+                if relationship.source in target_ids or relationship.target in target_ids
+            ]
+            retained_relationships = [
+                relationship for relationship in original.Relationships
+                if relationship.source not in target_ids and relationship.target not in target_ids
+            ]
+            proposal = InventoryProposal(
+                items=merged_items,
+                Relationships=[*retained_relationships, *replacement_relationships],
+            )
+        candidate = inventory._normalize_inventory(proposal)
+        errors, findings = _inventory_validation_regressions(index, candidate, baseline=baseline)
+        repair_findings = (*findings, *(
+            Finding(rule_id="inventory.validation_error", message=error, origin="deterministic")
+            for error in errors
+        ))
+        if not repair_findings:
+            return candidate
+        finding_keys = tuple(sorted({
+            *inventory.finding_text(findings),
+            *(f"inventory.validation_error: {error}" for error in errors),
+        }))
+        candidate_digest = stable_digest(candidate)
+        repeated = ledger.candidate_seen(
+            input_digest=input_digest, candidate_digest=candidate_digest,
+        ) or ledger.failure_seen(input_digest=input_digest, finding_keys=finding_keys)
+        unchanged = bool(ledger.attempts) and (
+            ledger.attempts[-1].finding_keys_after == finding_keys
+        )
+        ledger.record(RepairAttempt(
+            stage="design.class.inventory.feedback",
+            target_ids=tuple(sorted(target_ids)),
+            strategy_key=f"full-replacement-{attempt + 1}",
+            input_digest=input_digest,
+            candidate_digest=candidate_digest,
+            finding_keys_before=finding_keys,
+            finding_keys_after=finding_keys,
+            outcome="repeated_candidate" if repeated else "no_improvement",
+            detail="; ".join(finding_keys),
+        ))
+        if repeated or unchanged:
+            raise GenerationStalled("inventory", "; ".join(finding_keys))
+        last_findings = repair_findings
+        attempt += 1
 
 
 def _inventory_validation_regressions(

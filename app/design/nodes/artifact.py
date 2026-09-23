@@ -374,7 +374,15 @@ def extract_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict
     """앞선 산출물에서 이 산출물의 구조화 모델을 도출한다."""
 
     def node(state: ArchitectureState) -> dict:
-        return {spec.model_key: spec.extract(state)}
+        result = {spec.model_key: spec.extract(state)}
+        if spec.stage == "class_diagram" and state.get(
+            "class_binding_repair_guidance"
+        ):
+            # spec.extract returns only after the accepted model passed its
+            # typed validation boundary, so consuming guidance here is atomic
+            # with checkpointing that accepted model.
+            result["class_binding_repair_guidance"] = ""
+        return result
 
     return node
 

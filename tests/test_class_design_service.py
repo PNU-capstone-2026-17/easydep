@@ -208,13 +208,93 @@ def test_targeted_inventory_revision_allows_baseline_but_rejects_regression(monk
     assert legacy["useCaseIds"] == []
 
     proposal["Relationships"].append(deepcopy(relationship))
-    with pytest.raises(ValueError, match="both directions"):
+    with pytest.raises((ValueError, feedback_stage.GenerationStalled), match="both directions"):
         feedback_stage.propose_inventory_revision(
             build_scenario_index(single_use_case()),
             accepted,
             "Change relation.",
             {"LegacyRecord"},
         )
+
+
+def test_targeted_inventory_feedback_repairs_unresolved_generic_type(monkeypatch):
+    current_proposal = inventory_proposal()
+    current_proposal["items"].append({
+        "name": "Record",
+        "kind": "Entity",
+        "description": "Stored record",
+        "fields": [{"name": "id", "type": "UUID"}, {"name": "value", "type": "String"}],
+        "identifier": ["id"],
+        "values": [],
+        "useCaseIds": ["UC1"],
+    })
+    baseline = feedback_stage.inventory._normalize_inventory(
+        InventoryProposal.model_validate(current_proposal)
+    )
+    invalid = deepcopy(current_proposal)
+    record = next(item for item in invalid["items"] if item["name"] == "Record")
+    record["fields"][1]["type"] = "Optional<UnlistedValue>"
+    repaired = deepcopy(current_proposal)
+    repaired_record = next(item for item in repaired["items"] if item["name"] == "Record")
+    repaired_record["fields"][1]["type"] = "Optional<String>"
+    responses = iter([invalid, repaired])
+    calls = []
+
+    def fake_parse(messages, schema, **kwargs):
+        assert schema is InventoryProposal
+        calls.append((messages, kwargs))
+        return next(responses)
+
+    monkeypatch.setattr(feedback_stage, "parse_structured", fake_parse)
+    accepted = feedback_stage.propose_inventory_revision(
+        build_scenario_index(single_use_case()),
+        feedback_stage.AcceptedInventory.from_payload(baseline),
+        "Make Record.value optional.",
+        {"Record"},
+    ).as_payload()
+
+    assert len(calls) == 2
+    repair_prompt = json.loads(calls[1][0][-1]["content"])
+    assert repair_prompt["candidate"]["Classes"]
+    assert any("UnlistedValue" in finding["message"] for finding in repair_prompt["findings"])
+    assert repair_prompt["repairHistory"]
+    assert calls[1][1]["operation"] == "InteractionInventoryFeedbackRepair"
+    record = next(item for item in accepted["Classes"] if item["className"] == "Record")
+    assert record["fields"] == ["id : UUID", "value : Optional<String>"]
+
+
+def test_targeted_inventory_feedback_stops_on_unchanged_finding(monkeypatch):
+    current_proposal = inventory_proposal()
+    current_proposal["items"].append({
+        "name": "Record",
+        "kind": "Entity",
+        "description": "Stored record",
+        "fields": [{"name": "id", "type": "UUID"}, {"name": "value", "type": "String"}],
+        "identifier": ["id"],
+        "values": [],
+        "useCaseIds": ["UC1"],
+    })
+    baseline = feedback_stage.inventory._normalize_inventory(
+        InventoryProposal.model_validate(current_proposal)
+    )
+    invalid = deepcopy(current_proposal)
+    next(item for item in invalid["items"] if item["name"] == "Record")["fields"][1]["type"] = "Optional<UnlistedValue>"
+    calls = 0
+
+    def fake_parse(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return invalid
+
+    monkeypatch.setattr(feedback_stage, "parse_structured", fake_parse)
+    with pytest.raises(feedback_stage.GenerationStalled):
+        feedback_stage.propose_inventory_revision(
+            build_scenario_index(single_use_case()),
+            feedback_stage.AcceptedInventory.from_payload(baseline),
+            "Make Record.value optional.",
+            {"Record"},
+        )
+    assert calls == 2
 
 
 def test_inventory_revision_preserves_valid_operations_and_calls(monkeypatch):

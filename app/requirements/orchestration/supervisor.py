@@ -256,7 +256,7 @@ def repair_state(state: AgentState, through: str = "relationships") -> dict[str,
         status = "NEEDS_INPUT"
     else:
         # A local stage may be stalled while an upstream/cascade strategy is still available.
-        # The delegate_repair action owns that escalation, so the handoff remains actionable.
+        # Workspace owns the automatic escalation, so the handoff remains actionable.
         status = "ACTIVE"
     recent = [*attempts, *redo][-5:]
     rejected_candidates = sorted(

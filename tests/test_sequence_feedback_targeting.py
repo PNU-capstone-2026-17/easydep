@@ -366,6 +366,41 @@ def test_artifact_persistence_failure_restores_the_previous_design_checkpoint(
     ]
 
 
+def test_targeted_design_batch_rechecks_changed_stage_without_automatic_repair(monkeypatch) -> None:
+    original = {"sequence_diagram_model": {"Diagrams": [{"use_case_id": "UC5"}]}}
+    checked_specs = []
+    monkeypatch.setattr(design_service.artifact_repository, "load_state", lambda _app: original)
+    monkeypatch.setattr(design_service, "to_web_response", lambda state: {"artifacts": state})
+    monkeypatch.setattr(design_service, "sync_design_state", lambda *_args: None)
+    monkeypatch.setattr(design_service, "persist_cascade", lambda *_args: None)
+    monkeypatch.setattr(
+        design_service,
+        "revise_and_cascade",
+        lambda state, _target, _feedback, **_kwargs: {
+            "state": {**state, "sequence_diagram_model": {"Diagrams": [{"use_case_id": "UC5", "revision": 1}]}},
+            "changed": ["sequence_diagram"],
+            "touched": {"sequence_diagram": ["UC5"]},
+            "related": [],
+        },
+    )
+
+    def check_factory(spec):
+        checked_specs.append(spec)
+        return lambda _state: {spec.check_key: {"findings": [], "stopped": "clean"}}
+
+    monkeypatch.setattr(design_service, "check_node", check_factory)
+    result = design_service.revise_design_elements(
+        "00000000-0000-0000-0000-000000000001",
+        design_service.BatchReviseRequest(
+            revisions=[design_service.ReviseRequest(target="sequence_diagram:UC5", feedback="revise")]
+        ),
+    )
+
+    assert len(checked_specs) == 1
+    assert checked_specs[0].repair is None
+    assert result["artifacts"]["sequence_diagram_check"]["stopped"] == "clean"
+
+
 def test_design_review_result_exposes_pending_method_proposals_for_manual_approval() -> None:
     service = WorkspaceService()
     try:

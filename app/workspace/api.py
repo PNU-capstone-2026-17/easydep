@@ -497,6 +497,23 @@ def create_command(app_id: str, request: WorkspaceCommandRequest) -> dict[str, A
     return {"app_id": app_id, "command": command}
 
 
+@router.post("/apps/{app_id}/commands/{command_id}/stop")
+def stop_command(app_id: str, command_id: str) -> dict[str, Any]:
+    """Request cancellation of an active command without creating another one."""
+
+    validate_app_id(app_id)
+    try:
+        command = repository.request_stop(app_id, command_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Unknown workspace command.") from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    repository.notify_command_changed(
+        app_id, command_id=command_id, stage=str(command.get("stage") or "requirements")
+    )
+    return {"app_id": app_id, "command": command}
+
+
 @router.get("/apps/{app_id}/events")
 async def stream_events(
     app_id: str,

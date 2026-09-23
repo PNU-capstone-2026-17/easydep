@@ -944,7 +944,6 @@ def _testing_platform_wait() -> dict[str, Any]:
         "payload": {},
         "result": {
             "requires_revision": True,
-            "can_delegate_repair": False,
             "job": {"implementation_job_id": "implementation-1"},
             "blocking_findings": [
                 {
@@ -1045,16 +1044,16 @@ def test_conversation_failure_becomes_a_retryable_persisted_clarification(
     assert stage == "design"
 
 
-def test_natural_followup_uses_actions_preserved_by_a_reply(monkeypatch) -> None:
+def test_natural_followup_uses_stage_action_preserved_by_a_reply(monkeypatch) -> None:
     latest = {
         **_completed_command("design"),
         "command_id": "reply-command",
         "payload": {
             "_conversation_actions": [
                 {
-                    "action": "delegate_repair",
-                    "label": "Delegate repair to LLM",
-                    "payload": {"action_id": "repair-command"},
+                    "action": "start_implementation",
+                    "label": "Start implementation",
+                    "payload": {"action_id": "stage-command"},
                 }
             ]
         },
@@ -1066,7 +1065,7 @@ def test_natural_followup_uses_actions_preserved_by_a_reply(monkeypatch) -> None
         workspace_module.conversation_agent,
         "respond",
         lambda *_a, **_k: CommandIntent(
-            intent="delegate_repair", instruction="Please repair it."
+            intent="advance", instruction="Continue to implementation."
         ),
     )
     service = WorkspaceService()
@@ -1080,8 +1079,8 @@ def test_natural_followup_uses_actions_preserved_by_a_reply(monkeypatch) -> None
     finally:
         service.shutdown()
 
-    assert action == "delegate_repair"
-    assert payload["action_id"] == "repair-command"
+    assert action == "start_implementation"
+    assert payload["action_id"] == "stage-command"
     assert stage is None
 
 
@@ -1092,9 +1091,9 @@ def test_repeated_conversation_clarifications_route_to_original_offer(monkeypatc
         "payload": {
             "_conversation_actions": [
                 {
-                    "action": "delegate_repair",
-                    "label": "Delegate repair to LLM",
-                    "payload": {"action_id": "repair-command"},
+                    "action": "start_implementation",
+                    "label": "Start implementation",
+                    "payload": {"action_id": "stage-command"},
                 }
             ]
         },
@@ -1127,7 +1126,7 @@ def test_repeated_conversation_clarifications_route_to_original_offer(monkeypatc
         workspace_module.conversation_agent,
         "respond",
         lambda *_a, **_k: CommandIntent(
-            intent="delegate_repair", instruction="Delegate the original repair."
+            intent="advance", instruction="Continue to implementation."
         ),
     )
 
@@ -1142,6 +1141,6 @@ def test_repeated_conversation_clarifications_route_to_original_offer(monkeypatc
     finally:
         service.shutdown()
 
-    assert action == "delegate_repair"
-    assert payload["action_id"] == "repair-command"
+    assert action == "start_implementation"
+    assert payload["action_id"] == "stage-command"
     assert stage is None

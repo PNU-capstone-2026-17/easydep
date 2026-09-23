@@ -42,7 +42,6 @@ class _ConversationPlan(BaseModel):
         "advance",
         "answer",
         "revise",
-        "delegate_repair",
         "branch",
         "rerun",
         "confirm_revision",

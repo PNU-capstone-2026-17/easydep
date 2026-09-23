@@ -169,7 +169,9 @@ def resume_design(app_id: str, feedback: str) -> dict[str, Any]:
     )
 
 
-def retry_design(app_id: str) -> dict[str, Any]:
+def retry_design(
+    app_id: str, *, repair_guidance: str | None = None,
+) -> dict[str, Any]:
     """실패한 설계 노드부터 다시 실행한다.
 
     게이트의 사용자 입력을 재개하는 ``resume_design``과 달리, 실패 체크포인트에는
@@ -180,6 +182,13 @@ def retry_design(app_id: str) -> dict[str, Any]:
     if not status["retryable"]:
         raise ValueError("The design session has no failed stage to retry.")
     config: RunnableConfig = {"configurable": {"thread_id": app_id}}
+    if repair_guidance is not None:
+        guidance = repair_guidance.strip()
+        if not guidance:
+            raise ValueError("Repair guidance must not be empty.")
+        if status.get("stage") != "class_diagram":
+            raise ValueError("Repair guidance is only supported for class-diagram retries.")
+        graph.update_state(config, {"class_binding_repair_guidance": guidance})
     return _invoke_traced_design_graph("retry", app_id, lambda: graph.invoke(None, config))
 
 

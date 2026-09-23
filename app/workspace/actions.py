@@ -45,12 +45,6 @@ _SPECS = (
         ("action_id",),
     ),
     ActionSpec(
-        WorkspaceAction.DELEGATE_REPAIR,
-        "delegate_repair",
-        StagePolicy.REFERENCE,
-        ("action_id",),
-    ),
-    ActionSpec(
         WorkspaceAction.CONFIRM_CHANGE,
         "confirm_change",
         StagePolicy.REFERENCE,
@@ -481,15 +475,6 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
         actions = [
             _offer(WorkspaceAction.MESSAGE, "Send revision feedback", common),
         ]
-        if result.get("can_delegate_repair"):
-            actions.append(
-                _offer(
-                    WorkspaceAction.DELEGATE_REPAIR,
-                    "Delegate repair to LLM",
-                    common,
-                    auto=True,
-                )
-            )
         if stage == "design" and result.get("method_proposals"):
             actions.append(
                 _offer(
@@ -596,16 +581,6 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
                 or result.get("job_id")
                 or ""
             )
-            source_action_id = str((command.get("payload") or {}).get("action_id") or "")
-            if command.get("action") == "delegate_repair" and not job_id and source_action_id:
-                return [
-                    discuss,
-                    _offer(
-                        WorkspaceAction.DELEGATE_REPAIR,
-                        "Retry implementation repair request",
-                        {"action_id": source_action_id},
-                    ),
-                ]
             if job_id:
                 return [
                     discuss,

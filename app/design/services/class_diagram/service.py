@@ -367,7 +367,10 @@ def _validated(model: BCEModel, index: ScenarioIndex, action: str) -> BCEModel:
 
 
 def generate_class_model(
-    index: ScenarioIndex, *, cache: AcceptedUnitCache | None = None,
+    index: ScenarioIndex,
+    *,
+    cache: AcceptedUnitCache | None = None,
+    repair_guidance: str | None = None,
 ) -> BCEModel:
     """inventory 한 번과 유스케이스별 결합 호출로 수락 BCE 모델을 생성한다."""
 
@@ -381,7 +384,12 @@ def generate_class_model(
     return _validated(
         _accepted_model(
             None,
-            generation.build_model(index, accepted_inventory, cache=cache),
+            generation.build_model(
+                index,
+                accepted_inventory,
+                cache=cache,
+                repair_guidance=repair_guidance,
+            ),
         ),
         index,
         "generated",

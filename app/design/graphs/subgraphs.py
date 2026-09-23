@@ -60,8 +60,8 @@ from app.design.services.api_spec.service import (
 )
 from app.design.services.api_spec.service import revise_api_spec_model
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
-from app.design.services.class_diagram.public_contract_review import review_public_contract_closure
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
+from app.design.services.class_diagram.public_contract_review import review_public_contract_closure
 from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.class_diagram.service import (
     generate_class_model,
@@ -302,6 +302,9 @@ def _extract_class_model(state: ArchitectureState) -> dict[str, Any]:
     return generate_class_model(
         index,
         cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
+        repair_guidance=(
+            state.get("class_binding_repair_guidance") or None
+        ),
     ).model_dump(by_alias=True)
 
 

@@ -14,7 +14,6 @@ class ConversationIntent(StrEnum):
     ADVANCE = "advance"
     ANSWER = "answer"
     REVISE = "revise"
-    DELEGATE_REPAIR = "delegate_repair"
     BRANCH = "branch"
     RERUN = "rerun"
     CONFIRM_REVISION = "confirm_revision"

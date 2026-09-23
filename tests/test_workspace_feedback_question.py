@@ -73,6 +73,43 @@ def _question() -> Question:
     )
 
 
+def _class_binding_question() -> Question:
+    target = _target()
+    return Question(
+        question_id="class-binding-source:UC1:question-1",
+        question_version=1,
+        app_id="app-1",
+        source_execution_id="design-run-1",
+        detected_at={"stage": "design", "artifact_ref": target.ref},
+        base_revisions=[{"artifact_type": "USECASE_SPEC", "version_id": 7}],
+        trigger={"category": "class_binding_source"},
+        authority_candidates=[target],
+        prompt="Where should this value come from?",
+        decision_policy={
+            "allowed_semantic_scopes": ["contract"],
+            "allowed_change_types": ["modify"],
+            "required_preserved_constraints": ["Keep the existing behavior."],
+        },
+        options=[
+            QuestionOption(
+                option_id="use_case_input",
+                label="Use case input",
+                description="Supply it when the use case begins.",
+                decision_payload=DecisionPayload(
+                    normalized_meaning={
+                        "semantic_scope": "contract",
+                        "requested_effect": "Supply this value when the use case begins.",
+                        "change_type": "modify",
+                    },
+                    authoritative_target_refs=(target.ref,),
+                    preserved_constraints=("Keep the existing behavior.",),
+                ),
+            )
+        ],
+        allow_free_text=True,
+    )
+
+
 def _source_command(*, status: str = "AWAITING_INPUT") -> dict[str, Any]:
     return {
         "command_id": "design-question",
@@ -265,6 +302,58 @@ def test_option_answer_routes_without_llm_to_requirements(monkeypatch) -> None:
     assert payload["revision_plan"]["status"] == "needs_confirmation"
     assert payload["validated_targets"][0]["ref"] == "use_case_spec:UC1"
     assert payload["_conversation_outcome"] == {"kind": "revision_plan"}
+
+
+def test_class_binding_answer_retries_the_same_design_session(monkeypatch) -> None:
+    source = _source_command()
+    source["result"]["feedback_question"] = _class_binding_question().model_dump(
+        mode="json"
+    )
+    monkeypatch.setattr(repository, "latest_command", lambda *_args, **_kwargs: source)
+    monkeypatch.setattr(repository, "get_command", lambda *_args, **_kwargs: source)
+    monkeypatch.setattr(workspace_module, "ProjectTools", _Tools)
+
+    service = WorkspaceService()
+    try:
+        action, payload, stage = service._prepare_conversational_message(
+            "app-1",
+            action="message",
+            payload=dict(offered_actions(source)[0].payload),
+            stage=None,
+        )
+        captured: dict[str, Any] = {}
+        monkeypatch.setattr(
+            workspace_module,
+            "retry_design_session",
+            lambda app_id, *, repair_guidance: captured.update(
+                app_id=app_id, repair_guidance=repair_guidance
+            ) or {"status": "completed"},
+        )
+        monkeypatch.setattr(
+            service,
+            "_run_design_operation",
+            lambda _command, *, operation, **_kwargs: operation(),
+        )
+        monkeypatch.setattr(service, "_design_result", lambda result: result)
+        result = service._dispatch(
+            {
+                "command_id": "class-binding-retry-1",
+                "app_id": "app-1",
+                "action": action,
+                "stage": stage,
+                "payload": payload,
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert (action, stage) == ("message", "design")
+    assert payload["_conversation_outcome"] == {"kind": "class_binding_retry"}
+    assert captured == {
+        "app_id": "app-1",
+        "repair_guidance": "Supply this value when the use case begins.\nPreserve: Keep the existing behavior.",
+    }
+    assert result == {"status": "completed"}
 
 
 def test_semantic_ambiguity_option_routes_pinned_spec_effect_to_requirements(monkeypatch) -> None:

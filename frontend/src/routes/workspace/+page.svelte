@@ -8,7 +8,7 @@
   import Composer from '$lib/components/Composer.svelte';
   import StageRail from '$lib/components/StageRail.svelte';
   import ResizableWorkspace from '$lib/components/ResizableWorkspace.svelte';
-  import { connectEvents, getArtifacts, getClassDiagramPreview, getCloudOptions, getFileArtifact, getLiveImplementationSources, getWorkspace, listApps, saveDeploymentPreferences, sendCommand } from '$lib/api';
+  import { connectEvents, getArtifacts, getClassDiagramPreview, getCloudOptions, getFileArtifact, getLiveImplementationSources, getWorkspace, listApps, saveDeploymentPreferences, sendCommand, stopCommand } from '$lib/api';
   import type { ArtifactDocument, CloudProvider, CloudRegionOption, DeploymentPreferences, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, Stage, WorkspaceApp, WorkspaceCommand, WorkspaceEvent } from '$lib/types';
   import { errorMessage } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
@@ -41,6 +41,8 @@
   let connected = $state(false);
   let loading = $state(true);
   let actionBusy = $state(false);
+  let stopping = $state(false);
+  let stopRequestedCommandId = $state('');
   let error = $state('');
   let source: EventSource | null = null;
   let stateRefreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -511,6 +513,30 @@
     });
   }
 
+  async function stopCurrentCommand() {
+    if (
+      !appId || !command || stopping || stopRequestedCommandId === command.command_id ||
+      !['QUEUED', 'RUNNING'].includes(command.status)
+    ) return;
+    stopping = true;
+    stopRequestedCommandId = command.command_id;
+    const targetAppId = appId;
+    try {
+      const response = await stopCommand(targetAppId, command.command_id);
+      if (targetAppId === appId) command = response.command;
+    } catch {
+      // The command may have completed between rendering the Stop button and the request.
+      // Refreshing state resolves that race without adding a synthetic chat error.
+    } finally {
+      try {
+        if (targetAppId === appId) await refreshState(targetAppId);
+      } catch {
+        // SSE and the normal reconnect refresh will recover the latest workspace state.
+      }
+      stopping = false;
+    }
+  }
+
   async function saveCloudPreferences(preferences: DeploymentPreferences) {
     if (!appId || preferenceSaving) return;
     preferenceSaving = true;
@@ -648,6 +674,7 @@
             {appId}
             {command}
             {busy}
+            stopping={stopping || stopRequestedCommandId === command?.command_id}
             {autoMode}
             context={{
               stage: selectedStage,
@@ -655,6 +682,7 @@
                 selectedArtifact === 'TESTING_RESULTS' ? undefined : selectedArtifact
             }}
             onSend={send}
+            onStop={stopCurrentCommand}
             onAction={act}
             onToggleAutoMode={toggleAutoMode}
           />

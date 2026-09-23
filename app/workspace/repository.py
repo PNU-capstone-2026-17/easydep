@@ -221,6 +221,66 @@ def update_command(command_id: str, **changes: Any) -> dict[str, Any]:
         return command_dict(row)
 
 
+def request_stop(app_id: str, command_id: str) -> dict[str, Any]:
+    """Durably ask one active command to stop at its next safe boundary.
+
+    The worker owns the terminal transition.  Keeping the request in the
+    existing JSON payload avoids a migration while allowing a sleeping retry
+    loop (or a restarted reader) to observe it.
+    """
+
+    with session_scope() as session:
+        row = session.scalar(
+            select(WorkspaceCommand)
+            .where(
+                WorkspaceCommand.command_id == command_id,
+                WorkspaceCommand.app_id == app_id,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise KeyError(command_id)
+        if str(row.status or "") not in ACTIVE_STATUSES:
+            raise RuntimeError("Only an active workspace command can be stopped.")
+        payload = dict(row.payload or {})
+        payload["_stop_requested"] = True
+        row.payload = payload
+        session.flush()
+        return command_dict(row)
+
+
+def finish_command_honoring_stop(
+    command_id: str,
+    *,
+    status: str,
+    result: dict[str, Any],
+    error: str | None,
+    cancelled_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Apply a terminal outcome without allowing a durable stop to lose a race.
+
+    Both this transition and :func:`request_stop` lock the same command row.  A
+    stop committed before the terminal writer obtains the lock therefore always
+    wins; a later stop sees a terminal command and is correctly rejected.
+    """
+
+    with session_scope() as session:
+        row = session.scalar(
+            select(WorkspaceCommand)
+            .where(WorkspaceCommand.command_id == command_id)
+            .with_for_update()
+        )
+        if row is None:
+            raise KeyError(command_id)
+        stopped = bool((row.payload or {}).get("_stop_requested"))
+        row.status = "CANCELLED" if stopped else status
+        row.result = cancelled_result if stopped else result
+        row.error = None if stopped else error
+        row.completed_at = now()
+        session.flush()
+        return command_dict(row)
+
+
 def _progress_status(value: object) -> str:
     status = str(value or "").lower()
     if status == "running":

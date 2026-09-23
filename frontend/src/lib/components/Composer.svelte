@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ArrowUp, Download, LoaderCircle, Paperclip, Zap } from '@lucide/svelte';
+  import { ArrowUp, Download, LoaderCircle, Paperclip, Square, Zap } from '@lucide/svelte';
   import { downloadImplementationArtifacts } from '$lib/api';
   import type { ActionOffer, WorkspaceCommand } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
@@ -8,18 +8,22 @@
     command,
     appId,
     busy,
+    stopping,
     context,
     autoMode,
     onSend,
+    onStop,
     onAction,
     onToggleAutoMode
   }: {
     command?: WorkspaceCommand | null;
     appId: string;
     busy: boolean;
+    stopping: boolean;
     context?: { stage: string; artifact_stage?: string; element_ref?: string } | null;
     autoMode: boolean;
     onSend: (text: string, extra?: Record<string, unknown>) => Promise<void>;
+    onStop: () => Promise<void>;
     onAction: (action: string, extra?: Record<string, unknown>) => Promise<void>;
     onToggleAutoMode: () => void;
   } = $props();
@@ -37,7 +41,8 @@
   );
   let buttonActions = $derived(
     actions.filter(
-      (offer) => offer.action !== 'message' && offer.action !== 'rerun_implementation'
+      offer =>
+        offer.action !== 'message' && offer.action !== 'rerun_implementation'
     )
   );
   let resourceQuestion = $derived(result?.resource_question ?? result?.resource_questions?.[0] ?? null);
@@ -45,7 +50,6 @@
     String(resourceQuestion?.question ?? result?.question ?? result?.questions?.[0]?.question ?? '').trim()
   );
   let requiresRevision = $derived(Boolean(result?.requires_revision));
-  let canDelegateRepair = $derived(Boolean(result?.can_delegate_repair));
   let repairStalled = $derived(result?.repair_state?.status === 'STALLED');
   let repairStallReason = $derived(String(result?.repair_state?.stall_reason ?? '').trim());
   let implementationAction = $derived(
@@ -73,6 +77,7 @@
       : null
   );
   let downloadError = $state('');
+  let commandActive = $derived(['QUEUED', 'RUNNING'].includes(command?.status ?? ''));
 
   function isActionOffer(value: unknown): value is ActionOffer {
     if (!value || typeof value !== 'object') return false;
@@ -155,9 +160,7 @@
         <p class:mt-1={Boolean(questionText)}>
           {repairStalled
             ? 'Automatic repair could not reduce the blockers. Enter a specific revision request to continue.'
-            : canDelegateRepair
-              ? 'Automatic repair is continuing with the previous attempts in context.'
-              : 'Review the blocking findings and enter a specific revision request to continue.'}
+            : 'Review the blocking findings and enter a specific revision request to continue.'}
         </p>
         {#if repairStallReason}
           <p class="mt-1 text-[11px] text-[#876f45]">{repairStallReason}</p>
@@ -249,9 +252,15 @@
         >
           <Zap size={14} />
         </Button>
-        <Button size="icon" onclick={submit} disabled={busy || !messageInput || !text.trim()} aria-label="Send message">
-          <ArrowUp size={16} />
-        </Button>
+        {#if commandActive}
+          <Button size="icon" variant="ghost" onclick={onStop} disabled={stopping} aria-label="Stop current command">
+            {#if stopping}<LoaderCircle size={15} class="animate-spin" />{:else}<Square size={14} />{/if}
+          </Button>
+        {:else}
+          <Button size="icon" onclick={submit} disabled={busy || !messageInput || !text.trim()} aria-label="Send message">
+            <ArrowUp size={16} />
+          </Button>
+        {/if}
       </div>
     </div>
   </div>

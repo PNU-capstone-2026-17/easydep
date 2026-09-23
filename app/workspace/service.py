@@ -3,12 +3,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any, cast
@@ -17,8 +17,9 @@ from fastapi import HTTPException
 
 from app.db.models import TYPE_CLASS, TYPE_USECASE_SPEC
 from app.design import progress as design_progress
+from app.design.graphs.design_graph import graph as design_graph
 from app.design.graphs.design_graph import has_active_session, session_status
-from app.design.graphs.subgraphs import DESIGN_STAGES
+from app.design.graphs.subgraphs import DESIGN_SPECS, DESIGN_STAGES
 from app.design.observability import design_timing_context, log_design_timing
 from app.design.service import (
     BatchReviseRequest,
@@ -31,6 +32,7 @@ from app.design.service import (
     revise_design_stage_session,
     start_design_session,
 )
+from app.design.services.class_diagram.models import ClassBindingStalled
 from app.design.services.common.plantuml import render_plantuml
 from app.design.services.common.structured import capture_llm_timings
 from app.design.validation import design_readiness_report
@@ -96,6 +98,7 @@ from .conversation.delivery import (
 from .conversation.feedback_envelope import (
     BaseRevision,
     Decision,
+    DecisionMeaning,
     DecisionPayload,
     DecisionPolicy,
     Question,
@@ -247,6 +250,14 @@ _IMPLEMENTATION_PROGRESS_PHASES = (
     ("frontend", "Frontend implementation"),
     ("integration", "Integration verification"),
 )
+_MAX_AUTOMATIC_SEMANTIC_REPAIR_ITERATIONS = 32
+_RETRY_BASE_SECONDS = 1.0
+_RETRY_MAX_SECONDS = 60.0
+_RETRY_SLEEP_SLICE_SECONDS = 1.0
+
+
+class WorkspaceStopRequested(Exception):
+    """Internal control flow for a durable user cancellation request."""
 
 
 class WorkspaceService:
@@ -279,12 +290,9 @@ class WorkspaceService:
             "FAILED",
         }:
             return command
-        # Testing이 위임한 수리도 독립된 Implementation command다. 구현 화면을 다시 열 때
-        # 해당 owner checkpoint의 상태만 맞추고, 후속 Testing은 별도 START_TESTING으로 둔다.
         if command.get("stage") != "implementation":
             return command
         if command.get("action") not in {
-            "delegate_repair",
             "start_implementation",
             "retry_implementation",
             "rerun_implementation",
@@ -299,45 +307,6 @@ class WorkspaceService:
         except Exception:
             return command
         job_status = str(job.get("status") or "")
-        if command.get("action") == "delegate_repair" and job_status == "COMPLETED":
-            owner_repair = job.get("owner_repair")
-            requested_at = (
-                str(owner_repair.get("requested_at") or "")
-                if isinstance(owner_repair, dict)
-                else ""
-            )
-            started_at = str(command.get("started_at") or "")
-            try:
-                request_belongs_to_command = bool(
-                    requested_at
-                    and started_at
-                    and datetime.fromisoformat(requested_at)
-                    >= datetime.fromisoformat(started_at)
-                )
-            except (TypeError, ValueError):
-                request_belongs_to_command = False
-            if not request_belongs_to_command:
-                if command.get("status") == "RUNNING":
-                    return command
-                retry_payload = dict(payload)
-                retry_payload.pop("job_id", None)
-                failed = {**command, "status": "FAILED", "payload": retry_payload}
-                message = (
-                    "The Implementation repair was interrupted before its worker request "
-                    "could be confirmed. Retry the same repair request."
-                )
-                result = result_with_contract(
-                    failed,
-                    {"kind": "outcome_unknown", "message": message},
-                )
-                return repository.update_command(
-                    str(command["command_id"]),
-                    status="FAILED",
-                    payload=retry_payload,
-                    result=result,
-                    error=message,
-                    completed_at=repository.now(),
-                )
         # READY workflow의 완료 여부는 구현 작업 서비스가 판정하여 공개 상태를
         # COMPLETED로 바꾼다. Workspace가 그 내부 규칙을 다시 구현하지 않는다.
         if job_status != "COMPLETED":
@@ -367,8 +336,9 @@ class WorkspaceService:
                 result = result_with_contract(
                     {**command, "status": command_status}, result
                 )
-                return repository.update_command(
-                    command["command_id"],
+                return self._finish_terminal_command(
+                    str(command["command_id"]),
+                    command,
                     status=command_status,
                     result=result,
                     error=str(job.get("error") or "Implementation needs checkpoint repair."),
@@ -390,11 +360,11 @@ class WorkspaceService:
         result = result_with_contract(
             {**command, "status": "COMPLETED"}, result
         )
-        updated = repository.update_command(
-            command["command_id"],
+        updated = self._finish_terminal_command(
+            str(command["command_id"]),
+            command,
             status="COMPLETED",
             result=result,
-            completed_at=repository.now(),
             error=None,
         )
         repository.notify_command_changed(
@@ -1102,7 +1072,6 @@ class WorkspaceService:
                 "start_testing",
             },
             ConversationIntent.ANSWER.value: {"message"},
-            ConversationIntent.DELEGATE_REPAIR.value: {"delegate_repair"},
             ConversationIntent.CONFIRM_REVISION.value: {"confirm_change"},
             ConversationIntent.DISMISS_REVISION.value: {"dismiss_change"},
         }.get(intent_name, set())
@@ -1324,8 +1293,6 @@ class WorkspaceService:
         if policy == StagePolicy.REFERENCE:
             prior = repository.get_command(str(payload.get("action_id") or ""))
             if prior is not None:
-                if action == "delegate_repair" and prior.get("stage") == "testing":
-                    return "implementation"
                 return str(
                     (prior.get("result") or {}).get("routing_stage")
                     or prior.get("stage")
@@ -1383,6 +1350,9 @@ class WorkspaceService:
 
         app_id = str(command["app_id"])
         stage = str(command["stage"])
+        if self._stop_requested(command_id):
+            self._cancel_command(command_id, command, stage)
+            return
         repository.update_command(
             command_id,
             status="RUNNING",
@@ -1396,7 +1366,17 @@ class WorkspaceService:
             stage=stage,
         )
         try:
-            result = self._dispatch(command)
+            try:
+                result = self._dispatch_with_transient_retry(command)
+            except ClassBindingStalled as error:
+                result = self._class_binding_stall_result(command, error)
+            if self._stop_requested(command_id):
+                self._cancel_command(command_id, command, stage)
+                return
+            result = self._auto_repair_semantic_result(command, result)
+            if self._stop_requested(command_id):
+                self._cancel_command(command_id, command, stage)
+                return
             if stage == "design":
                 result = self._with_design_progress_hints(app_id, result)
             feedback_command = self._feedback_question_command(command)
@@ -1429,17 +1409,17 @@ class WorkspaceService:
                     self.apply_saved_deployment_preferences(app_id)
                 return
             result = result_with_contract({**command, "status": "COMPLETED"}, result)
-            repository.update_command(
-                command_id,
-                status="COMPLETED",
-                result=result,
-                completed_at=repository.now(),
+            terminal = self._finish_terminal_command(
+                command_id, command, status="COMPLETED", result=result, error=None
             )
             repository.notify_command_changed(
                 app_id,
                 command_id=command_id,
-                stage=stage,
+                stage=str(terminal.get("stage") or stage),
             )
+        except WorkspaceStopRequested:
+            self._cancel_command(command_id, command, stage)
+            return
         except Exception as error:
             detail = self._error_text(error)
             latest = repository.get_command(command_id) or command
@@ -1447,12 +1427,12 @@ class WorkspaceService:
                 {**latest, "status": "FAILED"},
                 dict(latest.get("result") or {}),
             )
-            repository.update_command(
+            self._finish_terminal_command(
                 command_id,
+                command,
                 status="FAILED",
                 result=failure_result,
                 error=detail,
-                completed_at=repository.now(),
             )
             repository.notify_command_changed(
                 app_id,
@@ -1460,6 +1440,219 @@ class WorkspaceService:
                 stage=stage,
             )
             raise
+
+    @staticmethod
+    def _stop_requested(command_id: str) -> bool:
+        current = repository.get_command(command_id)
+        return bool(current and (current.get("payload") or {}).get("_stop_requested"))
+
+    def _cancel_command(
+        self, command_id: str, command: dict[str, Any], stage: str
+    ) -> None:
+        """Finish a command only after its durable stop request is observed."""
+
+        latest = repository.get_command(command_id) or command
+        if stage == "implementation":
+            job_id = str((latest.get("payload") or {}).get("job_id") or "")
+            if job_id:
+                try:
+                    implementation_worker.cancel(job_id)
+                except Exception:
+                    # The worker may have completed between the stop request
+                    # and cancellation. The durable Workspace stop still wins.
+                    _log.debug("Could not cancel implementation job %s", job_id, exc_info=True)
+        result = result_with_contract(
+            {**latest, "status": "CANCELLED"},
+            {
+                **dict(latest.get("result") or {}),
+                "kind": "cancelled",
+                "message": "The workspace command was stopped.",
+            },
+        )
+        self._finish_terminal_command(
+            command_id, command, status="CANCELLED", result=result, error=None
+        )
+        repository.notify_command_changed(
+            str(command["app_id"]), command_id=command_id, stage=stage
+        )
+
+    @staticmethod
+    def _cancelled_result(command: dict[str, Any]) -> dict[str, Any]:
+        return result_with_contract(
+            {**command, "status": "CANCELLED"},
+            {
+                **dict(command.get("result") or {}),
+                "kind": "cancelled",
+                "message": "The workspace command was stopped.",
+            },
+        )
+
+    def _finish_terminal_command(
+        self,
+        command_id: str,
+        command: dict[str, Any],
+        *,
+        status: str,
+        result: dict[str, Any],
+        error: str | None,
+    ) -> dict[str, Any]:
+        """Atomically choose a terminal state after checking the stop bit."""
+
+        latest = repository.get_command(command_id) or command
+        return repository.finish_command_honoring_stop(
+            command_id,
+            status=status,
+            result=result,
+            error=error,
+            cancelled_result=self._cancelled_result(latest),
+        )
+
+    @staticmethod
+    def _is_transient_execution_error(error: Exception) -> bool:
+        """Classify provider/transport failures without treating validation as retryable."""
+
+        if isinstance(error, (ConnectionError, TimeoutError, OSError)):
+            return True
+        status_code = getattr(error, "status_code", None)
+        if isinstance(status_code, int) and (status_code == 429 or status_code >= 500):
+            return True
+        name = type(error).__name__.lower()
+        return any(
+            token in name
+            for token in (
+                "apiconnection",
+                "apitimeout",
+                "ratelimit",
+                "serviceunavailable",
+                "gatewaytimeout",
+            )
+        )
+
+    def _dispatch_with_transient_retry(self, command: dict[str, Any]) -> dict[str, Any]:
+        """Retry only checkpoint-backed stages, retaining this command identity."""
+
+        def operation() -> dict[str, Any]:
+            return self._dispatch(command)
+        return self._run_with_transient_retry(
+            command, operation, retry_operation=lambda: self._transient_retry_operation(command)
+        )
+
+    def _run_with_transient_retry(
+        self,
+        command: dict[str, Any],
+        operation: Callable[[], dict[str, Any]],
+        *,
+        retry_operation: Callable[[], Callable[[], dict[str, Any]] | None],
+    ) -> dict[str, Any]:
+        """Run an idempotent checkpoint operation with cancellable backoff."""
+
+        command_id = str(command["command_id"])
+        attempt = 0
+        while True:
+            if self._stop_requested(command_id):
+                raise WorkspaceStopRequested()
+            try:
+                return operation()
+            except Exception as error:
+                if not self._is_transient_execution_error(error):
+                    raise
+                next_operation = retry_operation()
+                if next_operation is None:
+                    # Never repeat job creation, in-flight implementation monitoring,
+                    # or an uncheckpointed test after an ambiguous provider failure.
+                    raise
+                attempt += 1
+                self._record_transient_retry(command_id, attempt, error)
+                self._sleep_for_retry(command_id, attempt)
+                operation = next_operation
+
+    def _transient_retry_operation(self, command: dict[str, Any]):
+        app_id = str(command["app_id"])
+        command_id = str(command["command_id"])
+        stage = str(command.get("stage") or "")
+        if stage == "requirements":
+            def retry_requirements() -> dict[str, Any]:
+                progress = self._requirements_progress_reporter(app_id, command_id)
+                with requirements_telemetry.progress_scope(progress):
+                    return self._requirements_result(
+                        retry_requirements_analysis(app_id, app_id=app_id)
+                    )
+            return retry_requirements
+        if stage == "design":
+            def retry_design() -> dict[str, Any]:
+                status = session_status(app_id)
+                design_stage = str(status.get("stage") or "design")
+                response = self._run_design_operation(
+                    command,
+                    stage=design_stage,
+                    label=self._design_stage_label(design_stage, "Retrying"),
+                    operation=lambda: retry_design_session(app_id),
+                )
+                return self._design_result(response)
+            return retry_design
+        if stage == "testing":
+            # A persisted testing input is immutable, so its run can safely resume.
+            latest = repository.get_command(command_id) or command
+            checkpoint = (latest.get("payload") or {}).get("testing_checkpoint")
+            if isinstance(checkpoint, dict) and checkpoint.get("implementation_job_id"):
+                return lambda: self._run_testing_command(
+                    latest, str(checkpoint["implementation_job_id"])
+                )
+        if stage == "implementation" and command.get("action") == "retry_implementation":
+            job_id = str((command.get("payload") or {}).get("job_id") or "")
+            if not job_id:
+                return None
+            try:
+                job = implementation_worker.get(job_id)
+            except Exception:
+                return None
+            if (
+                str(job.get("status") or "") in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER"}
+                and bool(job.get("checkpoint_retryable"))
+            ):
+                return lambda: self._retry_implementation_checkpoint(command, job_id)
+        return None
+
+    def _retry_implementation_checkpoint(
+        self, command: dict[str, Any], job_id: str
+    ) -> dict[str, Any]:
+        """Retry only a confirmed terminal job; never create a replacement job."""
+
+        current = implementation_worker.get(job_id)
+        if (
+            str(current.get("status") or "") not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER"}
+            or not bool(current.get("checkpoint_retryable"))
+        ):
+            raise RuntimeError("The implementation checkpoint is no longer safe to retry.")
+        job = implementation_worker.retry_failed(job_id)
+        return self._monitor_implementation(job, command_id=str(command["command_id"]))
+
+    def _record_transient_retry(
+        self, command_id: str, attempt: int, error: Exception
+    ) -> None:
+        latest = repository.get_command(command_id)
+        if latest is None:
+            raise WorkspaceStopRequested()
+        payload = dict(latest.get("payload") or {})
+        payload["_transient_retry"] = {
+            "attempt": attempt,
+            "error_type": type(error).__name__,
+        }
+        repository.update_command(command_id, payload=payload, error=None)
+        repository.notify_command_changed(
+            str(latest["app_id"]), command_id=command_id, stage=str(latest["stage"])
+        )
+
+    def _sleep_for_retry(self, command_id: str, attempt: int) -> None:
+        delay = min(_RETRY_MAX_SECONDS, _RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
+        delay *= random.uniform(0.8, 1.2)  # noqa: S311 - scheduling jitter, not security.
+        remaining = delay
+        while remaining > 0:
+            if self._stop_requested(command_id):
+                raise WorkspaceStopRequested()
+            pause = min(_RETRY_SLEEP_SLICE_SECONDS, remaining)
+            time.sleep(pause)
+            remaining -= pause
 
     def _complete_referenced_action(self, command: dict[str, Any]) -> None:
         if command["payload"].get("_conversation_outcome"):
@@ -1487,6 +1680,11 @@ class WorkspaceService:
                 and question.detected_at.stage == "design"
                 and question.trigger.category == "specification_gap"
             )
+            class_binding_stall = (
+                prior.get("stage") == "design"
+                and question.detected_at.stage == "design"
+                and question.trigger.category == "class_binding_source"
+            )
             implementation_gap = (
                 prior.get("stage") == "implementation"
                 and question.detected_at.stage == "implementation"
@@ -1497,12 +1695,17 @@ class WorkspaceService:
                 and question.detected_at.stage == "requirements"
                 and question.trigger.category == "semantic_ambiguity"
             )
-            if question.app_id != app_id or not (design_gap or implementation_gap or requirements_ambiguity):
+            if question.app_id != app_id or not (
+                design_gap
+                or class_binding_stall
+                or implementation_gap
+                or requirements_ambiguity
+            ):
                 raise ValueError("This feedback question is not an executable workspace gap.")
             targets = question.authority_candidates
             if len(targets) != 1:
                 raise ValueError("The feedback question must name one authority target.")
-            if (design_gap or requirements_ambiguity) and (
+            if (design_gap or class_binding_stall or requirements_ambiguity) and (
                 targets[0].owner != "requirements"
                 or targets[0].kind != "use_case_spec"
                 or targets[0].artifact_type != TYPE_USECASE_SPEC
@@ -1517,6 +1720,25 @@ class WorkspaceService:
                     option_id=option_id,
                     decision_id=str(uuid.uuid4()),
                     source_user_message_id=str(prior["command_id"]),
+                )
+            elif class_binding_stall:
+                raw_answer = str(payload.get("text") or "").strip()
+                decision = free_text_decision(
+                    question,
+                    raw_answer=raw_answer,
+                    decision_id=str(uuid.uuid4()),
+                    source_user_message_id=str(prior["command_id"]),
+                    normalization={
+                        "normalized_meaning": {
+                            "semantic_scope": "contract",
+                            "requested_effect": raw_answer,
+                            "change_type": "modify",
+                        },
+                        "authoritative_target_refs": [targets[0].ref],
+                        "preserved_constraints": (
+                            question.decision_policy.required_preserved_constraints
+                        ),
+                    },
                 )
             else:
                 interpretation = conversation_agent.interpret_revision(
@@ -1577,6 +1799,23 @@ class WorkspaceService:
             )
             if not selected.get("valid"):
                 raise ValueError("The feedback question is stale.")
+            if class_binding_stall:
+                guidance = decision.normalized_meaning.requested_effect
+                if decision.preserved_constraints:
+                    guidance += "\nPreserve: " + "; ".join(
+                        decision.preserved_constraints
+                    )
+                return (
+                    "message",
+                    {
+                        **payload,
+                        "action_id": str(prior["command_id"]),
+                        "text": guidance,
+                        "feedback_decision": decision.model_dump(mode="json"),
+                        "_conversation_outcome": {"kind": "class_binding_retry"},
+                    },
+                    "design",
+                )
             if implementation_gap:
                 plan = plan_revision(
                     tools,
@@ -1746,7 +1985,7 @@ class WorkspaceService:
 
     @staticmethod
     def _source_testing_command(command: dict[str, Any]) -> dict[str, Any] | None:
-        """Follow an Implementation repair/retry chain back to its failed Testing command."""
+        """Return the Testing command referenced by a retry action, if any."""
 
         app_id = str(command["app_id"])
         command_id = str((command.get("payload") or {}).get("action_id") or "")
@@ -1760,12 +1999,7 @@ class WorkspaceService:
                 raise ValueError("The Testing repair chain belongs to another app.")
             if referenced.get("stage") == "testing":
                 return referenced
-            if (
-                referenced.get("stage") != "implementation"
-                or referenced.get("action") not in {"delegate_repair", "retry_implementation"}
-            ):
-                return None
-            command_id = str((referenced.get("payload") or {}).get("action_id") or "")
+            return None
         return None
 
     def _dispatch(self, command: dict[str, Any]) -> dict[str, Any]:
@@ -1804,6 +2038,20 @@ class WorkspaceService:
                 if plan.status != "needs_confirmation":
                     raise ValueError("Only a confirmation plan can wait for approval.")
                 return self._revision_plan_result(str(command["command_id"]), plan)
+            if kind == "class_binding_retry":
+                app_id = str(command["app_id"])
+                guidance = str(command["payload"].get("text") or "").strip()
+                if not guidance:
+                    raise ValueError("Class binding retry guidance cannot be empty.")
+                response = self._run_design_operation(
+                    command,
+                    stage="class_diagram",
+                    label=self._design_stage_label("class_diagram", "Retrying"),
+                    operation=lambda: retry_design_session(
+                        app_id, repair_guidance=guidance
+                    ),
+                )
+                return self._design_result(response)
             raise ValueError("Unknown conversation outcome.")
         # 파일 복원이나 검사 도중 서버가 재시작되었다면 구현 수리부터 반복하지 않는다.
         # 현재 command에 저장한 Testing 체크포인트를 그대로 실행 서비스에 돌려준다.
@@ -1839,123 +2087,6 @@ class WorkspaceService:
             )
         if handler == "plan_downstream_revision":
             return self._plan_downstream_revision(command)
-        if handler == "delegate_repair":
-            action_id = str(command["payload"].get("action_id") or "")
-            prior = repository.get_command(action_id) or {}
-            result = prior.get("result") or {}
-            blockers = result.get("blocking_findings") or []
-            messages = [
-                str(blocker.get("message") or "")
-                for blocker in blockers
-                if isinstance(blocker, dict) and blocker.get("repairable") is not False
-            ]
-            if not messages:
-                raise ValueError("No LLM-repairable blocker is available.")
-            if prior.get("stage") == "testing":
-                previous_job = result.get("job") or {}
-                implementation_job_id = str(
-                    previous_job.get("implementation_job_id")
-                    or prior.get("payload", {}).get("implementation_job_id")
-                    or ""
-                )
-                if not implementation_job_id:
-                    raise ValueError("The failing Testing run has no implementation job ID.")
-                implementation_blockers = [
-                    blocker
-                    for blocker in blockers
-                    if isinstance(blocker, dict)
-                    and blocker.get("repairable") is not False
-                    and (
-                        blocker.get("repair_owner") == "implementation"
-                        or blocker.get("defect_class") == "SUT_DEFECT"
-                    )
-                ]
-                if not implementation_blockers:
-                    raise ValueError("The selected Testing finding does not belong to Implementation.")
-                (
-                    selected_blockers,
-                    repair_owner,
-                    repair_task_type,
-                    repair_file_hints,
-                    verification_profile,
-                ) = self._testing_repair_request(
-                    str(command["app_id"]),
-                    result,
-                    implementation_blockers,
-                )
-                original_implementation = implementation_worker.get(implementation_job_id)
-                previous_repair_results, older_repair_summaries = (
-                    self._implementation_repair_outcomes(original_implementation)
-                )
-                feedback = self._testing_implementation_feedback(
-                    result,
-                    selected_blockers,
-                    previous_repair_results=previous_repair_results,
-                    older_repair_summaries=older_repair_summaries,
-                )
-                (
-                    confirmed_target_refs,
-                    repair_file_hints,
-                ) = self._testing_implementation_repair_targets(
-                    str(command["app_id"]),
-                    selected_blockers,
-                    repair_file_hints,
-                )
-                repair_payload = {
-                    **dict(command.get("payload") or {}),
-                    "job_id": implementation_job_id,
-                }
-                command["payload"] = repair_payload
-                repository.update_command(
-                    str(command["command_id"]),
-                    payload=repair_payload,
-                )
-                repair_job = implementation_worker.request_owner_repair(
-                    implementation_job_id,
-                    owner=repair_owner,
-                    evidence={
-                        "command": ["testing", repair_task_type],
-                        "stderr": feedback,
-                        "testResults": json.dumps(
-                            {
-                                "confirmedTargetRefs": confirmed_target_refs,
-                                "fileHints": repair_file_hints,
-                                "verificationProfile": verification_profile,
-                            },
-                            ensure_ascii=False,
-                            sort_keys=True,
-                        ),
-                    },
-                )
-                repair_job_id = str(repair_job.get("job_id") or "")
-                if repair_job_id != implementation_job_id:
-                    raise RuntimeError("Implementation repair returned an unexpected job ID.")
-                return self._monitor_implementation(
-                    repair_job,
-                    command_id=str(command["command_id"]),
-                )
-            history = dict(result.get("repair_state") or {})
-            repair_stage = str(
-                result.get("current_stage") or result.get("phase") or prior.get("stage")
-            )
-            strategy_key = (
-                f"delegate:{prior.get('stage')}:{repair_stage}:"
-                f"episode-{int(history.get('attempt_count') or 0) + 1}"
-            )
-            delegated = dict(command)
-            delegated["payload"] = {
-                **command["payload"],
-                "_repair_strategy_key": strategy_key,
-                "text": (
-                    "Repair the current stage using the accumulated repair history. "
-                    f"Use this new strategy identity: {strategy_key}. "
-                    "Do not repeat a rejected strategy or candidate. Resolve these blockers:\n- "
-                    + "\n- ".join(messages)
-                    + "\n\nAccumulated repair history:\n"
-                    + json.dumps(history, ensure_ascii=False, sort_keys=True)
-                ),
-            }
-            return self._stage_message(delegated, advance=False)
         if handler == "retry_requirements":
             app_id = str(command["app_id"])
             feedback_command = self._feedback_question_command(command)
@@ -2087,6 +2218,366 @@ class WorkspaceService:
         if handler == "rerun_from_stage":
             return self._rerun_from_stage(command)
         raise ValueError(f"Unsupported workspace command: {action}")
+
+    def _auto_repair_semantic_result(
+        self,
+        command: dict[str, Any],
+        result: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Continue an active stage ledger until it repairs, asks, or stalls.
+
+        The loop has no service-owned retry count.  Each turn must produce a
+        new stage diagnostic fingerprint, and the Requirements/Design ledgers
+        remain responsible for exhausting strategies and returning ``STALLED``.
+        """
+
+        current = result
+        seen_fingerprints: set[str] = set()
+        iterations = 0
+        while True:
+            if self._stop_requested(str(command["command_id"])):
+                raise WorkspaceStopRequested()
+            repair_input = self._active_semantic_repair_input(current)
+            if repair_input is None:
+                return current
+            if iterations >= _MAX_AUTOMATIC_SEMANTIC_REPAIR_ITERATIONS:
+                return self._stalled_semantic_repair_result(current)
+            repair_state, repairable = repair_input
+            fingerprint = self._semantic_repair_fingerprint(current)
+            if fingerprint in seen_fingerprints:
+                return self._stalled_semantic_repair_result(current)
+            seen_fingerprints.add(fingerprint)
+            iterations += 1
+
+            stage = str(command.get("stage") or "")
+            if stage == "testing":
+                blockers = [
+                    blocker
+                    for blocker in current.get("blocking_findings") or []
+                    if isinstance(blocker, dict)
+                ]
+                implementation_blockers = [
+                    blocker
+                    for blocker in blockers
+                    if blocker.get("repairable") is not False
+                    and blocker.get("defect_class") == "SUT_DEFECT"
+                    and blocker.get("repair_owner") == "implementation"
+                ]
+                repairable_blockers = [
+                    blocker for blocker in blockers if blocker.get("repairable") is not False
+                ]
+                # Only an unambiguous Implementation-owned SUT failure can cross
+                # this boundary. Mixed or separately routed failures remain visible
+                # to the existing action/question handling.
+                if (
+                    not implementation_blockers
+                    or len(implementation_blockers) != len(repairable_blockers)
+                    or blocking_findings_route(blockers)
+                ):
+                    return current
+                previous_job = current.get("job")
+                if (
+                    not isinstance(previous_job, dict)
+                    or previous_job.get("status") != "COMPLETED"
+                    or (previous_job.get("result") or {}).get("passed") is not False
+                ):
+                    return current
+                repair_result, implementation_job_id, repair_task_type = (
+                    self._repair_testing_with_owner(command, current)
+                )
+                if (
+                    repair_result.get("awaiting_input") is True
+                    or (repair_result.get("job") or {}).get("status") != "COMPLETED"
+                ):
+                    return repair_result
+                current = self._run_with_transient_retry(
+                    command,
+                    lambda: self._run_testing_command(
+                        command,
+                        implementation_job_id,
+                        previous_job=previous_job,
+                        preserve_test=True,
+                        repair_task_type=repair_task_type,
+                        reset_checkpoint=True,
+                    ),
+                    retry_operation=lambda: self._transient_retry_operation(command),
+                )
+                continue
+            instruction = self._repair_instruction(stage, repair_state, repairable)
+            if stage == "requirements":
+                repaired = self._run_with_transient_retry(
+                    command,
+                    lambda: self._repair_requirements_result(
+                        command, current, instruction=instruction
+                    ),
+                    retry_operation=lambda: (
+                        lambda: self._repair_requirements_result(
+                            command, current, instruction=instruction
+                        )
+                    ),
+                )
+            elif stage == "design":
+                app_id = str(command["app_id"])
+                status = session_status(app_id)
+                # An active design gate continues with its saved session and
+                # repair guidance. Retry is reserved for failed checkpoints.
+                if not status.get("active"):
+                    return current
+                current_stage = str(
+                    status.get("stage") or current.get("current_stage") or "design"
+                )
+                response = self._run_with_transient_retry(
+                    command,
+                    lambda: self._run_design_operation(
+                        command,
+                        stage=current_stage,
+                        label=self._design_stage_label(current_stage, "Repairing"),
+                        operation=lambda: resume_design_session(app_id, instruction),
+                    ),
+                    retry_operation=lambda: (
+                        lambda: self._run_design_operation(
+                            command,
+                            stage=current_stage,
+                            label=self._design_stage_label(current_stage, "Repairing"),
+                            operation=lambda: resume_design_session(app_id, instruction),
+                        )
+                    ),
+                )
+                repaired = self._design_result(response)
+            else:
+                # Implementation owner work and Testing checkpoints have
+                # independent execution/retry semantics and are not replayed.
+                return current
+
+            if self._semantic_repair_fingerprint(repaired) == fingerprint:
+                return self._stalled_semantic_repair_result(repaired)
+            current = repaired
+
+    @staticmethod
+    def _active_semantic_repair_input(
+        result: dict[str, Any],
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+        if (
+            result.get("awaiting_input") is not True
+            or result.get("feedback_question") is not None
+            or result.get("resource_question") is not None
+            or bool(result.get("resource_questions"))
+            or result.get("requires_revision") is not True
+        ):
+            return None
+        repair_state = result.get("repair_state")
+        if not isinstance(repair_state, dict) or repair_state.get("status") != "ACTIVE":
+            return None
+        repairable = [
+            blocker
+            for blocker in result.get("blocking_findings") or []
+            if isinstance(blocker, dict) and blocker.get("repairable") is not False
+        ]
+        return (repair_state, repairable) if repairable else None
+
+    @staticmethod
+    def _semantic_repair_fingerprint(result: dict[str, Any]) -> str:
+        state = result.get("repair_state")
+        state = state if isinstance(state, dict) else {}
+        return stable_digest(
+            {
+                "stage": result.get("current_stage") or result.get("phase"),
+                "repair": {
+                    key: state.get(key)
+                    for key in (
+                        "status",
+                        "attempt_count",
+                        "accepted_count",
+                        "finding_digest",
+                        "tried_strategies",
+                        "rejected_candidate_digests",
+                    )
+                },
+                "findings": result.get("blocking_findings") or [],
+                "changed": result.get("changed") or [],
+                "touched": result.get("touched") or {},
+            }
+        )
+
+    @staticmethod
+    def _stalled_semantic_repair_result(result: dict[str, Any]) -> dict[str, Any]:
+        repair_state = dict(result.get("repair_state") or {})
+        repair_state["status"] = "STALLED"
+        repair_state.setdefault(
+            "stall_reason", "Automatic repair did not produce new stage progress."
+        )
+        stage = str(result.get("current_stage") or result.get("phase") or "current")
+        return {
+            **result,
+            "message": (
+                f"Automatic repair stalled at {stage.replace('_', ' ')}. "
+                "Provide revision feedback for the current artifact to continue."
+            ),
+            "repair_state": repair_state,
+        }
+
+    @staticmethod
+    def _repair_instruction(
+        stage: str,
+        repair_state: dict[str, Any],
+        blockers: list[dict[str, Any]],
+    ) -> str:
+        history = dict(repair_state)
+        strategy_key = (
+            f"automatic:{stage}:episode-"
+            f"{int(history.get('attempt_count') or 0) + 1}"
+        )
+        messages = [str(blocker.get("message") or "") for blocker in blockers]
+        return (
+            "Repair the current stage using the accumulated repair history. "
+            f"Use this new strategy identity: {strategy_key}. "
+            "Do not repeat a rejected strategy or candidate. Resolve these blockers:\n- "
+            + "\n- ".join(messages)
+            + "\n\nAccumulated repair history:\n"
+            + json.dumps(history, ensure_ascii=False, sort_keys=True)
+        )
+
+    def _repair_requirements_result(
+        self,
+        command: dict[str, Any],
+        result: dict[str, Any],
+        *,
+        instruction: str,
+    ) -> dict[str, Any]:
+        """Apply the existing Requirements repair edit to an in-memory result."""
+
+        repairable = [
+            blocker
+            for blocker in result.get("blocking_findings") or []
+            if isinstance(blocker, dict) and blocker.get("repairable") is not False
+        ]
+        if not repairable:
+            raise ValueError("No LLM-repairable blocker is available.")
+        stage_order = {
+            "actors": 0,
+            "use_cases": 1,
+            "specs": 2,
+            "relationships": 3,
+        }
+        owner_value = min(
+            (str(item.get("stage") or "relationships") for item in repairable),
+            key=lambda value: stage_order.get(value, 99),
+            default="relationships",
+        )
+        owner = cast(FeedbackStage, owner_value)
+        targets = sorted(
+            {
+                str(target)
+                for item in repairable
+                if str(item.get("stage") or "") == owner
+                for target in item.get("target_ids") or []
+            }
+        )
+        app_id = str(command["app_id"])
+        request = AnalyzeRequest(
+            edit=FeedbackEdit(
+                stage=owner,
+                scope="local" if targets else "broad",
+                target_ids=targets,
+                instruction=instruction,
+            ),
+            thread_id=app_id,
+            app_id=app_id,
+        )
+        progress = self._requirements_progress_reporter(
+            app_id, str(command["command_id"])
+        )
+        with requirements_telemetry.progress_scope(progress):
+            repaired = analyze_requirements(request)
+        return self._requirements_result(repaired)
+
+    def _repair_testing_with_owner(
+        self,
+        command: dict[str, Any],
+        result: dict[str, Any],
+    ) -> tuple[dict[str, Any], str, str]:
+        """Reuse the Testing-to-Implementation owner repair hand-off in memory."""
+
+        blockers = result.get("blocking_findings") or []
+        implementation_job_id = str(
+            (result.get("job") or {}).get("implementation_job_id")
+            or command.get("payload", {}).get("implementation_job_id")
+            or ""
+        )
+        if not implementation_job_id:
+            raise ValueError("The failing Testing run has no implementation job ID.")
+        implementation_blockers = [
+            blocker
+            for blocker in blockers
+            if isinstance(blocker, dict)
+            and blocker.get("repairable") is not False
+            and (
+                blocker.get("repair_owner") == "implementation"
+                or blocker.get("defect_class") == "SUT_DEFECT"
+            )
+        ]
+        if not implementation_blockers:
+            raise ValueError("The selected Testing finding does not belong to Implementation.")
+        (
+            selected_blockers,
+            repair_owner,
+            repair_task_type,
+            repair_file_hints,
+            verification_profile,
+        ) = self._testing_repair_request(
+            str(command["app_id"]),
+            result,
+            implementation_blockers,
+        )
+        original_implementation = implementation_worker.get(implementation_job_id)
+        previous_repair_results, older_repair_summaries = (
+            self._implementation_repair_outcomes(original_implementation)
+        )
+        feedback = self._testing_implementation_feedback(
+            result,
+            selected_blockers,
+            previous_repair_results=previous_repair_results,
+            older_repair_summaries=older_repair_summaries,
+        )
+        confirmed_target_refs, repair_file_hints = (
+            self._testing_implementation_repair_targets(
+                str(command["app_id"]), selected_blockers, repair_file_hints
+            )
+        )
+        repair_payload = {
+            **dict(command.get("payload") or {}),
+            "job_id": implementation_job_id,
+        }
+        command["payload"] = repair_payload
+        repository.update_command(str(command["command_id"]), payload=repair_payload)
+        repair_job = implementation_worker.request_owner_repair(
+            implementation_job_id,
+            owner=repair_owner,
+            evidence={
+                "command": ["testing", repair_task_type],
+                "stderr": feedback,
+                "testResults": json.dumps(
+                    {
+                        "confirmedTargetRefs": confirmed_target_refs,
+                        "fileHints": repair_file_hints,
+                        "verificationProfile": verification_profile,
+                    },
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            },
+        )
+        repair_job_id = str(repair_job.get("job_id") or "")
+        if repair_job_id != implementation_job_id:
+            raise RuntimeError("Implementation repair returned an unexpected job ID.")
+        return (
+            self._monitor_implementation(
+                repair_job,
+                command_id=str(command["command_id"]),
+            ),
+            implementation_job_id,
+            repair_task_type,
+        )
 
     def _rerun_from_stage(self, command: dict[str, Any]) -> dict[str, Any]:
         """선택 단계 직전까지 분기한 새 앱에서 정식 실행 경로를 시작한다."""
@@ -2221,42 +2712,6 @@ class WorkspaceService:
                             app_id=app_id,
                         )
                     return self._requirements_result(result)
-                elif command.get("action") == "delegate_repair":
-                    repairable = [
-                        blocker
-                        for blocker in previous_result.get("blocking_findings") or []
-                        if isinstance(blocker, dict) and blocker.get("repairable") is not False
-                    ]
-                    stage_order = {
-                        "actors": 0,
-                        "use_cases": 1,
-                        "specs": 2,
-                        "relationships": 3,
-                    }
-                    owner_value = min(
-                        (str(item.get("stage") or "relationships") for item in repairable),
-                        key=lambda value: stage_order.get(value, 99),
-                        default="relationships",
-                    )
-                    owner = cast(FeedbackStage, owner_value)
-                    targets = sorted(
-                        {
-                            str(target)
-                            for item in repairable
-                            if str(item.get("stage") or "") == owner
-                            for target in item.get("target_ids") or []
-                        }
-                    )
-                    request = AnalyzeRequest(
-                        edit=FeedbackEdit(
-                            stage=owner,
-                            scope="local" if targets else "broad",
-                            target_ids=targets,
-                            instruction=text,
-                        ),
-                        thread_id=app_id,
-                        app_id=app_id,
-                    )
                 elif (
                     text
                     and resource_field
@@ -2492,8 +2947,6 @@ class WorkspaceService:
             ]
             delivery = implementation_revision_payload(targets)
             confirmed_target_refs = list(delivery.confirmed_target_refs)
-        elif command.get("action") == "delegate_repair":
-            confirmed_target_refs = []
         else:
             confirmed_target_refs = None
         job = implementation_worker.create_feedback_job(
@@ -2504,7 +2957,15 @@ class WorkspaceService:
             bool(payload.get("allow_assumptions", True)),
             confirmed_target_refs=confirmed_target_refs,
         )
-        return self._monitor_implementation(job)
+        latest = repository.get_command(str(command["command_id"])) or command
+        persisted_payload = {
+            **dict(latest.get("payload") or {}),
+            "job_id": str(job["job_id"]),
+        }
+        repository.update_command(str(command["command_id"]), payload=persisted_payload)
+        return self._monitor_implementation(
+            job, command_id=str(command["command_id"])
+        )
 
     @staticmethod
     def _design_stage_label(stage: str, verb: str) -> str:
@@ -2892,6 +3353,139 @@ class WorkspaceService:
         except (TypeError, ValueError):
             return None
 
+    def _class_binding_stall_result(
+        self,
+        command: dict[str, Any],
+        error: ClassBindingStalled,
+    ) -> dict[str, Any]:
+        """Turn a bounded class-binding stall into a pinned user source choice."""
+
+        app_id = str(command.get("app_id") or "")
+        status = session_status(app_id)
+        if not status.get("retryable") or status.get("stage") != "class_diagram":
+            raise error
+
+        context = error.repair_context
+        if not isinstance(context, dict):
+            raise TypeError("A class binding question requires its repair context.") from error
+        use_case_id = str(error.unit_id or context.get("useCaseId") or "").strip()
+        parameter = context.get("parameter")
+        parameter_name = (
+            str(parameter.get("name") or "").strip()
+            if isinstance(parameter, dict)
+            else ""
+        )
+        if not use_case_id or not parameter_name:
+            raise ValueError("A class binding question requires a use case and value name.") from error
+
+        tools = ProjectTools(app_id)
+        normalized = tools.normalize_revision_targets(
+            [f"use_case_spec:{use_case_id}"], require_editable=False
+        )
+        if len(normalized) != 1 or normalized[0].kind != "use_case_spec":
+            raise ValueError("The stalled class binding has no current use-case authority.") from error
+        authority = tools.current_revision_target(normalized[0])
+        if (
+            authority is None
+            or authority.owner != "requirements"
+            or authority.artifact_type != TYPE_USECASE_SPEC
+            or authority.artifact_version_id is None
+        ):
+            raise ValueError("The stalled class binding authority is stale.") from error
+
+        choices = (
+            (
+                "use_case_input",
+                "Information supplied when this use case begins",
+                "Use an input provided at the start of the use case and pass it through the existing flow.",
+                "use an input provided at the start of the use case and pass it through the existing flow.",
+            ),
+            (
+                "authenticated_context",
+                "The current user's authenticated context",
+                "Use the current user's authenticated context as the source for this value.",
+                "use the current user's authenticated context as the source for this value.",
+            ),
+            (
+                "earlier_step_result",
+                "A result from an earlier step",
+                "Use a value produced by an earlier step in this use case.",
+                "use a value produced by an earlier step in this use case.",
+            ),
+            (
+                "derive_from_existing_inputs",
+                "Derive it from information already available",
+                "Derive the value from other information already available in the use case.",
+                "derive the value from other information already available in the use case.",
+            ),
+        )
+        question_id = f"class-binding-source:{use_case_id}:{uuid.uuid4().hex[:12]}"
+        question = Question(
+            question_id=question_id,
+            question_version=1,
+            app_id=app_id,
+            source_execution_id=str(command.get("command_id") or ""),
+            detected_at={
+                "stage": "design",
+                "artifact_ref": authority.ref,
+                "element_ref": authority.ref,
+            },
+            base_revisions=[
+                BaseRevision(
+                    artifact_type=authority.artifact_type,
+                    version_id=authority.artifact_version_id,
+                )
+            ],
+            trigger={
+                "category": "class_binding_source",
+                "finding_refs": [str(context.get("code") or "BINDING_SOURCE_UNAVAILABLE")],
+                "evidence_refs": [authority.ref, str(context.get("location") or "")],
+            },
+            authority_candidates=[authority],
+            prompt=(
+                f"While carrying out {authority.display_label or use_case_id}, "
+                f"the system needs a value for '{parameter_name}'. "
+                "Where should that value come from?"
+            ),
+            options=[
+                QuestionOption(
+                    option_id=option_id,
+                    label=label,
+                    description=description,
+                    decision_payload=DecisionPayload(
+                        normalized_meaning=DecisionMeaning(
+                            semantic_scope="contract",
+                            requested_effect=(
+                                f"For the value '{parameter_name}', {requested_effect}"
+                            ),
+                            change_type="modify",
+                        ),
+                        authoritative_target_refs=(authority.ref,),
+                        preserved_constraints=(
+                            "Preserve the existing use-case behavior; clarify only the source of this value.",
+                        ),
+                    ),
+                )
+                for option_id, label, description, requested_effect in choices
+            ],
+            allow_free_text=True,
+            decision_policy=DecisionPolicy(
+                allowed_semantic_scopes=("contract",),
+                allowed_change_types=("modify",),
+                required_preserved_constraints=(
+                    "Preserve the existing use-case behavior; clarify only the source of this value.",
+                ),
+            ),
+        )
+        return {
+            "awaiting_input": True,
+            "kind": "question",
+            "message": question.prompt,
+            "feedback_question": question.model_dump(mode="json"),
+            "phase": "class_diagram",
+            "review_artifacts": ["Class diagram"],
+        }
+
     def _requirements_result(self, result: dict[str, Any]) -> dict[str, Any]:
         status = result.get("status")
         if status == "need_clarification":
@@ -2935,8 +3529,7 @@ class WorkspaceService:
                         if resource_question
                         else (
                             f"Design handoff is blocked by {len(blockers)} unresolved "
-                            "requirements finding(s). Review them, provide feedback, or "
-                            "delegate the repair to the LLM."
+                            "requirements finding(s). Review them and provide feedback."
                         )
                     ),
                     "phase": phase,
@@ -2949,7 +3542,6 @@ class WorkspaceService:
                         "accepted_count": 0,
                         "recent_attempts": [],
                     },
-                    "can_delegate_repair": bool(repairable),
                     "resource_question": resource_question,
                     "resource_questions": resource_questions,
                     "summary": result.get("feedback_summary"),
@@ -3199,8 +3791,8 @@ class WorkspaceService:
             "kind": "action_required",
             "message": (
                 f"The {str(stage or 'design').replace('_', ' ')} draft has "
-                f"{len(findings)} findings. Review the draft, provide feedback, or "
-                "delegate the repair to the LLM before continuing."
+                f"{len(findings)} findings. Review the draft and provide feedback "
+                "before continuing."
                 if requires_revision
                 else "Review the current design artifacts, then send revision feedback "
                 "or continue to the next stage."
@@ -3209,7 +3801,6 @@ class WorkspaceService:
             "requires_revision": requires_revision,
             "blocking_findings": blocking_findings,
             "repair_state": repair_state,
-            "can_delegate_repair": requires_revision,
             "findings": findings,
             # Keep the pending approval decision on the workspace command as
             # well as in the artifact payload so the UI can offer an explicit
@@ -3245,6 +3836,16 @@ class WorkspaceService:
         try:
             checkpoint = session_status(app_id)
             state = cast(dict[str, Any], artifact_repository.load_state(app_id))
+            if checkpoint.get("active") and checkpoint.get("stage") in DESIGN_STAGES:
+                snapshot = design_graph.get_state(
+                    {"configurable": {"thread_id": app_id}}
+                )
+                checkpoint_state = snapshot.values or {}
+                check_key = DESIGN_SPECS[str(checkpoint["stage"])].check_key
+                if check_key and isinstance(checkpoint_state.get(check_key), dict):
+                    # Artifact hydration recomputes deterministic findings, but
+                    # the graph checkpoint owns digest-bound semantic evidence.
+                    state[check_key] = checkpoint_state[check_key]
         except Exception:  # A presentation hint must not hide a command result.
             return hints
 
@@ -4632,8 +5233,20 @@ class WorkspaceService:
         last_status: str | None = None
         last_progress: dict[str, str] = {}
         last_agent_results: dict[str, str] = {}
+        transient_attempt = 0
         while True:
-            current = implementation_worker.get(job_id)
+            if command_id and self._stop_requested(command_id):
+                raise WorkspaceStopRequested()
+            try:
+                current = implementation_worker.get(job_id)
+            except Exception as error:
+                if not command_id or not self._is_transient_execution_error(error):
+                    raise
+                transient_attempt += 1
+                self._record_transient_retry(command_id, transient_attempt, error)
+                self._sleep_for_retry(command_id, transient_attempt)
+                continue
+            transient_attempt = 0
             status = str(current.get("status") or "")
             if app_id and command_id:
                 if status and status != last_status:
@@ -4736,6 +5349,8 @@ class WorkspaceService:
                     "job": current,
                     "review_artifacts": True,
                 }
+            if command_id and self._stop_requested(command_id):
+                raise WorkspaceStopRequested()
             time.sleep(1)
 
     def _run_testing_command(
@@ -4746,14 +5361,29 @@ class WorkspaceService:
         previous_job: dict[str, Any] | None = None,
         preserve_test: bool = False,
         repair_task_type: str | None = None,
+        reset_checkpoint: bool = False,
     ) -> dict[str, Any]:
         """Testing을 실행하고 재시작 checkpoint를 현재 Workspace command에 저장한다."""
 
         command_id = str(command["command_id"])
         last_progress_fingerprint = ""
 
+        if reset_checkpoint:
+            # Implementation repaired the files, so the saved TestingInput points
+            # at the old artifact versions. Remove it before capturing the fresh
+            # candidate; retaining it would silently verify the unrepaired app.
+            payload = {
+                key: value
+                for key, value in dict(command.get("payload") or {}).items()
+                if key != "testing_checkpoint"
+            }
+            command["payload"] = payload
+            repository.update_command(command_id, payload=payload)
+
         def save_checkpoint(checkpoint: dict[str, Any]) -> None:
             nonlocal last_progress_fingerprint
+            if self._stop_requested(command_id):
+                raise WorkspaceStopRequested()
             # Testing command와 checkpoint의 수명주기가 같으므로 기존 payload에 함께 저장한다.
             # 다른 command 입력은 그대로 보존한다.
             latest = repository.get_command(command_id)
@@ -4869,7 +5499,13 @@ class WorkspaceService:
                     },
                 )
 
-        checkpoint = command.get("payload", {}).get("testing_checkpoint")
+        checkpoint = (
+            None
+            if reset_checkpoint
+            else command.get("payload", {}).get("testing_checkpoint")
+        )
+        if self._stop_requested(command_id):
+            raise WorkspaceStopRequested()
         job = run_testing(
             str(command["app_id"]),
             implementation_job_id,
@@ -4898,7 +5534,6 @@ class WorkspaceService:
             blocking_route = blocking_findings_route(
                 [blocker for blocker in blockers if isinstance(blocker, dict)]
             )
-            can_delegate_repair = repairable and not blocking_route
             if blocking_route == "environment":
                 guidance = (
                     "The runtime environment must be restored before the same checks "
@@ -4916,7 +5551,7 @@ class WorkspaceService:
                     "Review the deployment design and EasyDep platform evidence before "
                     "continuing."
                 )
-            elif can_delegate_repair:
+            elif repairable and not blocking_route:
                 guidance = (
                     "EasyDep classified the failures and will continue the matching "
                     "automatic repair path."
@@ -4939,7 +5574,6 @@ class WorkspaceService:
                     "accepted_count": 0,
                     "recent_attempts": [],
                 },
-                "can_delegate_repair": can_delegate_repair,
                 "blocking_route": blocking_route,
                 "job_id": job_id,
                 "job": job,

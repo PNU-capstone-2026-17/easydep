@@ -186,6 +186,35 @@ def test_missing_source_repairs_owning_unit_without_call_plan_retry(monkeypatch)
     assert model.Collaborations[0].calls[1].argument_bindings[0].parameter == "request"
 
 
+def test_binding_retry_guidance_reaches_owning_operation_repair(monkeypatch):
+    combined_calls = 0
+
+    def fake_parse(messages, schema, **_kwargs):
+        nonlocal combined_calls
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is CombinedUnitProposal:
+            combined_calls += 1
+            payload = json.loads(messages[-1]["content"])
+            assert payload["repairGuidance"] == "Use the captured request as the source."
+            if combined_calls == 1:
+                proposal = combined_unit_proposal()
+                proposal["fragment"] = operation_fragment(unsourceable=True)
+                return proposal
+            assert payload["repairContext"]["code"] == "BINDING_SOURCE_UNAVAILABLE"
+            return combined_unit_proposal()
+        if issubclass(schema, CallPlanProposal):
+            return call_plan()
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    service.generate_class_model(
+        build_scenario_index(single_use_case()),
+        repair_guidance="  Use the captured request as the source.  ",
+    )
+    assert combined_calls == 2
+
+
 def test_unchanged_missing_source_stalls_after_one_owning_unit_repair(monkeypatch):
     """The same structural source slot cannot regenerate indefinitely."""
 
@@ -205,10 +234,18 @@ def test_unchanged_missing_source_stalls_after_one_owning_unit_repair(monkeypatc
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
-    with pytest.raises(generation.GenerationStalled, match="BINDING_SOURCE_UNAVAILABLE"):
+    with pytest.raises(
+        generation.ClassBindingStalled, match="BINDING_SOURCE_UNAVAILABLE",
+    ) as caught:
         service.generate_class_model(build_scenario_index(single_use_case()))
 
     assert combined_calls == 2
+    assert caught.value.unit_id == "UC1"
+    assert caught.value.repair_context["code"] == "BINDING_SOURCE_UNAVAILABLE"
+    assert caught.value.repair_context["useCaseId"] == "UC1"
+    assert caught.value.repair_context["parameter"]["type"]
+    assert caught.value.repair_context["searchedSourceScopes"]
+    assert caught.value.repair_context["callIndex"] == 1
 
 
 def test_temporal_parameter_uses_explicit_runtime_clock_when_no_upstream_value(monkeypatch):

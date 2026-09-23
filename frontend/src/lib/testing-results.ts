@@ -661,10 +661,7 @@ export function projectTestingRun(input: {
   const repairState = record(source.repair_state ?? outerResult.repair_state);
   const initialFailure = record(command?.payload?.initial_testing_failure);
   const hasTestingEvent = Boolean(event);
-  const isTestingCommand =
-    command?.stage === 'testing' ||
-    command?.action === 'start_testing' ||
-    (command?.action === 'delegate_repair' && Object.keys(initialFailure).length > 0);
+  const isTestingCommand = command?.stage === 'testing' || command?.action === 'start_testing';
   if (!Object.keys(source).length && !Object.keys(progress).length && !hasTestingEvent && !isTestingCommand) {
     return null;
   }

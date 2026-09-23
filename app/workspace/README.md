@@ -52,10 +52,10 @@ POST /api/workspace/apps/{app_id}/commands
 `auto_selectable=true`인 첫 action을 payload 변경 없이 클릭하는 기능이다. 질문에 답을
 발명하거나 단계·상태에서 action을 추측하지 않는다.
 
-`delegate_repair`도 일반 action과 같은 새 command다. 특히 Testing은 실패 근거를 남기고
-`AWAITING_INPUT`에서 멈추며, 수리 위임을 선택하면 별도 Implementation command가 해당
-checkpoint만 수정한다. 구현이 끝난 뒤 `start_testing`을 선택해야 별도 Testing command가
-검사를 이어 간다. 자동 모드는 이 action들을 차례로 클릭할 뿐 단계 경계를 합치지 않는다.
+의미상 수리 가능한 결과는 같은 command 안에서 해당 단계 소유자가 자동으로 수리하고 다시
+검증한다. 자동 수리가 더 이상 진전하지 못하면 현재 단계와 근거를 유지한 자유 입력 피드백만
+요청한다. 선택지가 근거로 제공된 typed Question은 그 선택지로만 묻고, 연결·전송 같은 실행
+실패는 checkpoint retry 정책이 처리한다.
 
 ## 실패한 단계 다시 실행하기
 

@@ -17,6 +17,7 @@ from app.design.services.class_diagram.cache import (
 from app.design.services.class_diagram.models import (
     AcceptedFragment,
     AcceptedInventory,
+    ClassBindingStalled,
     Collision,
     DataTypeCollision,
     GenerationStalled,
@@ -105,6 +106,7 @@ def _payload(
     issue: str = "",
     history: list[dict[str, str]] | None = None,
     repair_context: dict[str, Any] | None = None,
+    repair_guidance: str | None = None,
 ) -> dict[str, Any]:
     payload = operations.operation_payload(
         index,
@@ -131,6 +133,8 @@ def _payload(
         })
     if repair_context is not None:
         payload["repairContext"] = repair_context
+    if repair_guidance and repair_guidance.strip():
+        payload["repairGuidance"] = repair_guidance.strip()
     return payload
 
 
@@ -146,6 +150,7 @@ def _propose_unit(
     initial_issue: str = "",
     repair_history: list[dict[str, str]] | None = None,
     repair_context: dict[str, Any] | None = None,
+    repair_guidance: str | None = None,
 ) -> tuple[AcceptedFragment, dict[str, Any]]:
     """operation 검사를 통과할 때까지 한 유스케이스 제안만 전체 교체한다."""
 
@@ -168,6 +173,7 @@ def _propose_unit(
             issue=issue,
             history=history,
             repair_context=repair_context,
+            repair_guidance=repair_guidance,
         )
         parsed = parse_structured(
             [
@@ -385,7 +391,12 @@ def _collaboration_valid(
     return not report.errors and not report.findings
 
 
-def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEModel:
+def _build_uncached(
+    index: ScenarioIndex,
+    inventory: AcceptedInventory,
+    *,
+    repair_guidance: str | None = None,
+) -> BCEModel:
     use_cases = sorted(index.use_cases, key=lambda item: id_key(item.id))
     budgets = {use_case.id: RepairBudget(use_case.id) for use_case in use_cases}
     inventory_model = operations.compose_operation_units(inventory, [])
@@ -406,6 +417,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                 reserved=reserved,
                 reserved_types=reserved_types,
                 budget=budgets[use_case.id],
+                repair_guidance=repair_guidance,
             )
             for use_case in use_cases
         ]
@@ -444,6 +456,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                     previous=raw,
                     initial_issue=issue,
                     repair_history=collision_history,
+                    repair_guidance=repair_guidance,
                 )
         committed.append(fragment)
         raw_by_use_case[use_case.id] = raw
@@ -499,6 +512,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                         initial_issue=issue,
                         repair_history=repair_history,
                         repair_context=repair_context,
+                        repair_guidance=repair_guidance,
                     )
                     candidate_fragments = list(committed)
                     candidate_fragments[unit_index] = fragment
@@ -522,7 +536,9 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                         if _same_binding_event(
                             repair_context, repeated.repair_context,
                         ):
-                            raise GenerationStalled(use_case.id, repeated.issue) from repeated
+                            raise ClassBindingStalled(
+                                use_case.id, repeated.issue, repeated.repair_context,
+                            ) from repeated
                         previous = raw
                         issue = repeated.issue
                         repair_context = repeated.repair_context
@@ -652,7 +668,9 @@ def replace_use_case_unit(
             accepted = _materialize_use_case(index, skeleton, use_case, raw, budget)
         except collaboration.CombinedReplacementRequired as repeated:
             if _same_binding_event(repair_context, repeated.repair_context):
-                raise GenerationStalled(use_case.id, repeated.issue) from repeated
+                raise ClassBindingStalled(
+                    use_case.id, repeated.issue, repeated.repair_context,
+                ) from repeated
             previous = raw
             issue = repeated.issue
             repair_context = repeated.repair_context
@@ -692,16 +710,19 @@ def build_model(
     inventory: AcceptedInventory,
     *,
     cache: AcceptedUnitCache | None = None,
+    repair_guidance: str | None = None,
 ) -> BCEModel:
     """두 단계 생성 결과 전체만 cache하고 hit에서도 최종 검사를 다시 실행한다."""
 
     if cache is None:
         record_cache_outcome(None, operation="InteractionClassModel", unit="class-model")
-        model = _build_uncached(index, inventory)
+        model = _build_uncached(index, inventory, repair_guidance=repair_guidance)
     else:
         result = cache.get_or_compute(
             _model_cache_key(index, inventory),
-            lambda: _build_uncached(index, inventory).model_dump(by_alias=True),
+            lambda: _build_uncached(
+                index, inventory, repair_guidance=repair_guidance,
+            ).model_dump(by_alias=True),
         )
         record_cache_outcome(result, operation="InteractionClassModel", unit="class-model")
         model = BCEModel.model_validate(result.value)
@@ -736,4 +757,6 @@ def build_model(
     return model
 
 
-__all__ = ["GenerationStalled", "build_model", "replace_use_case_unit"]
+__all__ = [
+    "ClassBindingStalled", "GenerationStalled", "build_model", "replace_use_case_unit",
+]

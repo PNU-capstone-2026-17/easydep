@@ -41,6 +41,9 @@ class ArchitectureState(TypedDict, total=False):
     # 사용하며 저장되는 산출물에는 포함하지 않는다.
     extracted_bce_classes: dict[str, Any]
     class_diagram_feedback: str
+    # One-shot guidance for retrying a failed class-generation checkpoint. The
+    # extract node clears it in the same checkpoint update that accepts a model.
+    class_binding_repair_guidance: str
     class_diagram_puml: str
     class_diagram_syntax_valid: bool
     class_diagram_syntax_errors: list[str]

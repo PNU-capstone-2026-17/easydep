@@ -250,22 +250,18 @@ def test_deployment_configuration_wait_does_not_offer_early_advance() -> None:
     assert [item["action"] for item in shaped["actions"]] == ["message"]
 
 
-def test_repair_action_is_the_only_auto_selectable_repair_offer() -> None:
+def test_stalled_repair_offers_only_user_feedback() -> None:
     shaped = result_with_contract(
         command(status="AWAITING_INPUT", stage="design"),
         {
             "requires_revision": True,
-            "can_delegate_repair": True,
             "blocking_findings": [{"message": "missing call", "repairable": True}],
         },
     )
 
     assert shaped["wait_reason"] == "repair"
-    assert [item["action"] for item in shaped["actions"]] == [
-        "message",
-        "delegate_repair",
-    ]
-    assert [item["auto_selectable"] for item in shaped["actions"]] == [False, True]
+    assert [item["action"] for item in shaped["actions"]] == ["message"]
+    assert [item["auto_selectable"] for item in shaped["actions"]] == [False]
 
 
 @pytest.mark.parametrize(
@@ -313,7 +309,6 @@ def test_unrepairable_testing_findings_use_explicit_owner_route(
         command(status="AWAITING_INPUT", stage="testing"),
         {
             "requires_revision": True,
-            "can_delegate_repair": False,
             "job_id": "testing-1",
             "blocking_findings": [finding],
         },
@@ -338,7 +333,6 @@ def test_testing_environment_retry_reuses_the_implementation_job() -> None:
         command(status="AWAITING_INPUT", stage="testing"),
         {
             "requires_revision": True,
-            "can_delegate_repair": False,
             "job_id": "testing-1",
             "job": {"implementation_job_id": "implementation-1"},
             "blocking_findings": [
@@ -370,7 +364,6 @@ def test_unclassified_unrepairable_finding_is_not_treated_as_environment() -> No
         command(status="AWAITING_INPUT", stage="testing"),
         {
             "requires_revision": True,
-            "can_delegate_repair": False,
             "job_id": "testing-1",
             "blocking_findings": [{"repairable": False}],
         },
@@ -386,7 +379,6 @@ def test_upstream_testing_ambiguity_offers_review_without_automatic_repair() -> 
         command(status="AWAITING_INPUT", stage="testing"),
         {
             "requires_revision": True,
-            "can_delegate_repair": False,
             "job": {"implementation_job_id": "implementation-1"},
             "blocking_findings": [
                 {
@@ -417,7 +409,6 @@ def test_exhausted_testing_plan_defect_is_an_easydep_platform_issue() -> None:
         command(status="AWAITING_INPUT", stage="testing"),
         {
             "requires_revision": True,
-            "can_delegate_repair": False,
             "job": {"implementation_job_id": "implementation-1"},
             "blocking_findings": [
                 {
@@ -585,15 +576,15 @@ def test_reply_preserves_the_same_actions_for_rendering_and_followup_routing() -
         payload={
             "_conversation_actions": [
                 {
-                    "action": "delegate_repair",
-                    "label": "Delegate repair to LLM",
+                    "action": "message",
+                    "label": "Send revision feedback",
                     "payload": {"action_id": "repair-command"},
                 }
             ]
         },
     )
 
-    assert [offer.action for offer in offered_actions(reply)] == ["delegate_repair"]
+    assert [offer.action for offer in offered_actions(reply)] == ["message"]
     assert action_is_offered(
-        "delegate_repair", {"action_id": "repair-command"}, reply
+        "message", {"action_id": "repair-command"}, reply
     )

@@ -11,6 +11,7 @@ Python 호출자도 같은 흐름을 그대로 사용할 수 있다.
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from typing import Any, cast
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -38,7 +39,9 @@ from app.design.graphs.design_graph import (
     sync_design_state,
 )
 from app.design.graphs.subgraphs import DESIGN_SPECS, DESIGN_STAGES
+from app.design.nodes.artifact import check_node
 from app.design.schemas.architecture_state import ArchitectureState
+from app.design.services.class_diagram.models import GenerationStalled
 from app.design.services.deployment_diagram.bundle import (
     hydrate_deployment_diagram_bundle,
     select_deployment_target,
@@ -150,6 +153,8 @@ def start_design_session(app_id: str) -> dict[str, Any]:
     reset_design(app_id)
     try:
         return start_design(app_id, state)
+    except GenerationStalled:
+        raise
     except Exception as error:
         raise RuntimeError(f"Design pipeline failed: {error}") from error
 
@@ -248,6 +253,8 @@ def resume_design_session(app_id: str, feedback: str = "") -> dict[str, Any]:
                     }
     try:
         return resume_design(app_id, feedback)
+    except GenerationStalled:
+        raise
     except Exception as error:
         raise RuntimeError(f"Design pipeline failed: {error}") from error
 
@@ -482,7 +489,9 @@ def apply_deployment_sizing_session(
     }
 
 
-def retry_design_session(app_id: str) -> dict[str, Any]:
+def retry_design_session(
+    app_id: str, *, repair_guidance: str | None = None,
+) -> dict[str, Any]:
     """실패한 설계 노드부터 재시도하거나 현재 검토 결과를 복원한다."""
     _validate_app_id(app_id)
     _require_app_exists(app_id)
@@ -506,7 +515,9 @@ def retry_design_session(app_id: str) -> dict[str, Any]:
             }
         raise ValueError(f"No failed design stage is available to retry. Session: {status}")
     try:
-        return retry_design(app_id)
+        return retry_design(app_id, repair_guidance=repair_guidance)
+    except GenerationStalled:
+        raise
     except Exception as error:
         raise RuntimeError(f"Design pipeline failed: {error}") from error
 
@@ -648,6 +659,16 @@ def revise_design_elements(
     }
     if not changed:
         working = original
+    else:
+        # Targeted edits invalidate the old stage verdict. Run the ordinary
+        # stage check against the final batch state, with automatic whole-model
+        # repair disabled so the targeted edit boundary remains intact.
+        for stage in changed:
+            spec = DESIGN_SPECS.get(stage)
+            if spec is None or not spec.check_key:
+                continue
+            verdict = check_node(replace(spec, repair=None))(working)
+            working = {**working, **verdict}
 
     combined = {
         "state": working,

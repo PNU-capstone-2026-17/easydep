@@ -4,6 +4,7 @@ import type {
   FileArtifactSnapshot,
   WorkspaceApp,
   WorkspaceEvent,
+  WorkspaceCommand,
   WorkspaceSnapshot,
   CloudProvider,
   CloudRegionOption,
@@ -75,6 +76,13 @@ export function sendCommand(appId: string, payload: CommandPayload) {
     method: 'POST',
     body: JSON.stringify(payload)
   });
+}
+
+export function stopCommand(appId: string, commandId: string) {
+  return request<{ app_id: string; command: WorkspaceCommand }>(
+    `/api/workspace/apps/${encodeURIComponent(appId)}/commands/${encodeURIComponent(commandId)}/stop`,
+    { method: 'POST' }
+  );
 }
 
 export function getArtifacts(appId: string) {

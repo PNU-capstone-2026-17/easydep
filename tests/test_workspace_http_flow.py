@@ -184,6 +184,30 @@ def test_frontend_can_create_read_and_advance_a_workspace(
     assert [call["action"] for call in submitted] == ["message", "start_design"]
 
 
+def test_stop_active_command_is_durable_and_notifies(client: TestClient, monkeypatch) -> None:
+    command = {
+        "command_id": "command-1",
+        "app_id": APP_ID,
+        "action": "message",
+        "stage": "requirements",
+        "status": "RUNNING",
+        "payload": {"_stop_requested": True},
+    }
+    notified: list[dict[str, object]] = []
+    monkeypatch.setattr(workspace_api.repository, "request_stop", lambda *_args: command)
+    monkeypatch.setattr(
+        workspace_api.repository,
+        "notify_command_changed",
+        lambda _app_id, **kwargs: notified.append(kwargs),
+    )
+
+    response = client.post(f"/api/workspace/apps/{APP_ID}/commands/command-1/stop")
+
+    assert response.status_code == 200
+    assert response.json() == {"app_id": APP_ID, "command": command}
+    assert notified == [{"command_id": "command-1", "stage": "requirements"}]
+
+
 def test_deployment_sizing_apply_checks_preview_and_completes_workspace_wait(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -309,7 +333,7 @@ def test_llm_timing_details_are_loaded_one_page_at_a_time(
     ]
 
 
-def test_repair_and_retry_commands_reach_the_workspace_service(
+def test_manual_repair_is_rejected_and_retry_reaches_the_workspace_service(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     submitted: list[dict[str, Any]] = []
@@ -339,10 +363,10 @@ def test_repair_and_retry_commands_reach_the_workspace_service(
         json={"action": "retry_design", "action_id": "failed-command"},
     )
 
-    assert repair.status_code == retry.status_code == 202
-    assert [call["action"] for call in submitted] == ["delegate_repair", "retry_design"]
-    assert submitted[0]["payload"]["action_id"] == "review-command"
-    assert submitted[1]["payload"]["action_id"] == "failed-command"
+    assert repair.status_code == 422
+    assert retry.status_code == 202
+    assert [call["action"] for call in submitted] == ["retry_design"]
+    assert submitted[0]["payload"]["action_id"] == "failed-command"
 
 
 def test_class_preview_is_readable_while_its_command_is_running(

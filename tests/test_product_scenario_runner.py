@@ -98,20 +98,6 @@ def _auto_result(action: str, payload: Mapping[str, Any], **result: Any) -> dict
         ),
         (
             _command(
-                5,
-                "requirements",
-                "AWAITING_INPUT",
-                result=_auto_result(
-                    "delegate_repair",
-                    {"action_id": "command-5"},
-                    requires_revision=True,
-                    can_delegate_repair=True,
-                ),
-            ),
-            {"action": "delegate_repair", "action_id": "command-5"},
-        ),
-        (
-            _command(
                 6,
                 "design",
                 "AWAITING_INPUT",
@@ -146,12 +132,8 @@ def test_auto_action_matches_frontend_buttons(
         {"kind": "question", "questions": ["리전을 선택하세요."]},
         {"resource_question": {"kind": "choice"}},
         {"action": "confirm_change"},
-        {"requires_revision": True, "can_delegate_repair": False},
-        {
-            "requires_revision": True,
-            "can_delegate_repair": True,
-            "repair_state": {"status": "STALLED"},
-        },
+        {"requires_revision": True, "repair_state": {"status": "ACTIVE"}},
+        {"requires_revision": True, "repair_state": {"status": "STALLED"}},
     ],
 )
 def test_auto_action_does_not_guess_user_decisions(result: Mapping[str, Any]) -> None:
@@ -209,13 +191,8 @@ def test_runner_calls_only_the_public_product_flow() -> None:
         _command(
             2,
             "design",
-            "AWAITING_INPUT",
-            result=_auto_result(
-                "delegate_repair",
-                {"action_id": "command-2"},
-                requires_revision=True,
-                can_delegate_repair=True,
-            ),
+            "COMPLETED",
+            result={"requires_revision": True, "repair_state": {"status": "COMPLETED"}},
         ),
         _command(
             3,
@@ -249,7 +226,6 @@ def test_runner_calls_only_the_public_product_flow() -> None:
 
     assert [payload["action"] for payload in transport.commands] == [
         "start_design",
-        "delegate_repair",
         "start_implementation",
         "start_testing",
     ]
