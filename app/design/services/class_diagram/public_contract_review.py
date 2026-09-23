@@ -30,7 +30,10 @@ from app.validation import Finding, stable_digest
 
 _EVIDENCE_VERSION = "class-public-contract-review/v1"
 _PROMPT = """You independently review whether an accepted class-model use-case
-slice closes every public-contract obligation.  Do not accept a claim merely
+slice closes every public-contract obligation owned by the class stage.  The
+requirements/API/implementation stages own the authentication policy expressed
+by identity obligations of kind authenticate; do not require a class operation
+or collaboration mapping for that policy precondition.  Do not accept a claim merely
 because a DTO, principal, or method has a similar name.  For every obligation,
 cite the accepted operation and collaboration call that realize it; cite a
 parameter or declared field when that is the evidence for the value/identity.
@@ -67,8 +70,7 @@ def _contract(use_case: UseCase) -> dict[str, Any]:
 
 def has_obligations(index: ScenarioIndex) -> bool:
     return any(
-        (contract := _contract(use_case))
-        and ((contract.get("identity_obligations") or []) or (contract.get("required_values") or []))
+        _obligations(use_case)
         for use_case in index.use_cases
     )
 
@@ -77,7 +79,7 @@ def _obligations(use_case: UseCase) -> list[dict[str, Any]]:
     contract = _contract(use_case)
     result: list[dict[str, Any]] = []
     for ordinal, item in enumerate(contract.get("identity_obligations") or [], start=1):
-        if isinstance(item, Mapping):
+        if isinstance(item, Mapping) and text(item.get("obligation")).casefold() != "authenticate":
             result.append({"obligationId": f"identity:{ordinal}", "kind": "identity", **dict(item)})
     for ordinal, item in enumerate(contract.get("required_values") or [], start=1):
         if isinstance(item, Mapping):

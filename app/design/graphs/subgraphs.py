@@ -348,7 +348,16 @@ def _class_model_findings(
             model, index, cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
             evidence=(state.get("class_diagram_check") or {}).get("semanticEvidence"),
         )
-        findings.extend(semantic)
+        findings.extend(
+            ArtifactFinding(
+                rule_id=finding.rule_id,
+                message=finding.message,
+                location=finding.location,
+                requires_user_input=finding.requires_user_input,
+                origin=finding.origin,
+            )
+            for finding in semantic
+        )
     return findings
 
 

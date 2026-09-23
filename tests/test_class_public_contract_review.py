@@ -71,6 +71,46 @@ def test_public_contract_review_persists_digest_bound_pass_and_reuses_it(monkeyp
     assert semantic_evidence_for_readiness(model, {"class_diagram_check": {"semanticEvidence": evidence}}, index) == []
 
 
+def test_authentication_policy_is_not_a_class_operation_obligation(monkeypatch) -> None:
+    from app.design.services.class_diagram import public_contract_review as subject
+
+    scenario = _scenario()
+    contract = scenario["use_case_specs"][0]["public_contract"]
+    contract["identity_obligations"] = [{"obligation": "authenticate", "requirement_ids": ["R2"]}]
+    contract["required_values"] = []
+    monkeypatch.setattr(subject, "parse_structured", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("reviewer must not be called")))
+
+    findings, evidence = review_public_contract_closure(_model(), build_scenario_index(scenario))
+
+    assert findings == []
+    assert evidence["status"] == "not_required"
+    assert evidence["verdicts"] == []
+
+
+def test_authentication_policy_is_skipped_while_required_values_stay_reviewed(monkeypatch) -> None:
+    import json
+    from app.design.services.class_diagram import public_contract_review as subject
+
+    scenario = _scenario()
+    scenario["use_case_specs"][0]["public_contract"]["identity_obligations"] = [
+        {"obligation": "authenticate", "requirement_ids": ["R2"]},
+    ]
+    reviewed_obligations: list[list[dict]] = []
+
+    def fake_parse(messages, *_args, **_kwargs):
+        payload = json.loads(messages[1]["content"])
+        reviewed_obligations.append(payload["publicContractObligations"])
+        return _pass_response()
+
+    monkeypatch.setattr(subject, "parse_structured", fake_parse)
+    findings, evidence = review_public_contract_closure(_model(), build_scenario_index(scenario))
+
+    assert findings == []
+    assert evidence["status"] == "pass"
+    assert len(reviewed_obligations) == 1
+    assert [item["obligationId"] for item in reviewed_obligations[0]] == ["value:1"]
+
+
 def test_public_contract_review_rejects_uncited_or_wrong_call_evidence(monkeypatch) -> None:
     from app.design.services.class_diagram import public_contract_review as subject
     bad = _pass_response()
@@ -145,3 +185,31 @@ def test_validate_class_model_accepts_prebuilt_scenario_index(monkeypatch) -> No
     index = build_scenario_index(_scenario())
     report = design_validation.validate_class_model(_model(), index)
     assert "class.public-contract-semantic" not in report.checked_rule_ids
+
+
+def test_class_graph_adapts_semantic_finding_for_artifact_check_serialization(monkeypatch) -> None:
+    from app.design.graphs import subgraphs
+    from app.validation import Finding, ValidationReport
+
+    monkeypatch.setattr(subgraphs, "validate_class_model", lambda *_args: ValidationReport(status="clean"))
+    monkeypatch.setattr(
+        subgraphs,
+        "review_public_contract_closure",
+        lambda *_args, **_kwargs: ([Finding("class.public-contract-semantic", "Missing contract mapping", "UC1", origin="semantic")], {}),
+    )
+
+    model = _model()
+    model["Collaborations"][0]["useCaseIds"] = ["UC1"]
+    for owner in model["Classes"]:
+        operation = owner["operations"][0]
+        operation["parameters"][0]["type"] = "String"
+        operation["returnType"] = "String" if owner["className"] == "SubmitControl" else "void"
+        operation["operationId"] = operation["operationId"].replace("RequestData", "String")
+    for call in model["Collaborations"][0]["calls"]:
+        call["receiverOperationId"] = call["receiverOperationId"].replace("RequestData", "String")
+    findings = subgraphs._class_model_findings(model, {"usecase_spec": _scenario()})
+
+    assert len(findings) == 1
+    serialized = findings[0].as_issue()
+    assert "UC1: Missing contract mapping" in serialized
+    assert "class.public-contract-semantic" in serialized

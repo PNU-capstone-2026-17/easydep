@@ -1,6 +1,8 @@
 """Class-design inventory and scenario evidence contracts."""
 from __future__ import annotations
 
+from copy import deepcopy
+
 import pytest
 from pydantic import ValidationError
 
@@ -219,6 +221,44 @@ def test_invalid_inventory_repairs_stop_as_generation_stalled(monkeypatch):
         inventory.inventory_proposal(build_scenario_index(single_use_case()))
 
     assert caught.value.unit_id == "inventory"
+
+
+def test_unknown_relationship_multiplicity_is_repaired_before_materialization(monkeypatch):
+    invalid = inventory_proposal()
+    for name in ("RequestRecord", "RequestEntry"):
+        invalid["items"].append({
+            "name": name,
+            "kind": "Entity",
+            "description": "Persistent request data",
+            "fields": [{"name": "id", "type": "UUID"}],
+            "identifier": ["id"],
+            "values": [],
+            "useCaseIds": ["UC1"],
+        })
+    invalid["Relationships"] = [{
+        "source": "RequestRecord",
+        "target": "RequestEntry",
+        "type": "Association",
+        "sourceMultiplicity": "many",
+        "targetMultiplicity": "1",
+        "description": "A request has entries.",
+    }]
+    repaired = deepcopy(invalid)
+    repaired["Relationships"][0]["sourceMultiplicity"] = "*"
+    candidates = iter([invalid, repaired])
+    calls: list[list[dict[str, str]]] = []
+
+    def fake_parse(messages, schema, **_kwargs):
+        assert schema is InventoryProposal
+        calls.append(messages)
+        return next(candidates)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    accepted = inventory.inventory_proposal(build_scenario_index(single_use_case()))
+
+    assert len(calls) == 2
+    assert "source endpoint multiplicity 'many' is unknown" in calls[1][-1]["content"]
+    assert accepted.relationships[0]["sourceMultiplicity"] == "*"
 
 
 def _entity_inventory_proposal(field_type: str) -> dict:

@@ -11,7 +11,7 @@ from app.design.services.class_diagram.type_system import (
     type_is_resolved,
 )
 from app.design.services.class_diagram.validation.model import class_name
-from app.design.services.common import fields
+from app.design.services.common import fields, multiplicity
 from app.validation import CheckSpec, Finding, ValidationReport, run_checks
 
 
@@ -143,14 +143,21 @@ def _inventory_relationships(
                 "structural relationships may connect only Entity classes",
                 location,
             ))
-        if not text(relationship.get("sourceMultiplicity")) or not text(
-            relationship.get("targetMultiplicity")
-        ):
-            findings.append(Finding(
-                "class.inventory.relationships",
-                "both endpoint multiplicities are required",
-                location,
-            ))
+        for side in ("source", "target"):
+            value = text(relationship.get(f"{side}Multiplicity"))
+            if not value:
+                findings.append(Finding(
+                    "class.inventory.relationships",
+                    f"{side} endpoint multiplicity is required",
+                    location,
+                ))
+            elif not multiplicity.is_known(value):
+                findings.append(Finding(
+                    "class.inventory.relationships",
+                    f"{side} endpoint multiplicity '{value}' is unknown; use one of "
+                    f"{', '.join(multiplicity.CANONICAL)}",
+                    location,
+                ))
         pair = frozenset((source, target))
         if pair in seen:
             findings.append(Finding(
