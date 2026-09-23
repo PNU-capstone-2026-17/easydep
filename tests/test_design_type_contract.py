@@ -109,6 +109,19 @@ def test_unsupported_or_unresolved_types_fail_before_code_generation() -> None:
         )
 
 
+def test_operation_prompt_teaches_explicit_generic_type_spelling() -> None:
+    prompt = operation_prompt()
+    assert "String, List<Item>" in prompt
+    assert "Optional<List<Item>>" in prompt
+    assert '"listItem"' in prompt
+    assert '"optional list Item"' in prompt
+
+
+@pytest.mark.parametrize("source", ["optional list Item", "listCourseOffering"])
+def test_loose_operation_type_spellings_remain_unresolved(source: str) -> None:
+    assert not type_is_resolved(source, {"Item", "CourseOffering"}, allow_void=False)
+
+
 def test_declared_enum_and_value_object_have_deterministic_sql_storage() -> None:
     model = BCEModel.model_validate(
         {

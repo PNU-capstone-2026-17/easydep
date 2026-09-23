@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import settings
 from app.design.schemas.class_model import BCEModel, Collaboration
@@ -33,6 +36,10 @@ from app.design.services.class_diagram.scenario import (
     ScenarioIndex,
     UseCase,
     id_key,
+)
+from app.design.services.class_diagram.type_system import (
+    type_expression_is_well_formed,
+    type_is_resolved,
 )
 from app.design.services.class_diagram.validation.collaboration import (
     COLLABORATION_CHECKS,
@@ -67,6 +74,178 @@ The same operation may be called in several roots. Cover each actor entry's step
 range through Boundary to Control and, when needed, Entity. If actorEntries is
 empty, return no calls; its operations can be used by an including use case.
 """
+
+
+class TypeFieldCorrection(BaseModel):
+    """One narrowly-scoped replacement in an otherwise accepted proposal."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    path: str = Field(min_length=1)
+    corrected_type: str = Field(alias="correctedType", min_length=1)
+
+
+class TypeFieldRepairProposal(BaseModel):
+    """The type-only repair response must not be able to alter calls or operations."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    corrections: list[TypeFieldCorrection]
+
+
+_TYPE_FIELD_REPAIR_PROMPT = """Repair only the listed type strings. Return JSON matching
+the supplied schema: {"corrections":[{"path":"...","correctedType":"..."}]}.
+Return every listed path exactly once; do not return another path. Do not change names,
+operations, step references, DataType declarations, or calls.
+
+Canonical type grammar: a scalar primitive, a declared name, or List<T>, Set<T>,
+Collection<T>, Iterable<T>, or Optional<T>; containers take one recursively valid type.
+`byte[]` is also valid. `?` optionally wraps a complete type. `void` is permitted only
+as an operation return type. Every non-primitive name must be in declaredNames.
+
+Examples (invalid -> valid): String[ -> String; listItem -> List<Item> when Item is
+declared; optional list Item -> Optional<List<Item>> when Item is declared.
+"""
+
+
+def _declared_type_names(
+    raw: dict[str, Any], inventory: AcceptedInventory, reserved_types: list[dict[str, Any]],
+) -> set[str]:
+    """Names available to a fragment before its type-only repair is applied."""
+
+    names = {
+        str(item.get("className") or item.get("name") or "").strip()
+        for item in inventory.as_payload().get("Classes") or []
+        if isinstance(item, dict)
+    }
+    for items in (
+        inventory.as_payload().get("DataTypes") or [],
+        reserved_types,
+        raw.get("fragment", {}).get("DataTypes") or [],
+    ):
+        names.update(
+            str(item.get("name") or "").strip()
+            for item in items if isinstance(item, dict)
+        )
+    names.discard("")
+    return names
+
+
+def _invalid_type_fields(
+    raw: dict[str, Any], inventory: AcceptedInventory, reserved_types: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Enumerate proposal type strings that fail the same grammar/reference contract."""
+
+    fragment = raw.get("fragment") if isinstance(raw.get("fragment"), dict) else {}
+    names = _declared_type_names(raw, inventory, reserved_types)
+    findings: list[dict[str, Any]] = []
+
+    def add(path: str, value: object, *, allow_void: bool) -> None:
+        type_name = str(value or "").strip()
+        if type_is_resolved(type_name, names, allow_void=allow_void):
+            return
+        reason = (
+            "type does not match the canonical grammar"
+            if not type_expression_is_well_formed(type_name)
+            else "type references a name outside declaredNames"
+        )
+        findings.append({"path": path, "value": type_name, "reason": reason,
+                         "allowVoid": allow_void})
+
+    for data_type_index, data_type in enumerate(fragment.get("DataTypes") or []):
+        if not isinstance(data_type, dict):
+            continue
+        for field_index, field in enumerate(data_type.get("fields") or []):
+            if isinstance(field, dict):
+                add(f"/fragment/DataTypes/{data_type_index}/fields/{field_index}/type",
+                    field.get("type"), allow_void=False)
+    for class_index, class_set in enumerate(fragment.get("Classes") or []):
+        if not isinstance(class_set, dict):
+            continue
+        for operation_index, operation in enumerate(class_set.get("operations") or []):
+            if not isinstance(operation, dict):
+                continue
+            for parameter_index, parameter in enumerate(operation.get("parameters") or []):
+                if isinstance(parameter, dict):
+                    add(f"/fragment/Classes/{class_index}/operations/{operation_index}"
+                        f"/parameters/{parameter_index}/type", parameter.get("type"),
+                        allow_void=False)
+            add(f"/fragment/Classes/{class_index}/operations/{operation_index}/returnType",
+                operation.get("returnType"), allow_void=True)
+    return findings
+
+
+def _path_target(raw: dict[str, Any], path: str) -> dict[str, Any] | None:
+    """Resolve a known JSON pointer to the dict that owns its final type property."""
+
+    current: Any = raw
+    parts = [part for part in path.split("/") if part]
+    if not parts or parts[-1] not in {"type", "returnType"}:
+        return None
+    for part in parts[:-1]:
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, list) and part.isdigit() and int(part) < len(current):
+            current = current[int(part)]
+        else:
+            return None
+    return current if isinstance(current, dict) else None
+
+
+def _repair_invalid_type_fields(
+    raw: dict[str, Any], inventory: AcceptedInventory, reserved_types: list[dict[str, Any]],
+    *, use_case_id: str,
+) -> dict[str, Any]:
+    """Attempt one validated, type-only patch; leave the candidate for full repair on failure."""
+
+    findings = _invalid_type_fields(raw, inventory, reserved_types)
+    if not findings:
+        return raw
+    fragment = raw.get("fragment") if isinstance(raw.get("fragment"), dict) else {}
+    payload = {
+        "invalidTypes": findings,
+        "declaredNames": sorted(_declared_type_names(raw, inventory, reserved_types)),
+        "fragmentContext": {
+            "DataTypes": fragment.get("DataTypes") or [],
+            "Classes": [
+                {"className": item.get("className"), "operations": item.get("operations")}
+                for item in fragment.get("Classes") or [] if isinstance(item, dict)
+            ],
+        },
+    }
+    try:
+        repaired = parse_structured(
+            [
+                {"role": "system", "content": _TYPE_FIELD_REPAIR_PROMPT},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            TypeFieldRepairProposal,
+            reasoning_effort=operations.operation_reasoning_effort(),
+            max_completion_tokens=min(1024, operations.operation_max_completion_tokens()),
+            operation="InteractionCombinedUnitTypeFieldRepair",
+            metadata={"useCaseId": use_case_id, "invalidTypeCount": len(findings)},
+        )
+        response = TypeFieldRepairProposal.model_validate(repaired)
+    except (TypeError, ValueError):
+        # A malformed narrow repair is handled by the existing full repair.
+        return raw
+    expected_paths = {item["path"] for item in findings}
+    corrections = response.corrections
+    paths = [item.path for item in corrections]
+    if len(paths) != len(set(paths)) or set(paths) != expected_paths:
+        return raw
+    allow_void = {item["path"]: item["allowVoid"] for item in findings}
+    names = _declared_type_names(raw, inventory, reserved_types)
+    if any(not type_is_resolved(item.corrected_type, names, allow_void=allow_void[item.path])
+           for item in corrections):
+        return raw
+    patched = deepcopy(raw)
+    for correction in corrections:
+        target = _path_target(patched, correction.path)
+        if target is None:
+            return raw
+        target[correction.path.rsplit("/", 1)[-1]] = correction.corrected_type
+    return patched
 
 
 def _same_boundary_response_operations(raw: dict[str, Any]) -> set[str]:
@@ -191,6 +370,12 @@ def _propose_unit(
             },
         )
         raw = CombinedUnitProposal.model_validate(parsed).model_dump(by_alias=True)
+        raw = _repair_invalid_type_fields(
+            raw,
+            inventory,
+            reserved_types,
+            use_case_id=use_case.id,
+        )
         try:
             fragment = operations.normalize_operation_fragment(
                 raw["fragment"],

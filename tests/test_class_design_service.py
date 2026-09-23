@@ -533,6 +533,11 @@ def test_invalid_operation_repairs_stop_as_generation_stalled(monkeypatch):
             proposal = combined_unit_proposal()
             proposal["fragment"]["DataTypes"][0]["fields"][0]["type"] = "MissingType"
             return proposal
+        if schema is generation.TypeFieldRepairProposal:
+            return {"corrections": [{
+                "path": "/fragment/DataTypes/0/fields/0/type",
+                "correctedType": "List<MissingType>",
+            }]}
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)

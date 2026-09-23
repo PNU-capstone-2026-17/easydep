@@ -16,7 +16,6 @@ from typing import Any
 from app.config import settings
 from app.design import progress as design_progress
 from app.design.contracts.type_system import (
-    PROMPT_PRIMITIVES,
     DesignTypeError,
     canonical_design_type,
 )
@@ -111,9 +110,10 @@ when the scenario explicitly requires an out-of-band push, callback, or later
 notification. Choose concrete operations supported by the supplied steps. Every
 parameter and return type must resolve to a fixed class/type, a primitive, or a
 local DataType.
-Write collection types with explicit generic syntax, such as
-List<CourseOffering>; never join a container and item name into an undeclared
-token such as listCourseOffering.
+Use canonical type spellings and explicit generic syntax. When the fixed
+inventory declares class Item, valid types include String, List<Item>, and
+Optional<List<Item>>. Write invalid "listItem" or "optional list Item" as
+List<Item> or Optional<List<Item>>, respectively.
 Before returning, audit every named parameter and return type: reuse an exact
 fixed or reserved type when it has the required shape, and otherwise declare a
 concrete local DataType in this fragment; never leave a referenced name undeclared.
@@ -660,54 +660,6 @@ def operation_payload(
     return _operation_payload(index, inventory.as_payload(), use_case, **kwargs)
 
 
-def _canonicalize_loose_collection_types(
-    candidate: dict[str, Any],
-    inventory: dict[str, Any],
-    reserved: list[dict[str, Any]] | None,
-    reserved_types: list[dict[str, Any]] | None,
-) -> dict[str, Any]:
-    """Repair a concatenated container only when its item is an exact known type."""
-
-    known_names = {
-        class_name(item)
-        for source in (inventory.get("Classes") or [], candidate.get("Classes") or [], reserved or [])
-        for item in source
-        if isinstance(item, dict) and class_name(item)
-    } | {
-        text(item.get("name"))
-        for source in (
-            inventory.get("DataTypes") or [],
-            candidate.get("DataTypes") or [],
-            reserved_types or [],
-        )
-        for item in source
-        if isinstance(item, dict) and text(item.get("name"))
-    }
-
-    def canonical(raw: object) -> str:
-        value = text(raw)
-        if value in known_names:
-            return value
-        for prefix in ("list", "array", "set", "collection", "iterable", "optional"):
-            if value.casefold().startswith(prefix):
-                item = value[len(prefix) :]
-                if item in known_names or item.casefold() in PROMPT_PRIMITIVES:
-                    return canonical_design_type(f"{prefix}<{item}>")
-        return value
-
-    for owner in candidate.get("Classes") or []:
-        if not isinstance(owner, dict):
-            continue
-        for operation in owner.get("operations") or []:
-            if not isinstance(operation, dict):
-                continue
-            operation["returnType"] = canonical(operation.get("returnType"))
-            for parameter in operation.get("parameters") or []:
-                if isinstance(parameter, dict):
-                    parameter["type"] = canonical(parameter.get("type"))
-    return candidate
-
-
 def normalize_operation_fragment(
     proposal: OperationFragment | Mapping[str, Any],
     index: ScenarioIndex,
@@ -731,9 +683,6 @@ def normalize_operation_fragment(
         structured_data_type(item) for item in proposal_payload.get("DataTypes") or []
     ]
     candidate = OperationFragment.model_validate(proposal_payload).model_dump(by_alias=True)
-    candidate = _canonicalize_loose_collection_types(
-        candidate, inventory_payload, reserved, reserved_types
-    )
     fixed_names = (
         {
             class_name(item)
@@ -842,9 +791,6 @@ def _propose_fragment(
     )
     # 2. 설명문이나 임의 필드를 거부하고 일시적 proposal schema만 수락한다.
     candidate = OperationFragment.model_validate(parsed).model_dump(by_alias=True)
-    candidate = _canonicalize_loose_collection_types(
-        candidate, inventory, reserved, reserved_types
-    )
     fixed_names = (
         {class_name(item) for item in inventory.get("Classes") or [] if isinstance(item, dict)}
         | {
