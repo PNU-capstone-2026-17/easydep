@@ -102,6 +102,73 @@ def test_reviewed_implementation_gap_revision_returns_to_implementation() -> Non
     ]
 
 
+def test_completed_design_gate_uses_readiness_hints_for_next_action() -> None:
+    can_advance = result_with_contract(
+        command(
+            status="COMPLETED",
+            stage="design",
+            result={"design_can_advance": True, "design_complete": False},
+        ),
+        {"design_can_advance": True, "design_complete": False},
+    )
+    complete = result_with_contract(
+        command(
+            status="COMPLETED",
+            stage="design",
+            result={"design_complete": True},
+        ),
+        {"design_complete": True},
+    )
+    incomplete = result_with_contract(
+        command(status="COMPLETED", stage="design"),
+        {},
+    )
+
+    assert [item["action"] for item in can_advance["actions"]] == [
+        "message",
+        "advance",
+    ]
+    assert can_advance["actions"][1]["label"] == "Continue design"
+    assert [item["action"] for item in complete["actions"]] == [
+        "message",
+        "start_implementation",
+    ]
+    assert [item["action"] for item in incomplete["actions"]] == ["message"]
+
+
+def test_completed_design_clarification_replaces_stale_transition_offer() -> None:
+    source = command(
+        status="COMPLETED",
+        stage="design",
+        payload={
+            "action_id": "class-gate-command",
+            "_conversation_actions": [
+                {
+                    "action": "message",
+                    "label": "Continue conversation",
+                    "payload": {"action_id": "class-gate-command"},
+                    "auto_selectable": False,
+                },
+                {
+                    "action": "start_implementation",
+                    "label": "Start implementation",
+                    "payload": {"action_id": "class-gate-command"},
+                    "auto_selectable": True,
+                },
+            ],
+        },
+        result={"design_can_advance": True, "design_complete": False},
+    )
+
+    actions = offered_actions(source)
+
+    assert [item.action for item in actions] == [
+        WorkspaceAction.MESSAGE,
+        WorkspaceAction.ADVANCE,
+    ]
+    assert actions[1].label == "Continue design"
+
+
 def test_choice_actions_carry_the_answer_in_their_payload() -> None:
     shaped = result_with_contract(
         command(status="AWAITING_INPUT"),

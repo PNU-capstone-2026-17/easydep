@@ -642,15 +642,8 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
             _offer(WorkspaceAction.START_DESIGN, "Start design", common, auto=True),
         ]
     if stage == "design":
-        return [
-            discuss,
-            _offer(
-                WorkspaceAction.START_IMPLEMENTATION,
-                "Start implementation",
-                common,
-                auto=True,
-            ),
-        ]
+        transition = _design_transition_offer(command)
+        return [discuss, *([transition] if transition is not None else [])]
     if stage == "implementation":
         job_id = str(result.get("job_id") or "")
         actions = [
@@ -675,8 +668,50 @@ def offered_actions(command: dict[str, Any]) -> list[ActionOffer]:
         return awaiting_outcome(command).actions
     preserved = (command.get("payload") or {}).get("_conversation_actions")
     if isinstance(preserved, list):
-        return [ActionOffer.model_validate(action) for action in preserved]
+        actions = [ActionOffer.model_validate(action) for action in preserved]
+        if command.get("status") == "COMPLETED" and command.get("stage") == "design":
+            # A completed clarification can carry a transition offer copied from
+            # the earlier gate. Recompute that offer from current readiness hints
+            # so stale "Start implementation" actions cannot bypass unfinished
+            # design artifacts.
+            actions = [
+                offer
+                for offer in actions
+                if offer.action
+                not in {
+                    WorkspaceAction.ADVANCE,
+                    WorkspaceAction.START_IMPLEMENTATION,
+                }
+            ]
+            transition = _design_transition_offer(command)
+            if transition is not None:
+                actions.append(transition)
+        return actions
     return terminal_actions(command)
+
+
+def _design_transition_offer(command: dict[str, Any]) -> ActionOffer | None:
+    """Choose the next design transition from service-provided readiness hints."""
+
+    result = command.get("result") or {}
+    if not isinstance(result, dict):
+        return None
+    common = {"action_id": str(command.get("command_id") or "")}
+    if result.get("design_complete") is True:
+        return _offer(
+            WorkspaceAction.START_IMPLEMENTATION,
+            "Start implementation",
+            common,
+            auto=True,
+        )
+    if result.get("design_can_advance") is True:
+        return _offer(
+            WorkspaceAction.ADVANCE,
+            "Continue design",
+            common,
+            auto=True,
+        )
+    return None
 
 
 def result_with_contract(command: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:

@@ -170,6 +170,64 @@ def test_authenticated_context_is_a_typed_handoff_source_not_a_domain_special_ca
     ]
 
 
+def test_boundary_control_handoff_uses_compatible_opaque_id_despite_parameter_rename():
+    """RTM handoff provenance survives a harmless identifier rename."""
+
+    use_case_id = "UC73"
+    index = build_scenario_index(_scenario(use_case_id, "Visitor", []))
+    model = BCEModel.model_validate({
+        "Classes": [
+            {
+                "className": "RegistrationBoundary",
+                "stereotype": "Boundary",
+                "use_case_ids": [use_case_id],
+                "operations": [{
+                    "operationId": "ignored",
+                    "name": "submit",
+                    "parameters": [{"name": "registrationIdentifier", "type": "UUID"}],
+                    "returnType": "void",
+                    "stepRefs": [f"{use_case_id}:main:1"],
+                }],
+            },
+            {
+                "className": "RegistrationControl",
+                "stereotype": "Control",
+                "use_case_ids": [use_case_id],
+                "operations": [{
+                    "operationId": "ignored",
+                    "name": "register",
+                    "parameters": [{"name": "registrationId", "type": "UUID"}],
+                    "returnType": "void",
+                    "stepRefs": [f"{use_case_id}:main:2"],
+                }],
+            },
+        ],
+        "DataTypes": [],
+        "Relationships": [],
+        "Collaborations": [],
+    })
+    plan = collaboration.CallPlanProposal.model_validate({
+        "calls": [
+            {
+                "receiverOperationId": "RegistrationBoundary::submit(registrationIdentifier:UUID)",
+                "parentCallIndex": None,
+            },
+            {
+                "receiverOperationId": "RegistrationControl::register(registrationId:UUID)",
+                "parentCallIndex": 1,
+            },
+        ],
+    })
+
+    result = collaboration.materialize(
+        index, model, index.use_case(use_case_id), plan,
+    )
+
+    assert result.calls[1].argument_bindings[0].source_ref == (
+        f"{use_case_id}::call:1#registrationIdentifier"
+    )
+
+
 @pytest.mark.parametrize("preconditions", [
     ["Customer accepts the booking policy before submitting the request."],
     ["The booking catalog is available and the selected slot is open."],

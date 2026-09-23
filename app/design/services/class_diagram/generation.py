@@ -104,6 +104,7 @@ def _payload(
     previous: dict[str, Any] | None = None,
     issue: str = "",
     history: list[dict[str, str]] | None = None,
+    repair_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     payload = operations.operation_payload(
         index,
@@ -128,6 +129,8 @@ def _payload(
             "finding": issue,
             "repairHistory": history or [],
         })
+    if repair_context is not None:
+        payload["repairContext"] = repair_context
     return payload
 
 
@@ -142,6 +145,7 @@ def _propose_unit(
     previous: dict[str, Any] | None = None,
     initial_issue: str = "",
     repair_history: list[dict[str, str]] | None = None,
+    repair_context: dict[str, Any] | None = None,
 ) -> tuple[AcceptedFragment, dict[str, Any]]:
     """operation 검사를 통과할 때까지 한 유스케이스 제안만 전체 교체한다."""
 
@@ -163,6 +167,7 @@ def _propose_unit(
             previous=prior,
             issue=issue,
             history=history,
+            repair_context=repair_context,
         )
         parsed = parse_structured(
             [
@@ -295,6 +300,18 @@ def _materialize_use_case(
         )
     except ValueError as error:
         finding = f"{type(error).__name__}: {error}"
+        # A missing finite value source is not a call-order problem.  Retrying a
+        # call-plan-only proposal cannot create one, so hand it directly to the
+        # existing combined-unit seam that owns both the operation and its calls.
+        if isinstance(error, collaboration.BindingSourceViolation):
+            if previous is None:
+                raise
+            raise collaboration.CombinedReplacementRequired(
+                use_case.id,
+                finding,
+                previous,
+                _binding_repair_context(error.repair_context, error.repair_slot),
+            ) from error
         allowed_parents = (
             error.repair_context.get("allowedParentCallIndexes") or []
             if isinstance(error, collaboration.CallPlanViolation)
@@ -326,6 +343,32 @@ def _materialize_use_case(
             ),
             previous=previous,
         )
+
+
+def _binding_repair_context(
+    context: dict[str, Any], slot: dict[str, int],
+) -> dict[str, Any]:
+    """Add the canonical call pointer needed to bound an owning-unit repair."""
+
+    result = dict(context)
+    result.update(slot)
+    return result
+
+
+def _same_binding_event(
+    first: dict[str, Any] | None,
+    repeated: dict[str, Any] | None,
+) -> bool:
+    """Compare the stable structural slot of a missing source, not its wording."""
+
+    if not first or not repeated:
+        return False
+    if first.get("code") != "BINDING_SOURCE_UNAVAILABLE":
+        return False
+    if repeated.get("code") != "BINDING_SOURCE_UNAVAILABLE":
+        return False
+    fields = ("useCaseId", "actorEntryIndex", "callIndex", "parameterIndex")
+    return all(first.get(field) == repeated.get(field) for field in fields)
 
 
 def _collaboration_valid(
@@ -440,6 +483,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                 snapshot = operations.compose_operation_units(inventory, others)
                 previous = raw_by_use_case[use_case.id]
                 issue = signal.issue
+                repair_context = signal.repair_context
                 repair_history = [_repair_history_item(previous, issue)]
                 while True:
                     fragment, raw = _propose_unit(
@@ -454,6 +498,7 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                         previous=previous,
                         initial_issue=issue,
                         repair_history=repair_history,
+                        repair_context=repair_context,
                     )
                     candidate_fragments = list(committed)
                     candidate_fragments[unit_index] = fragment
@@ -474,8 +519,13 @@ def _build_uncached(index: ScenarioIndex, inventory: AcceptedInventory) -> BCEMo
                             index, skeleton, use_case, raw, budgets[use_case.id],
                         )
                     except collaboration.CombinedReplacementRequired as repeated:
+                        if _same_binding_event(
+                            repair_context, repeated.repair_context,
+                        ):
+                            raise GenerationStalled(use_case.id, repeated.issue) from repeated
                         previous = raw
                         issue = repeated.issue
+                        repair_context = repeated.repair_context
                         repair_history.append(_repair_history_item(raw, issue))
                         continue
                     break
@@ -557,6 +607,7 @@ def replace_use_case_unit(
     snapshot = operations.compose_fragments(inventory, others)
     previous = _previous_combined_unit(fragment, current, signal.previous_plan)
     issue = signal.issue
+    repair_context = signal.repair_context
     budget = RepairBudget(use_case.id)
     collision_states: set[str] = set()
     repair_history = [_repair_history_item(previous, issue)]
@@ -573,6 +624,7 @@ def replace_use_case_unit(
             previous=previous,
             initial_issue=issue,
             repair_history=repair_history,
+            repair_context=repair_context,
         )
         candidate_fragments = {**others, use_case.id: replacement}
         try:
@@ -599,8 +651,11 @@ def replace_use_case_unit(
         try:
             accepted = _materialize_use_case(index, skeleton, use_case, raw, budget)
         except collaboration.CombinedReplacementRequired as repeated:
+            if _same_binding_event(repair_context, repeated.repair_context):
+                raise GenerationStalled(use_case.id, repeated.issue) from repeated
             previous = raw
             issue = repeated.issue
+            repair_context = repeated.repair_context
             repair_history.append(_repair_history_item(raw, issue))
             continue
         return skeleton, accepted

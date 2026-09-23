@@ -128,8 +128,14 @@ class CallPlanViolation(ValueError):
 class BindingSourceViolation(ValueError):
     """A parameter whose finite source search returned no candidate."""
 
-    def __init__(self, repair_context: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        repair_context: dict[str, Any],
+        *,
+        repair_slot: dict[str, int] | None = None,
+    ) -> None:
         self.repair_context = repair_context
+        self.repair_slot = repair_slot or {}
         super().__init__(
             f"no finite source for {repair_context['location']}; repairContext="
             + json.dumps(repair_context, ensure_ascii=False, separators=(",", ":"))
@@ -550,7 +556,6 @@ def _binding_candidates(
                 ancestor_position == 0
                 and boundary_handoff
                 and compatible
-                and not _requires_named_provenance(name, target_type)
             ):
                 renamed_handoff_sources.append(source_ref)
             for field_path in fields_by_type.get(source_type, {}):
@@ -858,7 +863,7 @@ def materialize(
     for call_index, call in enumerate(calls):
         operation = operations[call["receiverOperationId"]]
         group = groups[assignments[call_index + 1]]
-        for parameter in operation.get("parameters") or []:
+        for parameter_index, parameter in enumerate(operation.get("parameters") or []):
             if not isinstance(parameter, dict):
                 raise TypeError("operation parameter must be an object")
             candidates = _binding_candidates(
@@ -889,6 +894,10 @@ def materialize(
                         "context, an earlier result, a supported runtime value, or a "
                         "derivable structured value."
                     ),
+                }, repair_slot={
+                    "actorEntryIndex": assignments[call_index + 1],
+                    "callIndex": call_index,
+                    "parameterIndex": parameter_index,
                 })
             if len(candidates) == 1:
                 call["argumentBindings"].append({
@@ -937,11 +946,13 @@ class CombinedReplacementRequired(RuntimeError):
         use_case_id: str,
         issue: str,
         previous_plan: CallPlanProposal,
+        repair_context: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(issue)
         self.use_case_id = use_case_id
         self.issue = issue
         self.previous_plan = previous_plan
+        self.repair_context = repair_context
 
 
 def _accepted_payload(

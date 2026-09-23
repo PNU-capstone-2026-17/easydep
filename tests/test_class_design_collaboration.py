@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.design.schemas.class_model import BCEModel
-from app.design.services.class_diagram import collaboration, service
+from app.design.services.class_diagram import collaboration, generation, service
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
     CombinedUnitProposal,
@@ -154,6 +154,61 @@ def test_vertical_service_persists_calls_and_derives_parameter_provenance(monkey
         "sourceRef": "UC1::call:1#request",
     }]
     assert all(item.get("type") != "Dependency" for item in model["Relationships"])
+
+
+def test_missing_source_repairs_owning_unit_without_call_plan_retry(monkeypatch):
+    """A finite-source gap is repaired at the operation/call unit seam once."""
+
+    combined_calls = 0
+
+    def fake_parse(messages, schema, **_kwargs):
+        nonlocal combined_calls
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is CombinedUnitProposal:
+            combined_calls += 1
+            if combined_calls == 2:
+                payload = json.loads(messages[-1]["content"])
+                assert payload["repairContext"]["code"] == "BINDING_SOURCE_UNAVAILABLE"
+                assert payload["repairContext"]["callIndex"] == 1
+                return combined_unit_proposal()
+            proposal = combined_unit_proposal()
+            proposal["fragment"] = operation_fragment(unsourceable=True)
+            return proposal
+        if issubclass(schema, CallPlanProposal):
+            raise TypeError("a missing source must not trigger a call-plan retry")
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    model = service.generate_class_model(build_scenario_index(single_use_case()))
+
+    assert combined_calls == 2
+    assert model.Collaborations[0].calls[1].argument_bindings[0].parameter == "request"
+
+
+def test_unchanged_missing_source_stalls_after_one_owning_unit_repair(monkeypatch):
+    """The same structural source slot cannot regenerate indefinitely."""
+
+    combined_calls = 0
+
+    def fake_parse(_messages, schema, **_kwargs):
+        nonlocal combined_calls
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is CombinedUnitProposal:
+            combined_calls += 1
+            proposal = combined_unit_proposal()
+            proposal["fragment"] = operation_fragment(unsourceable=True)
+            return proposal
+        if issubclass(schema, CallPlanProposal):
+            raise TypeError("a missing source must not trigger a call-plan retry")
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    with pytest.raises(generation.GenerationStalled, match="BINDING_SOURCE_UNAVAILABLE"):
+        service.generate_class_model(build_scenario_index(single_use_case()))
+
+    assert combined_calls == 2
 
 
 def test_temporal_parameter_uses_explicit_runtime_clock_when_no_upstream_value(monkeypatch):

@@ -2044,6 +2044,177 @@ def test_design_feedback_status_remains_a_workspace_review_gate() -> None:
     assert result["current_stage"] == "deployment_diagram"
 
 
+def _complete_design_source_state() -> dict[str, object]:
+    return {
+        config["source_key"]: {"generated": stage}
+        for stage, config in artifact_repository.STAGE_ARTIFACTS.items()
+        if stage in workspace_module.DESIGN_STAGES
+    }
+
+
+def test_design_progress_hints_offer_advance_only_at_a_ready_active_gate(
+    monkeypatch,
+) -> None:
+    state = _complete_design_source_state()
+    monkeypatch.setattr(
+        workspace_module,
+        "session_status",
+        lambda _app_id: {
+            "exists": True,
+            "active": True,
+            "retryable": False,
+            "stage": "class_diagram",
+        },
+    )
+    monkeypatch.setattr(artifact_repository, "load_state", lambda _app_id: state)
+    monkeypatch.setattr(
+        workspace_module,
+        "design_readiness_report",
+        lambda _state, stages=None: {"status": "READY", "findings": []},
+    )
+
+    service = WorkspaceService()
+    try:
+        hints = service._design_progress_hints("app-1", {"stage": "class_diagram"})
+    finally:
+        service.shutdown()
+
+    assert hints == {"design_can_advance": True, "design_complete": False}
+
+
+def test_design_progress_hints_require_every_persisted_design_model(
+    monkeypatch,
+) -> None:
+    state = _complete_design_source_state()
+    state.pop(artifact_repository.STAGE_ARTIFACTS["api_spec"]["source_key"])
+    monkeypatch.setattr(
+        workspace_module,
+        "session_status",
+        lambda _app_id: {
+            "exists": True,
+            "active": False,
+            "retryable": False,
+            "stage": None,
+        },
+    )
+    monkeypatch.setattr(artifact_repository, "load_state", lambda _app_id: state)
+    monkeypatch.setattr(
+        workspace_module,
+        "design_readiness_report",
+        lambda _state, stages=None: {"status": "READY", "findings": []},
+    )
+
+    service = WorkspaceService()
+    try:
+        hints = service._design_progress_hints("app-1", {"status": "completed"})
+    finally:
+        service.shutdown()
+
+    assert hints == {"design_can_advance": False, "design_complete": False}
+
+
+def test_design_progress_hint_wrapper_preserves_result_content(monkeypatch) -> None:
+    service = WorkspaceService()
+    monkeypatch.setattr(
+        service,
+        "_design_progress_hints",
+        lambda _app_id, _result: {
+            "design_can_advance": True,
+            "design_complete": False,
+        },
+    )
+    try:
+        result = service._with_design_progress_hints(
+            "app-1", {"message": "Review complete.", "design": {"stage": "class_diagram"}}
+        )
+    finally:
+        service.shutdown()
+
+    assert result == {
+        "message": "Review complete.",
+        "design": {"stage": "class_diagram"},
+        "design_can_advance": True,
+        "design_complete": False,
+    }
+
+
+def test_historical_message_reply_uses_referenced_design_stage(monkeypatch) -> None:
+    latest = {
+        "command_id": "implementation-command",
+        "app_id": "app-1",
+        "stage": "implementation",
+        "status": "FAILED",
+        "payload": {},
+        "result": {},
+    }
+    referenced = {
+        "command_id": "design-command",
+        "app_id": "app-1",
+        "stage": "design",
+        "status": "AWAITING_INPUT",
+        "payload": {},
+        "result": {},
+    }
+    monkeypatch.setattr(repository, "latest_command", lambda _app_id: latest)
+    monkeypatch.setattr(
+        repository,
+        "get_command",
+        lambda command_id: referenced if command_id == "design-command" else None,
+    )
+    monkeypatch.setattr(WorkspaceService, "_fixed_class_resource_choice", lambda *_args: None)
+    monkeypatch.setattr(
+        workspace_module,
+        "build_conversation_context",
+        lambda _app_id: SimpleNamespace(workspace={}),
+    )
+    monkeypatch.setattr(
+        workspace_module.conversation_agent,
+        "respond",
+        lambda *_args, **_kwargs: workspace_module.Reply(text="Acknowledged."),
+    )
+    monkeypatch.setattr(workspace_module, "offered_actions", lambda _command: [])
+
+    service = WorkspaceService()
+    try:
+        _action, _payload, stage = service._prepare_conversational_message(
+            "app-1",
+            action="message",
+            payload={"action_id": "design-command", "text": "Re-evaluate the review."},
+            stage=None,
+        )
+    finally:
+        service.shutdown()
+
+    assert stage == "design"
+
+
+def test_start_implementation_rejects_missing_persisted_design_models(
+    monkeypatch,
+) -> None:
+    state = _complete_design_source_state()
+    state.pop(artifact_repository.STAGE_ARTIFACTS["api_spec"]["source_key"])
+    monkeypatch.setattr(artifact_repository, "load_state", lambda _app_id: state)
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "create_job",
+        lambda *_args, **_kwargs: pytest.fail("incomplete design must not start a job"),
+    )
+    command = {
+        "command_id": "implementation-command",
+        "app_id": "app-1",
+        "action": "start_implementation",
+        "stage": "implementation",
+        "payload": {},
+    }
+
+    service = WorkspaceService()
+    try:
+        with pytest.raises(ValueError, match="Missing required design artifacts: api_spec"):
+            service._dispatch(command)
+    finally:
+        service.shutdown()
+
+
 def test_multiple_completed_deployment_targets_use_the_artifact_configuration_gate() -> None:
     service = WorkspaceService()
     try:

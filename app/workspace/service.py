@@ -33,6 +33,7 @@ from app.design.service import (
 )
 from app.design.services.common.plantuml import render_plantuml
 from app.design.services.common.structured import capture_llm_timings
+from app.design.validation import design_readiness_report
 from app.implementation.application.jobs import (
     worker as implementation_worker,
 )
@@ -805,6 +806,11 @@ class WorkspaceService:
                 )
             )
         if isinstance(outcome, Reply):
+            referenced_stage = (
+                str(prior.get("stage") or "requirements")
+                if action_id and prior is not None and prior.get("app_id") == app_id
+                else ""
+            )
             return (
                 "message",
                 {
@@ -818,7 +824,7 @@ class WorkspaceService:
                         **outcome.model_dump(mode="json"),
                     },
                 },
-                stage or str(latest.get("stage") or "requirements"),
+                stage or referenced_stage or str(latest.get("stage") or "requirements"),
             )
         if isinstance(outcome, Clarification):
             return self._clarification_message(payload, outcome, stage, actionable)
@@ -1217,6 +1223,8 @@ class WorkspaceService:
         payload = payload if isinstance(payload, dict) else {}
         result = command.get("result")
         shaped_result = dict(result) if isinstance(result, dict) else {}
+        if str(command.get("stage") or "") == "design":
+            shaped_result = self._with_design_progress_hints(app_id, shaped_result)
         conversation = shaped_result.get("conversation")
         completed_reply = (
             command.get("status") == "COMPLETED"
@@ -1250,9 +1258,17 @@ class WorkspaceService:
                     and anchor_conversation.get("clarification")
                 ):
                     break
+            anchor_result = anchor.get("result")
+            anchor_for_actions = {
+                **anchor,
+                "result": self._with_design_progress_hints(
+                    app_id,
+                    dict(anchor_result) if isinstance(anchor_result, dict) else {},
+                ),
+            }
             restored_actions = [
                 item.model_dump(mode="json", exclude_none=True)
-                for item in offered_actions(anchor)
+                for item in offered_actions(anchor_for_actions)
             ]
             if restored_actions:
                 presented["payload"] = {
@@ -1381,6 +1397,8 @@ class WorkspaceService:
         )
         try:
             result = self._dispatch(command)
+            if stage == "design":
+                result = self._with_design_progress_hints(app_id, result)
             feedback_command = self._feedback_question_command(command)
             if feedback_command is not None:
                 if not result.get("stale_revision_plan"):
@@ -1983,6 +2001,12 @@ class WorkspaceService:
                 )
             app_id = str(command["app_id"])
             design_state = cast(dict[str, Any], artifact_repository.load_state(app_id))
+            missing_artifacts = self._missing_design_artifacts(design_state)
+            if missing_artifacts:
+                raise ValueError(
+                    "Missing required design artifacts: "
+                    + ", ".join(missing_artifacts)
+                )
             job = implementation_worker.create_job(
                 app_id,
                 design_state,
@@ -3005,6 +3029,8 @@ class WorkspaceService:
         }
 
     def _design_result(self, result: dict[str, Any]) -> dict[str, Any]:
+        app_id = str(result.get("app_id") or "")
+        progress_hints = self._design_progress_hints(app_id, result)
         session = result.get("session") or {}
         stage_hint = (
             session.get("current_stage")
@@ -3040,6 +3066,7 @@ class WorkspaceService:
                 "message": question.prompt,
                 "feedback_question": question.model_dump(mode="json"),
                 "design": result,
+                **progress_hints,
             }
         # The design service reports completion as ``status: completed``.
         # Older stored command results can still contain the two flags below.
@@ -3050,6 +3077,7 @@ class WorkspaceService:
             return {
                 "message": "Design artifact generation completed.",
                 "design": result,
+                **progress_hints,
             }
         stage = (
             session.get("current_stage")
@@ -3070,6 +3098,7 @@ class WorkspaceService:
                 "resource_question": resource_question,
                 "resource_questions": [resource_question],
                 "design": result,
+                **progress_hints,
             }
         stage_validation = (result.get("validation") or {}).get(stage) or {}
         findings = [
@@ -3111,6 +3140,7 @@ class WorkspaceService:
                 "current_stage": stage,
                 "deployment_configuration_required": True,
                 "design": result,
+                **progress_hints,
             }
         method_proposals = list(stage_validation.get("method_proposals") or [])
         requires_revision = bool(findings)
@@ -3186,7 +3216,66 @@ class WorkspaceService:
             # approval action instead of requiring a magic text phrase.
             "method_proposals": method_proposals,
             "design": result,
+            **progress_hints,
         }
+
+    @staticmethod
+    def _missing_design_artifacts(state: Mapping[str, Any]) -> list[str]:
+        """Return canonical design stages without their persisted source model."""
+
+        return [
+            stage
+            for stage in DESIGN_STAGES
+            if not state.get(artifact_repository.STAGE_ARTIFACTS[stage]["source_key"])
+        ]
+
+    def _design_progress_hints(
+        self, app_id: str, result: Mapping[str, Any]
+    ) -> dict[str, bool]:
+        """Derive design transitions from the saved graph checkpoint and models.
+
+        A completed targeted revision is not equivalent to a completed design run.
+        The graph checkpoint owns whether another design gate is ready, while the
+        persisted source models prove that implementation has all of its inputs.
+        """
+
+        hints = {"design_can_advance": False, "design_complete": False}
+        if not app_id:
+            return hints
+        try:
+            checkpoint = session_status(app_id)
+            state = cast(dict[str, Any], artifact_repository.load_state(app_id))
+        except Exception:  # A presentation hint must not hide a command result.
+            return hints
+
+        missing = self._missing_design_artifacts(state)
+        if not missing:
+            readiness = design_readiness_report(state)
+            hints["design_complete"] = bool(
+                checkpoint.get("exists")
+                and not checkpoint.get("active")
+                and not checkpoint.get("retryable")
+                and readiness.get("status") == "READY"
+            )
+
+        stage = str(checkpoint.get("stage") or result.get("current_stage") or result.get("stage") or "")
+        if checkpoint.get("active") and stage in DESIGN_STAGES:
+            stage_readiness = design_readiness_report(state, stages=[stage])
+            hints["design_can_advance"] = bool(
+                not stage_readiness.get("findings")
+                and not checkpoint.get("retryable")
+            )
+        return hints
+
+    def _with_design_progress_hints(
+        self, app_id: str, result: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        """Merge persisted design-transition hints into a result snapshot."""
+
+        visible = dict(result)
+        design = visible.get("design")
+        source = design if isinstance(design, Mapping) else visible
+        return {**visible, **self._design_progress_hints(app_id, source)}
 
     def _confirm_change(self, command: dict[str, Any]) -> dict[str, Any]:
         action_id = str(command["payload"].get("action_id") or "")
