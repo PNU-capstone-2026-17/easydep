@@ -64,6 +64,24 @@ def test_known_concatenated_collection_types_are_canonicalized(monkeypatch):
     assert normalized["returnType"] == "List<RequestResult>"
 
 
+def test_concatenated_container_and_scalar_types_are_canonicalized():
+    candidate = {
+        "Classes": [{
+            "operations": [{
+                "parameters": [{"name": "count", "type": "ListInt"}],
+                "returnType": "optionaluuid",
+            }],
+        }],
+    }
+
+    normalized = operations._canonicalize_loose_collection_types(
+        candidate, {"Classes": [], "DataTypes": []}, None, None,
+    )["Classes"][0]["operations"][0]
+
+    assert normalized["parameters"][0]["type"] == "List<int>"
+    assert normalized["returnType"] == "Optional<UUID>"
+
+
 def test_operation_payload_exposes_structured_data_type_fields_to_llm():
     index = build_scenario_index(single_use_case())
     payload = operations._operation_payload(

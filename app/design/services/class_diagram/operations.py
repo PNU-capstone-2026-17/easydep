@@ -15,7 +15,11 @@ from typing import Any
 
 from app.config import settings
 from app.design import progress as design_progress
-from app.design.contracts.type_system import DesignTypeError, canonical_design_type
+from app.design.contracts.type_system import (
+    PROMPT_PRIMITIVES,
+    DesignTypeError,
+    canonical_design_type,
+)
 from app.design.schemas.class_model import BCEModel, canonical_operation_id
 from app.design.services.class_diagram.cache import (
     AcceptedUnitCache,
@@ -682,9 +686,13 @@ def _canonicalize_loose_collection_types(
 
     def canonical(raw: object) -> str:
         value = text(raw)
+        if value in known_names:
+            return value
         for prefix in ("list", "array", "set", "collection", "iterable", "optional"):
-            if value.startswith(prefix) and value[len(prefix) :] in known_names:
-                return canonical_design_type(f"{prefix}<{value[len(prefix):]}>")
+            if value.casefold().startswith(prefix):
+                item = value[len(prefix) :]
+                if item in known_names or item.casefold() in PROMPT_PRIMITIVES:
+                    return canonical_design_type(f"{prefix}<{item}>")
         return value
 
     for owner in candidate.get("Classes") or []:
