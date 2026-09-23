@@ -315,12 +315,14 @@ def test_class_binding_answer_retries_the_same_design_session(monkeypatch) -> No
 
     service = WorkspaceService()
     try:
+        offered_payload = dict(offered_actions(source)[0].payload)
         action, payload, stage = service._prepare_conversational_message(
             "app-1",
             action="message",
-            payload=dict(offered_actions(source)[0].payload),
+            payload=offered_payload,
             stage=None,
         )
+        service._validate_action_reference("app-1", action, payload)
         captured: dict[str, Any] = {}
         monkeypatch.setattr(
             workspace_module,
@@ -351,7 +353,7 @@ def test_class_binding_answer_retries_the_same_design_session(monkeypatch) -> No
     assert payload["_conversation_outcome"] == {"kind": "class_binding_retry"}
     assert captured == {
         "app_id": "app-1",
-        "repair_guidance": "Supply this value when the use case begins.\nPreserve: Keep the existing behavior.",
+        "repair_guidance": offered_payload["text"],
     }
     assert result == {"status": "completed"}
 

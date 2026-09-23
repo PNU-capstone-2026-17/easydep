@@ -1802,7 +1802,7 @@ class WorkspaceService:
             if class_binding_stall:
                 guidance = decision.normalized_meaning.requested_effect
                 if decision.preserved_constraints:
-                    guidance += "\nPreserve: " + "; ".join(
+                    guidance += "\nPreserve constraint: " + "; ".join(
                         decision.preserved_constraints
                     )
                 return (
