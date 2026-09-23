@@ -267,6 +267,49 @@ def test_option_answer_routes_without_llm_to_requirements(monkeypatch) -> None:
     assert payload["_conversation_outcome"] == {"kind": "revision_plan"}
 
 
+def test_semantic_ambiguity_option_routes_pinned_spec_effect_to_requirements(monkeypatch) -> None:
+    question = _question().model_dump(mode="json")
+    question["detected_at"]["stage"] = "requirements"
+    question["trigger"] = {"category": "semantic_ambiguity"}
+    question["decision_policy"]["allowed_semantic_scopes"] = ["behavior"]
+    question["options"][0]["decision_payload"]["normalized_meaning"][
+        "semantic_scope"
+    ] = "behavior"
+    requested_effect = "Specify that a full course places the student on the waitlist."
+    question["options"][0]["decision_payload"]["normalized_meaning"][
+        "requested_effect"
+    ] = requested_effect
+    source = _source_command()
+    source["stage"] = "requirements"
+    source["result"]["feedback_question"] = question
+    monkeypatch.setattr(repository, "latest_command", lambda *_args, **_kwargs: source)
+    monkeypatch.setattr(
+        repository,
+        "get_command",
+        lambda command_id: source if command_id == "design-question" else None,
+    )
+    monkeypatch.setattr(workspace_module, "ProjectTools", _Tools)
+    monkeypatch.setattr(workspace_module, "plan_revision", lambda *_args: _plan())
+    monkeypatch.setattr(workspace_module, "validate_plan", lambda *_args: True)
+
+    service = WorkspaceService()
+    try:
+        action, payload, stage = service._prepare_conversational_message(
+            "app-1",
+            action="message",
+            payload=dict(offered_actions(source)[0].payload),
+            stage=None,
+        )
+    finally:
+        service.shutdown()
+
+    assert (action, stage) == ("message", "requirements")
+    assert payload["text"] == requested_effect
+    assert payload["feedback_decision"]["selected_option_id"] == "reject_when_full"
+    assert payload["validated_targets"] == [_target().model_dump(mode="json")]
+    assert payload["validated_targets"][0]["artifact_version_id"] == 7
+
+
 def test_free_text_answer_uses_existing_normalizer_and_same_decision(monkeypatch) -> None:
     source = _source_command()
     monkeypatch.setattr(repository, "latest_command", lambda *_args, **_kwargs: source)

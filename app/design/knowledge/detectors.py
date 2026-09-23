@@ -43,6 +43,8 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 
+from pydantic import ValidationError
+
 from app.design.contracts.type_system import (
     DesignTypeError,
     parse_type_expression,
@@ -58,6 +60,8 @@ from app.design.services.class_diagram.validation.diagram import (
     _relation_label,
     _relationships,
 )
+from app.design.schemas.class_model import BCEModel
+from app.design.services.api_spec.normalization import interaction_contracts
 from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
 from app.design.services.persistence_scope import entity_names
@@ -805,15 +809,10 @@ def api_control_arguments(model: dict, state: dict) -> list[Finding]:
             ))
         available = _request_value_types(endpoint, schemas)
         for name, source in supplied.items():
-            try:
-                trusted_context = source == f"$context.{name}" and _normalise_contract_type(
-                    expected.get(name, "")
-                ) == "string"
-            except DesignTypeError:
-                trusted_context = False
-            if trusted_context:
-                # A precondition-derived server context stays outside the HTTP
-                # request, but is typed by the exact Control parameter it fills.
+            if source == f"$context.{name}":
+                # The trusted-context provenance rule checks an explicit BCE
+                # context# binding.  Its type is the Control parameter's type;
+                # it need not be a String (for example, a typed principal).
                 continue
             if source not in available:
                 found.append(Finding(
@@ -829,6 +828,145 @@ def api_control_arguments(model: dict, state: dict) -> list[Finding]:
                     "api.control-arguments-match",
                     f"'{name}'의 원천 타입 {available[source]}이 Control 파라미터 타입 {expected[name]}과 호환되지 않음",
                     location,
+                ))
+    return found
+
+
+def _trusted_context_arguments(
+    state: dict,
+    control: str,
+    method: str,
+    use_case_ids: set[str],
+) -> dict[str, set[str]]:
+    """Return trusted values explicitly declared by BCE collaboration evidence.
+
+    The API model represents server-owned values as ``$context.<parameter>``.
+    It deliberately does not store their policy or natural-language meaning, so
+    a context value is trustworthy here only when the accepted Collaboration
+    binds the same Control parameter to its explicit ``context#`` source.
+    Class collaboration validation owns the typed subject and explicit-trust
+    declaration behind that finite source; a bare ``:precondition:`` ref is
+    not trusted context evidence.
+    """
+    declared: dict[str, set[str]] = {}
+    if not use_case_ids:
+        return declared
+    collaborations = (state.get("extracted_bce_classes") or {}).get(
+        "Collaborations", []
+    )
+    for collaboration in collaborations or []:
+        if not isinstance(collaboration, dict):
+            continue
+        collaboration_use_cases = {
+            str(item).strip()
+            for item in collaboration.get("useCaseIds", []) or []
+            if str(item).strip()
+        }
+        covered_use_cases = use_case_ids & collaboration_use_cases
+        if not covered_use_cases:
+            continue
+        for call in collaboration.get("calls", []) or []:
+            if not isinstance(call, dict):
+                continue
+            target = str(call.get("receiverOperationId") or "").strip()
+            if not target.startswith(f"{control}::{method}("):
+                continue
+            for argument in call.get("argumentBindings", []) or []:
+                if not isinstance(argument, dict):
+                    continue
+                parameter = str(argument.get("parameter") or "").strip()
+                source_ref = str(argument.get("sourceRef") or "").strip()
+                if parameter and source_ref.startswith("context#"):
+                    declared.setdefault(parameter, set()).update(covered_use_cases)
+    return declared
+
+
+def api_trusted_context_provenance(model: dict, state: dict) -> list[Finding]:
+    """Require each API trusted-context value to have accepted BCE evidence.
+
+    Requirement policy is reviewed upstream. This API-owned check rejects only
+    a concrete projection gap: ``$context.<name>`` without a matching accepted
+    collaboration ``context#`` binding.
+    """
+    found: list[Finding] = []
+    for endpoint in model.get("Endpoints", []) or []:
+        if not isinstance(endpoint, dict):
+            continue
+        binding = _binding(endpoint)
+        if binding is None:
+            continue
+        control = str(binding.get("control") or "").strip()
+        method = str(binding.get("method") or "").strip()
+        if not control or not method:
+            continue  # api.control-binding-exists owns incomplete targets.
+        use_case_ids = {
+            str(item).strip()
+            for item in endpoint.get("use_case_ids", []) or []
+            if str(item).strip()
+        }
+        declared = _trusted_context_arguments(
+            state, control, method, use_case_ids
+        )
+        for argument in binding.get("arguments", []) or []:
+            if not isinstance(argument, dict):
+                continue
+            parameter = str(argument.get("name") or "").strip()
+            source = str(argument.get("source") or "").strip()
+            if not parameter or source != f"$context.{parameter}":
+                continue
+            if use_case_ids <= declared.get(parameter, set()):
+                continue
+            found.append(Finding(
+                "api.trusted-context-provenance",
+                f"'{parameter}'의 trusted context에 모든 endpoint 유스케이스를 덮는 같은 Control context# 인자 근거가 없음",
+                _api_location(endpoint),
+            ))
+    return found
+
+
+def api_accepted_interactions_covered(model: dict, state: dict) -> list[Finding]:
+    """Check that every accepted Boundary→Control interaction has an API endpoint.
+
+    The class stage owns the collaboration's meaning and arguments.  This API
+    stage only checks that its generated interaction ID, Control target, and
+    use-case coverage survived HTTP projection.
+    """
+    raw_bce = state.get("extracted_bce_classes")
+    if not isinstance(raw_bce, dict) or not raw_bce.get("Collaborations"):
+        return []
+    try:
+        contracts = interaction_contracts(BCEModel.model_validate(raw_bce))
+    except ValidationError:
+        # Invalid BCE data is owned by class validation, not this API rule.
+        return []
+
+    found: list[Finding] = []
+    for contract in contracts:
+        covered: set[str] = set()
+        for endpoint in model.get("Endpoints", []) or []:
+            if not isinstance(endpoint, dict):
+                continue
+            if str(endpoint.get("interaction_id") or "").strip() != contract.interaction_id:
+                continue
+            binding = _binding(endpoint)
+            if (
+                binding is None
+                or str(binding.get("control") or "").strip() != contract.control_class
+                or str(binding.get("method") or "").strip() != contract.control_method
+                or contract.boundary_class not in (endpoint.get("source_classes") or [])
+            ):
+                continue
+            covered.update(
+                str(item).strip()
+                for item in endpoint.get("use_case_ids", []) or []
+                if str(item).strip()
+            )
+        for use_case_id in contract.use_case_ids:
+            if use_case_id not in covered:
+                found.append(Finding(
+                    "api.accepted-interactions-covered",
+                    f"승인된 Boundary→Control 상호작용의 {use_case_id}에 대응하는 API endpoint가 없음",
+                    contract.interaction_id,
                 ))
     return found
 
@@ -1113,6 +1251,8 @@ API_SPEC_DETECTORS: dict[str, Callable[[dict, dict], list[Finding]]] = {
     "api_traceability": api_traceability,
     "api_control_binding": api_control_binding,
     "api_control_arguments": api_control_arguments,
+    "api_trusted_context_provenance": api_trusted_context_provenance,
+    "api_accepted_interactions_covered": api_accepted_interactions_covered,
     "api_control_outcomes": api_control_outcomes,
     "api_control_sequence": api_control_sequence,
 }
@@ -1127,6 +1267,8 @@ API_SPEC_CHECKS: tuple[CheckSpec[dict, dict], ...] = (
     CheckSpec("api.references-exist", api_traceability),
     CheckSpec("api.control-binding-exists", api_control_binding),
     CheckSpec("api.control-arguments-match", api_control_arguments),
+    CheckSpec("api.trusted-context-provenance", api_trusted_context_provenance),
+    CheckSpec("api.accepted-interactions-covered", api_accepted_interactions_covered),
     CheckSpec("api.control-outcomes-cover-responses", api_control_outcomes),
     CheckSpec("api.control-call-in-sequence", api_control_sequence),
 )

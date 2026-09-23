@@ -10,9 +10,11 @@ from pydantic import ValidationError
 from app.design.contracts.api_spec import ApiSpecModel, ApiSpecProposal
 from app.design.graphs import subgraphs as design_subgraphs
 from app.design.knowledge.detectors import (
+    api_accepted_interactions_covered,
     api_control_arguments,
     api_executable_schema_fields,
     api_spec_findings,
+    api_trusted_context_provenance,
 )
 from app.design.rtm import build_design_rtm
 from app.design.schemas.class_model import BCEModel
@@ -396,17 +398,26 @@ def test_control_arguments_do_not_fall_back_to_matching_names_or_types() -> None
     assert endpoint.control_binding.arguments == []
 
 
-def test_string_precondition_stays_internal_as_trusted_control_context() -> None:
+def test_accepted_trusted_context_stays_internal_to_the_control() -> None:
     payload = _bce_model().model_dump(by_alias=True)
     control = payload["Classes"][1]["operations"][0]
-    control["parameters"].append({"name": "authenticatedPrincipal", "type": "String"})
+    payload["DataTypes"].append(
+        {
+            "name": "AuthenticatedPrincipal",
+            "kind": "valueObject",
+            "fields": ["subject : String"],
+        }
+    )
+    control["parameters"].append(
+        {"name": "authenticatedPrincipal", "type": "AuthenticatedPrincipal"}
+    )
     payload["Collaborations"][0]["calls"][1]["receiverOperationId"] = (
-        "CatalogControl::searchCatalog(filter:CourseFilter,authenticatedPrincipal:String)"
+        "CatalogControl::searchCatalog(filter:CourseFilter,authenticatedPrincipal:AuthenticatedPrincipal)"
     )
     payload["Collaborations"][0]["calls"][1]["argumentBindings"].append(
         {
             "parameter": "authenticatedPrincipal",
-            "sourceRef": "UC1:precondition:1#authenticatedPrincipal",
+            "sourceRef": "context#UC1:precondition:1:authenticatedPrincipal",
         }
     )
     bce_model = BCEModel.model_validate(payload)
@@ -414,7 +425,7 @@ def test_string_precondition_stays_internal_as_trusted_control_context() -> None
     proposal = _proposal().model_dump()
     proposal["Endpoints"][0]["interaction_id"] = (
         "CatalogBoundary::browseCatalog(filter:CourseFilter) -> "
-        "CatalogControl::searchCatalog(filter:CourseFilter,authenticatedPrincipal:String)"
+        "CatalogControl::searchCatalog(filter:CourseFilter,authenticatedPrincipal:AuthenticatedPrincipal)"
     )
     normalized = normalize_api_spec_model(ApiSpecProposal.model_validate(proposal), bce_model)
     endpoint = normalized.Endpoints[0]
@@ -424,20 +435,54 @@ def test_string_precondition_stays_internal_as_trusted_control_context() -> None
         {"name": "filter", "source": "$query.filter"},
         {"name": "authenticatedPrincipal", "source": "$context.authenticatedPrincipal"},
     ]
-    assert api_control_arguments(
-        normalized.model_dump(by_alias=True),
-        {"extracted_bce_classes": bce_model.model_dump(by_alias=True)},
-    ) == []
+
+
+def test_plain_precondition_ref_is_not_projected_as_trusted_context() -> None:
+    payload = _bce_model().model_dump(by_alias=True)
+    control = payload["Classes"][1]["operations"][0]
+    payload["DataTypes"].append(
+        {
+            "name": "AuthenticatedPrincipal",
+            "kind": "valueObject",
+            "fields": ["subject : String"],
+        }
+    )
+    control["parameters"].append(
+        {"name": "authenticatedPrincipal", "type": "AuthenticatedPrincipal"}
+    )
+    payload["Collaborations"][0]["calls"][1]["receiverOperationId"] = (
+        "CatalogControl::searchCatalog(filter:CourseFilter,authenticatedPrincipal:AuthenticatedPrincipal)"
+    )
+    payload["Collaborations"][0]["calls"][1]["argumentBindings"].append(
+        {
+            "parameter": "authenticatedPrincipal",
+            "sourceRef": "UC1:precondition:1#authenticatedPrincipal",
+        }
+    )
+    proposal = _proposal().model_dump()
+    proposal["Endpoints"][0]["interaction_id"] = (
+        "CatalogBoundary::browseCatalog(filter:CourseFilter) -> "
+        "CatalogControl::searchCatalog(filter:CourseFilter,authenticatedPrincipal:AuthenticatedPrincipal)"
+    )
+
+    endpoint = normalize_api_spec_model(
+        ApiSpecProposal.model_validate(proposal), BCEModel.model_validate(payload)
+    ).Endpoints[0]
+
+    assert endpoint.control_binding is not None
+    assert [item.model_dump() for item in endpoint.control_binding.arguments] == [
+        {"name": "filter", "source": "$query.filter"}
+    ]
 
 
 @pytest.mark.parametrize(
     ("parameter_type", "source"),
     [
         ("String", "$context.otherPrincipal"),
-        ("UUID", "$context.authenticatedPrincipal"),
+        ("UUID", "$context.otherPrincipal"),
     ],
 )
-def test_control_context_rejects_arbitrary_or_non_string_values(
+def test_control_context_rejects_nonmatching_parameter_sources(
     parameter_type: str, source: str
 ) -> None:
     state = {
@@ -473,6 +518,160 @@ def test_control_context_rejects_arbitrary_or_non_string_values(
     findings = api_control_arguments(model, state)
 
     assert [finding.rule_id for finding in findings] == ["api.control-arguments-match"]
+
+
+def test_typed_context_is_checked_by_provenance_not_string_type() -> None:
+    state = {
+        "extracted_bce_classes": {
+            "Classes": [{
+                "className": "CatalogControl",
+                "stereotype": "Control",
+                "methods": ["search(principal: AuthenticatedPrincipal): void"],
+            }],
+            "Collaborations": [{
+                "useCaseIds": ["UC1"],
+                "calls": [{
+                    "receiverOperationId": "CatalogControl::search(principal:AuthenticatedPrincipal)",
+                    "argumentBindings": [{
+                        "parameter": "principal",
+                        "sourceRef": "context#UC1:precondition:1:principal",
+                    }],
+                }],
+            }],
+        }
+    }
+    model = {
+        "Endpoints": [{
+            "path": "/catalog", "method": "get", "use_case_ids": ["UC1"],
+            "control_binding": {
+                "control": "CatalogControl", "method": "search",
+                "arguments": [{"name": "principal", "source": "$context.principal"}],
+            },
+        }],
+        "Schemas": [],
+    }
+
+    assert api_control_arguments(model, state) == []
+    assert api_trusted_context_provenance(model, state) == []
+
+
+def test_trusted_context_requires_matching_bce_precondition_provenance() -> None:
+    """A server context value cannot be asserted by the API binding alone."""
+    state = {
+        "extracted_bce_classes": {
+            "Collaborations": [
+                {
+                    "useCaseIds": ["UC9"],
+                    "calls": [
+                        {
+                            "receiverOperationId": "ReportControl::list(ownerId: String)",
+                            "argumentBindings": [
+                                {
+                                    "parameter": "ownerId",
+                                    "sourceRef": "context#UC9:precondition:1:ownerId",
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+    }
+    model = {
+        "Endpoints": [
+            {
+                "method": "get",
+                "path": "/reports",
+                "use_case_ids": ["UC9"],
+                "control_binding": {
+                    "control": "ReportControl",
+                    "method": "list",
+                    "arguments": [
+                        {"name": "ownerId", "source": "$context.ownerId"}
+                    ],
+                },
+            }
+        ]
+    }
+
+    assert api_trusted_context_provenance(model, state) == []
+
+    model["Endpoints"][0]["use_case_ids"].append("UC10")
+    assert [finding.rule_id for finding in api_trusted_context_provenance(model, state)] == [
+        "api.trusted-context-provenance"
+    ]
+    model["Endpoints"][0]["use_case_ids"].pop()
+
+    state["extracted_bce_classes"]["Collaborations"][0]["calls"][0][
+        "argumentBindings"
+    ][0]["sourceRef"] = "UC9:precondition:1#ownerId"
+    assert [finding.rule_id for finding in api_trusted_context_provenance(model, state)] == [
+        "api.trusted-context-provenance"
+    ]
+
+    state["extracted_bce_classes"]["Collaborations"][0]["calls"][0][
+        "argumentBindings"
+    ] = []
+
+    findings = api_trusted_context_provenance(model, state)
+
+    assert [finding.rule_id for finding in findings] == [
+        "api.trusted-context-provenance"
+    ]
+
+
+def test_executable_schema_fields_still_rejects_used_empty_dto() -> None:
+    model = {
+        "Endpoints": [
+            {
+                "method": "post",
+                "path": "/reports",
+                "request_schema": "CreateReportRequest",
+            }
+        ],
+        "Schemas": [{"name": "CreateReportRequest", "fields": [], "values": []}],
+    }
+
+    findings = api_executable_schema_fields(model, {})
+
+    assert [finding.rule_id for finding in findings] == ["api.executable-schema-fields"]
+
+
+def test_api_covers_accepted_boundary_control_interaction_and_each_use_case() -> None:
+    bce_payload = _bce_model().model_dump(by_alias=True)
+    bce_payload["Collaborations"][0]["useCaseIds"].append("UC2")
+    bce = BCEModel.model_validate(bce_payload)
+    model = normalize_api_spec_model(_proposal(), bce).model_dump()
+    state = {"extracted_bce_classes": bce.model_dump(by_alias=True)}
+
+    assert api_accepted_interactions_covered(model, state) == []
+
+    model["Endpoints"][0]["use_case_ids"].remove("UC2")
+    findings = api_accepted_interactions_covered(model, state)
+    assert [finding.rule_id for finding in findings] == [
+        "api.accepted-interactions-covered"
+    ]
+    assert "UC2" in findings[0].message
+    assert any(
+        item.rule_id == "api.accepted-interactions-covered"
+        for item in api_spec_findings(model, state)
+    )
+
+
+def test_api_interaction_is_not_covered_by_wrong_control_or_missing_endpoint() -> None:
+    bce = _bce_model()
+    model = normalize_api_spec_model(_proposal(), bce).model_dump()
+    state = {"extracted_bce_classes": bce.model_dump(by_alias=True)}
+
+    model["Endpoints"][0]["control_binding"]["control"] = "OtherControl"
+    assert [item.rule_id for item in api_accepted_interactions_covered(model, state)] == [
+        "api.accepted-interactions-covered"
+    ]
+
+    model["Endpoints"] = []
+    assert [item.rule_id for item in api_accepted_interactions_covered(model, state)] == [
+        "api.accepted-interactions-covered"
+    ]
 
 
 def test_path_placeholder_does_not_assume_a_nested_field_role_from_its_name() -> None:

@@ -369,6 +369,15 @@ def test_operation_payload_exposes_only_explicit_inherited_actor_context():
     assert bare_payload["availableTrustedContext"] == []
 
 
+def test_operation_prompt_distinguishes_public_contract_value_origins():
+    prompt = operations.operation_prompt()
+
+    assert "public_contract.required_values" in prompt
+    assert "system_result values are produced" in prompt
+    assert "caller-supplied identifier" in prompt
+    assert "invent authentication or delegation" in prompt
+
+
 def _hand_authored_context_model(
     use_case_id: str,
     *,

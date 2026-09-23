@@ -31,7 +31,7 @@ from app.requirements.orchestration.feedback import apply_feedback_upto
 
 
 def _ask(stage: str, summary, *, edit_stage: str | None = None, edit_targets=(),
-         questions=()) -> object:
+         questions=(), semantic_ambiguity_question=None) -> object:
     """피드백을 요청하는 interrupt. 재개 값을 그대로 반환한다.
 
     재개 값은 `FeedbackEdit`·`ResourceAnswer`·`DeploymentPreferences` 중 하나다.
@@ -51,6 +51,7 @@ def _ask(stage: str, summary, *, edit_stage: str | None = None, edit_targets=(),
         "edit_stage": edit_stage,
         "edit_targets": list(edit_targets),
         "resource_questions": list(questions),
+        "semantic_ambiguity_question": semantic_ambiguity_question,
     })
 
 
@@ -198,24 +199,44 @@ def gate_use_cases(state: AgentState) -> dict[str, object]:
 def gate_specs(state: AgentState) -> dict[str, object]:
     """step3(명세) 말미 게이트. specs local 피드백은 대상 UC 명세만 재생성한다."""
     specs = state.get("use_case_specs", [])
+    # The stage's check_specs node owns the selective LLM review and persists
+    # its result.  Do not recalculate it here: interrupt resume re-enters this
+    # node and would otherwise duplicate the review call.
+    ambiguity = state.get("semantic_ambiguity_question")
     answer = _ask(
         "specs",
         [s["use_case_id"] for s in specs],
         edit_stage="specs",
         edit_targets=[s["use_case_id"] for s in specs if s.get("use_case_id")],
+        semantic_ambiguity_question=ambiguity,
     )
     if _empty(answer):
-        return {"gate_route": "advance"}
+        return {"gate_route": "advance", "semantic_ambiguity_question": ambiguity}
     st = dict(state)
     if not isinstance(answer, FeedbackEdit):
         raise TypeError("Specification feedback requires a validated FeedbackEdit.")
+    # A typed question answer has resolved this one product choice.  Mark it
+    # before recomputing reports so check_specs does not reopen the same source
+    # wording while the local UC revision is being applied.
+    resolved_ambiguity = bool(ambiguity)
+    if resolved_ambiguity:
+        st["semantic_ambiguity_questioned"] = True
     apply_feedback_upto(cast(AgentState, st), answer, up_to="specs")
     st.update(check_specs(cast(AgentState, st)))  # spec_report 갱신
     upd = _pick(st, (
         "actors", "use_cases", "constraint_applicability", "coverage", "traceability",
         "use_case_specs", "spec_report",
     ))
-    return {**upd, "gate_route": "loop"}
+    return {
+        **upd,
+        "semantic_ambiguity_question": (
+            None if resolved_ambiguity else st.get("semantic_ambiguity_question")
+        ),
+        "semantic_ambiguity_questioned": (
+            True if resolved_ambiguity else state.get("semantic_ambiguity_questioned", False)
+        ),
+        "gate_route": "loop",
+    }
 
 
 def gate_relationships(state: AgentState) -> dict[str, object]:

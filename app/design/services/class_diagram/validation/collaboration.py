@@ -94,6 +94,7 @@ def _collaboration_contract(
     covered_by_group: list[set[str]] = [set() for _group in groups]
     root_ordinal = {position: ordinal for ordinal, position in enumerate(roots)}
     control_by_group = [False for _group in groups]
+    direct_control_handoffs = [0 for _group in groups]
     for position, call in enumerate(calls):
         call_id = text(call.get("callId"))
         operation = operations.get(text(call.get("receiverOperationId")))
@@ -160,6 +161,8 @@ def _collaboration_contract(
             )
             source = text(parent_operation.get("stereotype"))
             target = text(operation.get("stereotype"))
+            if source == "boundary" and target == "control":
+                direct_control_handoffs[ordinal] += 1
             if (
                 (source == "boundary" and target != "control")
                 or (source == "entity" and target != "entity")
@@ -177,6 +180,12 @@ def _collaboration_contract(
                     call_id,
                 ))
     for ordinal, group in enumerate(groups):
+        if direct_control_handoffs[ordinal] != 1:
+            findings.append(Finding(
+                "class.collaboration.contract",
+                "each actor entry Boundary must hand off directly to exactly one Control",
+                group.id,
+            ))
         if set(group.required_step_ids) - covered_by_group[ordinal]:
             findings.append(Finding(
                 "class.collaboration.contract",

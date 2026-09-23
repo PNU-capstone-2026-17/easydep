@@ -419,6 +419,103 @@ class UseCaseSpec(BaseModel):
             "Use an empty list when no such guarantee is supported."
         ),
     )
+    public_contract: "PublicBehaviorContract" = Field(
+        default_factory=lambda: PublicBehaviorContract(),
+        description=(
+            "Optional source-grounded projection of public identity obligations and values "
+            "obligations needed to complete this goal. Leave lists empty when requirements "
+            "establish no such obligation; cite only this use case's functional requirement IDs."
+        ),
+    )
+
+
+class SemanticAmbiguityOption(BaseModel):
+    """One user-visible consequence of a source-grounded product choice."""
+
+    id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    requested_effect: str = Field(alias="requestedEffect", min_length=1)
+
+
+class SemanticAmbiguityQuestion(BaseModel):
+    """A single unresolved product meaning in one use-case contract.
+
+    This is deliberately not a generic validation finding.  The source evidence
+    and the two mutually exclusive outcomes let the Workspace turn it into its
+    existing version-pinned Question envelope without trusting a model-selected
+    artifact target.
+    """
+
+    use_case_id: str = Field(alias="useCaseId", min_length=1)
+    source_requirement_ids: list[str] = Field(alias="sourceRequirementIds", min_length=1)
+    evidence_spans: list[str] = Field(alias="evidenceSpans", min_length=1)
+    prompt: str = Field(min_length=1)
+    options: list[SemanticAmbiguityOption] = Field(min_length=2, max_length=2)
+
+
+class SemanticAmbiguityReview(BaseModel):
+    """Selective semantic review: abstain unless a real product choice remains."""
+
+    question: SemanticAmbiguityQuestion | None = None
+
+
+class IdentityObligation(BaseModel):
+    """An identity or delegation condition explicitly required by a functional requirement."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    subject: str = Field(min_length=1, description="Person or party whose identity matters.")
+    obligation: Literal["identify", "authenticate", "act_on_behalf"] = Field(
+        description=(
+            "identify distinguishes the selected subject; authenticate verifies that subject's "
+            "identity; act_on_behalf means one subject exercises delegated authority for a "
+            "different subject. Authentication alone is not delegation."
+        )
+    )
+    requirement_ids: list[str] = Field(
+        min_length=1,
+        description="Functional requirement IDs that explicitly establish this obligation.",
+    )
+
+
+class RequiredValue(BaseModel):
+    """A named information value that a functional requirement says is required."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, description="The required public input or value.")
+    source: Literal[
+        "caller_input", "authenticated_actor_context", "system_result"
+    ] = Field(
+        description=(
+            "Value origin established by the source requirement: caller_input is untrusted actor "
+            "input, authenticated_actor_context is trusted context for the authenticated actor, "
+            "and system_result is produced by the system. A caller supplied identifier is not "
+            "proof of identity."
+        )
+    )
+    value_type: Literal[
+        "string", "integer", "number", "boolean", "date", "datetime", "identifier",
+        "object", "array", "unknown",
+    ] = Field(description="The requirement-grounded value type; use unknown if unspecified.")
+    usage: Literal["control", "result", "both"] = Field(
+        description="Whether the value controls an operation, is an observable result, or both."
+    )
+    requirement_ids: list[str] = Field(
+        min_length=1,
+        description="Functional requirement IDs that explicitly establish this required value.",
+    )
+
+
+class PublicBehaviorContract(BaseModel):
+    """Compact source-grounded identity and required-value obligations for design closure."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal["PublicBehaviorContract/v1"] = "PublicBehaviorContract/v1"
+    identity_obligations: list[IdentityObligation] = Field(default_factory=list)
+    required_values: list[RequiredValue] = Field(default_factory=list)
 
 
 # ----------------------------------------------------------------------------

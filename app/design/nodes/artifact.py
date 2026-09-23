@@ -221,6 +221,9 @@ class DesignArtifactSpec:
     #: 상태를 받는 이유는 그라운딩 검사(지어낸 유스케이스 id 등)가 상류 산출물을 봐야
     #: 해서다 — 모델만으로는 "지어낸 참조"와 "정당한 참조"를 구별할 수 없다.
     check: Callable[[dict, ArchitectureState], list[Finding]] = lambda model, state: []
+    #: Optional digest-bound semantic evidence persisted with this check report.
+    #: Read-only hydration consumes it and never repeats a model judgement.
+    check_evidence: Callable[[dict, ArchitectureState], dict[str, Any]] | None = None
     #: 검사 결과를 담는 상태 키. **비어 있으면 검사 노드 자체가 안 생긴다** —
     #: 그 산출물에는 아직 규칙이 없다는 뜻이고, 없는 것을 있는 척하지 않는다.
     #: 값은 dict: {findings: list[str], repair_iters: int, stopped: str, error?: str}.
@@ -649,7 +652,17 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
     def node(state: ArchitectureState) -> dict:
         started = time.perf_counter()
         model = state.get(spec.model_key) or {}
-        findings = _dedupe_findings(spec.check(model, state))
+        # A semantic hook may perform one bounded review.  Make its durable,
+        # digest-bound result visible to the check in the same invocation so a
+        # successful (or failed) review is never executed twice for one gate.
+        evidence: dict[str, Any] | None = None
+        check_state = state
+        if spec.check_evidence is not None:
+            evidence = spec.check_evidence(model, state)
+            prior = dict(state.get(spec.check_key) or {})
+            prior["semanticEvidence"] = evidence
+            check_state = {**state, spec.check_key: prior}
+        findings = _dedupe_findings(spec.check(model, check_state))
         iterations = 0
         error: str | None = None
         ledger = RepairLedger()
@@ -872,6 +885,8 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
             "stopped": stopped,
             "repair_history": ledger.model_dump(mode="json"),
         }
+        if evidence is not None:
+            report["semanticEvidence"] = evidence
         if error:
             report["error"] = error
         log_design_timing(

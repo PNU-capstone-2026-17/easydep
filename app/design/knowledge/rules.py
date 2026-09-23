@@ -910,6 +910,33 @@ RULES: tuple[Rule, ...] = (
         detector="api_control_arguments",
     ),
     Rule(
+        id="api.trusted-context-provenance",
+        stage=API_SPEC,
+        severity=DEFECT,
+        statement=(
+            "A Control argument sourced from trusted context must be explicitly "
+            "bound to the same parameter from a validated trusted-context source in the BCE "
+            "collaboration for that endpoint."
+        ),
+        citation="app/design/services/api_spec/normalization.py (_control_arguments)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="api_trusted_context_provenance",
+    ),
+    Rule(
+        id="api.accepted-interactions-covered",
+        stage=API_SPEC,
+        severity=DEFECT,
+        statement=(
+            "Every accepted Boundary-to-Control interaction and use-case ID "
+            "must be represented by an API endpoint bound to that Control."
+        ),
+        citation="app/design/services/api_spec/normalization.py (interaction_contracts)",
+        evidence="pipeline-invariant",
+        judged_by=JUDGED_DETECTOR,
+        detector="api_accepted_interactions_covered",
+    ),
+    Rule(
         id="api.control-outcomes-cover-responses",
         stage=API_SPEC,
         severity=DEFECT,

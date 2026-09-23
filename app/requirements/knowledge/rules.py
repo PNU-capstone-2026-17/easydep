@@ -610,6 +610,23 @@ RULES: tuple[Rule, ...] = (
         detector="contract_fields",
     ),
     Rule(
+        id="spec.public-behavior-completeness",
+        stage=WRITE_SPECIFICATIONS,
+        severity=DEFECT,
+        statement=(
+            "Review the specification against its use-case goal and linked requirements for "
+            "complete, non-contradictory public behavior: the responsible actor, any relevant "
+            "authenticated subject or delegation, required information, and observable outcome. "
+            "Report an omission or contradiction only when that behavior is grounded in the "
+            "supplied goal or requirements. Do not invent authentication, authorization, required "
+            "preconditions, or other behavior when the sources establish none."
+        ),
+        citation="easydep convention (source-grounded public behavior review)",
+        evidence="project-convention",
+        owner="specs",
+        judged_by=JUDGED_VALIDATOR,
+    ),
+    Rule(
         id="spec.scenario-requirement-reference-integrity",
         stage=WRITE_SPECIFICATIONS,
         severity=DEFECT,

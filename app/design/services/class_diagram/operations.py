@@ -118,6 +118,11 @@ Keep signatures as a closed value flow. A delegated parameter must be available
 from an entry input, an earlier operation result, an explicit precondition, or a
 supported runtime value. Declare a result type when later work needs several
 values produced earlier. Do not invent caller input merely to satisfy a signature.
+Honor `useCase.specification.public_contract.required_values`: caller_input values
+must come from actor-facing steps, authenticated_actor_context may enter Control only
+through matching availableTrustedContext evidence, and system_result values are produced
+outputs, never request inputs or trusted context. Do not treat a caller-supplied identifier
+as proof of identity or invent authentication or delegation absent a cited obligation.
 An actorEntry names the caller role; it does not itself supply that actor's identifier.
 When the steps refer to the current actor without explicitly providing an identifier,
 model that actor-scoped responsibility without an identity parameter. Do not move an

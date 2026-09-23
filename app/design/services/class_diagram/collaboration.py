@@ -62,7 +62,9 @@ notification; parent it to Control, never to Boundary. Entities may collaborate
 with other Entities, but do not call a Control or Boundary directly. The Boundary
 class used by a root must not appear again inside that root. Cover all
 required steps inside the matching actor entry. The same operation may be used
-in more than one root. Do not return ids, step refs, values, or bindings.
+in more than one root. Each Boundary root hands off directly to exactly one
+Control; any further Control collaboration must be under that Control. Do not
+return ids, step refs, values, or bindings.
 For a root and all of its descendants, choose only that actorEntry's
 eligibleReceiverOperationIds. Do not move an operation from another actor entry
 into this root, even when it is semantically related to the same use case.

@@ -473,6 +473,7 @@ ARTIFACT_KEYS = (
     "traceability",
     "use_case_specs",
     "spec_report",
+    "semantic_ambiguity_question",
     "relationships",
     "relationship_report",
     "diagram",

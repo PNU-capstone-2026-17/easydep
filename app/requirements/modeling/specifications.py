@@ -47,7 +47,7 @@ from app.requirements.modeling.contracts import (
 from app.requirements.modeling.feedback import feedback_for
 from app.requirements.runtime import telemetry
 from app.requirements.runtime.structured_llm import invoke_structured
-from app.requirements.schemas import UseCaseSpec
+from app.requirements.schemas import SemanticAmbiguityReview, UseCaseSpec
 from app.requirements.traceability import constraints_for_use_case
 from app.validation import (
     RepairAttempt,
@@ -110,7 +110,66 @@ def validate_specification(spec: dict[str, object]) -> list[str]:
     예전에는 정규식과 UI 단어 목록이 이 파일 상단에 있었고, "그 목록은 완전목록이 아니다"는
     사실이 **주석에만** 있었다. 그래서 지적을 받는 사람은 그 한계를 알 수 없었다.
     """
-    return [f.as_issue() for f in detectors.spec_findings(spec)]
+    findings = [f.as_issue() for f in detectors.spec_findings(spec)]
+    findings.extend(_public_contract_findings(spec))
+    return findings
+
+
+def _public_contract_findings(spec: dict[str, object]) -> list[str]:
+    """Check source references and declaration consistency in the optional typed projection."""
+    contract = spec.get("public_contract")
+    if not isinstance(contract, dict):
+        return []
+
+    linked_raw = spec.get("requirement_ids")
+    linked_ids = {str(value) for value in linked_raw} if isinstance(linked_raw, list) else None
+    findings: list[str] = []
+
+    for collection in ("identity_obligations", "required_values"):
+        entries = contract.get(collection)
+        if not isinstance(entries, list):
+            continue
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict):
+                continue
+            refs = entry.get("requirement_ids")
+            if linked_ids is None or not isinstance(refs, list):
+                continue
+            unsupported = sorted({str(ref) for ref in refs} - linked_ids)
+            if unsupported:
+                findings.append(
+                    "[public-contract-integrity] "
+                    f"{collection}[{index}] cites requirement IDs not linked as functional "
+                    f"requirements to this use case: {', '.join(unsupported)}."
+                )
+
+    values = contract.get("required_values")
+    declarations: dict[str, list[dict[str, object]]] = {}
+    if isinstance(values, list):
+        for entry in values:
+            if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
+                continue
+            key = " ".join(entry["name"].split()).casefold()
+            if key:
+                declarations.setdefault(key, []).append(entry)
+    for name, entries in declarations.items():
+        if len(entries) < 2:
+            continue
+        signatures = {
+            (entry.get("source"), entry.get("value_type"), entry.get("usage"))
+            for entry in entries
+        }
+        label = name
+        if len(signatures) > 1:
+            findings.append(
+                f"[public-contract-integrity] Required value '{label}' has conflicting "
+                "source, type, or usage declarations."
+            )
+        else:
+            findings.append(
+                f"[public-contract-integrity] Required value '{label}' is declared more than once."
+            )
+    return findings
 
 
 def _spec_human(
@@ -151,7 +210,16 @@ def _spec_human(
         f"Functional requirements it covers:\n{_resolve(uc.get('requirement_ids', []), by_id)}\n\n"
         f"Non-functional constraints:\n{_resolve(uc.get('nfr_ids', []), by_id)}\n\n"
         "Applicable RTM constraints (refine this use case; they are not new goals or "
-        f"scenario coverage):\n{constraint_listing}"
+        f"scenario coverage):\n{constraint_listing}\n\n"
+        "Public behavior contract: list only identity obligations and values explicitly "
+        "established by the covered functional requirements. 'identify' distinguishes the "
+        "selected subject; 'authenticate' verifies that subject; 'act_on_behalf' means one "
+        "subject exercises delegated authority for a different subject, not authentication alone. "
+        "For each value, cite requirement IDs and report its source (caller_input, "
+        "authenticated_actor_context, or system_result), type, and use (control, result, or both). "
+        "A caller supplied identifier remains untrusted input and is not proof of identity. "
+        "Leave lists empty when the requirements establish no obligation; do not infer login, "
+        "authorization, identity checks, or required values."
     )
     existing_spec = uc.get("_existing_spec")
     if existing_spec:
@@ -164,6 +232,7 @@ def _spec_human(
                 "extensions",
                 "success_guarantee",
                 "minimal_guarantee",
+                "public_contract",
             )
         }
         base += (
@@ -211,6 +280,7 @@ def normalize_specification(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecIt
             }
             for guarantee in spec.minimal_guarantee
         ],
+        "public_contract": spec.public_contract.model_dump(mode="json"),
         "issues": [],
         "repair_iters": 0,
         # _check가 곧 덮어쓴다. 조립 시점에는 아직 아무 검증도 안 했다.
@@ -226,6 +296,7 @@ SPECIFICATION_REVIEW_FIELDS = (
     "extensions",
     "success_guarantee",
     "minimal_guarantee",
+    "public_contract",
 )
 
 def spec_review_payload(
@@ -240,7 +311,7 @@ def spec_review_payload(
     재는 것이 조용히 달라진다 — 그러면 눈금 수치가 파이프라인에 대한 말이 아니게 된다.
     """
     payload: dict[str, object] = {
-        key: item[key] for key in SPECIFICATION_REVIEW_FIELDS
+        key: item[key] for key in SPECIFICATION_REVIEW_FIELDS if key in item
     }
     if item.get("name"):
         payload["use_case_name"] = item["name"]
@@ -404,6 +475,7 @@ def generate_specification(
             for key in (
                 "preconditions", "trigger", "main_scenario", "extensions",
                 "success_guarantee", "minimal_guarantee",
+                "public_contract",
             )
         }
         input_digest = stable_digest(
@@ -470,6 +542,7 @@ def generate_specification(
             for key in (
                 "preconditions", "trigger", "main_scenario", "extensions",
                 "success_guarantee", "minimal_guarantee",
+                "public_contract",
             )
         }
         candidate_digest = stable_digest(candidate_spec)
@@ -718,4 +791,82 @@ def check_specs(state: AgentState) -> ModelingStagePatch:
             Counter(s.get("repair_stopped", "unknown") for s in specs)
         ),
     }
-    return {"spec_report": report, "phase": "check_specs"}
+    # This runs in the stage subgraph before its parent feedback gate.  Persist
+    # the selective-review result in graph state so an interrupt resume does not
+    # issue the same LLM call again merely to redisplay the same question.
+    return {
+        "spec_report": report,
+        "semantic_ambiguity_question": find_source_grounded_semantic_ambiguity(state),
+        "phase": "check_specs",
+    }
+
+
+def find_source_grounded_semantic_ambiguity(
+    state: AgentState,
+    *,
+    proposal_call: StructuredProposalCall | None = None,
+) -> dict[str, object] | None:
+    """Return one genuine UC-level product choice, or abstain.
+
+    Deterministic defects are already represented by ``issues`` and are repaired
+    locally before this review runs.  This selective call therefore receives only
+    clean specifications and their own linked requirement text; it cannot choose
+    an actor, UC, or source outside that bounded evidence.
+    """
+    if state.get("semantic_ambiguity_questioned"):
+        return None
+    specs = state.get("use_case_specs") or []
+    requirements = {str(item.get("id")): item for item in state.get("classified") or []
+                    if isinstance(item, dict) and item.get("id")}
+    candidates: list[dict[str, object]] = []
+    for spec in specs:
+        if not isinstance(spec, dict) or spec.get("issues") or spec.get("generated") is False:
+            continue
+        uc_id = str(spec.get("use_case_id") or "").strip()
+        linked = [str(value) for value in spec.get("requirement_ids") or []]
+        source = [
+            {"id": requirement_id, "text": requirements[requirement_id].get("text", "")}
+            for requirement_id in linked if requirement_id in requirements
+        ]
+        if uc_id and source:
+            candidates.append({
+                "useCaseId": uc_id,
+                "requirements": source,
+                "specification": spec_review_payload(spec, source),
+            })
+    if not candidates:
+        return None
+    prompt = (
+        "Review these use-case contracts for exactly one unresolved product-behavior "
+        "choice. Abstain unless the supplied requirement wording supports two materially "
+        "different public behaviors and neither behavior is selected. Do not report missing "
+        "fields, invalid references, implementation details, or a repairable defect. If you "
+        "ask, cite exact source substrings, target one supplied useCaseId, and provide exactly "
+        "two concise options whose requestedEffect revises only that use-case specification."
+    )
+    try:
+        review = (proposal_call or invoke_structured)(
+            SemanticAmbiguityReview,
+            [SystemMessage(content=prompt), HumanMessage(content=json.dumps(candidates, ensure_ascii=False))],
+        )
+    except Exception as error:  # A question is optional; an unavailable reviewer must not block handoff.
+        telemetry.record_degradation("spec.semantic_ambiguity", f"{type(error).__name__}: {error}")
+        return None
+    question = review.question
+    if question is None:
+        return None
+    by_uc = {str(item["useCaseId"]): item for item in candidates}
+    candidate = by_uc.get(question.use_case_id)
+    if candidate is None:
+        return None
+    source = candidate["requirements"]
+    source_by_id = {str(item["id"]): str(item["text"]) for item in source if isinstance(item, dict)}
+    if (set(question.source_requirement_ids) - set(source_by_id)
+            or len(set(question.source_requirement_ids)) != len(question.source_requirement_ids)):
+        return None
+    evidence = "\n".join(source_by_id[item] for item in question.source_requirement_ids)
+    if any(span not in evidence for span in question.evidence_spans):
+        return None
+    if len({option.id for option in question.options}) != 2:
+        return None
+    return question.model_dump(mode="json", by_alias=True)

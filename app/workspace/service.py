@@ -1474,12 +1474,17 @@ class WorkspaceService:
                 and question.detected_at.stage == "implementation"
                 and question.trigger.category == "upstream_contract_gap"
             )
-            if question.app_id != app_id or not (design_gap or implementation_gap):
+            requirements_ambiguity = (
+                prior.get("stage") == "requirements"
+                and question.detected_at.stage == "requirements"
+                and question.trigger.category == "semantic_ambiguity"
+            )
+            if question.app_id != app_id or not (design_gap or implementation_gap or requirements_ambiguity):
                 raise ValueError("This feedback question is not an executable workspace gap.")
             targets = question.authority_candidates
             if len(targets) != 1:
                 raise ValueError("The feedback question must name one authority target.")
-            if design_gap and (
+            if (design_gap or requirements_ambiguity) and (
                 targets[0].owner != "requirements"
                 or targets[0].kind != "use_case_spec"
                 or targets[0].artifact_type != TYPE_USECASE_SPEC
@@ -1589,7 +1594,7 @@ class WorkspaceService:
             )
         routed_owner = (
             "requirements"
-            if design_gap
+            if design_gap or requirements_ambiguity
             else plan.authority_targets[0].owner
             if plan.authority_targets
             else targets[0].owner
@@ -2795,6 +2800,74 @@ class WorkspaceService:
 
         return report
 
+    @staticmethod
+    def _semantic_ambiguity_question(app_id: str, candidate: object) -> Question | None:
+        """Bind a reviewed ambiguity to the current catalog-owned UC spec target."""
+        if not isinstance(candidate, dict):
+            return None
+        try:
+            uc_id = str(candidate.get("useCaseId") or "").strip()
+            prompt = str(candidate.get("prompt") or "").strip()
+            raw_options = candidate.get("options")
+            evidence = [str(item) for item in candidate.get("evidenceSpans") or [] if str(item).strip()]
+            requirement_ids = [str(item) for item in candidate.get("sourceRequirementIds") or [] if str(item).strip()]
+            if not uc_id or not prompt or len(evidence) == 0 or len(requirement_ids) == 0 or not isinstance(raw_options, list):
+                return None
+            tools = ProjectTools(app_id)
+            authority = tools.current_revision_target(f"use_case_spec:{uc_id}")
+            if (authority is None or authority.owner != "requirements"
+                    or authority.kind != "use_case_spec" or authority.artifact_type != TYPE_USECASE_SPEC
+                    or authority.artifact_version_id is None):
+                return None
+            options: list[QuestionOption] = []
+            for raw in raw_options:
+                if not isinstance(raw, dict):
+                    return None
+                option_id = str(raw.get("id") or "").strip()
+                label = str(raw.get("label") or "").strip()
+                description = str(raw.get("description") or "").strip()
+                effect = str(raw.get("requestedEffect") or "").strip()
+                if not all((option_id, label, description, effect)):
+                    return None
+                options.append(QuestionOption(
+                    option_id=option_id,
+                    label=label,
+                    description=description,
+                    decision_payload=DecisionPayload(
+                        normalized_meaning={
+                            "semantic_scope": "behavior",
+                            "requested_effect": effect,
+                            "change_type": "modify",
+                        },
+                        authoritative_target_refs=(authority.ref,),
+                    ),
+                ))
+            if len(options) != 2 or len({option.option_id for option in options}) != 2:
+                return None
+            digest = stable_digest(candidate)[:16]
+            return Question(
+                question_id=f"requirements-semantic-ambiguity:{uc_id}:{digest}",
+                question_version=1,
+                app_id=app_id,
+                draft_id=f"requirements-semantic-ambiguity:{uc_id}:{digest}",
+                detected_at={"stage": "requirements", "artifact_ref": authority.ref, "element_ref": authority.ref},
+                base_revisions=[BaseRevision(artifact_type=TYPE_USECASE_SPEC, version_id=authority.artifact_version_id)],
+                trigger={
+                    "category": "semantic_ambiguity",
+                    "evidence_refs": [*requirement_ids, *evidence],
+                },
+                authority_candidates=[authority],
+                prompt=prompt,
+                options=options,
+                allow_free_text=True,
+                decision_policy=DecisionPolicy(
+                    allowed_semantic_scopes=("behavior",),
+                    allowed_change_types=("modify",),
+                ),
+            )
+        except (TypeError, ValueError):
+            return None
+
     def _requirements_result(self, result: dict[str, Any]) -> dict[str, Any]:
         status = result.get("status")
         if status == "need_clarification":
@@ -2808,6 +2881,19 @@ class WorkspaceService:
             }
         if status == "need_feedback":
             phase = str(result.get("phase") or "requirements")
+            app_id = str(result.get("app_id") or "")
+            question = self._semantic_ambiguity_question(
+                app_id, result.get("semantic_ambiguity_question")
+            ) if app_id and phase == "specs" else None
+            if question is not None:
+                return {
+                    "awaiting_input": True,
+                    "kind": "question",
+                    "message": question.prompt,
+                    "phase": phase,
+                    "feedback_question": question.model_dump(mode="json"),
+                    "review_artifacts": ["Use-case specifications"],
+                }
             if phase == "requirements_handoff":
                 blockers = list(result.get("blocking_findings") or [])
                 resource_questions, resource_question = _resource_questions(result)

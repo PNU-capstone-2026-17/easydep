@@ -60,6 +60,7 @@ from app.design.services.api_spec.service import (
 )
 from app.design.services.api_spec.service import revise_api_spec_model
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
+from app.design.services.class_diagram.public_contract_review import review_public_contract_closure
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
 from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.class_diagram.service import (
@@ -332,7 +333,7 @@ def _class_model_findings(
     report = validate_class_model(accepted, index)
     if report.errors:
         raise RuntimeError("; ".join(report.errors))
-    return [
+    findings = [
         ArtifactFinding(
             rule_id=finding.rule_id,
             message=finding.message,
@@ -342,6 +343,28 @@ def _class_model_findings(
         )
         for finding in report.findings
     ]
+    if not findings:
+        semantic, _evidence = review_public_contract_closure(
+            model, index, cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
+            evidence=(state.get("class_diagram_check") or {}).get("semanticEvidence"),
+        )
+        findings.extend(semantic)
+    return findings
+
+
+def _class_semantic_evidence(model: dict[str, Any], state: ArchitectureState) -> dict[str, Any]:
+    """Persist the same digest-bound verdict used by the class approval check."""
+    # Do not spend a semantic review on a model that deterministic class checks
+    # have already rejected.  A corrected model changes the digest and is then
+    # reviewed at its next class approval gate.
+    static = validate_class_model(_stored_class_model(model), _class_index(state))
+    if static.errors or static.findings:
+        return {"status": "skipped_static_findings"}
+    _findings, evidence = review_public_contract_closure(
+        model, _class_index(state), cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
+        evidence=(state.get("class_diagram_check") or {}).get("semanticEvidence"),
+    )
+    return evidence
 
 
 def _sequence_model_findings(
@@ -504,6 +527,7 @@ CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
     # typed ValidationReport를 artifact finding으로 바꾼 뒤 기존 check node가 소비한다.
     # repair 여부와 예산은 validator가 아니라 graph/service orchestration이 결정한다.
     check=_class_model_findings,
+    check_evidence=_class_semantic_evidence,
     check_key="class_diagram_check",
 )
 

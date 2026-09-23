@@ -14,6 +14,8 @@ from app.design.knowledge.detectors import (
 from app.design.services.class_diagram.validation.diagram import (
     class_diagram_validation_report,
 )
+from app.design.services.class_diagram.public_contract_review import semantic_evidence_for_readiness
+from app.design.services.class_diagram.scenario import ScenarioIndex, build_scenario_index
 from app.design.services.sequence_diagram.validation import (
     validate_sequence_model as _validate_sequence_model,
 )
@@ -24,7 +26,26 @@ DESIGN_READINESS_SCHEMA = "easydep-design-readiness/v1alpha1"
 
 def validate_class_model(model: dict[str, Any], state: dict[str, Any]) -> ValidationReport:
     """클래스 다이어그램의 전체 의미 규칙을 typed 보고서로 반환한다."""
-    return class_diagram_validation_report(model, state)
+    report = class_diagram_validation_report(model, state)
+    if isinstance(state, ScenarioIndex):
+        return report
+    if report.errors:
+        return report
+    scenario = state.get("usecase_spec") or {}
+    if not isinstance(scenario, Mapping):
+        return report
+    index = build_scenario_index({
+        **scenario,
+        "relationships": state.get("relationships") or scenario.get("relationships") or {},
+    })
+    semantic = semantic_evidence_for_readiness(model, state, index)
+    if not semantic:
+        return report
+    return ValidationReport(
+        status="needs_input" if all(item.requires_user_input for item in semantic) else "findings",
+        findings=(*report.findings, *semantic), errors=report.errors,
+        checked_rule_ids=(*report.checked_rule_ids, "class.public-contract-semantic"),
+    )
 
 
 def validate_sequence_model(model: dict[str, Any], state: dict[str, Any]) -> ValidationReport:
@@ -161,5 +182,10 @@ def rehydrated_check_state(
             "repair_iters": 0,
             "stopped": "clean" if not findings else "checked_only",
         }
+        if stage == "class_diagram":
+            prior = state.get(check_key)
+            evidence = prior.get("semanticEvidence") if isinstance(prior, Mapping) else None
+            if evidence is not None:
+                check["semanticEvidence"] = evidence
         result[check_key] = check
     return result

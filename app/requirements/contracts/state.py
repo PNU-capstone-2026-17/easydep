@@ -60,6 +60,29 @@ class GuaranteeItem(TypedDict):
     covered_req_ids: list[str]
 
 
+class IdentityObligationItem(TypedDict):
+    subject: str
+    obligation: Literal["identify", "authenticate", "act_on_behalf"]
+    requirement_ids: list[str]
+
+
+class RequiredValueItem(TypedDict):
+    name: str
+    source: Literal["caller_input", "authenticated_actor_context", "system_result"]
+    value_type: Literal[
+        "string", "integer", "number", "boolean", "date", "datetime", "identifier",
+        "object", "array", "unknown",
+    ]
+    usage: Literal["control", "result", "both"]
+    requirement_ids: list[str]
+
+
+class PublicBehaviorContractItem(TypedDict):
+    schema_version: Literal["PublicBehaviorContract/v1"]
+    identity_obligations: list[IdentityObligationItem]
+    required_values: list[RequiredValueItem]
+
+
 class UseCaseSpecItem(TypedDict):
     """유스케이스 명세 (step3 산출, Cockburn 풀 템플릿)."""
 
@@ -81,6 +104,7 @@ class UseCaseSpecItem(TypedDict):
     # "ok"|"disabled"|"failed"|"ungrounded"(지식베이스에 없는 규칙만 인용해 버렸다)|"pending".
     # issues가 비었다는 것만으로는 "깨끗함"과 "확인 못 함"을 구별할 수 없어서 둔다.
     # 예전 spec item과 섞일 수 있으므로 NotRequired.
+    public_contract: NotRequired[PublicBehaviorContractItem]
     semantic_status: NotRequired[str]
     # 생성이 성공했는지. False면 이 항목은 자리만 지키는 빈 명세다(형제를 살리려고
     # 남긴다 — 목록에서 빼면 산출물에서 조용히 사라진다). 없으면 성공한 것으로 본다.
@@ -158,6 +182,11 @@ class AgentState(TypedDict):
     # 3단계 — 유스케이스별 명세(병렬 생성) + 검증 요약
     use_case_specs: list[UseCaseSpecItem]
     spec_report: dict  # check_specs의 명세 검증 집계
+    # A single source-grounded product ambiguity discovered after deterministic
+    # specification checks.  It is rendered as the existing Workspace Question
+    # envelope there, because only the Workspace owns catalog versions.
+    semantic_ambiguity_question: NotRequired[dict]
+    semantic_ambiguity_questioned: NotRequired[bool]
     # 4단계 — 관계 식별(LLM) + 검증 요약 + 다이어그램 렌더(결정론)
     relationships: dict  # {associations, includes, extends, generalizations, derived_use_cases}
     relationship_report: dict  # check_relationships의 관계 검증 집계

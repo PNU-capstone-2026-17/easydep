@@ -184,6 +184,7 @@ def analyze_requirements(req: AnalyzeRequest) -> dict[str, object]:
             payload["saved_stages"] = persist_analysis(req.app_id, payload)
         except artifact_repository.AppNotFound as error:
             raise ValueError(f"App {req.app_id} was not found.") from error
+        payload["app_id"] = req.app_id
 
     return payload
 
@@ -202,6 +203,7 @@ def retry_requirements_analysis(
             payload["saved_stages"] = persist_analysis(app_id, payload)
         except artifact_repository.AppNotFound as error:
             raise ValueError(f"App {app_id} was not found.") from error
+        payload["app_id"] = app_id
     return payload
 
 
@@ -354,4 +356,5 @@ def revise_requirements_analysis(
             persist=settings.enable_session_persistence,
         )
         raise
+    payload["app_id"] = app_id
     return payload
