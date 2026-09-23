@@ -24,6 +24,7 @@ from app.design.observability import design_timing_context, log_design_timing
 from app.design.service import (
     BatchReviseRequest,
     ReviseRequest,
+    apply_deployment_endpoint_answer_session,
     apply_deployment_topology_decision_session,
     resume_design_session,
     retry_design_session,
@@ -656,6 +657,30 @@ class WorkspaceService:
             if isinstance(pending_question, dict):
                 return self._route_feedback_question_answer(
                     app_id, payload, stage, latest, pending, pending_question
+                )
+            resource_question = pending_result.get("resource_question")
+            resource_field = (
+                str(resource_question.get("field") or "")
+                if isinstance(resource_question, dict)
+                else ""
+            )
+            if (
+                pending.get("app_id") == app_id
+                and pending.get("stage") == "design"
+                and resource_field.startswith("connectionEndpoint:")
+            ):
+                # This is a server-pinned value intake, not revision prose.
+                # Preserve the complete question envelope for the Design
+                # handler, which verifies its connection/source/digest again.
+                return (
+                    "message",
+                    {
+                        **payload,
+                        "_resource_answer_context": {
+                            "connection_endpoint_question": dict(resource_question),
+                        },
+                    },
+                    "design",
                 )
         fixed_class_context = self._fixed_class_resource_choice(app_id, payload, latest)
         if fixed_class_context is not None:
@@ -1685,6 +1710,11 @@ class WorkspaceService:
                 and question.detected_at.stage == "design"
                 and question.trigger.category == "class_binding_source"
             )
+            design_validation_input = (
+                prior.get("stage") == "design"
+                and question.detected_at.stage == "design"
+                and question.trigger.category == "design_validation_input"
+            )
             implementation_gap = (
                 prior.get("stage") == "implementation"
                 and question.detected_at.stage == "implementation"
@@ -1698,6 +1728,7 @@ class WorkspaceService:
             if question.app_id != app_id or not (
                 design_gap
                 or class_binding_stall
+                or design_validation_input
                 or implementation_gap
                 or requirements_ambiguity
             ):
@@ -2801,19 +2832,15 @@ class WorkspaceService:
                         else None
                     ),
                 )
-                return {
-                    "awaiting_input": True,
-                    "kind": "action_required",
-                    "message": (
+                return self._targeted_design_result(
+                    app_id,
+                    validated_revision,
+                    status,
+                    message=(
                         f"Revised {len(revisions)} validated design element(s) and only "
-                        "their trace-linked artifacts. Review the result or continue."
+                        "their trace-linked artifacts."
                     ),
-                    "current_stage": status.get("stage") or "design",
-                    "changed": validated_revision.get("changed") or [],
-                    "touched": validated_revision.get("touched") or {},
-                    "related": validated_revision.get("related") or [],
-                    "design": validated_revision,
-                }
+                )
             target_feedbacks = self._sequence_target_feedbacks(context)
             revised: dict[str, Any] | None = None
             if target_feedbacks:
@@ -2845,16 +2872,13 @@ class WorkspaceService:
                 )
                 related_default = []
             if revised is not None:
-                return {
-                    "awaiting_input": bool(status.get("active")),
-                    "kind": "action_required",
-                    "message": revision_message,
-                    "current_stage": status.get("stage") or "design",
-                    "changed": revised.get("changed") or [],
-                    "touched": revised.get("touched") or {},
-                    "related": revised.get("related") or related_default,
-                    "design": revised,
-                }
+                return self._targeted_design_result(
+                    app_id,
+                    revised,
+                    status,
+                    message=revision_message,
+                    related_default=related_default,
+                )
             current_stage = str(status.get("stage") or "")
             action_id = str(payload.get("action_id") or "")
             previous = repository.get_command(action_id) if action_id else None
@@ -2870,11 +2894,33 @@ class WorkspaceService:
                 and isinstance(previous_question, dict)
                 and previous_question.get("field") == "dataExecutionMode"
             )
+            endpoint_question = (payload.get("_resource_answer_context") or {}).get(
+                "connection_endpoint_question"
+            )
+            answers_connection_endpoint = (
+                command.get("action") == "message"
+                and isinstance(endpoint_question, dict)
+                and isinstance(previous_question, dict)
+                and previous.get("status") == "AWAITING_INPUT"
+                and endpoint_question == previous_question
+                and str(endpoint_question.get("field") or "").startswith(
+                    "connectionEndpoint:"
+                )
+            )
             if text and command.get("action") == "message" and current_stage == "sequence_diagram":
                 raise ValueError(
                     "Select one or more use-case targets and provide feedback for each target."
                 )
-            if answers_data_execution_mode:
+            if answers_connection_endpoint:
+                operation_stage = "deployment_diagram"
+                verb = "Applying"
+
+                def operation():
+                    return apply_deployment_endpoint_answer_session(
+                        app_id, dict(endpoint_question), text
+                    )
+
+            elif answers_data_execution_mode:
                 operation_stage = "deployment_diagram"
                 verb = "Generating"
 
@@ -3620,6 +3666,180 @@ class WorkspaceService:
             "phase": result.get("phase"),
         }
 
+    def _targeted_design_result(
+        self,
+        app_id: str,
+        revision: dict[str, Any],
+        status: Mapping[str, Any],
+        *,
+        message: str,
+        related_default: list[Any] | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Project a local revision through the ordinary design gate contract.
+
+        Targeted edits return the same artifact response as a graph checkpoint,
+        but do not have a graph response of their own.  Rebuild a small response
+        envelope from that checked artifact result so findings, repairs, and a
+        possible typed question cannot be bypassed by a generic review card.
+        """
+
+        revision_stalled = str(revision.get("revision_status") or "").lower() == "stalled"
+        validation = revision.get("validation")
+        validation = dict(validation) if isinstance(validation, Mapping) else {}
+        changed = [str(item) for item in revision.get("changed") or [] if str(item)]
+        checked_stages = [
+            stage
+            for stage in changed
+            if isinstance(validation.get(stage), Mapping)
+        ]
+        if not checked_stages:
+            checked_stages = [
+                stage for stage, check in validation.items() if isinstance(check, Mapping)
+            ]
+        stage = str(status.get("stage") or (checked_stages[0] if checked_stages else "design"))
+        # A local cascade can check several changed artifacts while the saved
+        # graph gate is at another stage.  Aggregate their unresolved reports
+        # at this response boundary; no string-only legacy finding may acquire
+        # an advance offer merely because it belongs to a different key.
+        if checked_stages:
+            findings: list[Any] = []
+            details: list[Any] = []
+            for checked_stage in checked_stages:
+                check = validation.get(checked_stage) or {}
+                findings.extend(list(check.get("errors") or []))
+                findings.extend(list(check.get("findings") or []))
+                details.extend(list(check.get("finding_details") or []))
+            validation[stage] = {
+                **dict(validation.get(stage) or {}),
+                "findings": findings,
+                "finding_details": details,
+            }
+        normalized = self._design_result(
+            {
+                **revision,
+                "app_id": app_id,
+                "stage": stage,
+                "current_stage": stage,
+                "validation": validation,
+            }
+        )
+        # The normalizer owns kind, wait state, findings, repair state, and
+        # questions.  Revision provenance is supplementary UI data only.
+        return {
+            **normalized,
+            "message": (
+                "Requested revision could not be validated; the previous artifact is unchanged."
+                if revision_stalled
+                else message
+                if normalized.get("kind") == "action_required"
+                and not normalized.get("requires_revision")
+                else normalized.get("message")
+            ),
+            "changed": revision.get("changed") or [],
+            "touched": revision.get("touched") or {},
+            "related": revision.get("related") or related_default or [],
+            # Candidate validation belongs to the rejected, unpersisted
+            # revision. Keep it diagnostic-only; readiness and action offers
+            # above are calculated solely from the accepted artifact state.
+            **(
+                {"revision_validation": revision.get("revision_validation")}
+                if revision_stalled and revision.get("revision_validation") is not None
+                else {}
+            ),
+        }
+
+    def _design_finding_question(
+        self,
+        app_id: str,
+        stage: str,
+        finding_details: list[Any],
+    ) -> Question | None:
+        """Build a free-text design question only from typed user-input evidence.
+
+        Check reports deliberately do not turn ordinary technical findings into
+        product choices.  A report can optionally name a catalog authority (and
+        may carry a fully evidenced option envelope); absent that authority the
+        finding remains on the repair/stalled path instead of guessing a target.
+        """
+
+        for raw in finding_details:
+            if not isinstance(raw, Mapping) or not bool(
+                raw.get("requires_user_input", raw.get("requiresUserInput", False))
+            ):
+                continue
+            authority_ref = str(
+                raw.get("authority_ref")
+                or raw.get("authorityRef")
+                or ""
+            ).strip()
+            if not authority_ref:
+                continue
+            try:
+                authorities = ProjectTools(app_id).normalize_revision_targets([authority_ref])
+            except (TypeError, ValueError):
+                continue
+            if len(authorities) != 1 or authorities[0].artifact_version_id is None:
+                continue
+            authority = authorities[0]
+            message = str(raw.get("message") or raw.get("finding") or "").strip()
+            if not message:
+                continue
+            # Options must be supplied with their complete decision payload.
+            # Do not manufacture alternatives, effects, or target references.
+            envelope = (
+                raw.get("resolution_envelope")
+                or raw.get("resolutionEnvelope")
+                or raw.get("resolution")
+                or raw
+            )
+            raw_options = envelope.get("options") if isinstance(envelope, Mapping) else None
+            options: list[QuestionOption] = []
+            if isinstance(raw_options, list):
+                try:
+                    options = [QuestionOption.model_validate(item) for item in raw_options]
+                except (TypeError, ValueError):
+                    options = []
+            digest = stable_digest({"stage": stage, "finding": dict(raw), "authority": authority.ref})[:16]
+            finding_ref = str(raw.get("rule_id") or raw.get("ruleId") or "").strip()
+            location = str(raw.get("location") or "").strip()
+            try:
+                return Question(
+                    question_id=f"design-finding:{stage}:{digest}",
+                    question_version=1,
+                    app_id=app_id,
+                    draft_id=f"design-finding:{stage}:{digest}",
+                    detected_at={
+                        "stage": "design",
+                        "artifact_ref": authority.ref,
+                        "element_ref": authority.ref,
+                    },
+                    base_revisions=[
+                        BaseRevision(
+                            artifact_type=authority.artifact_type,
+                            version_id=authority.artifact_version_id,
+                        )
+                    ],
+                    trigger={
+                        "category": "design_validation_input",
+                        "finding_refs": [finding_ref] if finding_ref else [],
+                        "evidence_refs": [authority.ref, *([location] if location else [])],
+                    },
+                    authority_candidates=[authority],
+                    prompt=message,
+                    options=options,
+                    allow_free_text=True,
+                    decision_policy=DecisionPolicy(
+                        allowed_semantic_scopes=(
+                            "presentation", "contract", "behavior", "implementation", "test_expectation"
+                        ),
+                        allowed_change_types=("modify", "add", "rename", "remove"),
+                    ),
+                )
+            except (TypeError, ValueError):
+                # An invalid optional envelope is not a license to invent one.
+                continue
+        return None
+
     def _design_result(self, result: dict[str, Any]) -> dict[str, Any]:
         app_id = str(result.get("app_id") or "")
         progress_hints = self._design_progress_hints(app_id, result)
@@ -3644,11 +3864,16 @@ class WorkspaceService:
                 if (
                     question.app_id != result.get("app_id")
                     or question.detected_at.stage != "design"
-                    or question.trigger.category != "specification_gap"
                     or target is None
-                    or target.owner != "requirements"
-                    or target.artifact_type != TYPE_USECASE_SPEC
                 ):
+                    raise ValueError("unsupported feedback question")
+                if question.trigger.category == "specification_gap":
+                    if target.owner != "requirements" or target.artifact_type != TYPE_USECASE_SPEC:
+                        raise ValueError("unsupported feedback question")
+                elif question.trigger.category not in {
+                    "class_binding_source",
+                    "design_validation_input",
+                }:
                     raise ValueError("unsupported feedback question")
             except (TypeError, ValueError) as error:
                 raise ValueError("Design produced an unsupported feedback question.") from error
@@ -3658,7 +3883,10 @@ class WorkspaceService:
                 "message": question.prompt,
                 "feedback_question": question.model_dump(mode="json"),
                 "design": result,
-                **progress_hints,
+                # A pending typed decision is a hard readiness boundary even
+                # if a stale checkpoint snapshot still reports advancement.
+                "design_can_advance": False,
+                "design_complete": False,
             }
         # The design service reports completion as ``status: completed``.
         # Older stored command results can still contain the two flags below.
@@ -3697,6 +3925,7 @@ class WorkspaceService:
             *list(stage_validation.get("errors") or []),
             *list(stage_validation.get("findings") or []),
         ]
+        finding_details = list(stage_validation.get("finding_details") or [])
         deployment_meta = (result.get("artifact_metadata") or {}).get("deployment_diagram") or {}
         has_completed_target = any(
             isinstance(target, dict)
@@ -3735,6 +3964,21 @@ class WorkspaceService:
                 **progress_hints,
             }
         method_proposals = list(stage_validation.get("method_proposals") or [])
+        finding_question = self._design_finding_question(app_id, str(stage or "design"), finding_details)
+        if finding_question is not None:
+            return {
+                "awaiting_input": True,
+                "kind": "question",
+                "message": finding_question.prompt,
+                "current_stage": stage,
+                "feedback_question": finding_question.model_dump(mode="json"),
+                "findings": findings,
+                "finding_details": finding_details,
+                "design": result,
+                # An unanswered decision is itself a readiness blocker.
+                "design_can_advance": False,
+                "design_complete": False,
+            }
         requires_revision = bool(findings)
         repair_history = stage_validation.get("repair_history") or {}
         repair_status = str(repair_history.get("status") or "")
@@ -3802,6 +4046,7 @@ class WorkspaceService:
             "blocking_findings": blocking_findings,
             "repair_state": repair_state,
             "findings": findings,
+            "finding_details": finding_details,
             # Keep the pending approval decision on the workspace command as
             # well as in the artifact payload so the UI can offer an explicit
             # approval action instead of requiring a magic text phrase.

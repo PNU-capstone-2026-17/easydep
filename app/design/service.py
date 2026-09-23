@@ -10,9 +10,11 @@ Python 호출자도 같은 흐름을 그대로 사용할 수 있다.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import replace
 from typing import Any, cast
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -39,13 +41,22 @@ from app.design.graphs.design_graph import (
     sync_design_state,
 )
 from app.design.graphs.subgraphs import DESIGN_SPECS, DESIGN_STAGES
-from app.design.nodes.artifact import check_node
+from app.design.nodes.artifact import (
+    _repair_is_improvement,
+    _repairable_findings,
+    assert_untargeted_elements_preserved,
+    check_node,
+    merge_model,
+    render_and_validate,
+)
 from app.design.schemas.architecture_state import ArchitectureState
 from app.design.services.class_diagram.models import GenerationStalled
 from app.design.services.deployment_diagram.bundle import (
+    build_deployment_diagram_bundle,
     hydrate_deployment_diagram_bundle,
     select_deployment_target,
 )
+from app.design.services.deployment_diagram.digest import workload_graph_structure_digest
 from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_provisioning_puml,
     deployment_bundle_runtime_puml,
@@ -62,6 +73,7 @@ from app.design.services.deployment_diagram.workload_contracts import (
 from app.design.validation import design_readiness_report
 from app.repositories import artifact_repository
 from app.repositories.artifact_repository import AppNotFound
+from app.validation import Finding, RepairAttempt, RepairLedger, stable_digest
 
 
 class ReviseRequest(BaseModel):
@@ -182,6 +194,279 @@ def _repair_stale_sequence_projection(
     return rewind_design(app_id, "sequence_diagram")
 
 
+def _deployment_endpoint_question(
+    app_id: str, state: ArchitectureState
+) -> dict[str, Any] | None:
+    """Expose a grounded missing endpoint as one pinned, free-text question."""
+
+    bundle = state.get("deployment_diagram_bundle") or {}
+    graph = bundle.get("workloadGraph") or state.get("deployment_diagram_model") or {}
+    issues = [
+        issue
+        for issue in graph.get("issues") or []
+        if isinstance(issue, dict)
+        and issue.get("classification") == "needsInput"
+        and str(issue.get("field") or "").startswith("connections.")
+        and str(issue.get("field") or "").endswith(".endpoint")
+    ]
+    if not issues:
+        return None
+    issue = issues[0]
+    field = str(issue.get("field") or "")
+    connection_id = field[len("connections.") : -len(".endpoint")]
+    connections = [
+        item
+        for item in graph.get("connections") or []
+        if isinstance(item, dict) and str(item.get("id") or "") == connection_id
+    ]
+    if len(connections) != 1:
+        return None
+    connection = connections[0]
+    source_ref = str(connection.get("sourceRef") or "")
+    source_refs = sorted({str(ref) for ref in connection.get("sourceRefs") or [] if ref})
+    if not source_ref or not source_refs:
+        return None
+    question = {
+        "field": f"connectionEndpoint:{connection_id}",
+        "kind": "text",
+        "question": (
+            f"What non-secret endpoint should workload {source_ref} use for "
+            f"external dependency {connection.get('targetRef')}? Enter a URL or host:port."
+        ),
+        "reason": str(issue.get("reason") or "The external endpoint is required."),
+        "sourceRefs": source_refs,
+        "context": {
+            "connectionId": connection_id,
+            "sourceRef": source_ref,
+            "workloadGraphStructureDigest": workload_graph_structure_digest(graph),
+        },
+    }
+    return {
+        "app_id": app_id,
+        **to_web_response(state),
+        "status": "need_feedback",
+        "stage": "deployment_diagram",
+        "resource_question": question,
+    }
+
+
+def _parse_public_endpoint(value: str) -> tuple[str, str]:
+    """Accept a plain HTTP(S) URL or host:port without embedded credentials."""
+
+    text = value.strip()
+    if not text or any(ord(char) < 32 or char.isspace() for char in text):
+        raise ValueError("Enter a non-secret URL or host:port endpoint.")
+    parsed = urlsplit(text if "://" in text else f"//{text}")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Endpoint credentials are not accepted; enter a non-secret endpoint.")
+    if parsed.query or parsed.fragment:
+        raise ValueError("Endpoint query strings and fragments are not accepted.")
+    if parsed.scheme:
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("Enter an HTTP(S) URL or host:port endpoint.")
+        try:
+            if parsed.port is not None and not 1 <= parsed.port <= 65535:
+                raise ValueError
+        except ValueError as error:
+            raise ValueError("Endpoint port must be between 1 and 65535.") from error
+        return "url", text
+    if parsed.path or not parsed.hostname:
+        raise ValueError("Enter a host:port endpoint.")
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError("Endpoint port must be between 1 and 65535.") from error
+    if port is None or not 1 <= port <= 65535:
+        raise ValueError("Enter a host:port endpoint with a valid port.")
+    # Preserve bracketed IPv6, which urlsplit validates through hostname/port.
+    host = text.rsplit(":", 1)[0]
+    return "hostport", host
+
+
+def _unique_environment_name(base: str, reserved: set[str]) -> str:
+    candidate = base
+    suffix = 2
+    while candidate in reserved:
+        candidate = f"{base}_{suffix}"
+        suffix += 1
+    reserved.add(candidate)
+    return candidate
+
+
+def _unique_configuration_id(base: str, reserved: set[str]) -> str:
+    candidate = base
+    suffix = 2
+    while candidate in reserved:
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    reserved.add(candidate)
+    return candidate
+
+
+def _blocking_graph_issue_keys(graph: dict[str, Any]) -> set[tuple[str, str, str]]:
+    return {
+        (
+            str(issue.get("field") or ""),
+            str(issue.get("classification") or ""),
+            str(issue.get("reason") or ""),
+        )
+        for issue in graph.get("issues") or []
+        if isinstance(issue, dict)
+        and issue.get("classification") in {"invalid", "unsupported"}
+    }
+
+
+def apply_deployment_endpoint_answer_session(
+    app_id: str, pinned_question: dict[str, Any], text: str
+) -> dict[str, Any]:
+    """Apply a pinned endpoint answer only while the same deployment issue remains."""
+
+    _validate_app_id(app_id)
+    _require_app_exists(app_id)
+    _require_active_session(app_id)
+    if session_status(app_id).get("stage") != "deployment_diagram":
+        raise ValueError("An endpoint can only be supplied at the deployment design gate.")
+    state = _load_app(app_id)
+    current_result = _deployment_endpoint_question(app_id, state)
+    current = (current_result or {}).get("resource_question") or {}
+    if not current or any(
+        pinned_question.get(key) != current.get(key)
+        for key in ("field", "sourceRefs", "context")
+    ):
+        raise ValueError("The endpoint question is stale. Reload the current deployment question.")
+    endpoint_kind, endpoint_value = _parse_public_endpoint(text)
+    bundle = state.get("deployment_diagram_bundle") or {}
+    graph = bundle.get("workloadGraph") or {}
+    context = current.get("context") or {}
+    connection_id = str(context.get("connectionId") or "")
+    source_ref = str(context.get("sourceRef") or "")
+    updated_graph = dict(graph)
+    baseline_issue_keys = _blocking_graph_issue_keys(graph)
+    updated_workloads = []
+    matched = False
+    for workload in graph.get("workloads") or []:
+        item = dict(workload)
+        if str(item.get("id") or "") == source_ref:
+            configurations = [
+                dict(configuration)
+                for configuration in item.get("configuration") or []
+                if not (
+                    configuration.get("kind") == "endpointBinding"
+                    and str(configuration.get("connectionRef") or "") == connection_id
+                )
+            ]
+            existing = [
+                dict(configuration)
+                for configuration in item.get("configuration") or []
+                if configuration.get("kind") == "endpointBinding"
+                and str(configuration.get("connectionRef") or "") == connection_id
+            ]
+            matched = bool(existing)
+            source_refs = list(context.get("sourceRefs") or [])
+            reserved_names = {
+                str(configuration.get("name") or "")
+                for configuration in configurations
+            }
+            reserved_ids = {
+                str(configuration.get("id") or "")
+                for configuration in configurations
+            }
+            target = next(
+                (
+                    connection.get("targetRef")
+                    for connection in graph.get("connections") or []
+                    if isinstance(connection, dict)
+                    and str(connection.get("id") or "") == connection_id
+                ),
+                connection_id,
+            )
+            name_stem = re.sub(r"[^A-Z0-9]+", "_", str(target).upper()).strip("_") or "ENDPOINT"
+            existing_names = {
+                str(configuration.get("projection") or ""): str(configuration.get("name") or "")
+                for configuration in existing
+            }
+            if endpoint_kind == "url":
+                url_name = existing_names.get("url")
+                if not url_name or url_name in reserved_names:
+                    url_name = _unique_environment_name(
+                        f"{name_stem}_ENDPOINT", reserved_names
+                    )
+                else:
+                    reserved_names.add(url_name)
+                configurations.append({
+                    "id": _unique_configuration_id(
+                        f"{connection_id}-endpoint-url", reserved_ids
+                    ),
+                    "name": url_name,
+                    "kind": "endpointBinding",
+                    "value": endpoint_value,
+                    "connectionRef": connection_id,
+                    "projection": "url",
+                    "sensitive": False,
+                    "sourceRefs": source_refs,
+                })
+            else:
+                host = endpoint_value
+                port = int(text.strip().rsplit(":", 1)[1])
+                for projection, value in (("host", host), ("port", port)):
+                    config_name = existing_names.get(projection)
+                    if not config_name or config_name in reserved_names:
+                        config_name = _unique_environment_name(
+                            f"{name_stem}_{projection.upper()}", reserved_names
+                        )
+                    else:
+                        reserved_names.add(config_name)
+                    configurations.append({
+                        "id": _unique_configuration_id(
+                            f"{connection_id}-endpoint-{projection}", reserved_ids
+                        ),
+                        "name": config_name,
+                        "kind": "endpointBinding",
+                        "value": value,
+                        "connectionRef": connection_id,
+                        "projection": projection,
+                        "sensitive": False,
+                        "sourceRefs": source_refs,
+                    })
+            item["configuration"] = configurations
+        updated_workloads.append(item)
+    if not matched:
+        raise ValueError("The pinned endpoint binding no longer exists.")
+    updated_graph["workloads"] = updated_workloads
+    rebuilt = build_deployment_diagram_bundle(
+        updated_graph,
+        dict(state.get("resource_spec") or {}),
+        planning_facts=dict(bundle.get("planningFacts") or {}),
+    )
+    remaining = [
+        issue
+        for issue in (rebuilt.get("workloadGraph") or {}).get("issues") or []
+        if issue.get("field") == f"connections.{connection_id}.endpoint"
+        and issue.get("classification") == "needsInput"
+    ]
+    if remaining:
+        raise ValueError("The endpoint value did not resolve the current deployment finding.")
+    introduced_issues = (
+        _blocking_graph_issue_keys(rebuilt.get("workloadGraph") or {})
+        - baseline_issue_keys
+    )
+    if introduced_issues:
+        raise ValueError("The endpoint answer introduced a deployment graph validation issue.")
+    hydrated = hydrate_deployment_diagram_bundle(rebuilt)
+    state.update(hydrated)
+    state["deployment_diagram_puml"] = deployment_bundle_runtime_puml(rebuilt)
+    state["deployment_diagram_provisioning_puml"] = deployment_bundle_provisioning_puml(rebuilt)
+    artifact_repository.save_stage(
+        app_id, "deployment_diagram", state, origin=ORIGIN_FEEDBACK_REVISED
+    )
+    current_state = _load_app(app_id)
+    sync_design_state(app_id, dict(current_state))
+    status = session_status(app_id)
+    if status.get("active") and status.get("stage") == "deployment_diagram":
+        return resume_design_session(app_id)
+    return {"app_id": app_id, **to_web_response(current_state), "status": "completed"}
+
+
 def resume_design_session(app_id: str, feedback: str = "") -> dict[str, Any]:
     """검토 중인 설계에 피드백을 적용하거나 다음 설계 단계로 진행한다."""
     _validate_app_id(app_id)
@@ -194,6 +479,10 @@ def resume_design_session(app_id: str, feedback: str = "") -> dict[str, Any]:
         active_stage = session_status(app_id).get("stage")
         if active_stage:
             state = _load_app(app_id)
+            if active_stage == "deployment_diagram":
+                endpoint_question = _deployment_endpoint_question(app_id, state)
+                if endpoint_question is not None:
+                    return endpoint_question
             readiness = design_readiness_report(state, stages=[str(active_stage)])
             findings = list(readiness.get("findings") or [])
             if findings:
@@ -252,7 +541,19 @@ def resume_design_session(app_id: str, feedback: str = "") -> dict[str, Any]:
                         "resource_question": question,
                     }
     try:
-        return resume_design(app_id, feedback)
+        result = resume_design(app_id, feedback)
+        # When ERD advances into the deployment gate, this graph result is the
+        # first Workspace-visible response for that gate. Attach any grounded
+        # endpoint value question before it is normalized into a checkpoint.
+        if (
+            result.get("status") == "need_feedback"
+            and result.get("stage") == "deployment_diagram"
+            and not result.get("resource_question")
+        ):
+            endpoint_question = _deployment_endpoint_question(app_id, _load_app(app_id))
+            if endpoint_question is not None:
+                result = {**result, "resource_question": endpoint_question["resource_question"]}
+        return result
     except GenerationStalled:
         raise
     except Exception as error:
@@ -667,8 +968,163 @@ def revise_design_elements(
             spec = DESIGN_SPECS.get(stage)
             if spec is None or not spec.check_key:
                 continue
-            verdict = check_node(replace(spec, repair=None))(working)
+            # Class checks have an explicit owner mapper, so they can safely
+            # reuse the ordinary bounded checker repair ledger. Other targeted
+            # revisions keep their existing no-whole-artifact check behavior.
+            checker_spec = spec if spec.repair_target_mapper else replace(spec, repair=None)
+            verdict = check_node(checker_spec)(working)
             working = {**working, **verdict}
+            if spec.repair_target_mapper:
+                working.update(render_and_validate(
+                    spec, working.get(spec.model_key) or {}, working
+                ))
+                continue
+            report = dict(working.get(spec.check_key) or {})
+            findings = [
+                Finding.model_validate(item)
+                for item in report.get("finding_details") or []
+                if isinstance(item, dict)
+            ]
+            # Follow up once, and only when the finding names an element that
+            # this revision already owns. This uses the existing repair
+            # callback/ledger but never invokes check_node's whole-model loop.
+            repair = spec.repair
+            if not repair or not spec.elements:
+                continue
+            eligible: list[Finding] = []
+            repair_targets: set[str] = set()
+            merge_targets: set[str] = set()
+            for finding in _repairable_findings(findings):
+                location = str(finding.location or "").strip()
+                if not location:
+                    continue
+                owners = {location}
+                if owners & touched.get(stage, set()):
+                    eligible.append(finding)
+                    repair_targets.add(location)
+                    merge_targets.update(owners)
+            if not eligible:
+                continue
+            batch = eligible
+            input_digest = stable_digest({
+                "model": working.get(spec.model_key) or {},
+                "findings": [finding.model_dump(mode="json") for finding in batch],
+                "targets": sorted(repair_targets),
+                "merge_targets": sorted(merge_targets),
+            })
+            directive = (
+                "[TARGETED TECHNICAL REPAIR]\n"
+                "Correct only the listed findings on the listed targets. Preserve "
+                "every other model element exactly.\n"
+                + "\n".join(
+                    f"- {finding.rule_id} at {finding.location}: {finding.message}"
+                    for finding in batch
+                )
+            )
+            ledger = RepairLedger()
+            try:
+                current_model = working.get(spec.model_key) or {}
+                revised_model = repair(current_model, directive, working, repair_targets)
+                candidate = merge_model(spec, current_model, revised_model, merge_targets)
+                assert_untargeted_elements_preserved(
+                    spec, current_model, candidate, merge_targets
+                )
+                candidate_state: ArchitectureState = {**working, spec.model_key: candidate}
+                if spec.finalize:
+                    finalized = spec.finalize(candidate_state)
+                    candidate_state = {**candidate_state, **finalized}
+                    candidate = candidate_state.get(spec.model_key) or candidate
+                candidate_state.update(render_and_validate(spec, candidate, candidate_state))
+                candidate_verdict = check_node(replace(spec, repair=None))(candidate_state)
+                candidate_state = {**candidate_state, **candidate_verdict}
+                candidate_findings = [
+                    Finding.model_validate(item)
+                    for item in (candidate_verdict.get(spec.check_key) or {}).get("finding_details") or []
+                    if isinstance(item, dict)
+                ]
+                improved = _repair_is_improvement(spec, findings, candidate_findings)
+                ledger.record(RepairAttempt(
+                    stage=f"design.{stage}",
+                    target_ids=tuple(sorted(repair_targets)),
+                    strategy_key=f"targeted:{','.join(sorted({f.rule_id for f in batch}))}",
+                    input_digest=input_digest,
+                    candidate_digest=stable_digest(candidate),
+                    finding_keys_before=tuple(sorted(
+                        f"{f.rule_id}|{f.location or ''}|{f.message}" for f in findings
+                    )),
+                    finding_keys_after=tuple(sorted(
+                        f"{f.rule_id}|{f.location or ''}|{f.message}" for f in candidate_findings
+                    )),
+                    outcome=("clean" if improved and not candidate_findings else "improved")
+                    if improved else "no_improvement",
+                ))
+                ledger.status = "COMPLETED" if improved and not candidate_findings else "STALLED"
+                if improved:
+                    working = candidate_state
+                    report = dict(working.get(spec.check_key) or {})
+                    report["repair_iters"] = 1
+                    report["stopped"] = "clean" if not candidate_findings else "stalled"
+                    report["repair_history"] = ledger.model_dump(mode="json")
+                    working = {**working, spec.check_key: report}
+                else:
+                    report["repair_iters"] = 1
+                    report["stopped"] = "stalled"
+                    report["repair_history"] = ledger.model_dump(mode="json")
+                    working = {**working, spec.check_key: report}
+            except Exception as error:
+                ledger.status = "STALLED"
+                ledger.stall_reason = f"{type(error).__name__}: {error}"
+                report["stopped"] = "error"
+                report["error"] = ledger.stall_reason
+                report["repair_iters"] = 1
+                report["repair_history"] = ledger.model_dump(mode="json")
+                working = {**working, spec.check_key: report}
+
+    # Feedback may only replace an accepted artifact with another accepted
+    # artifact. Keep the prior persisted state when bounded repair/checking
+    # leaves any changed stage invalid, and return the rejected candidate's
+    # validation separately for Workspace review.
+    revision_validation: dict[str, Any] = {}
+    if changed:
+        candidate_response = to_web_response(working)
+        candidate_validation = dict(candidate_response.get("validation") or {})
+        for stage in changed:
+            spec = DESIGN_SPECS.get(stage)
+            if spec is None:
+                continue
+            check = dict(working.get(spec.check_key) or {}) if spec.check_key else {}
+            findings = list(check.get("findings") or [])
+            errors = list(working.get(spec.errors_key) or [])
+            invalid_syntax = bool(spec.valid_key and working.get(spec.valid_key) is False)
+            if not findings and not errors and not invalid_syntax:
+                continue
+            stage_validation = dict(candidate_validation.get(stage) or {})
+            stage_validation.setdefault("errors", errors)
+            stage_validation.setdefault("findings", findings)
+            if check.get("finding_details") is not None:
+                stage_validation.setdefault("finding_details", list(check["finding_details"]))
+            if check.get("stopped") is not None:
+                stage_validation.setdefault("check_status", check["stopped"])
+            if check.get("repair_iters") is not None:
+                stage_validation.setdefault("repair_iters", check["repair_iters"])
+            if check.get("repair_history") is not None:
+                stage_validation["repair_history"] = check["repair_history"]
+            if invalid_syntax and not stage_validation.get("errors"):
+                stage_validation["errors"] = ["Rendered artifact validation failed."]
+            revision_validation[stage] = stage_validation
+
+    if revision_validation:
+        return {
+            "app_id": app_id,
+            **to_web_response(original),
+            "status": "stalled",
+            "revision_status": "stalled",
+            "revision_validation": revision_validation,
+            "changed": [],
+            "touched": {},
+            "related": related,
+            "regenerated": {},
+        }
 
     combined = {
         "state": working,

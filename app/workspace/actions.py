@@ -472,18 +472,11 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
         )
 
     if result.get("requires_revision"):
-        actions = [
-            _offer(WorkspaceAction.MESSAGE, "Send revision feedback", common),
-        ]
-        if stage == "design" and result.get("method_proposals"):
-            actions.append(
-                _offer(
-                    WorkspaceAction.ADVANCE,
-                    "Approve method proposals and continue",
-                    {**common, "auto_approve_method_proposals": True},
-                )
-            )
-        return AwaitingOutcome(wait_reason=WaitReason.REPAIR, actions=actions)
+        # An incomplete artifact is owned by the bounded repair loop.  Do not
+        # turn a technical finding into a generic user-edit request (or allow
+        # approval to skip it); a real user decision is represented above by a
+        # typed feedback_question with grounded authority and options.
+        return AwaitingOutcome(wait_reason=WaitReason.REPAIR, actions=[])
 
     if result.get("kind") == "question" or result.get("questions"):
         actions = _answer_offers(command_id, result)

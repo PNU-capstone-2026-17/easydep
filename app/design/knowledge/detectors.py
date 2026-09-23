@@ -50,6 +50,8 @@ from app.design.contracts.type_system import (
     parse_type_expression,
     referenced_names,
 )
+from app.design.schemas.class_model import BCEModel
+from app.design.services.api_spec.normalization import interaction_contracts
 from app.design.services.class_diagram.validation.diagram import (
     Finding,
     _broken_stereotypes,
@@ -60,8 +62,6 @@ from app.design.services.class_diagram.validation.diagram import (
     _relation_label,
     _relationships,
 )
-from app.design.schemas.class_model import BCEModel
-from app.design.services.api_spec.normalization import interaction_contracts
 from app.design.services.common import fields, multiplicity
 from app.design.services.erd import mapping
 from app.design.services.persistence_scope import entity_names
@@ -169,7 +169,6 @@ def erd_source_entity_consistency(model: dict, logical: dict) -> list[Finding]:
             f"actualEntities={sorted(current_entities)}, "
             f"expectedRelationships={sorted(expected_relationships)}, "
             f"actualRelationships={sorted(current_relationships)}",
-            requires_user_input=True,
         )
     ]
 

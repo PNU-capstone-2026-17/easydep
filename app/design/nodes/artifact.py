@@ -232,6 +232,8 @@ class DesignArtifactSpec:
     #: stages with owned local repair leave this unset so the generic graph
     #: cannot start a second whole-model correction loop.
     repair: Callable[[Any, str, ArchitectureState, set[str]], Any] | None = None
+    #: Optional adapter for findings nested inside top-level merge units.
+    repair_target_mapper: Callable[[dict, ArchitectureState, list[Finding]], set[str]] | None = None
     #: 모델이 만들어진 뒤, 검사 전에 **다른 산출물과 대사**하는 후크. 그래프에서
     #: extract/revise 노드와 check/render 사이에 선택적으로 끼워진다. 하위 산출물은
     #: 상위 계약을 수정하지 않는 것이 원칙이며, 필요한 스테이지에만 둔다.
@@ -485,6 +487,17 @@ def _finding_key(finding: Finding) -> tuple[str, str, str]:
     return finding.rule_id, finding.location, finding.message
 
 
+def finding_details(findings: list[Finding], stage: str) -> list[dict[str, Any]]:
+    """Serialize structured findings while retaining the legacy display text."""
+    details: list[dict[str, Any]] = []
+    for finding in findings:
+        item = finding.model_dump(mode="json")
+        if finding.location:
+            item["authority_ref"] = f"{stage}:{finding.location}"
+        details.append(item)
+    return details
+
+
 def _repair_finding_keys(findings: list[Finding]) -> tuple[str, ...]:
     return tuple(
         sorted(
@@ -660,6 +673,7 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
     def node(state: ArchitectureState) -> dict:
         started = time.perf_counter()
         model = state.get(spec.model_key) or {}
+        initial_model_digest = stable_digest(model)
         # A semantic hook may perform one bounded review.  Make its durable,
         # digest-bound result visible to the check in the same invocation so a
         # successful (or failed) review is never executed twice for one gate.
@@ -704,7 +718,16 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                 ledger.status = "STALLED"
                 ledger.stall_reason = "No untried repair batch remains for this artifact state."
                 break
-            targets = _sequence_repair_targets(spec, model, state, batch)
+            targets = (
+                spec.repair_target_mapper(model, state, batch)
+                if spec.repair_target_mapper
+                else _sequence_repair_targets(spec, model, state, batch)
+            )
+            if spec.repair_target_mapper and not targets:
+                stopped = STALLED
+                ledger.status = "STALLED"
+                ledger.stall_reason = "No bounded merge target could be resolved for these findings."
+                break
             if len(targets) > 1:
                 # 같은 종류의 결함이 여러 유스케이스에 있어도 한 번에 하나만 고친다.
                 target = min(targets)
@@ -884,11 +907,28 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                 else (STALLED if remaining_repairable else _unrepaired_stop(findings))
             )
 
+        # Candidate checks may have repaired the model after the initial
+        # semantic hook ran. Refresh digest-bound evidence for that final model
+        # and check against it; accepted-unit caching avoids repeating review
+        # work already done while evaluating the candidate.
+        if spec.check_evidence is not None and stable_digest(model) != initial_model_digest:
+            evidence = spec.check_evidence(model, state)
+            prior = dict(state.get(spec.check_key) or {})
+            check_state = {**state, spec.check_key: {**prior, "semanticEvidence": evidence}}
+            findings = _dedupe_findings(spec.check(model, check_state))
+            stopped = CLEAN if not findings else (
+                STALLED if _repairable_findings(findings) else _unrepaired_stop(findings)
+            )
+            if findings and spec.repair:
+                ledger.status = "NEEDS_INPUT" if stopped == NEEDS_INPUT else "STALLED"
+                ledger.stall_reason = "Final digest-bound check left findings after bounded repair."
+
         if not findings:
             ledger.status = "COMPLETED"
 
         report: dict[str, Any] = {
             "findings": [f.as_issue() for f in findings],
+            "finding_details": finding_details(findings, spec.stage),
             "repair_iters": iterations,
             "stopped": stopped,
             "repair_history": ledger.model_dump(mode="json"),

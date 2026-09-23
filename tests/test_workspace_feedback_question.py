@@ -6,7 +6,7 @@ import pytest
 
 from app.workspace import repository
 from app.workspace import service as workspace_module
-from app.workspace.actions import offered_actions
+from app.workspace.actions import WorkspaceAction, offered_actions
 from app.workspace.api import WorkspaceCommandRequest
 from app.workspace.conversation.contracts import (
     CommandIntent,
@@ -302,6 +302,40 @@ def test_option_answer_routes_without_llm_to_requirements(monkeypatch) -> None:
     assert payload["revision_plan"]["status"] == "needs_confirmation"
     assert payload["validated_targets"][0]["ref"] == "use_case_spec:UC1"
     assert payload["_conversation_outcome"] == {"kind": "revision_plan"}
+
+
+def test_design_validation_option_routes_through_the_pinned_plan(monkeypatch) -> None:
+    question = _question().model_dump(mode="json")
+    question["trigger"] = {"category": "design_validation_input"}
+    source = _source_command()
+    source["result"]["feedback_question"] = question
+    monkeypatch.setattr(repository, "latest_command", lambda *_args, **_kwargs: source)
+    monkeypatch.setattr(repository, "get_command", lambda *_args, **_kwargs: source)
+    monkeypatch.setattr(workspace_module, "ProjectTools", _Tools)
+    monkeypatch.setattr(workspace_module, "plan_revision", lambda *_args: _plan())
+    monkeypatch.setattr(workspace_module, "validate_plan", lambda *_args: True)
+    monkeypatch.setattr(
+        workspace_module.conversation_agent,
+        "interpret_revision",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("a grounded option answer must not call the LLM")
+        ),
+    )
+
+    service = WorkspaceService()
+    try:
+        action, payload, stage = service._prepare_conversational_message(
+            "app-1",
+            action="message",
+            payload=dict(offered_actions(source)[0].payload),
+            stage=None,
+        )
+    finally:
+        service.shutdown()
+
+    assert (action, stage) == ("message", "requirements")
+    assert payload["feedback_decision"]["status"] == "NORMALIZED"
+    assert payload["revision_plan"]["authority_targets"] == [_target().model_dump(mode="json")]
 
 
 def test_class_binding_answer_retries_the_same_design_session(monkeypatch) -> None:
@@ -925,3 +959,111 @@ def test_design_result_exposes_only_supported_feedback_question() -> None:
 
     assert result["kind"] == "question"
     assert result["feedback_question"]["question_id"] == "question-1"
+
+
+def test_design_finding_detail_becomes_free_text_question_without_advance(monkeypatch) -> None:
+    monkeypatch.setattr(
+        workspace_module.ProjectTools,
+        "normalize_revision_targets",
+        lambda _self, _refs: [_target()],
+    )
+    service = WorkspaceService()
+    try:
+        result = service._design_result(
+            {
+                "app_id": "app-1",
+                "stage": "sequence_diagram",
+                "validation": {
+                    "sequence_diagram": {
+                        "findings": ["UC1 needs a business decision."],
+                        "finding_details": [
+                            {
+                                "rule_id": "sequence.decision",
+                                "message": "Should UC1 keep the current behavior?",
+                                "location": "UC1",
+                                "requires_user_input": True,
+                                "origin": "semantic",
+                                "authority_ref": "sequence_diagram:UC1",
+                            }
+                        ],
+                    }
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert result["kind"] == "question"
+    assert result["feedback_question"]["allow_free_text"] is True
+    assert result["feedback_question"]["options"] == []
+    assert result["design_can_advance"] is False
+    assert WorkspaceAction.ADVANCE not in {
+        offer.action
+        for offer in offered_actions(
+            {
+                "command_id": "design-question",
+                "stage": "design",
+                "status": "AWAITING_INPUT",
+                "result": result,
+            }
+        )
+    }
+
+
+def test_design_technical_repair_offers_no_generic_revision_message() -> None:
+    actions = offered_actions(
+        {
+            "command_id": "design-repair",
+            "stage": "design",
+            "status": "AWAITING_INPUT",
+            "result": {
+                "awaiting_input": True,
+                "kind": "action_required",
+                "requires_revision": True,
+                "blocking_findings": [{"message": "Missing required step."}],
+                "repair_state": {"status": "STALLED"},
+            },
+        }
+    )
+
+    assert actions == []
+
+
+def test_stalled_targeted_revision_keeps_accepted_artifact_readiness(monkeypatch) -> None:
+    service = WorkspaceService()
+    monkeypatch.setattr(
+        service,
+        "_design_result",
+        lambda result: {
+            "awaiting_input": True,
+            "kind": "action_required",
+            "message": "Review the current design artifacts.",
+            "requires_revision": False,
+            "findings": list(result["validation"]["class_diagram"]["findings"]),
+        },
+    )
+    try:
+        result = service._targeted_design_result(
+            "app-1",
+            {
+                "revision_status": "stalled",
+                "changed": [],
+                "validation": {"class_diagram": {"findings": []}},
+                "revision_validation": {
+                    "findings": ["Rejected candidate is incomplete."]
+                },
+            },
+            {"stage": "class_diagram"},
+            message="Revised the selected element.",
+        )
+    finally:
+        service.shutdown()
+
+    assert result["message"] == (
+        "Requested revision could not be validated; the previous artifact is unchanged."
+    )
+    assert result["changed"] == []
+    assert result["findings"] == []
+    assert result["revision_validation"] == {
+        "findings": ["Rejected candidate is incomplete."]
+    }

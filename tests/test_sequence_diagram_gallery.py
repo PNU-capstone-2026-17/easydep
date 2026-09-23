@@ -149,6 +149,30 @@ def test_sequence_diagram_draft_remains_visible_while_findings_block_advance() -
     assert image.body == b"draft"
 
 
+def test_web_response_preserves_typed_check_finding_details() -> None:
+    state = {
+        "sequence_diagram_check": {
+            "findings": ["a decision is needed"],
+            "finding_details": [
+                {
+                    "rule_id": "sequence.decision",
+                    "message": "A decision is needed.",
+                    "location": "UC1",
+                    "requires_user_input": True,
+                    "origin": "semantic",
+                    "authority_ref": "sequence_diagram:UC1",
+                }
+            ],
+        }
+    }
+
+    response = to_web_response(state)
+
+    assert response["validation"]["sequence_diagram"]["finding_details"] == state[
+        "sequence_diagram_check"
+    ]["finding_details"]
+
+
 def test_design_refuses_to_advance_past_sequence_findings() -> None:
     state = {
         **_state(),

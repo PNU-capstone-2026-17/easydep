@@ -37,6 +37,7 @@ from app.db.models import (
     TYPE_SEQUENCE,
     TYPE_USECASE_SPEC,
 )
+from app.design.class_target_scope import class_execution_merge_targets
 from app.design.contracts.api_spec import ApiSpecModel
 from app.design.knowledge.detectors import (
     Finding as ArtifactFinding,
@@ -156,9 +157,9 @@ def _deployment_planning_inputs(state: ArchitectureState) -> dict[str, Any]:
 def _deployment_model_findings(
     model: dict[str, Any], state: ArchitectureState
 ) -> list[ArtifactFinding]:
-    """템플릿 입력에서 해결되지 않은 문제를 사용자 입력 항목으로 바꾼다.
+    """Only genuinely missing external values require user input.
 
-    배포 LLM은 이름만 바꿀 수 있으므로 구조 문제를 자동 수리 대상으로 보내지 않는다.
+    Invalid or ungrounded generated graph elements are technical defects.
     """
 
     facts = extract_planning_facts(
@@ -171,7 +172,7 @@ def _deployment_model_findings(
             "deployment.workload-graph-valid",
             str(issue.get("reason") or "Deployment workload graph is incomplete."),
             str(issue.get("field") or "deployment"),
-            requires_user_input=True,
+            requires_user_input=str(issue.get("classification") or "") == "needsInput",
         )
         for issue in normalized.get("issues") or []
         if isinstance(issue, dict)
@@ -364,6 +365,21 @@ def _class_model_findings(
     return findings
 
 
+def _class_repair_targets(
+    model: dict[str, Any], _state: ArchitectureState,
+    findings: list[ArtifactFinding],
+) -> set[str]:
+    """Map nested class findings to their exact top-level merge owners."""
+    locations = {str(finding.location).strip() for finding in findings if finding.location}
+    if not locations:
+        return set()
+    try:
+        return class_execution_merge_targets(model, locations)
+    except ValueError:
+        # An unknown or ambiguous location cannot authorize a bounded repair.
+        return set()
+
+
 def _class_semantic_evidence(model: dict[str, Any], state: ArchitectureState) -> dict[str, Any]:
     """Persist the same digest-bound verdict used by the class approval check."""
     # Do not spend a semantic review on a model that deterministic class checks
@@ -540,6 +556,8 @@ CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
     # repair 여부와 예산은 validator가 아니라 graph/service orchestration이 결정한다.
     check=_class_model_findings,
     check_evidence=_class_semantic_evidence,
+    repair=_revise_class_state,
+    repair_target_mapper=_class_repair_targets,
     check_key="class_diagram_check",
 )
 

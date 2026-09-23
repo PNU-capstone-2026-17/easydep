@@ -154,6 +154,10 @@ def to_web_response(result: Mapping[str, Any]) -> dict[str, Any]:
             "valid": result.get(config["valid_key"]) if config["valid_key"] else None,
             "errors": (result.get(config["errors_key"], []) if config["errors_key"] else []),
             "findings": findings,
+            # Targeted design checks retain typed evidence alongside their
+            # legacy display strings.  Workspace uses this to distinguish a
+            # genuine user decision from a technical repair finding.
+            "finding_details": list(check.get("finding_details") or []),
             "check_status": check.get("stopped"),
             "repair_iters": check.get("repair_iters", 0),
             # Sequence reconciliation may need a new class operation.  The

@@ -24,12 +24,18 @@ from typing import Any
 
 from app.artifact_trace import TraceRef
 from app.db.models import ORIGIN_FEEDBACK_REVISED
+from app.design.class_target_scope import (
+    AmbiguousClassMergeTarget,
+    UnknownClassMergeTarget,
+    class_execution_merge_targets,
+)
 from app.design.graphs.subgraphs import DESIGN_SPECS
 from app.design.nodes.artifact import (
     CHECKED_ONLY,
     CLEAN,
     DesignArtifactSpec,
     assert_untargeted_elements_preserved,
+    finding_details,
     merge_model,
     render_and_validate,
 )
@@ -68,13 +74,6 @@ def _design_target(value: str) -> TraceRef | None:
     return parsed if parsed.kind in DESIGN_SPECS else None
 
 
-def _root_rtm_element(value: str) -> str:
-    """Map an argument-level RTM projection to its owning call element."""
-
-    marker = value.find("#")
-    return value if marker < 0 else value[:marker]
-
-
 def _class_execution_merge_targets(
     state: ArchitectureState, requested_targets: set[str]
 ) -> set[str]:
@@ -89,52 +88,12 @@ def _class_execution_merge_targets(
     model = state.get(class_spec.model_key) or {}
     if not isinstance(model, dict):
         raise UnapprovedScopeExpansion("The class model is unavailable for target normalization.")
-    class_names = {
-        str(item.get("className") or "").strip()
-        for item in model.get("Classes") or []
-        if isinstance(item, dict) and str(item.get("className") or "").strip()
-    }
-    operation_owners: dict[str, set[str]] = {}
-    collaboration_ids: set[str] = set()
-    call_owners: dict[str, set[str]] = {}
-    for item in model.get("Classes") or []:
-        if not isinstance(item, dict):
-            continue
-        owner = str(item.get("className") or "").strip()
-        for operation in item.get("operations") or []:
-            if isinstance(operation, dict) and str(operation.get("operationId") or "").strip():
-                operation_owners.setdefault(str(operation["operationId"]).strip(), set()).add(owner)
-    for item in model.get("Collaborations") or []:
-        if not isinstance(item, dict):
-            continue
-        collaboration = str(item.get("collaborationId") or "").strip()
-        if not collaboration:
-            continue
-        collaboration_ids.add(collaboration)
-        for call in item.get("calls") or []:
-            if isinstance(call, dict) and str(call.get("callId") or "").strip():
-                call_owners.setdefault(str(call["callId"]).strip(), set()).add(collaboration)
-
-    merged: set[str] = set()
-    for ref in requested_targets:
-        parsed = _design_target(ref)
-        candidate = parsed.id if parsed is not None and parsed.kind == "class_diagram" else ref
-        owners = operation_owners.get(candidate, set())
-        call_id = _root_rtm_element(candidate)
-        call_collaborations = call_owners.get(call_id, set())
-        if candidate in class_names or candidate in collaboration_ids:
-            merged.add(candidate)
-        elif len(owners) == 1:
-            merged.update(owners)
-        elif len(call_collaborations) == 1:
-            merged.update(call_collaborations)
-        elif len(owners) > 1 or len(call_collaborations) > 1:
-            raise UnapprovedScopeExpansion(
-                f"Class execution target {ref!r} maps to more than one merge unit."
-            )
-        else:
-            raise UnknownTarget(f"{ref} is not a current class execution target.")
-    return merged
+    try:
+        return class_execution_merge_targets(model, requested_targets)
+    except AmbiguousClassMergeTarget as error:
+        raise UnapprovedScopeExpansion(str(error)) from error
+    except UnknownClassMergeTarget as error:
+        raise UnknownTarget(str(error)) from error
 
 
 def _check_report(
@@ -157,6 +116,7 @@ def _check_report(
     findings = spec.check(model, state)
     return {
         "findings": [f.as_issue() for f in findings],
+        "finding_details": finding_details(findings, spec.stage),
         "repair_iters": 0,
         "stopped": CLEAN if not findings else CHECKED_ONLY,
     }

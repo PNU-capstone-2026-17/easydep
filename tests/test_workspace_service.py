@@ -1410,6 +1410,83 @@ def test_requirement_reply_answers_the_resource_question_without_reclassificatio
     assert captured["request"].answer is None
 
 
+def test_design_endpoint_answer_uses_the_pinned_resource_question(monkeypatch) -> None:
+    question = {
+        "field": "connectionEndpoint:orders-db",
+        "kind": "text",
+        "question": "What endpoint should Orders use for the database?",
+        "sourceRefs": ["connection:orders-db"],
+        "context": {
+            "connectionId": "orders-db",
+            "sourceRef": "connection:orders-db",
+            "workloadGraphStructureDigest": "a" * 64,
+        },
+    }
+    pending = {
+        "command_id": "endpoint-question",
+        "app_id": "app-1",
+        "stage": "design",
+        "status": "AWAITING_INPUT",
+        "result": {"resource_question": question},
+    }
+    monkeypatch.setattr(repository, "latest_command", lambda *_args, **_kwargs: {
+        "command_id": "previous-complete", "status": "COMPLETED"
+    })
+    monkeypatch.setattr(repository, "get_command", lambda *_args, **_kwargs: pending)
+    monkeypatch.setattr(
+        workspace_module.conversation_agent,
+        "interpret_revision",
+        lambda *_args, **_kwargs: pytest.fail("endpoint intake must not be a revision"),
+    )
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        workspace_module,
+        "apply_deployment_endpoint_answer_session",
+        lambda app_id, pinned_question, text: captured.update(
+            app_id=app_id, question=pinned_question, text=text
+        ) or {"status": "completed"},
+    )
+    monkeypatch.setattr(
+        workspace_module,
+        "session_status",
+        lambda _app_id: {"active": True, "stage": "deployment_diagram"},
+    )
+    service = WorkspaceService()
+    try:
+        action, payload, stage = service._prepare_conversational_message(
+            "app-1",
+            action="message",
+            payload={"action_id": "endpoint-question", "text": "postgresql://db:5432/orders"},
+            stage=None,
+        )
+        monkeypatch.setattr(
+            service,
+            "_run_design_operation",
+            lambda _command, *, operation, **_kwargs: operation(),
+        )
+        monkeypatch.setattr(service, "_design_result", lambda result: result)
+        result = service._stage_message(
+            {
+                "command_id": "endpoint-answer",
+                "app_id": "app-1",
+                "action": action,
+                "stage": stage,
+                "payload": payload,
+            },
+            advance=False,
+        )
+    finally:
+        service.shutdown()
+
+    assert (action, stage) == ("message", "design")
+    assert result == {"status": "completed"}
+    assert captured == {
+        "app_id": "app-1",
+        "question": question,
+        "text": "postgresql://db:5432/orders",
+    }
+
+
 def test_conversation_answer_to_resource_question_uses_free_form_contract(monkeypatch) -> None:
     captured = {}
     monkeypatch.setattr(
