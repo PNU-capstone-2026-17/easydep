@@ -4,6 +4,8 @@ from app.requirements.contracts.state import UseCaseItem
 from app.requirements.modeling.specifications import (
     _semantic_findings,
     _accepted_public_contract_proposal,
+    _public_contract_findings,
+    identity_source_question,
     normalize_specification,
     spec_review_payload,
     validate_specification,
@@ -43,6 +45,72 @@ def test_accepted_contract_projects_to_proposal_fields_for_regeneration() -> Non
             "identity_obligation_index": 1,
         }],
     }
+
+
+def test_orphan_identify_obligation_is_a_deterministic_contract_finding() -> None:
+    findings = _public_contract_findings({
+        "requirement_ids": ["R1"],
+        "public_contract": {
+            "identity_obligations": [{
+                "obligation_ref": "ob_identify", "obligation": "identify",
+                "subject": "student", "identity_source_kind": "caller_input",
+                "requirement_ids": ["R1"],
+            }],
+            "required_values": [],
+        },
+    })
+
+    assert any("identify obligation must link to a required identifier value" in item for item in findings)
+
+
+@pytest.mark.parametrize(
+    ("source", "identity_source_kind", "auth_ref"),
+    [
+        ("caller_input", "caller_input", None),
+        ("system_result", "system_result", None),
+        ("authenticated_actor_context", "authenticated_context", "ob_auth"),
+    ],
+)
+def test_explicit_identifier_links_accept_all_canonical_sources(source, identity_source_kind, auth_ref):
+    identity = {
+        "obligation_ref": "ob_identify", "obligation": "identify", "subject": "student",
+        "identity_source_kind": identity_source_kind, "requirement_ids": ["R1"],
+    }
+    obligations = [identity]
+    if auth_ref:
+        identity["source_authenticate_obligation_ref"] = auth_ref
+        obligations.append({
+            "obligation_ref": auth_ref, "obligation": "authenticate", "subject": "student",
+            "identity_source_kind": "unresolved", "requirement_ids": ["R1"],
+        })
+    findings = _public_contract_findings({
+        "requirement_ids": ["R1"],
+        "public_contract": {
+            "identity_obligations": obligations,
+            "required_values": [{
+                "value_ref": "val_student", "name": "student identifier", "source": source,
+                "value_type": "identifier", "usage": "control", "requirement_ids": ["R1"],
+                "identity_obligation_ref": "ob_identify",
+            }],
+        },
+    })
+
+    assert findings == []
+
+
+def test_anonymous_public_search_does_not_create_identity_source_question() -> None:
+    spec = {
+        "use_case_id": "UC-search", "name": "Search public university courses",
+        "public_contract": {
+            "identity_obligations": [],
+            "required_values": [{
+                "value_ref": "val_query", "name": "search query", "source": "caller_input",
+                "value_type": "string", "usage": "control", "requirement_ids": ["R1"],
+            }],
+        },
+    }
+
+    assert identity_source_question({"use_case_specs": [spec]}) is None
 
 
 def test_spec_projects_grounded_identity_and_required_value_obligations() -> None:

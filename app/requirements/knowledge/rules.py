@@ -629,7 +629,9 @@ RULES: tuple[Rule, ...] = (
             "identity relation only when grounded in the supplied requirements. "
             "Report an omission or contradiction only when that behavior is grounded in the "
             "supplied goal or requirements. Do not invent authentication, authorization, required "
-            "preconditions, or other behavior when the sources establish none."
+            "preconditions, or other behavior when the sources establish none. An actor role or "
+            "label alone does not establish an identify obligation; a linked functional "
+            "requirement must require selecting or distinguishing an identified subject."
         ),
         citation="easydep convention (source-grounded public behavior review)",
         evidence="project-convention",

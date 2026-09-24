@@ -212,6 +212,7 @@ def _public_contract_findings(spec: dict[str, object]) -> list[str]:
 
     values = contract.get("required_values")
     declarations: dict[str, list[dict[str, object]]] = {}
+    linked_identify_refs: set[str] = set()
     if isinstance(values, list):
         value_refs: set[str] = set()
         for entry in values:
@@ -237,7 +238,13 @@ def _public_contract_findings(spec: dict[str, object]) -> list[str]:
                         "[public-contract-integrity] An identity obligation link must select a "
                         "same-use-case identify obligation on an identifier value."
                     )
-                elif entry.get("source") == "authenticated_actor_context" and (
+                elif isinstance(identity_ref, str):
+                    linked_identify_refs.add(identity_ref)
+                if (
+                    is_identifier and isinstance(linked, dict)
+                    and linked.get("obligation") == "identify"
+                    and entry.get("source") == "authenticated_actor_context"
+                ) and (
                     linked.get("identity_source_kind") != "authenticated_context"
                     or linked.get("source_authenticate_obligation_ref") not in valid_auth_refs
                 ):
@@ -255,6 +262,16 @@ def _public_contract_findings(spec: dict[str, object]) -> list[str]:
             key = " ".join(entry["name"].split()).casefold()
             if key:
                 declarations.setdefault(key, []).append(entry)
+    if isinstance(obligations, list):
+        for index, entry in enumerate(obligations):
+            if not isinstance(entry, dict) or entry.get("obligation") != "identify":
+                continue
+            obligation_ref = entry.get("obligation_ref")
+            if not isinstance(obligation_ref, str) or obligation_ref not in linked_identify_refs:
+                findings.append(
+                    f"[public-contract-integrity] identity_obligations[{index}] identify obligation "
+                    "must link to a required identifier value in this use case."
+                )
     for name, entries in declarations.items():
         if len(entries) < 2:
             continue
