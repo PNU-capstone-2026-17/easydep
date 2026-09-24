@@ -6,7 +6,7 @@ import pytest
 
 from app.workspace import repository
 from app.workspace import service as workspace_module
-from app.workspace.actions import WorkspaceAction, offered_actions
+from app.workspace.actions import WorkspaceAction, action_is_offered, offered_actions
 from app.workspace.api import WorkspaceCommandRequest
 from app.workspace.conversation.contracts import (
     CommandIntent,
@@ -198,9 +198,15 @@ def _identity_source_candidate() -> dict[str, Any]:
 class _IdentityTools(_Tools):
     version = 7
 
-    def current_revision_target(self, ref):
-        assert ref == "use_case_spec:UC1"
+    def normalize_revision_targets(self, refs, *, require_editable=True):
+        assert refs == ["use_case_spec:UC1"]
+        assert require_editable is False
         target = _target()
+        return [target.model_copy(update={"artifact_version_id": self.version})]
+
+    def current_revision_target(self, target):
+        assert isinstance(target, RevisionTarget)
+        assert target.ref == "use_case_spec:UC1"
         return target.model_copy(update={"artifact_version_id": self.version})
 
 
@@ -253,6 +259,40 @@ def test_identity_source_option_resumes_typed_answer_without_revision_plan(monke
     assert "feedback_decision" not in payload
 
 
+def test_offered_identity_option_is_accepted_and_client_answer_is_replaced(monkeypatch) -> None:
+    monkeypatch.setattr(workspace_module, "ProjectTools", _IdentityTools)
+    source = _identity_source_command()
+    monkeypatch.setattr(repository, "latest_command", lambda _app_id: source)
+    monkeypatch.setattr(repository, "get_command", lambda _command_id: source)
+    offer = offered_actions(source)[0]
+    service = WorkspaceService()
+    try:
+        action, payload, stage = service._prepare_conversational_message(
+            "app-1",
+            action=offer.action.value,
+            payload={
+                **offer.payload,
+                "identity_source_answer": {
+                    "use_case_id": "UC999",
+                    "obligation_ref": "forged",
+                    "identity_source_kind": "caller_input",
+                },
+            },
+            stage=None,
+        )
+    finally:
+        service.shutdown()
+
+    assert (action, stage) == ("message", "requirements")
+    assert payload["identity_source_answer"] == {
+        "use_case_id": "UC1",
+        "obligation_ref": "identify-student",
+        "identity_source_kind": "authenticated_context",
+        "source_authenticate_obligation_ref": "authenticate-student",
+    }
+    assert action_is_offered(action, payload, source)
+
+
 def test_identity_source_rejects_stale_artifact_or_foreign_question(monkeypatch) -> None:
     monkeypatch.setattr(workspace_module, "ProjectTools", _IdentityTools)
     source = _identity_source_command()
@@ -292,6 +332,65 @@ def test_identity_source_rejects_tampered_option_and_nonexact_free_text(monkeypa
         service.shutdown()
     assert tampered["_conversation_outcome"]["kind"] == "clarification"
     assert prose["_conversation_outcome"]["kind"] == "clarification"
+
+
+def test_identity_source_answer_refreshes_existing_downstream_handoff(monkeypatch) -> None:
+    source = {
+        "command_id": "identity-question",
+        "app_id": "app-1",
+        "status": "AWAITING_INPUT",
+        "result": {
+            "downstream_revision_handoff": {
+                "source_targets": [
+                    {"ref": "use_case_spec:UC8", "artifact_version_id": 7}
+                ],
+                "semantic_scope": "contract",
+                "requested_effect": "Use authenticated session identity.",
+                "change_type": "modify",
+            }
+        },
+    }
+
+    class CurrentSpecTools:
+        def __init__(self, app_id):
+            assert app_id == "app-1"
+
+        def normalize_revision_targets(self, refs, *, require_editable):
+            assert refs == ["use_case_spec:UC8"]
+            assert require_editable is False
+            return [_target().model_copy(
+                update={
+                    "ref": "use_case_spec:UC8",
+                    "element_id": "UC8",
+                    "artifact_version_id": 8,
+                }
+            )]
+
+    monkeypatch.setattr(workspace_module, "ProjectTools", CurrentSpecTools)
+    monkeypatch.setattr(repository, "get_command", lambda _command_id: source)
+    command = {
+        "app_id": "app-1",
+        "payload": {
+            "action_id": "identity-question",
+            "identity_source_answer": {
+                "use_case_id": "UC8",
+                "obligation_ref": "ob_identify",
+                "identity_source_kind": "authenticated_context",
+                "source_authenticate_obligation_ref": "ob_authenticate",
+            },
+        },
+    }
+
+    result = WorkspaceService._refresh_identity_source_downstream_handoff(
+        command, {"awaiting_input": True, "kind": "action_required"}
+    )
+
+    assert result["downstream_revision_handoff"]["source_targets"] == [
+        {"ref": "use_case_spec:UC8", "artifact_version_id": 8}
+    ]
+    assert result["downstream_revision_handoff"]["requested_effect"] == (
+        "Use authenticated session identity."
+    )
 
 
 def test_feedback_question_offers_stable_option_and_free_text() -> None:

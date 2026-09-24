@@ -22,7 +22,7 @@ from app.design.services.class_diagram.cache import (
 )
 from app.design.services.class_diagram.scenario import ScenarioIndex, UseCase, text
 from app.design.services.class_diagram.type_system import referenced_type_names
-from app.design.services.class_diagram.trusted_context import trusted_context_sources
+from app.design.services.class_diagram.trusted_context import required_value_catalog, required_value_evidence
 from app.design.services.class_diagram.validation.model import operation_catalog
 from app.design.services.common.structured import parse_structured
 from app.llm_connection import build_llm_connection
@@ -30,7 +30,7 @@ from app.llm_profiles import effective_temperature
 from app.validation import Finding, stable_digest
 
 
-_EVIDENCE_VERSION = "class-public-contract-review/v3"
+_EVIDENCE_VERSION = "class-public-contract-review/v6"
 _PROMPT = """You independently review whether an accepted class-model use-case
 slice closes every public-contract obligation owned by the class stage.  The
 requirements/API/implementation stages own the authentication policy expressed
@@ -43,12 +43,19 @@ fieldRef when those declarations are evidence. A fieldRef must belong to the
 concrete return or input parameter type cited by that mapping.
 For required_values with usage control or both, cite the Control call that receives
 the value, its exact parameter, and that call's argument binding. For usage result
-or both, cite a Control operation with a concrete non-void return type.
+or both, cite a Control operation with a concrete non-void return type. For a
+required_value whose source is system_result, that Control return (and, when
+cited, a fieldRef on its concrete return DTO) is sufficient evidence: do not
+require an argument binding or a prior call result.
 For identify identity obligations, cite a Control parameter and its exact argument
-binding. The obligation's identity_source_kind is authoritative: authenticated_context
-must bind context#<source_authenticate_obligation_ref>; caller_input must bind a
-canonical actor input; system_result must bind a prior accepted call result. An
-unresolved source cannot pass. Never infer provenance from names or rationale.
+binding. An authenticated identity source must link through that parameter's exact
+requiredValueRef to an accepted required-value catalog entry whose identityObligationRef
+is this identify obligation. caller_input must bind a canonical actor input;
+system_result must bind a prior accepted call result. Never infer provenance from names.
+For every required value, the cited parameter's requiredValueRef must equal the exact
+accepted valueRef. Catalog entries are evidence, not arbitrary runtime values: direct
+bindings are offered only for eligible server-context entries; caller_input and
+system_result must use their actual actor-input/prior-result dataflow.
 If the supplied model does not make the connection clear, return fail or
 ambiguous with one precise reason.  Never invent IDs, fields, operations, or
 calls.  Return only the response schema."""
@@ -121,7 +128,11 @@ def _slice(model: dict[str, Any], use_case: UseCase) -> dict[str, Any]:
             and any(text(ref).startswith(prefix) for ref in operation.get("stepRefs") or [])
         ]
         if operations:
-            classes.append({"className": text(owner.get("className")), "operations": operations})
+            classes.append({
+                "className": text(owner.get("className")),
+                "stereotype": text(owner.get("stereotype")),
+                "operations": operations,
+            })
     type_expressions = [text(parameter.get("type")) for owner in classes for operation in owner["operations"]
                         for parameter in operation.get("parameters") or [] if isinstance(parameter, Mapping)]
     type_expressions.extend(text(operation.get("returnType")) for owner in classes for operation in owner["operations"])
@@ -192,6 +203,7 @@ def _review_payload(index: ScenarioIndex, model: dict[str, Any], use_case: UseCa
     return {
         "useCaseId": use_case.id,
         "publicContractObligations": _obligations(use_case),
+        "requiredValueCatalog": required_value_evidence(use_case),
         "acceptedFragmentAndCollaboration": _slice(model, use_case),
     }
 
@@ -272,22 +284,25 @@ def _verify_response(model: dict[str, Any], use_case: UseCase, response: _Review
                 return f"Identity obligation '{mapping.obligation_id}' has no exact argument binding for its cited parameter."
             source_kind = text(obligation.get("identity_source_kind")).casefold()
             source_ref = text(binding.get("sourceRef"))
-            declared_kind = text(binding.get("sourceKind")).casefold()
             if source_kind == "unresolved" or source_kind not in {"caller_input", "authenticated_context", "system_result"}:
                 return f"Identity obligation '{mapping.obligation_id}' has unresolved or unsupported identity source; clarification is required."
             if source_kind == "authenticated_context":
-                auth_ref = text(obligation.get("source_authenticate_obligation_ref"))
-                valid_auth = auth_ref and trusted_context_sources(
-                    use_case, parameter_name, text(cited_parameter.get("type")), obligation_ref=auth_ref,
-                )
-                if not valid_auth or source_ref != f"context#{auth_ref}" or declared_kind != "authenticated_context":
-                    return f"Identity obligation '{mapping.obligation_id}' must bind the exact accepted authenticate context source."
+                identify_ref = text(obligation.get("obligation_ref"))
+                required_ref = text(cited_parameter.get("requiredValueRef"))
+                linked_value = next((item for item in required_value_catalog(use_case)
+                                     if item["valueRef"] == required_ref
+                                     and item["identityObligationRef"] == identify_ref), None)
+                direct_valid = bool(linked_value and source_ref == linked_value["sourceRef"])
+                prior_valid = bool(linked_value and mapping.field_ref
+                                   and _prior_result_source(source_ref, calls, mapping.call_ref, operations))
+                if not (direct_valid or prior_valid):
+                    return f"Identity obligation '{mapping.obligation_id}' must bind a required value linked to this identity obligation, directly or through a prior result."
             elif source_kind == "caller_input":
                 root_inputs = _actor_input_sources(model, use_case)
-                if source_ref not in root_inputs or declared_kind != "use_case_input":
+                if source_ref not in root_inputs:
                     return f"Identity obligation '{mapping.obligation_id}' must bind a canonical actor input source."
             else:
-                if not _prior_result_source(source_ref, calls, mapping.call_ref, operations) or declared_kind != "earlier_step_result":
+                if not _prior_result_source(source_ref, calls, mapping.call_ref, operations):
                     return f"Identity obligation '{mapping.obligation_id}' must bind a prior accepted call result."
         if mapping.field_ref:
             type_expression = text(cited_parameter.get("type")) if cited_parameter else text(operation.get("returnType"))
@@ -300,6 +315,8 @@ def _verify_response(model: dict[str, Any], use_case: UseCase, response: _Review
                 return f"Required value '{mapping.obligation_id}' must be mapped to a Control call."
             if cited_parameter is None:
                 return f"Required value '{mapping.obligation_id}' must cite its Control parameter."
+            if text(cited_parameter.get("requiredValueRef")) != text(obligation.get("value_ref")):
+                return f"Required value '{mapping.obligation_id}' must cite its exact accepted valueRef on the parameter."
             parameter_name = text(cited_parameter.get("name"))
             bound_parameters = {
                 text(binding.get("parameter")) for binding in call.get("argumentBindings") or []
@@ -307,16 +324,6 @@ def _verify_response(model: dict[str, Any], use_case: UseCase, response: _Review
             }
             if parameter_name not in bound_parameters:
                 return f"Required value '{mapping.obligation_id}' is not bound on callRef '{mapping.call_ref}'."
-            if text(obligation.get("source")).casefold() == "authenticated_actor_context":
-                source_ref = text(cited_parameter.get("obligationRef"))
-                binding = next((item for item in call.get("argumentBindings") or []
-                                if isinstance(item, Mapping) and text(item.get("parameter")) == parameter_name), None)
-                accepted = source_ref and trusted_context_sources(
-                    use_case, parameter_name, text(cited_parameter.get("type")), obligation_ref=source_ref,
-                )
-                if (not accepted or not binding or text(binding.get("sourceRef")) != f"context#{source_ref}"
-                        or text(binding.get("sourceKind")).casefold() != "authenticated_context"):
-                    return f"Required value '{mapping.obligation_id}' must use trusted context for its Control parameter."
         if usage in {"result", "both"} and (
             text(operation.get("stereotype")).casefold() != "control"
             or not text(operation.get("returnType"))

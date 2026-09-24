@@ -558,7 +558,28 @@ def test_requirement_revision_uses_saved_artifacts_when_checkpoint_is_missing(mo
         assert list(by_id) == ["R1"]
         assert actors[0]["name"] == "Student"
         assert feedback == "Use the enrollment trigger."
-        return {**existing, "trigger": "student selects a course"}
+        return {
+            **existing,
+            "trigger": "student selects a course",
+            "public_contract": {"identity_obligations": [
+                {
+                    "obligation_ref": "ob_identify",
+                    "subject_ref": "sub_student",
+                    "subject": "student",
+                    "obligation": "identify",
+                    "identity_source_kind": "unresolved",
+                    "requirement_ids": ["R1"],
+                },
+                {
+                    "obligation_ref": "ob_auth",
+                    "subject_ref": "sub_student",
+                    "subject": "student",
+                    "obligation": "authenticate",
+                    "identity_source_kind": "unresolved",
+                    "requirement_ids": ["R1"],
+                },
+            ]},
+        }
 
     monkeypatch.setattr(service, "generate_specification", generate)
     monkeypatch.setattr(
@@ -581,6 +602,12 @@ def test_requirement_revision_uses_saved_artifacts_when_checkpoint_is_missing(mo
 
     assert result["status"] == "need_feedback"
     assert result["phase"] == "specs"
+    assert result["app_id"] == "app-1"
+    assert result["identity_source_question"]["useCaseId"] == "UC1"
+    assert result["identity_source_question"]["obligationRef"] == "ob_identify"
+    assert "authenticated_context:ob_auth" in {
+        option["id"] for option in result["identity_source_question"]["options"]
+    }
     assert result["saved_stages"] == ["usecase_spec"]
     assert result["use_case_specs"][0]["trigger"] == "student selects a course"
     assert saved[0][0:2] == ("app-1", ["usecase_spec"])

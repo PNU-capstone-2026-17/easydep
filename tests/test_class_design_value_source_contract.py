@@ -13,7 +13,7 @@ from app.design.services.class_diagram import collaboration, operations
 from app.design.services.class_diagram.identity import materialize_pre_collaboration_refs
 from app.design.services.class_diagram.proposals import OperationFragment
 from app.design.services.class_diagram.scenario import build_scenario_index
-from app.design.services.class_diagram.trusted_context import trusted_context_sources
+from app.design.services.class_diagram.trusted_context import required_value_catalog
 from app.design.services.class_diagram.validation import validate_class_model
 from app.design.services.class_diagram.validation.operations import (
     OperationContext,
@@ -27,6 +27,7 @@ def _scenario(
     preconditions: list[str],
     actors: list[dict] | None = None,
     identity_obligations: list[dict] | None = None,
+    required_values: list[dict] | None = None,
 ) -> dict:
     scenario_actors = actors or [{"actor_ref": "ACT1", "name": actor}]
     for index, item in enumerate(scenario_actors, start=1):
@@ -47,7 +48,7 @@ def _scenario(
             "preconditions": preconditions,
             "public_contract": {
                 "identity_obligations": identity_obligations or [],
-                "required_values": [],
+                "required_values": required_values or [],
             },
             "main_scenario": [
                 {
@@ -106,7 +107,7 @@ def _identity_handoff_model(
                         {
                             "name": identity_parameter,
                             "type": identity_name,
-                            **({"obligationRef": obligation_ref} if obligation_ref else {}),
+                            **({"requiredValueRef": obligation_ref} if obligation_ref else {}),
                         },
                     ],
                     "returnType": result_type,
@@ -166,21 +167,18 @@ def _select_offered_finite_source(_use_case, ambiguous, _parameter_types, **_kwa
             (source for source in candidates if source.startswith("call_") and "#param_" in source),
             None,
         )
-        context = next(
-            (source for source in candidates if source.startswith("context#")), None,
-        )
-        selected[location] = direct or context or candidates[0]
+        selected[location] = direct or candidates[0]
     return selected
 
 
 @pytest.mark.parametrize(
     ("use_case_id", "actor", "prefix", "identity_name"),
     [
-        ("UC17", "Customer", "Booking", "CustomerIdentity"),
-        ("UC42", "Patient", "Admission", "PatientIdentity"),
+        ("UC17", "Customer", "Booking", "UUID"),
+        ("UC42", "Patient", "Admission", "UUID"),
     ],
 )
-def test_authenticated_context_is_a_typed_handoff_source_not_a_domain_special_case(
+def test_authenticated_required_identifier_is_a_direct_handoff_source(
     monkeypatch,
     use_case_id: str,
     actor: str,
@@ -199,14 +197,32 @@ def test_authenticated_context_is_a_typed_handoff_source_not_a_domain_special_ca
             "obligation_ref": f"ob-{use_case_id}", "subject_ref": f"sub-{use_case_id}",
             "subject": "display-only", "obligation": "authenticate",
             "requirement_ids": [f"REQ-{use_case_id}"],
+        }, {
+            "obligation_ref": f"identify-{use_case_id}", "subject_ref": f"sub-{use_case_id}",
+            "subject": "display-only", "obligation": "identify",
+            "identity_source_kind": "authenticated_context",
+            "source_authenticate_obligation_ref": f"ob-{use_case_id}",
+            "requirement_ids": [f"REQ-{use_case_id}"],
+        }],
+        required_values=[{
+            "value_ref": f"val-{use_case_id}", "name": "actor id",
+            "source": "authenticated_actor_context", "value_type": "identifier",
+            "usage": "control", "requirement_ids": [f"REQ-{use_case_id}"],
+            "identity_obligation_ref": f"identify-{use_case_id}",
         }],
     )
     index = build_scenario_index(specification)
     monkeypatch.setattr(
-        collaboration, "select_ambiguous_bindings", _select_offered_finite_source,
+        collaboration, "select_ambiguous_bindings",
+        lambda _use_case, ambiguous, _parameter_types, **_kwargs: {
+            location: next(source for source in candidates if source.startswith("value#"))
+            if any(source.startswith("value#") for source in candidates)
+            else candidates[0]
+            for location, candidates in ambiguous.items()
+        },
     )
     model = _identity_handoff_model(
-        use_case_id, prefix, identity_name, f"ob-{use_case_id}",
+        use_case_id, prefix, identity_name, f"val-{use_case_id}",
     )
     result = collaboration.materialize(
         index,
@@ -217,128 +233,88 @@ def test_authenticated_context_is_a_typed_handoff_source_not_a_domain_special_ca
 
     assert [binding.source_ref for binding in result.calls[1].argument_bindings] == [
         f"{result.calls[0].stable_id}#{model.Classes[0].operations[0].parameters[0].stable_ref}",
-        f"context#ob-{use_case_id}",
+        f"value#val-{use_case_id}",
     ]
 
 
-@pytest.mark.parametrize(
-    ("use_case_id", "actor", "context_type"),
-    [
-        ("UC84", "Learner", "AuthContext"),
-        ("UC85", "Clinician", "AuthenticatedContext"),
-    ],
-)
-def test_explicit_trust_evidence_supplies_authentication_context_envelope(
-    use_case_id: str,
-    actor: str,
-    context_type: str,
-):
-    index = build_scenario_index(_scenario(
-        use_case_id,
-        actor,
-        ["An authenticated server session is trusted for this request."],
-        identity_obligations=[{
-            "obligation_ref": f"ob-{use_case_id}", "subject_ref": f"sub-{use_case_id}",
-            "subject": "display-only", "obligation": "authenticate", "requirement_ids": ["REQ-A"],
-        }],
-    ))
+def test_required_value_catalog_is_exact_typed_and_keeps_availability():
+    index = build_scenario_index(_scenario("UC84", "Learner", [], required_values=[
+        {"value_ref": "val-a", "name": "student", "source": "authenticated_actor_context",
+         "value_type": "identifier", "usage": "control", "requirement_ids": ["R1"]},
+        {"value_ref": "val-b", "name": "details", "source": "caller_input",
+         "value_type": "object", "usage": "control", "requirement_ids": ["R2"]},
+        {"value_ref": "val-c", "name": "receipt", "source": "system_result",
+         "value_type": "string", "usage": "result", "requirement_ids": ["R3"]},
+    ]))
+    catalog = required_value_catalog(index.use_case("UC84"))
+    assert [item["sourceRef"] for item in catalog] == ["value#val-a", "value#val-b", "value#val-c"]
+    assert [item["availability"] for item in catalog] == ["server_context", "actor_entry", "prior_result"]
+    assert catalog[0]["identityObligationRef"] is None
 
-    sources = trusted_context_sources(
-        index.use_case(use_case_id), "authContext", context_type, obligation_ref=f"ob-{use_case_id}",
-    )
 
-    assert [source.source_ref for source in sources] == [
-        f"context#ob-{use_case_id}",
+def test_operation_validator_checks_exact_required_value_ref_and_type():
+    index = build_scenario_index(_scenario("UC87", "Reviewer", [], required_values=[{
+        "value_ref": "val-87", "name": "student id", "source": "authenticated_actor_context",
+        "value_type": "identifier", "usage": "control", "requirement_ids": ["REQ-87"],
+        "identity_obligation_ref": "identify-87",
+    }]))
+    inventory = {"Classes": [{"className": "ReviewControl", "stereotype": "Control"}], "DataTypes": []}
+    fragment = {"DataTypes": [], "Classes": [{"className": "ReviewControl", "operations": [{
+        "name": "process", "parameters": [
+            {"name": "studentId", "type": "UUID", "requiredValueRef": "val-87"},
+            {"name": "bad", "type": "ReviewRequest", "requiredValueRef": "unknown"},
+        ], "returnType": "void", "stepRefs": ["UC87:main:2"],
+    }]}]}
+    report = validate_operations(fragment, OperationContext(index, inventory, index.use_case("UC87")))
+    assert len([f for f in report.findings if f.rule_id == "class.operation.required-value"]) == 1
+
+
+def test_operation_validator_keeps_server_context_out_of_boundary_signature():
+    index = build_scenario_index(_scenario("UC89", "Student", [], required_values=[{
+        "value_ref": "val-session", "name": "student id", "source": "authenticated_actor_context",
+        "value_type": "identifier", "usage": "control", "requirement_ids": ["R-ID"],
+    }]))
+    inventory = {"Classes": [{"className": "StudentBoundary", "stereotype": "Boundary"}], "DataTypes": []}
+    fragment = {"DataTypes": [], "Classes": [{"className": "StudentBoundary", "operations": [{
+        "name": "submit", "parameters": [{"name": "studentId", "type": "UUID", "requiredValueRef": "val-session"}],
+        "returnType": "void", "stepRefs": ["UC89:main:1"],
+    }]}]}
+    report = validate_operations(fragment, OperationContext(index, inventory, index.use_case("UC89")))
+    assert any("cannot be exposed as actor-facing Boundary" in f.message for f in report.findings)
+
+
+def test_direct_required_value_binding_is_not_offered_for_caller_or_system_result():
+    use_case_id = "UC86"
+    index = build_scenario_index(_scenario(use_case_id, "Reviewer", [], required_values=[
+        {"value_ref": "val-input", "name": "criteria", "source": "caller_input",
+         "value_type": "string", "usage": "control", "requirement_ids": ["R1"]},
+        {"value_ref": "val-output", "name": "result", "source": "system_result",
+         "value_type": "string", "usage": "result", "requirement_ids": ["R2"]},
+    ]))
+    refs = {item["sourceRef"] for item in required_value_catalog(index.use_case(use_case_id))}
+    assert refs == {"value#val-input", "value#val-output"}
+    assert not any(item["availability"] == "server_context" for item in required_value_catalog(index.use_case(use_case_id)))
+
+    model = {"Classes": [], "DataTypes": [], "Collaborations": []}
+    operations = {
+        "Entry::submit(id:UUID)": {"stereotype": "boundary", "returnType": "void",
+                                   "parameters": [{"name": "id", "type": "UUID", "stableRef": "entry-id"}]},
+        "Work::first()": {"stereotype": "control", "returnType": "UUID", "parameters": []},
+        "Work::consume(id:UUID)": {"stereotype": "control", "returnType": "void", "parameters": []},
+    }
+    calls = [
+        {"callId": "UC86::call:1", "stableId": "call-entry", "receiverOperationId": "Entry::submit(id:UUID)", "parentCallId": None},
+        {"callId": "UC86::call:2", "stableId": "call-first", "receiverOperationId": "Work::first()", "parentCallId": "UC86::call:1"},
+        {"callId": "UC86::call:3", "stableId": "call-target", "receiverOperationId": "Work::consume(id:UUID)", "parentCallId": "UC86::call:2"},
     ]
-    assert trusted_context_sources(
-        index.use_case(use_case_id), "command", "EnrollmentCommand", obligation_ref="unknown",
-    ) == ()
-    assert trusted_context_sources(
-        index.use_case(use_case_id), "studentId", "UUID",
-    ) == ()
-
-
-def test_authentication_context_envelope_requires_explicit_trust_evidence():
-    index = build_scenario_index(_scenario(
-        "UC86", "Reviewer", ["The request queue is available."],
-    ))
-
-    assert trusted_context_sources(
-        index.use_case("UC86"), "authContext", "AuthContext",
-    ) == ()
-
-
-def test_operation_validator_rejects_unknown_or_boundary_obligation_ref():
-    index = build_scenario_index(_scenario(
-        "UC87", "Reviewer", [], identity_obligations=[{
-            "obligation_ref": "ob-valid", "subject_ref": "sub-valid", "subject": "display-only",
-            "obligation": "authenticate", "requirement_ids": ["REQ-87"],
-        }],
-    ))
-    inventory = {
-        "Classes": [{"className": "ReviewBoundary", "stereotype": "Boundary"}, {
-            "className": "ReviewControl", "stereotype": "Control",
-        }],
-        "DataTypes": [{"name": "ReviewRequest", "kind": "valueObject", "fields": ["value : String"]}],
-    }
-    fragment = {
-        "DataTypes": [],
-        "Classes": [
-            {"className": "ReviewBoundary", "operations": [{
-                "name": "submit", "parameters": [{"name": "context", "type": "ReviewRequest", "obligationRef": "ob-valid"}],
-                "returnType": "void", "stepRefs": ["UC87:main:1"],
-            }]},
-            {"className": "ReviewControl", "operations": [{
-                "name": "process", "parameters": [{"name": "context", "type": "ReviewRequest", "obligationRef": "ob-unknown"}],
-                "returnType": "void", "stepRefs": ["UC87:main:2"],
-            }]},
-        ],
-    }
-
-    report = validate_operations(
-        fragment, OperationContext(index, inventory, index.use_case("UC87")),
-    )
-
-    assert len([f for f in report.findings if f.rule_id == "class.operation.trusted-context"]) == 2
-
-
-def test_trusted_context_obligation_ref_is_control_only():
-    index = build_scenario_index(_scenario(
-        "UC88", "Reviewer", [], identity_obligations=[{
-            "obligation_ref": "ob-valid", "subject_ref": "sub-valid", "subject": "display-only",
-            "obligation": "authenticate", "requirement_ids": ["REQ-88"],
-        }],
-    ))
-    inventory = {
-        "Classes": [
-            {"className": "ReviewBoundary", "stereotype": "Boundary"},
-            {"className": "ReviewControl", "stereotype": "Control"},
-            {"className": "ReviewEntity", "stereotype": "Entity"},
-        ],
-        "DataTypes": [{"name": "ReviewRequest", "kind": "valueObject", "fields": ["value : String"]}],
-    }
-    fragment = {
-        "DataTypes": [],
-        "Classes": [
-            {"className": class_name, "operations": [{
-                "name": "process",
-                "parameters": [{"name": "context", "type": "ReviewRequest", "obligationRef": "ob-valid"}],
-                "returnType": "void", "stepRefs": ["UC88:main:1"],
-            }]}
-            for class_name in ("ReviewBoundary", "ReviewControl", "ReviewEntity")
-        ],
-    }
-
-    report = validate_operations(
-        fragment, OperationContext(index, inventory, index.use_case("UC88")),
-    )
-
-    trusted_context = [f for f in report.findings if f.rule_id == "class.operation.trusted-context"]
-    assert len(trusted_context) == 2
-    assert {finding.location for finding in trusted_context} == {
-        "UC88:ReviewBoundary.process#context",
-        "UC88:ReviewEntity.process#context",
-    }
+    for value_ref in ("val-input", "val-output"):
+        candidates = collaboration._binding_candidates(
+            model, index.use_case(use_case_id), "UC86:main:1", False, calls, 2,
+            {"name": "id", "type": "UUID", "requiredValueRef": value_ref}, operations,
+        )
+        assert f"value#{value_ref}" not in candidates
+        if value_ref == "val-output":
+            assert "call-first#result" in candidates
 
 
 def test_boundary_control_handoff_uses_compatible_opaque_id_despite_parameter_rename(monkeypatch):
@@ -550,9 +526,7 @@ def test_actor_description_and_lineage_cannot_supply_identity_context():
         ],
     )
     index = build_scenario_index(specification)
-    assert trusted_context_sources(
-        index.use_case(use_case_id), "premiumguest", "PremiumGuestIdentity", obligation_ref="ob-any"
-    ) == ()
+    assert required_value_catalog(index.use_case(use_case_id)) == ()
 
 
 def test_untrusted_parent_actor_hierarchy_does_not_supply_child_identity():
@@ -589,7 +563,7 @@ def test_untrusted_parent_actor_hierarchy_does_not_supply_child_identity():
         )
 
 
-def test_operation_payload_exposes_only_explicit_obligation_context():
+def test_operation_payload_exposes_exact_required_value_catalog():
     """The proposer receives finite refs, never actor-description guesses."""
 
     trusted = build_scenario_index(_scenario(
@@ -599,39 +573,43 @@ def test_operation_payload_exposes_only_explicit_obligation_context():
         identity_obligations=[{
             "obligation_ref": "ob-context:71", "subject_ref": "sub-71", "subject": "display-only",
             "obligation": "authenticate", "requirement_ids": ["RR7"],
+        }, {
+            "obligation_ref": "identify-buyer", "subject_ref": "sub-71", "subject": "display-only",
+            "obligation": "identify", "identity_source_kind": "authenticated_context",
+            "source_authenticate_obligation_ref": "ob-context:71", "requirement_ids": ["RR7"],
+        }],
+        required_values=[{
+            "value_ref": "val-student-71", "name": "student id",
+            "source": "authenticated_actor_context", "value_type": "identifier",
+            "usage": "control", "requirement_ids": ["RR7"],
+            "identity_obligation_ref": "identify-buyer",
         }],
     ))
     payload = operations._operation_payload(
         trusted, {"Classes": [], "DataTypes": []}, trusted.use_case("UC71"),
     )
 
-    assert payload["availableTrustedContext"] == [{
-        "sourceRef": "context#ob-context:71",
-        "obligationRef": "ob-context:71",
-        "subjectRef": "sub-71",
-        "kind": "trusted_context",
-        "evidenceRefs": ["ob-context:71", "RR7"],
-        "eligibility": "assign this exact obligationRef only to an internal Control parameter on a Boundary-to-Control handoff",
-    }]
+    assert payload["requiredValueSources"][0]["sourceRef"] == "value#val-student-71"
+    assert payload["requiredValueSources"][0]["identityObligationRef"] == "identify-buyer"
+    assert payload["requiredValueSources"][0]["availability"] == "server_context"
     assert set(payload["valueSourcePolicy"]) == {
-        "requestInputs", "trustedContext", "previousResults", "runtimeValues", "derivedValues",
+        "requestInputs", "requiredValues", "previousResults", "runtimeValues", "derivedValues",
     }
 
     bare = build_scenario_index(_scenario("UC72", "Browser", []))
     bare_payload = operations._operation_payload(
         bare, {"Classes": [], "DataTypes": []}, bare.use_case("UC72"),
     )
-    assert bare_payload["availableTrustedContext"] == []
+    assert bare_payload["requiredValueSources"] == []
 
 
 def test_operation_prompt_distinguishes_public_contract_value_origins():
     prompt = operations.operation_prompt()
 
     assert "public_contract.required_values" in prompt
-    assert "system_result values are produced" in prompt
-    assert "caller-supplied identifier" in prompt
-    assert "invent authentication or delegation" in prompt
-    assert "obligationRef" in prompt
+    assert "system_result values from prior" in prompt
+    assert "server_context values as actor-facing Boundary inputs" in prompt
+    assert "requiredValueRef" in prompt
 
 
 def _hand_authored_context_model(

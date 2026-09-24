@@ -491,22 +491,13 @@ class IdentityObligation(BaseModel):
             "different subject. Authentication alone is not delegation."
         )
     )
-    identity_source_kind: Literal[
-        "caller_input", "authenticated_context", "system_result", "unresolved"
-    ] = Field(
-        default="unresolved",
-        description=(
-            "For an identify obligation, identify where the selected subject comes from. "
-            "Use unresolved unless the functional requirement clearly establishes the source. "
-            "authenticated_context requires an explicit source_authenticate_obligation_ref "
-            "that selects an authenticate obligation in this use case."
-        ),
-    )
-    source_authenticate_obligation_ref: str | None = Field(
+    source_authenticate_obligation_index: int | None = Field(
         default=None,
+        ge=1,
         description=(
-            "Optional exact obligation_ref selected from a supplied same-use-case authenticate "
-            "obligation. Never invent or infer this reference."
+            "For an identify obligation whose linked RequiredValue.source is "
+            "authenticated_actor_context, select the exact authenticate obligation by its "
+            "1-based position in this proposal's identity_obligations list. Do not set otherwise."
         ),
     )
     requirement_ids: list[str] = Field(
@@ -520,15 +511,28 @@ class RequiredValue(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # Proposal-only 1-based reference into this proposal's identity_obligations.
+    # normalize_specification converts it to the accepted exact obligation_ref.
+    identity_obligation_index: int | None = Field(
+        default=None, ge=1,
+        description=(
+            "For an identifier representing an identified subject, select the exact identify "
+            "obligation by its "
+            "1-based position in this proposal's identity_obligations list. Do not set otherwise."
+        ),
+    )
     name: str = Field(min_length=1, description="The required public input or value.")
     source: Literal[
         "caller_input", "authenticated_actor_context", "system_result"
     ] = Field(
         description=(
-            "Value origin established by the source requirement: caller_input is untrusted actor "
-            "input, authenticated_actor_context is trusted context for the authenticated actor, "
-            "and system_result is produced by the system. A caller supplied identifier is not "
-            "proof of identity."
+            "Classify where the value comes from according to the requirement, not whether it is "
+            "trusted: caller_input means the actor supplies it in the request; "
+            "authenticated_actor_context means the requirement says the system obtains it from "
+            "the current authenticated session/actor context; system_result means the system "
+            "creates or returns it. For example, an identifier explicitly read from the "
+            "authenticated session is authenticated_actor_context, while an identifier entered "
+            "by the caller is caller_input even if used to select a record."
         )
     )
     value_type: Literal[

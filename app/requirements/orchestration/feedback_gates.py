@@ -294,6 +294,10 @@ def gate_specs(state: AgentState) -> dict[str, object]:
     ))
     return {
         **upd,
+        # A natural-language spec revision can introduce a new unresolved
+        # identity source. Return the freshly recomputed question so the next
+        # gate iteration and Workspace response see it instead of the old one.
+        "identity_source_question": st.get("identity_source_question"),
         "semantic_ambiguity_question": (
             None if resolved_ambiguity else st.get("semantic_ambiguity_question")
         ),

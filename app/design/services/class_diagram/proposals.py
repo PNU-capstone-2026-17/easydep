@@ -112,7 +112,7 @@ class OperationParameterProposal(Proposal):
 
     name: LowerCamelCaseName
     type: str = Field(min_length=1)
-    obligation_ref: str | None = Field(default=None, alias="obligationRef", min_length=1)
+    required_value_ref: str | None = Field(default=None, alias="requiredValueRef", min_length=1)
     stable_ref: str | None = Field(default=None, alias="stableRef", min_length=1)
 
 

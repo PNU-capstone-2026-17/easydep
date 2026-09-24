@@ -25,10 +25,22 @@ from app.requirements.knowledge import rules as _rules
 
 
 IDENTITY_SOURCE_INSTRUCTIONS = (
-    "For each identify obligation, set identity_source_kind only when the covered requirement "
-    "clearly establishes caller_input, authenticated_context, or system_result; otherwise use "
-    "unresolved. Never infer the source from a subject name or merely because an authenticate "
-    "obligation exists."
+    "For required value source, classify origin from the requirement: caller_input is explicitly "
+    "provided by the actor; authenticated_actor_context is explicitly obtained from the current "
+    "authenticated session/actor context; system_result is created or returned by the system. "
+    "An ID the requirement says is read from the authenticated session is not caller_input; an ID "
+    "the actor enters remains caller_input even if it selects a subject. "
+    "RequiredValue.source is the canonical source classification. Do not emit a separate source "
+    "classification on identity_obligations. For any identifier value that represents an "
+    "identified subject, set RequiredValue.identity_obligation_index to the 1-based position of "
+    "the corresponding identify obligation in identity_obligations, regardless of whether its "
+    "source is caller_input, authenticated_actor_context, or system_result. Only when that linked "
+    "value's source is authenticated_actor_context, set the identify obligation's "
+    "source_authenticate_obligation_index to the 1-based position of the exact authenticate "
+    "obligation in the same list, when the requirement establishes that authentication relation. "
+    "Never infer either link from names or requirement-ID overlap. Do not set identity links on "
+    "values that are not identifiers for an identified subject; do not omit them when the "
+    "requirement establishes these identity relations."
 )
 
 

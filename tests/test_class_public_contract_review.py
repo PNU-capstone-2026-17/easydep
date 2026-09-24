@@ -16,7 +16,10 @@ def _scenario(source: str = "caller_input") -> dict:
             "main_scenario": [{"step_number": 1, "subject_ref": "ACT1", "sentence": "Member submits details."}],
             "extensions": [],
             "public_contract": {"identity_obligations": [], "required_values": [{
-                "name": "request details", "source": source, "value_type": "object", "usage": "control", "requirement_ids": ["R1"],
+                "value_ref": "val-1",
+                "name": "request details", "source": source,
+                "value_type": "identifier" if source == "authenticated_actor_context" else "object",
+                "usage": "control", "requirement_ids": ["R1"],
             }]},
         }],
         "relationships": {"includes": [], "extends": []},
@@ -30,7 +33,7 @@ def _model() -> dict:
             "parameters": [{"name": "details", "type": "RequestData", "stableRef": "param-details"}], "returnType": "void", "stepRefs": ["UC1:main:1"],
         }]}, {"className": "SubmitControl", "stereotype": "Control", "fields": [], "operations": [{
             "stableId": "op-control", "operationId": "SubmitControl::submit(details:RequestData)", "name": "submit",
-            "parameters": [{"name": "details", "type": "RequestData", "stableRef": "param-details-control"}], "returnType": "Receipt", "stepRefs": ["UC1:main:1"],
+            "parameters": [{"name": "details", "type": "RequestData", "stableRef": "param-details-control", "requiredValueRef": "val-1"}], "returnType": "Receipt", "stepRefs": ["UC1:main:1"],
         }]}],
         "Collaborations": [{"collaborationId": "UC1", "calls": [{
             "callId": "UC1-call-1", "stableId": "call-boundary", "receiverOperationId": "SubmitBoundary::submit(details:RequestData)",
@@ -46,6 +49,128 @@ def _pass_response() -> dict:
         "callRef": "call-control", "parameterRef": "param-details-control", "fieldRef": None,
         "rationale": "The accepted Control receives the caller-supplied details on this bound call.",
     }]}
+
+
+def _authenticated_identify_obligations(scenario: dict) -> str:
+    scenario["use_case_specs"][0]["public_contract"]["identity_obligations"] = [
+        {"obligation": "authenticate", "obligation_ref": "auth-1", "subject_ref": "ACT1", "requirement_ids": ["R-AUTH"]},
+        {"obligation": "identify", "obligation_ref": "identify-1", "subject": "student",
+         "identity_source_kind": "authenticated_context",
+         "source_authenticate_obligation_ref": "auth-1", "subject_ref": "ACT1", "requirement_ids": ["R-ID"]},
+    ]
+    scenario["use_case_specs"][0]["public_contract"]["required_values"][0]["identity_obligation_ref"] = "identify-1"
+    return "identify-1"
+
+
+def _with_identity_mapping(response: dict, *, operation_id: str | None = None,
+                           call_ref: str | None = None, parameter_ref: str | None = None,
+                           field_ref: str | None = None) -> dict:
+    mapping = next((item for item in response["mappings"]
+                    if item.get("obligationId") == "identity:2"), None)
+    is_new = mapping is None
+    if mapping is None:
+        mapping = dict(response["mappings"][0])
+        mapping["obligationId"] = "identity:2"
+    if operation_id:
+        mapping["operationId"] = operation_id
+    if call_ref:
+        mapping["callRef"] = call_ref
+    if parameter_ref:
+        mapping["parameterRef"] = parameter_ref
+    if field_ref:
+        mapping["fieldRef"] = field_ref
+    if is_new:
+        response["mappings"].append(mapping)
+    return response
+
+
+def test_review_slice_preserves_owner_stereotypes() -> None:
+    from app.design.services.class_diagram import public_contract_review as subject
+
+    index = build_scenario_index(_scenario())
+    use_case = index.use_cases[0]
+
+    reviewed_classes = {
+        item["className"]: item["stereotype"]
+        for item in subject._slice(_model(), use_case)["Classes"]
+    }
+
+    assert reviewed_classes == {"SubmitBoundary": "Boundary", "SubmitControl": "Control"}
+
+
+def test_system_result_value_needs_control_return_not_prior_call_result(monkeypatch) -> None:
+    from app.design.services.class_diagram import public_contract_review as subject
+
+    scenario = _scenario("system_result")
+    scenario["use_case_specs"][0]["public_contract"]["required_values"][0].update({
+        "name": "receipt identifier",
+        "usage": "result",
+    })
+    model = _model()
+    model["DataTypes"] = [{
+        "name": "Receipt",
+        "kind": "valueObject",
+        "fields": ["receiptId : String"],
+        "fieldRefs": ["field-receipt-id"],
+    }]
+    response = _pass_response()
+    response["mappings"][0].update({
+        "parameterRef": None,
+        "fieldRef": "field-receipt-id",
+        "rationale": "The Control returns the system-produced receipt identifier.",
+    })
+    monkeypatch.setattr(subject, "parse_structured", lambda *_args, **_kwargs: response)
+
+    findings, _evidence = subject.review_public_contract_closure(model, build_scenario_index(scenario))
+
+    assert findings == []
+
+
+def test_authenticated_context_can_flow_through_prior_control_result_field(monkeypatch) -> None:
+    from app.design.services.class_diagram import public_contract_review as subject
+
+    scenario = _scenario("authenticated_actor_context")
+    identify_ref = _authenticated_identify_obligations(scenario)
+    model = _model()
+    model["Classes"].append({
+        "className": "TrustedContextControl", "stereotype": "Control", "fields": [], "operations": [{
+            "stableId": "op-context", "operationId": "TrustedContextControl::resolve(context:String)",
+            "name": "resolve", "parameters": [{"name": "context", "type": "String", "stableRef": "param-context", "requiredValueRef": "val-1"}],
+            "returnType": "ActorRequest", "stepRefs": ["UC1:main:1"],
+        }],
+    })
+    model["Classes"][1]["operations"][0]["parameters"][0].update({
+        "type": "ActorRequest", "requiredValueRef": "val-1",
+    })
+    model["Classes"][1]["operations"][0]["operationId"] = "SubmitControl::submit(details:ActorRequest)"
+    calls = model["Collaborations"][0]["calls"]
+    calls[1]["stableId"] = "call-context"
+    calls[1]["receiverOperationId"] = "TrustedContextControl::resolve(context:String)"
+    calls[1]["parentCallId"] = "UC1-call-1"
+    calls[1]["argumentBindings"] = [{"parameter": "context", "sourceRef": "value#val-1"}]
+    calls.append({
+        "callId": "UC1-call-3", "stableId": "call-consumer",
+        "receiverOperationId": "SubmitControl::submit(details:ActorRequest)", "parentCallId": "UC1-call-2",
+        "argumentBindings": [{"parameter": "details", "sourceRef": "call-context#result"}],
+    })
+    model["DataTypes"] = [
+        {"name": "ActorRequest", "kind": "valueObject", "fields": ["memberKey : String"], "fieldRefs": ["field-actor-request"]},
+    ]
+    response = _pass_response()
+    response["mappings"][0].update({
+        "operationRef": "op-control", "operationId": "SubmitControl::submit(details:RequestData)",
+        "callRef": "call-consumer", "parameterRef": "param-details-control", "fieldRef": "field-actor-request",
+    })
+    response["mappings"][0]["obligationId"] = "value:1"
+    response["mappings"][0]["operationId"] = "SubmitControl::submit(details:ActorRequest)"
+    _with_identity_mapping(
+        response, operation_id="SubmitControl::submit(details:ActorRequest)",
+        call_ref="call-consumer", parameter_ref="param-details-control",
+        field_ref="field-actor-request",
+    )
+    monkeypatch.setattr(subject, "parse_structured", lambda *_args, **_kwargs: response)
+
+    assert subject.review_public_contract_closure(model, build_scenario_index(scenario))[0] == []
 
 
 def test_dto_field_ref_is_accepted_only_for_the_cited_concrete_type(monkeypatch) -> None:
@@ -255,48 +380,96 @@ def test_public_contract_review_stops_after_one_persistent_invalid_correction(mo
 def test_authenticated_context_cannot_be_satisfied_by_caller_input_binding(monkeypatch) -> None:
     from app.design.services.class_diagram import public_contract_review as subject
     scenario = _scenario("authenticated_actor_context")
-    scenario["use_case_specs"][0]["public_contract"]["identity_obligations"] = [
-        {"obligation": "authenticate", "obligation_ref": "auth-1", "subject_ref": "ACT1", "requirement_ids": ["R2"]},
-    ]
-    scenario["use_case_specs"][0]["public_contract"]["required_values"][0]["source_authenticate_obligation_ref"] = "auth-1"
+    identify_ref = _authenticated_identify_obligations(scenario)
     model = _model()
-    model["Classes"][1]["operations"][0]["parameters"][0]["obligationRef"] = "auth-1"
+    model["Classes"][1]["operations"][0]["parameters"][0]["requiredValueRef"] = "val-1"
+    model["Classes"][1]["operations"][0]["parameters"][0]["type"] = "String"
+    model["Classes"][1]["operations"][0]["operationId"] = "SubmitControl::submit(details:String)"
+    model["Collaborations"][0]["calls"][1]["receiverOperationId"] = "SubmitControl::submit(details:String)"
     model["Collaborations"][0]["calls"][1]["argumentBindings"][0].update({
-        "sourceRef": "context#wrong-auth", "sourceKind": "authenticated_context",
+        "sourceRef": "value#wrong-identify",
     })
-    monkeypatch.setattr(subject, "parse_structured", lambda *_args, **_kwargs: _pass_response())
+    response = _pass_response()
+    response["mappings"][0]["operationId"] = "SubmitControl::submit(details:String)"
+    _with_identity_mapping(response, operation_id="SubmitControl::submit(details:String)")
+    monkeypatch.setattr(subject, "parse_structured", lambda *_args, **_kwargs: response)
     findings, evidence = review_public_contract_closure(model, build_scenario_index(scenario))
     assert len(findings) == 1
-    assert "must use trusted context" in evidence["verdicts"][0]["finding"]
+    assert "linked to this identity obligation" in evidence["verdicts"][0]["finding"]
 
 
 def test_authenticated_required_value_accepts_exact_authenticate_binding(monkeypatch) -> None:
     from app.design.services.class_diagram import public_contract_review as subject
     scenario = _scenario("authenticated_actor_context")
-    scenario["use_case_specs"][0]["public_contract"]["identity_obligations"] = [
-        {"obligation": "authenticate", "obligation_ref": "auth-1", "subject_ref": "ACT1", "requirement_ids": ["R2"]},
-    ]
-    scenario["use_case_specs"][0]["public_contract"]["required_values"][0]["source_authenticate_obligation_ref"] = "auth-1"
+    identify_ref = _authenticated_identify_obligations(scenario)
     model = _model()
-    model["Classes"][1]["operations"][0]["parameters"][0]["obligationRef"] = "auth-1"
+    model["Classes"][1]["operations"][0]["parameters"][0]["requiredValueRef"] = "val-1"
+    model["Classes"][1]["operations"][0]["parameters"][0]["type"] = "String"
+    model["Classes"][1]["operations"][0]["operationId"] = "SubmitControl::submit(details:String)"
+    model["Collaborations"][0]["calls"][1]["receiverOperationId"] = "SubmitControl::submit(details:String)"
     model["Collaborations"][0]["calls"][1]["argumentBindings"][0].update({
-        "sourceRef": "context#auth-1", "sourceKind": "authenticated_context",
+        "sourceRef": "value#val-1",
     })
-    monkeypatch.setattr(subject, "parse_structured", lambda *_args, **_kwargs: _pass_response())
+    response = _pass_response()
+    response["mappings"][0]["operationId"] = "SubmitControl::submit(details:String)"
+    _with_identity_mapping(response, operation_id="SubmitControl::submit(details:String)")
+    monkeypatch.setattr(subject, "parse_structured", lambda *_args, **_kwargs: response)
     assert subject.review_public_contract_closure(model, build_scenario_index(scenario))[0] == []
+
+
+def test_authenticated_context_direct_dto_requires_semantic_review_pass(monkeypatch) -> None:
+    from app.design.services.class_diagram import public_contract_review as subject
+
+    scenario = _scenario("authenticated_actor_context")
+    identify_ref = _authenticated_identify_obligations(scenario)
+    model = _model()
+    model["Classes"][1]["operations"][0]["parameters"][0].update({"type": "ActorRequest", "requiredValueRef": "val-1"})
+    model["Classes"][1]["operations"][0]["operationId"] = "SubmitControl::submit(details:ActorRequest)"
+    model["Collaborations"][0]["calls"][1]["receiverOperationId"] = "SubmitControl::submit(details:ActorRequest)"
+    model["DataTypes"] = [{"name": "ActorRequest", "kind": "valueObject", "fields": ["memberId : String"], "fieldRefs": ["field-actor-id"]}]
+    model["Collaborations"][0]["calls"][1]["argumentBindings"][0].update({"sourceRef": "value#val-1"})
+    response = {"status": "fail", "finding": "The authenticated context source does not establish the required request details DTO.", "mappings": []}
+
+    monkeypatch.setattr(subject, "parse_structured", lambda *_args, **_kwargs: response)
+    findings, evidence = subject.review_public_contract_closure(model, build_scenario_index(scenario))
+
+    assert findings
+    assert "does not establish" in evidence["verdicts"][0]["finding"]
+
+
+def test_review_payload_lists_authenticated_subject_identifier_value() -> None:
+    from app.design.services.class_diagram import public_contract_review as subject
+
+    scenario = _scenario("authenticated_actor_context")
+    identify_ref = _authenticated_identify_obligations(scenario)
+    payload = subject._review_payload(build_scenario_index(scenario), _model(), build_scenario_index(scenario).use_cases[0])
+
+    assert payload["requiredValueCatalog"][0]["sourceRef"] == "value#val-1"
+    assert payload["requiredValueCatalog"][0]["identityObligationRef"] == identify_ref
+    assert payload["requiredValueCatalog"][0]["availability"] == "server_context"
 
 
 def _identity_case(source_kind: str, source_ref: str | None = None) -> tuple[dict, dict]:
     scenario = _scenario()
     contract = scenario["use_case_specs"][0]["public_contract"]
     contract["required_values"] = []
-    identify = {"obligation": "identify", "identity_source_kind": source_kind, "requirement_ids": ["R-ID"]}
+    identify = {
+        "obligation_ref": "identify-1", "obligation": "identify",
+        "identity_source_kind": source_kind, "subject": "student", "subject_ref": "ACT1",
+        "requirement_ids": ["R-ID"],
+    }
     if source_kind == "authenticated_context":
         identify["source_authenticate_obligation_ref"] = "auth-1"
         contract["identity_obligations"] = [
             {"obligation": "authenticate", "obligation_ref": "auth-1", "subject_ref": "ACT1", "requirement_ids": ["R-AUTH"]},
             identify,
         ]
+        contract["required_values"] = [{
+            "value_ref": "val-identity", "name": "student id",
+            "source": "authenticated_actor_context", "value_type": "identifier",
+            "usage": "control", "requirement_ids": ["R-ID"],
+            "identity_obligation_ref": "identify-1",
+        }]
     else:
         contract["identity_obligations"] = [identify]
     model = _model()
@@ -305,9 +478,24 @@ def _identity_case(source_kind: str, source_ref: str | None = None) -> tuple[dic
         "sourceRef": source_ref or "UC1:main:1#param-details",
         "sourceKind": {"caller_input": "use_case_input", "authenticated_context": "authenticated_context", "system_result": "earlier_step_result"}.get(source_kind, ""),
     })
+    if source_kind == "authenticated_context":
+        model["Classes"][1]["operations"][0]["parameters"][0].update({
+            "type": "String", "requiredValueRef": "val-identity",
+        })
+        model["Classes"][1]["operations"][0]["operationId"] = "SubmitControl::submit(details:String)"
+        model["Collaborations"][0]["calls"][1]["receiverOperationId"] = "SubmitControl::submit(details:String)"
     mapping = _pass_response()["mappings"][0]
-    mapping.update({"obligationId": "identity:2" if source_kind == "authenticated_context" else "identity:1"})
-    return scenario, {"status": "pass", "finding": "", "mappings": [mapping]}
+    if source_kind == "authenticated_context":
+        identity_mapping = dict(mapping, obligationId="identity:2")
+        mapping.update({"obligationId": "value:1"})
+        mappings = [mapping, identity_mapping]
+    else:
+        mapping.update({"obligationId": "identity:1"})
+        mappings = [mapping]
+    if source_kind == "authenticated_context":
+        for item in mappings:
+            item["operationId"] = "SubmitControl::submit(details:String)"
+    return scenario, {"status": "pass", "finding": "", "mappings": mappings}
 
 
 def test_identify_caller_input_requires_canonical_actor_binding(monkeypatch) -> None:
@@ -329,6 +517,12 @@ def _identity_model(source_kind: str, source_ref: str) -> dict:
         "sourceRef": source_ref,
         "sourceKind": {"caller_input": "use_case_input", "authenticated_context": "authenticated_context", "system_result": "earlier_step_result"}.get(source_kind, ""),
     })
+    if source_kind == "authenticated_context":
+        model["Classes"][1]["operations"][0]["parameters"][0].update({
+        "type": "String", "requiredValueRef": "val-identity",
+        })
+        model["Classes"][1]["operations"][0]["operationId"] = "SubmitControl::submit(details:String)"
+        model["Collaborations"][0]["calls"][1]["receiverOperationId"] = "SubmitControl::submit(details:String)"
     return model
 
 
@@ -347,30 +541,26 @@ def test_identify_rejects_wrong_actor_ref_and_unresolved_source(monkeypatch) -> 
 
 def test_identify_authenticated_context_requires_exact_authenticate_ref(monkeypatch) -> None:
     from app.design.services.class_diagram import public_contract_review as subject
-    scenario, payload = _identity_case("authenticated_context", "context#wrong-auth")
+    scenario, payload = _identity_case("authenticated_context", "value#wrong-auth")
     monkeypatch.setattr(subject, "parse_structured", lambda *_args, **_kwargs: payload)
-    findings, evidence = subject.review_public_contract_closure(_identity_model("authenticated_context", "context#wrong-auth"), build_scenario_index(scenario))
-    assert findings and "exact accepted authenticate context" in evidence["verdicts"][0]["finding"]
+    findings, evidence = subject.review_public_contract_closure(_identity_model("authenticated_context", "value#wrong-auth"), build_scenario_index(scenario))
+    assert findings and "linked to this identity obligation" in evidence["verdicts"][0]["finding"]
 
-    scenario, payload = _identity_case("authenticated_context", "context#auth-1")
+    scenario, payload = _identity_case("authenticated_context", "value#val-identity")
     monkeypatch.setattr(subject, "parse_structured", lambda *_args, **_kwargs: payload)
-    assert subject.review_public_contract_closure(_identity_model("authenticated_context", "context#auth-1"), build_scenario_index(scenario))[0] == []
+    assert subject.review_public_contract_closure(_identity_model("authenticated_context", "value#val-identity"), build_scenario_index(scenario))[0] == []
 
 
-def test_identify_authenticated_context_requires_exact_source_kind(monkeypatch) -> None:
+def test_identify_authenticated_context_accepts_exact_source_ref_without_sidecar_kind(monkeypatch) -> None:
     from app.design.services.class_diagram import public_contract_review as subject
 
-    scenario, payload = _identity_case("authenticated_context", "context#auth-1")
-    model = _identity_model("authenticated_context", "context#auth-1")
+    scenario, payload = _identity_case("authenticated_context", "value#val-identity")
+    model = _identity_model("authenticated_context", "value#val-identity")
+    payload["mappings"][0].update({"operationId": "SubmitControl::submit(details:String)"})
     binding = model["Collaborations"][0]["calls"][1]["argumentBindings"][0]
     binding.pop("sourceKind")
     monkeypatch.setattr(subject, "parse_structured", lambda *_args, **_kwargs: payload)
-    findings, evidence = subject.review_public_contract_closure(model, build_scenario_index(scenario))
-    assert findings and "exact accepted authenticate context" in evidence["verdicts"][0]["finding"]
-
-    binding["sourceKind"] = "use_case_input"
-    findings, evidence = subject.review_public_contract_closure(model, build_scenario_index(scenario))
-    assert findings and "exact accepted authenticate context" in evidence["verdicts"][0]["finding"]
+    assert subject.review_public_contract_closure(model, build_scenario_index(scenario))[0] == []
 
 
 def test_identify_system_result_requires_prior_nonvoid_call_result(monkeypatch) -> None:

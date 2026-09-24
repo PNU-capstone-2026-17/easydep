@@ -18,7 +18,6 @@ from app.design.contracts.type_system import (
     render_design_type,
 )
 from app.design.schemas.class_model import BCEModel
-from app.design.services.class_diagram.trusted_context import is_trusted_context_ref
 
 
 @dataclass(frozen=True)
@@ -544,7 +543,7 @@ def _control_arguments(
     Parameter names and types are not semantic routing hints.  A Control input is
     connected only when the accepted collaboration explicitly points at the entry
     Boundary call and that Boundary input has an HTTP representation, or when it
-    carries an already-validated ``context#`` trusted-context source.
+    carries an already-validated required-value catalog source.
     """
 
     boundary_sources = _boundary_http_sources(endpoint, request_schema, contract)
@@ -553,11 +552,9 @@ def _control_arguments(
     for parameter, source_ref in contract.control_argument_sources:
         if parameter not in expected_parameters:
             continue
-        if is_trusted_context_ref(source_ref):
-            # ``context#`` is a finite source admitted by class collaboration
-            # validation only after its explicit trust evidence and typed
-            # subject have been checked.  Keep its API representation private
-            # to the server rather than turning it into a request field.
+        if source_ref.partition("#")[0] == "value" and source_ref.partition("#")[2]:
+            # Exact accepted value catalog refs remain server-owned; never turn
+            # them into HTTP request fields.
             arguments.append({"name": parameter, "source": f"$context.{parameter}"})
             continue
         source_call, separator, source_path = source_ref.partition("#")

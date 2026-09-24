@@ -52,6 +52,8 @@ from app.design.contracts.type_system import (
 )
 from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec.normalization import interaction_contracts
+from app.design.services.class_diagram.scenario import build_scenario_index
+from app.design.services.class_diagram.trusted_context import required_value_catalog
 from app.design.services.class_diagram.validation.diagram import (
     Finding,
     _broken_stereotypes,
@@ -837,19 +839,30 @@ def _trusted_context_arguments(
     method: str,
     use_case_ids: set[str],
 ) -> dict[str, set[str]]:
-    """Return trusted values explicitly declared by BCE collaboration evidence.
+    """Return accepted server-context values declared by BCE collaboration.
 
     The API model represents server-owned values as ``$context.<parameter>``.
-    It deliberately does not store their policy or natural-language meaning, so
-    a context value is trustworthy here only when the accepted Collaboration
-    binds the same Control parameter to its explicit ``context#`` source.
-    Class collaboration validation owns the typed subject and explicit-trust
-    declaration behind that finite source; a bare ``:precondition:`` ref is
-    not trusted context evidence.
+    A value is trustworthy here only when the accepted Collaboration binds the
+    same Control parameter to an exact value# reference in that use case's
+    accepted required-value catalog, and that catalog marks it as
+    authenticated_actor_context/server_context.
     """
     declared: dict[str, set[str]] = {}
     if not use_case_ids:
         return declared
+    scenario = state.get("usecase_spec") or {}
+    try:
+        index = build_scenario_index(scenario) if isinstance(scenario, dict) else None
+    except (TypeError, ValueError):
+        index = None
+    eligible_sources: dict[str, set[str]] = {}
+    if index is not None:
+        for use_case in index.use_cases:
+            eligible_sources[use_case.id] = {
+                item["sourceRef"]
+                for item in required_value_catalog(use_case)
+                if item["availability"] == "server_context"
+            }
     collaborations = (state.get("extracted_bce_classes") or {}).get(
         "Collaborations", []
     )
@@ -875,8 +888,10 @@ def _trusted_context_arguments(
                     continue
                 parameter = str(argument.get("parameter") or "").strip()
                 source_ref = str(argument.get("sourceRef") or "").strip()
-                if parameter and source_ref.startswith("context#"):
-                    declared.setdefault(parameter, set()).update(covered_use_cases)
+                if parameter:
+                    for use_case_id in covered_use_cases:
+                        if source_ref in eligible_sources.get(use_case_id, set()):
+                            declared.setdefault(parameter, set()).add(use_case_id)
     return declared
 
 

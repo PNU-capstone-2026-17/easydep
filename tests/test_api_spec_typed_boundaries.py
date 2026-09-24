@@ -409,7 +409,7 @@ def test_accepted_trusted_context_stays_internal_to_the_control() -> None:
         }
     )
     control["parameters"].append(
-        {"name": "authenticatedPrincipal", "type": "AuthenticatedPrincipal"}
+        {"name": "authenticatedPrincipal", "type": "AuthenticatedPrincipal", "requiredValueRef": "val-principal"}
     )
     payload["Collaborations"][0]["calls"][1]["receiverOperationId"] = (
         "CatalogControl::searchCatalog(filter:CourseFilter,authenticatedPrincipal:AuthenticatedPrincipal)"
@@ -417,7 +417,7 @@ def test_accepted_trusted_context_stays_internal_to_the_control() -> None:
     payload["Collaborations"][0]["calls"][1]["argumentBindings"].append(
         {
             "parameter": "authenticatedPrincipal",
-            "sourceRef": "context#UC1:precondition:1:authenticatedPrincipal",
+            "sourceRef": "value#val-principal",
         }
     )
     bce_model = BCEModel.model_validate(payload)
@@ -522,6 +522,20 @@ def test_control_context_rejects_nonmatching_parameter_sources(
 
 def test_typed_context_is_checked_by_provenance_not_string_type() -> None:
     state = {
+        "usecase_spec": {
+            "use_cases": [{"id": "UC1", "name": "Catalog", "primary_actor": "Student"}],
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "public_contract": {"required_values": [{
+                    "value_ref": "val_uc1_principal",
+                    "name": "authenticated student identifier",
+                    "source": "authenticated_actor_context",
+                    "value_type": "identifier",
+                    "usage": "control",
+                    "requirement_ids": ["REQ1"],
+                }]},
+            }],
+        },
         "extracted_bce_classes": {
             "Classes": [{
                 "className": "CatalogControl",
@@ -534,7 +548,7 @@ def test_typed_context_is_checked_by_provenance_not_string_type() -> None:
                     "receiverOperationId": "CatalogControl::search(principal:AuthenticatedPrincipal)",
                     "argumentBindings": [{
                         "parameter": "principal",
-                        "sourceRef": "context#UC1:precondition:1:principal",
+                        "sourceRef": "value#val_uc1_principal",
                     }],
                 }],
             }],
@@ -556,8 +570,22 @@ def test_typed_context_is_checked_by_provenance_not_string_type() -> None:
 
 
 def test_trusted_context_requires_matching_bce_precondition_provenance() -> None:
-    """A server context value cannot be asserted by the API binding alone."""
+    """A server context value needs an exact accepted same-use-case catalog source."""
     state = {
+        "usecase_spec": {
+            "use_cases": [{"id": "UC9", "name": "Reports", "primary_actor": "Student"}],
+            "use_case_specs": [{
+                "use_case_id": "UC9",
+                "public_contract": {"required_values": [{
+                    "value_ref": "val_uc9_owner",
+                    "name": "authenticated student identifier",
+                    "source": "authenticated_actor_context",
+                    "value_type": "identifier",
+                    "usage": "control",
+                    "requirement_ids": ["REQ9"],
+                }]},
+            }],
+        },
         "extracted_bce_classes": {
             "Collaborations": [
                 {
@@ -568,7 +596,7 @@ def test_trusted_context_requires_matching_bce_precondition_provenance() -> None
                             "argumentBindings": [
                                 {
                                     "parameter": "ownerId",
-                                    "sourceRef": "context#UC9:precondition:1:ownerId",
+                                    "sourceRef": "value#val_uc9_owner",
                                 }
                             ],
                         }
@@ -604,7 +632,7 @@ def test_trusted_context_requires_matching_bce_precondition_provenance() -> None
 
     state["extracted_bce_classes"]["Collaborations"][0]["calls"][0][
         "argumentBindings"
-    ][0]["sourceRef"] = "UC9:precondition:1#ownerId"
+    ][0]["sourceRef"] = "context#UC9:precondition:1:ownerId"
     assert [finding.rule_id for finding in api_trusted_context_provenance(model, state)] == [
         "api.trusted-context-provenance"
     ]
@@ -618,6 +646,50 @@ def test_trusted_context_requires_matching_bce_precondition_provenance() -> None
     assert [finding.rule_id for finding in findings] == [
         "api.trusted-context-provenance"
     ]
+
+
+def test_api_context_provenance_rejects_non_server_catalog_sources() -> None:
+    for source in ("caller_input", "system_result"):
+        state = {
+            "usecase_spec": {
+                "use_cases": [{"id": "UC1", "name": "Search", "primary_actor": "Student"}],
+                "use_case_specs": [{
+                    "use_case_id": "UC1",
+                    "public_contract": {"required_values": [{
+                        "value_ref": "val_uc1_value",
+                        "name": "student identifier",
+                        "source": source,
+                        "value_type": "identifier",
+                        "usage": "control",
+                        "requirement_ids": ["REQ1"],
+                    }]},
+                }],
+            },
+            "extracted_bce_classes": {"Collaborations": [{
+                "useCaseIds": ["UC1"],
+                "calls": [{
+                    "receiverOperationId": "SearchControl::list(studentId:UUID)",
+                    "argumentBindings": [{
+                        "parameter": "studentId",
+                        "sourceRef": "value#val_uc1_value",
+                    }],
+                }],
+            }]},
+        }
+        model = {"Endpoints": [{
+            "method": "get",
+            "path": "/search",
+            "use_case_ids": ["UC1"],
+            "control_binding": {
+                "control": "SearchControl",
+                "method": "list",
+                "arguments": [{"name": "studentId", "source": "$context.studentId"}],
+            },
+        }]}
+
+        assert [finding.rule_id for finding in api_trusted_context_provenance(model, state)] == [
+            "api.trusted-context-provenance"
+        ]
 
 
 def test_executable_schema_fields_still_rejects_used_empty_dto() -> None:

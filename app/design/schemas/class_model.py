@@ -73,11 +73,9 @@ class ClassParameter(ClassModelBase):
     """operation signature의 이름 있는 입력 하나다."""
     name: str = Field(min_length=1, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     type: str = Field(min_length=1)
-    # An explicit accepted identity-obligation link; never inferred from the
-    # parameter's display name or type.
-    obligation_ref: str | None = Field(default=None, alias="obligationRef", min_length=1)
-    # Unlike ``obligationRef``, this is an application-issued identity for the
-    # parameter itself.  It is deliberately not used in sourceRef yet.
+    # Exact accepted required-value declaration used to justify this input.
+    required_value_ref: str | None = Field(default=None, alias="requiredValueRef", min_length=1)
+    # Application-issued identity for the parameter itself.
     stable_ref: str | None = Field(default=None, alias="stableRef", min_length=1)
 
 

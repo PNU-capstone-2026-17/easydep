@@ -12,6 +12,8 @@ from app.design.services.class_diagram.type_system import (
     type_is_resolved,
 )
 from app.design.services.class_diagram.validation.model import class_name
+from app.design.services.class_diagram.trusted_context import required_value_catalog
+from app.design.services.class_diagram.type_system import types_compatible
 from app.validation import CheckSpec, Finding, ValidationReport, run_checks
 
 
@@ -130,44 +132,35 @@ def _operation_references(
     return findings
 
 
-def _trusted_context_parameter_refs(
+def _required_value_parameter_refs(
     fragment: dict[str, Any], context: OperationContext,
 ) -> list[Finding]:
-    """Validate explicit trust links without inspecting any display name/type."""
-
-    contract = context.use_case.specification.get("public_contract")
-    obligations = (
-        contract.get("identity_obligations")
-        if isinstance(contract, dict) and isinstance(contract.get("identity_obligations"), list)
-        else []
-    )
-    authenticate_refs = {
-        text(item.get("obligation_ref"))
-        for item in obligations
-        if isinstance(item, dict)
-        and text(item.get("obligation")) == "authenticate"
-        and text(item.get("obligation_ref"))
-    }
+    """Validate exact accepted declaration refs and compatible parameter types."""
     findings: list[Finding] = []
     for operation in _fragment_operations(fragment, context.inventory):
         location = f"{context.use_case.id}:{operation['className']}.{operation.get('name')}"
         for parameter in operation.get("parameters") or []:
             if not isinstance(parameter, dict):
                 continue
-            obligation_ref = text(parameter.get("obligationRef"))
-            if not obligation_ref:
+            required_ref = text(parameter.get("requiredValueRef"))
+            if not required_ref:
                 continue
             parameter_location = f"{location}#{parameter.get('name')}"
-            if obligation_ref not in authenticate_refs:
+            value = next((item for item in required_value_catalog(context.use_case)
+                          if item["valueRef"] == required_ref), None)
+            if value is None or not types_compatible(value["designType"], text(parameter.get("type"))):
                 findings.append(Finding(
-                    "class.operation.trusted-context",
-                    "obligationRef must cite an accepted authenticate obligation in this use case",
+                    "class.operation.required-value",
+                    "requiredValueRef must select an accepted required value with a compatible type",
                     parameter_location,
                 ))
-            if text(operation.get("stereotype")) != "Control":
+            elif (
+                value["availability"] == "server_context"
+                and text(operation.get("stereotype")).casefold() == "boundary"
+            ):
                 findings.append(Finding(
-                    "class.operation.trusted-context",
-                    "a trusted-context obligationRef is allowed only on a Control parameter",
+                    "class.operation.required-value",
+                    "server-context values cannot be exposed as actor-facing Boundary parameters",
                     parameter_location,
                 ))
     return findings
@@ -197,7 +190,7 @@ def _operation_coverage(
 OPERATION_CHECKS = (
     CheckSpec("class.operation.data-types", _operation_data_types),
     CheckSpec("class.operation.references", _operation_references),
-    CheckSpec("class.operation.trusted-context", _trusted_context_parameter_refs),
+    CheckSpec("class.operation.required-value", _required_value_parameter_refs),
     CheckSpec("class.operation.coverage", _operation_coverage),
 )
 

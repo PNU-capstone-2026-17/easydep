@@ -648,6 +648,7 @@ class WorkspaceService:
             "revision_plan",
             "validated_impact",
             "validated_targets",
+            "identity_source_answer",
         ):
             payload.pop(field, None)
         text = str(payload.get("text") or "").strip()
@@ -1769,6 +1770,63 @@ class WorkspaceService:
         return isinstance(outcome, dict) and outcome.get("kind") == "identity_source_retry"
 
     @staticmethod
+    def _refresh_identity_source_downstream_handoff(
+        command: dict[str, Any], result: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Refresh an existing Requirements-to-Design handoff after a typed source answer."""
+
+        payload = command.get("payload") or {}
+        app_id = str(command.get("app_id") or "")
+        source_id = str(payload.get("action_id") or "")
+        if not app_id or not source_id or result.get("awaiting_input") is not True:
+            return result
+        source = repository.get_command(source_id)
+        handoff = (source.get("result") or {}).get("downstream_revision_handoff") if source else None
+        if (
+            source is None
+            or source.get("status") != "AWAITING_INPUT"
+            or str(source.get("app_id") or "") != app_id
+            or not isinstance(handoff, dict)
+        ):
+            return result
+        try:
+            answer = IdentitySourceAnswer.model_validate(payload.get("identity_source_answer") or {})
+            source_targets = [
+                item for item in handoff.get("source_targets") or []
+                if isinstance(item, dict) and isinstance(item.get("ref"), str)
+            ]
+            answered_ref = f"use_case_spec:{answer.use_case_id}"
+            refs = [str(item["ref"]) for item in source_targets]
+            if not refs or answered_ref not in refs:
+                return result
+            current_targets = ProjectTools(app_id).normalize_revision_targets(
+                refs, require_editable=False
+            )
+            if len(current_targets) != len(refs) or {
+                target.ref for target in current_targets
+            } != set(refs):
+                return result
+            if any(
+                target.kind != "use_case_spec"
+                or target.owner != "requirements"
+                or target.artifact_type != TYPE_USECASE_SPEC
+                or not isinstance(target.artifact_version_id, int)
+                for target in current_targets
+            ):
+                return result
+        except (TypeError, ValueError):
+            return result
+
+        refreshed_handoff = {
+            **handoff,
+            "source_targets": [
+                {"ref": target.ref, "artifact_version_id": target.artifact_version_id}
+                for target in current_targets
+            ],
+        }
+        return {**result, "downstream_revision_handoff": refreshed_handoff}
+
+    @staticmethod
     def _complete_identity_source_question_source(command: dict[str, Any]) -> None:
         """Close the exact saved identity question only after its typed resume succeeds."""
         payload = command.get("payload") or {}
@@ -1814,7 +1872,7 @@ class WorkspaceService:
             if question is None or displayed.question_id != question.question_id:
                 raise ValueError("The identity-source question is stale.")
             authority = ProjectTools(app_id).current_revision_target(
-                question.authority_candidates[0].ref
+                question.authority_candidates[0]
             )
             if authority is None or question_is_stale(
                 question,
@@ -2277,7 +2335,8 @@ class WorkspaceService:
                             app_id=app_id,
                         )
                     )
-                return self._requirements_result(result)
+                presented = self._requirements_result(result)
+                return self._refresh_identity_source_downstream_handoff(command, presented)
             if kind == "revision_plan":
                 plan = RevisionPlan.model_validate(
                     command["payload"].get("revision_plan") or {}
@@ -3569,7 +3628,10 @@ class WorkspaceService:
             if not uc_id or not prompt or len(evidence) == 0 or len(requirement_ids) == 0 or not isinstance(raw_options, list):
                 return None
             tools = ProjectTools(app_id)
-            authority = tools.current_revision_target(f"use_case_spec:{uc_id}")
+            authority_candidates = tools.normalize_revision_targets(
+                [f"use_case_spec:{uc_id}"], require_editable=False
+            )
+            authority = authority_candidates[0] if len(authority_candidates) == 1 else None
             if (authority is None or authority.owner != "requirements"
                     or authority.kind != "use_case_spec" or authority.artifact_type != TYPE_USECASE_SPEC
                     or authority.artifact_version_id is None):
@@ -3647,9 +3709,10 @@ class WorkspaceService:
                 return None
             if not isinstance(raw_options, list) or not 1 <= len(raw_options) <= 12:
                 return None
-            authority = ProjectTools(app_id).current_revision_target(
-                f"use_case_spec:{use_case_id}"
+            authority_candidates = ProjectTools(app_id).normalize_revision_targets(
+                [f"use_case_spec:{use_case_id}"], require_editable=False
             )
+            authority = authority_candidates[0] if len(authority_candidates) == 1 else None
             if (
                 authority is None
                 or authority.owner != "requirements"

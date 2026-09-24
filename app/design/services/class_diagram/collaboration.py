@@ -22,7 +22,11 @@ from app.design.services.class_diagram.scenario import (
     text,
 )
 from app.design.services.class_diagram.identity import materialize_pre_binding_call_refs
-from app.design.services.class_diagram.trusted_context import trusted_context_sources
+from app.design.services.class_diagram.trusted_context import (
+    directly_available_sources,
+    required_value_catalog,
+    value_source_allows_binding,
+)
 from app.design.services.class_diagram.type_system import (
     projected_field_type,
     structured_field_types,
@@ -642,16 +646,20 @@ def _binding_candidates(
     if not candidates and runtime_value_source(target_type):
         candidates.append(runtime_value_source(target_type))
     if boundary_handoff:
+        required_ref = text(parameter.get("requiredValueRef"))
         candidates.extend(
-            source.source_ref
-            for source in trusted_context_sources(
-                use_case,
-                name,
-                target_type,
-                obligation_ref=text(parameter.get("obligationRef")),
-                actors=actor_contracts,
-            )
+            source["sourceRef"] for source in directly_available_sources(use_case)
+            if source["valueRef"] == required_ref
+            and types_compatible(source["designType"], target_type)
         )
+    required_ref = text(parameter.get("requiredValueRef"))
+    declaration = next((item for item in required_value_catalog(use_case)
+                        if item["valueRef"] == required_ref), None)
+    if declaration is not None:
+        candidates = [source_ref for source_ref in candidates if value_source_allows_binding(
+            declaration, _candidate_source_kind(source_ref, calls, use_case),
+            boundary_handoff=boundary_handoff,
+        )]
     return list(dict.fromkeys(candidates))
 
 
@@ -677,11 +685,13 @@ def _binding_search_scopes(
     return scopes
 
 
-def _candidate_source_kind(source_ref: str, calls: list[dict[str, Any]]) -> str:
+def _candidate_source_kind(
+    source_ref: str, calls: list[dict[str, Any]], use_case: UseCase | None = None,
+) -> str:
     """Return the only user-selectable provenance kinds for a finite source."""
 
-    if source_ref.startswith("context#"):
-        return "authenticated_context"
+    if use_case and any(item["sourceRef"] == source_ref for item in required_value_catalog(use_case)):
+        return "required_value"
     if source_ref.startswith("derived#"):
         return "derive_from_existing_inputs"
     if source_ref.startswith("runtime#"):
@@ -701,20 +711,19 @@ def _candidate_detail(
     calls: list[dict[str, Any]],
     operations: dict[str, dict[str, Any]],
     model: dict[str, Any] | None = None,
+    use_case: UseCase | None = None,
 ) -> dict[str, Any]:
     """Describe an already-compatible finite candidate without widening it."""
 
     detail: dict[str, Any] = {
         "sourceRef": source_ref,
         "targetType": target_type,
-        "sourceKind": _candidate_source_kind(source_ref, calls),
+        "sourceKind": _candidate_source_kind(source_ref, calls, use_case),
     }
-    if source_ref.startswith("context#"):
-        detail.update({
-            "kind": "trusted_context",
-            "obligationRef": source_ref.partition("#")[2],
-            "evidenceRef": source_ref.partition("#")[2],
-        })
+    value = next((row for row in required_value_catalog(use_case)
+                  if row["sourceRef"] == source_ref), {}) if use_case else {}
+    if value:
+        detail.update({"kind": "required_value", **value})
         return detail
     if source_ref.startswith("runtime#"):
         detail["kind"] = "runtime_value"
@@ -825,6 +834,7 @@ def select_ambiguous_bindings(
                     calls or [],
                     operations or {},
                     model,
+                    use_case,
                 )
                 if value != NO_BINDING_SOURCE else {
                     "sourceRef": NO_BINDING_SOURCE,
@@ -902,7 +912,7 @@ def _matching_binding_source_kind(
         source_kind = text(decision.get("sourceKind"))
         if source_kind in {
             "use_case_input",
-            "authenticated_context",
+            "required_value",
             "earlier_step_result",
             "derive_from_existing_inputs",
         }:
@@ -1044,7 +1054,7 @@ def materialize(
             if requested_source_kind:
                 candidates = [
                     source_ref for source_ref in candidates
-                    if _candidate_source_kind(source_ref, calls) == requested_source_kind
+                    if _candidate_source_kind(source_ref, calls, use_case) == requested_source_kind
                 ]
             if not candidates:
                 raise BindingSourceViolation({

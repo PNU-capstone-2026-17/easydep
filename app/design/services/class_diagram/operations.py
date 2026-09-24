@@ -40,7 +40,7 @@ from app.design.services.class_diagram.proposals import (
     structured_data_type,
 )
 from app.design.services.class_diagram.scenario import ScenarioIndex, UseCase, id_key, text
-from app.design.services.class_diagram.trusted_context import trusted_context_evidence
+from app.design.services.class_diagram.trusted_context import required_value_evidence
 from app.design.services.class_diagram.type_system import (
     field_type,
     referenced_type_names,
@@ -119,23 +119,15 @@ Keep signatures as a closed value flow. A delegated parameter must be available
 from an entry input, an earlier operation result, an explicit precondition, or a
 supported runtime value. Declare a result type when later work needs several
 values produced earlier. Do not invent caller input merely to satisfy a signature.
-Honor `useCase.specification.public_contract.required_values`: caller_input values
-must come from actor-facing steps, authenticated_actor_context may enter Control only
-through an exact obligationRef selected from availableTrustedContext, and system_result values are produced
-outputs, never request inputs or trusted context. Do not treat a caller-supplied identifier
-as proof of identity or invent authentication or delegation absent a cited obligation.
-An actorEntry names the caller role; it does not itself supply that actor's identifier.
-When the steps refer to the current actor without explicitly providing an identifier,
-model that actor-scoped responsibility without an identity parameter. Do not move an
-unsourced internal identity parameter to the root Boundary merely to create a source.
-Only a subject explicitly selected or provided by the scenario is caller input.
-Only an availableTrustedContext entry with an explicit authenticate obligation may provide
-trusted server context to a Control operation. Assign its exact obligationRef to that
-internal parameter only when the supplied evidence justifies it; never add it to
-the actor-facing Boundary operation or expose it as an HTTP caller input. Do not infer
-trusted context from an actor name, prose, parameter name, or type. `availableTrustedContext`
-contains the only obligation refs that may justify it, and the parameter must be internal
-to a Boundary-to-Control handoff.
+Honor `useCase.specification.public_contract.required_values`: cite the exact accepted `valueRef`
+as `requiredValueRef` on the parameter it justifies. These declarations are evidence, not runtime
+values: caller_input values must come from actor-facing steps, and system_result values from prior
+call results. Only a catalog entry marked server_context is directly available for a Boundary-to-Control
+handoff. Do not create a wrapper class or DTO solely to relay a catalog value; a
+Session/AuthContext or other context type may be modeled when it has a concrete design
+responsibility beyond relaying one catalog value, even if the requirements do not name it.
+Do not expose server_context values as actor-facing Boundary inputs. Never infer a binding
+from an actor name, prose, parameter name, or type.
 
 When this use case reuses a reserved operation, include that operation in the
 fragment with its exact supplied name, parameters, and returnType, plus this use
@@ -301,12 +293,10 @@ def _operation_payload(
         "fixedDataTypes": scoped_types,
         "reservedOperations": scoped_reserved,
         "reservedDataTypes": [structured_data_type(item) for item in (reserved_types or [])],
-        "availableTrustedContext": trusted_context_evidence(
-            use_case, index.raw.get("actors") or [],
-        ),
+        "requiredValueSources": required_value_evidence(use_case),
         "valueSourcePolicy": {
             "requestInputs": "actor-facing Boundary parameters declared by the scenario",
-            "trustedContext": "only an exact availableTrustedContext obligationRef; internal Boundary-to-Control handoff only",
+            "requiredValues": "requiredValueRef cites a declaration only; actual binding must use an eligible finite actor input, prior result, server_context catalog entry, runtime, or derived value",
             "previousResults": "an earlier collaboration operation result",
             "runtimeValues": "supported clock values only",
             "derivedValues": "a DataType whose required fields have eligible sources",
@@ -920,7 +910,7 @@ def _validate_accepted_fragment(
                             {
                                 "name": parameter.get("name"),
                                 "type": parameter.get("type"),
-                                "obligationRef": parameter.get("obligationRef"),
+                                "requiredValueRef": parameter.get("requiredValueRef"),
                             }
                             for parameter in operation.get("parameters") or []
                             if isinstance(parameter, dict)
@@ -1207,11 +1197,9 @@ def _compose(
                 if existing is not None:
                     if _operation_signature(existing) != _operation_signature(proposed):
                         raise _Collision(owner, text(proposed.get("name")))
-                    # The method signature deliberately excludes provenance,
-                    # but an accepted fragment must not silently discard an
-                    # explicit obligation link while merging its step refs.
+                    # Preserve the exact accepted declaration link while merging step refs.
                     if any(
-                        text(parameter.get("obligationRef"))
+                        text(parameter.get("requiredValueRef"))
                         for parameter in proposed.get("parameters") or []
                         if isinstance(parameter, dict)
                     ):

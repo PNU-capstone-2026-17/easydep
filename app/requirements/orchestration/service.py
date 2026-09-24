@@ -311,6 +311,9 @@ def _revise_local_spec_from_artifacts(
 
     payload: dict[str, object] = {
         "thread_id": thread_id,
+        # Workspace uses the app id to bind the open identity-source question
+        # to the current saved use-case specification before presenting it.
+        "app_id": app_id,
         "phase": "specs",
         "status": "need_feedback",
         "feedback_prompt": "Enter feedback for [specs]. Leave it blank to continue.",

@@ -145,6 +145,8 @@ _INTERNAL_CONVERSATION_FIELDS = {
     "validated_target_feedbacks",
     "validated_targets",
     "feedback_decision",
+    # Added only by Workspace after validating a saved identity-source option.
+    "identity_source_answer",
 }
 
 
@@ -325,19 +327,6 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
             actions=_answer_offers(command_id, result),
         )
 
-    if isinstance(result.get("downstream_revision_handoff"), dict):
-        return AwaitingOutcome(
-            wait_reason=WaitReason.REVIEW,
-            actions=[
-                _offer(WorkspaceAction.MESSAGE, "Send revision feedback", common),
-                _offer(
-                    WorkspaceAction.PLAN_DOWNSTREAM_REVISION,
-                    "Plan affected design changes",
-                    common,
-                ),
-            ],
-        )
-
     raw_feedback_question = result.get("feedback_question")
     if raw_feedback_question is None and isinstance(result.get("validation"), dict):
         raw_feedback_question = result["validation"].get("feedback_question")
@@ -384,6 +373,19 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
                     )
                 )
             return AwaitingOutcome(wait_reason=WaitReason.QUESTION, actions=actions)
+
+    if isinstance(result.get("downstream_revision_handoff"), dict):
+        return AwaitingOutcome(
+            wait_reason=WaitReason.REVIEW,
+            actions=[
+                _offer(WorkspaceAction.MESSAGE, "Send revision feedback", common),
+                _offer(
+                    WorkspaceAction.PLAN_DOWNSTREAM_REVISION,
+                    "Plan affected design changes",
+                    common,
+                ),
+            ],
+        )
 
     blockers = [item for item in result.get("blocking_findings") or [] if isinstance(item, dict)]
     blocking_route = str(result.get("blocking_route") or blocking_findings_route(blockers))

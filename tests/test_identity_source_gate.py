@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.requirements.contracts.request import IdentitySourceAnswer
+from app.requirements.contracts.request import FeedbackEdit, IdentitySourceAnswer
 from app.requirements.modeling.specifications import (
     apply_identity_source_overrides,
     identity_source_question,
@@ -66,6 +66,33 @@ def test_typed_answer_patches_exact_spec_and_persists_override(monkeypatch) -> N
         "identity_source_kind": "authenticated_context",
         "source_authenticate_obligation_ref": "ob_auth",
     }
+
+
+def test_natural_spec_feedback_returns_recomputed_identity_question(monkeypatch) -> None:
+    question = identity_source_question({"use_case_specs": [_spec()]})
+    monkeypatch.setattr(feedback_gates, "_ask", lambda *args, **kwargs: FeedbackEdit(
+        stage="specs", scope="local", target_ids=["UC1"],
+        instruction="Use the authenticated session identity.",
+    ))
+
+    def apply_feedback(state, _answer, *, up_to):
+        assert up_to == "specs"
+        state["use_case_specs"] = [_spec()]
+
+    monkeypatch.setattr(feedback_gates, "apply_feedback_upto", apply_feedback)
+    monkeypatch.setattr(feedback_gates, "check_specs", lambda state: {
+        "spec_report": {},
+        "identity_source_question": question,
+        "semantic_ambiguity_question": None,
+    })
+
+    result = feedback_gates.gate_specs({
+        "use_case_specs": [_spec("caller_input")],
+        "identity_source_question": None,
+    })
+
+    assert result["gate_route"] == "loop"
+    assert result["identity_source_question"] == question
 
 
 def test_answered_source_override_survives_local_regeneration() -> None:

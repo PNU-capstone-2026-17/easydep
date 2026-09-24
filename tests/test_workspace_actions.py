@@ -11,6 +11,15 @@ from app.workspace.actions import (
     validate_payload,
 )
 from app.workspace.contracts import WorkspaceAction
+from app.workspace.conversation.contracts import RevisionTarget
+from app.workspace.conversation.feedback_envelope import (
+    BaseRevision,
+    DecisionMeaning,
+    DecisionPayload,
+    DecisionPolicy,
+    Question,
+    QuestionOption,
+)
 
 
 def command(*, status: str, stage: str = "requirements", result=None, **extra):
@@ -76,6 +85,93 @@ def test_reviewed_local_requirements_revision_offers_fresh_plan_not_advance() ->
     ]
     assert [item["auto_selectable"] for item in shaped["actions"]] == [False, False]
     assert "advance" not in {item["action"] for item in shaped["actions"]}
+
+
+def test_open_feedback_question_precedes_downstream_revision_handoff() -> None:
+    target = RevisionTarget(
+        ref="use_case_spec:UC8",
+        kind="use_case_spec",
+        element_id="UC8",
+        owner="requirements",
+        artifact_type="USECASE_SPEC",
+        artifact_version_id=6,
+        display_label="UC8 specification",
+    )
+    question = Question(
+        question_id="identity-source:UC8",
+        question_version=1,
+        app_id="app-1",
+        draft_id="identity-source:UC8",
+        detected_at={
+            "stage": "requirements",
+            "artifact_ref": target.ref,
+            "element_ref": target.ref,
+        },
+        base_revisions=[BaseRevision(artifact_type="USECASE_SPEC", version_id=6)],
+        trigger={"category": "identity_source", "evidence_refs": ["FR14"]},
+        authority_candidates=[target],
+        prompt="Where does the student identity come from?",
+        options=[QuestionOption(
+            option_id="authenticated_context:auth-uc8",
+            label="Authenticated session",
+            description="Use the student established by the authenticated session.",
+            decision_payload=DecisionPayload(
+                normalized_meaning=DecisionMeaning(
+                    semantic_scope="contract",
+                    requested_effect="Use authenticated session identity.",
+                    change_type="modify",
+                ),
+                authoritative_target_refs=(target.ref,),
+            ),
+        )],
+        allow_free_text=True,
+        decision_policy=DecisionPolicy(
+            allowed_semantic_scopes=("contract",),
+            allowed_change_types=("modify",),
+        ),
+    )
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT"),
+        {
+            "kind": "question",
+            "feedback_question": question.model_dump(mode="json"),
+            "downstream_revision_handoff": {
+                "source_targets": [
+                    {"ref": target.ref, "artifact_version_id": 6}
+                ],
+                "semantic_scope": "contract",
+                "requested_effect": "Use authenticated session identity.",
+                "change_type": "modify",
+            },
+        },
+    )
+
+    assert shaped["wait_reason"] == "question"
+    assert [item["action"] for item in shaped["actions"]] == ["message", "message"]
+    assert shaped["actions"][0]["payload"]["feedback_option_id"] == (
+        "authenticated_context:auth-uc8"
+    )
+    assert action_is_offered(
+        "message",
+        {
+            **shaped["actions"][0]["payload"],
+            # Workspace adds this only after validating the stored option.
+            "identity_source_answer": {
+                "use_case_id": "UC8",
+                "obligation_ref": "ob_identify",
+                "identity_source_kind": "authenticated_context",
+                "source_authenticate_obligation_ref": "ob_auth",
+            },
+        },
+        command(
+            status="AWAITING_INPUT",
+            result={
+                "kind": "question",
+                "feedback_question": question.model_dump(mode="json"),
+                "downstream_revision_handoff": shaped.get("downstream_revision_handoff"),
+            },
+        ),
+    )
 
 
 def test_reviewed_implementation_gap_revision_returns_to_implementation() -> None:

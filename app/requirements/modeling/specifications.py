@@ -176,6 +176,8 @@ def _public_contract_findings(spec: dict[str, object]) -> list[str]:
                 )
 
     obligations = contract.get("identity_obligations")
+    obligations_by_ref: dict[str, dict[str, object]] = {}
+    valid_auth_refs: list[object] = []
     if isinstance(obligations, list):
         valid_auth_refs = [
             entry.get("obligation_ref") for entry in obligations
@@ -203,11 +205,51 @@ def _public_contract_findings(spec: dict[str, object]) -> list[str]:
                 findings.append(
                     f"[public-contract-integrity] identity_obligations[{index}] has an authenticate reference without authenticated_context source."
                 )
+        obligations_by_ref = {
+            entry["obligation_ref"]: entry for entry in obligations
+            if isinstance(entry, dict) and isinstance(entry.get("obligation_ref"), str)
+        }
 
     values = contract.get("required_values")
     declarations: dict[str, list[dict[str, object]]] = {}
     if isinstance(values, list):
+        value_refs: set[str] = set()
         for entry in values:
+            if not isinstance(entry, dict):
+                continue
+            value_ref = entry.get("value_ref")
+            if isinstance(value_ref, str) and value_ref in value_refs:
+                findings.append(
+                    "[public-contract-integrity] Required value value_ref values must be unique within the use case."
+                )
+            elif isinstance(value_ref, str):
+                value_refs.add(value_ref)
+            identity_ref = entry.get("identity_obligation_ref")
+            if identity_ref is not None and identity_ref not in obligations_by_ref:
+                findings.append(
+                    "[public-contract-integrity] Required value references an identity obligation outside this use case."
+                )
+            is_identifier = entry.get("value_type") == "identifier"
+            if identity_ref is not None:
+                linked = obligations_by_ref.get(identity_ref) if isinstance(identity_ref, str) else None
+                if not is_identifier or not isinstance(linked, dict) or linked.get("obligation") != "identify":
+                    findings.append(
+                        "[public-contract-integrity] An identity obligation link must select a "
+                        "same-use-case identify obligation on an identifier value."
+                    )
+                elif entry.get("source") == "authenticated_actor_context" and (
+                    linked.get("identity_source_kind") != "authenticated_context"
+                    or linked.get("source_authenticate_obligation_ref") not in valid_auth_refs
+                ):
+                    findings.append(
+                        "[public-contract-integrity] An authenticated-context identifier must "
+                        "reference its exact same-use-case authenticated identify obligation."
+                    )
+            elif entry.get("source") == "authenticated_actor_context" and is_identifier:
+                findings.append(
+                    "[public-contract-integrity] An authenticated-context identifier must "
+                    "reference its exact same-use-case authenticated identify obligation."
+                )
             if not isinstance(entry, dict) or not isinstance(entry.get("name"), str):
                 continue
             key = " ".join(entry["name"].split()).casefold()
@@ -231,6 +273,43 @@ def _public_contract_findings(spec: dict[str, object]) -> list[str]:
                 f"[public-contract-integrity] Required value '{label}' is declared more than once."
             )
     return findings
+
+
+def _accepted_public_contract_proposal(contract: dict[str, object]) -> dict[str, object]:
+    """Project accepted contract refs and derived fields back to proposal-local indexes."""
+    obligations = contract.get("identity_obligations") or []
+    values = contract.get("required_values") or []
+    ref_to_index = {
+        item.get("obligation_ref"): index
+        for index, item in enumerate(obligations, start=1)
+        if isinstance(item, dict) and isinstance(item.get("obligation_ref"), str)
+    }
+    proposal: dict[str, object] = {"identity_obligations": [], "required_values": []}
+    for item in obligations:
+        if not isinstance(item, dict):
+            continue
+        projected = {
+            key: item[key]
+            for key in ("subject", "obligation", "requirement_ids")
+            if key in item
+        }
+        source_ref = item.get("source_authenticate_obligation_ref")
+        if source_ref in ref_to_index:
+            projected["source_authenticate_obligation_index"] = ref_to_index[source_ref]
+        proposal["identity_obligations"].append(projected)
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        projected = {
+            key: item[key]
+            for key in ("name", "source", "value_type", "usage", "requirement_ids")
+            if key in item
+        }
+        identity_ref = item.get("identity_obligation_ref")
+        if identity_ref in ref_to_index:
+            projected["identity_obligation_index"] = ref_to_index[identity_ref]
+        proposal["required_values"].append(projected)
+    return proposal
 
 
 def _spec_human(
@@ -289,6 +368,8 @@ def _spec_human(
         "subject exercises delegated authority for a different subject, not authentication alone. "
         "For each value, cite requirement IDs and report its source (caller_input, "
         "authenticated_actor_context, or system_result), type, and use (control, result, or both). "
+        "The normalizer assigns each accepted required value its stable value_ref; do not invent "
+        "or copy value references. "
         + prompts.IDENTITY_SOURCE_INSTRUCTIONS + " "
         "A caller supplied identifier remains untrusted input and is not proof of identity. "
         "Leave lists empty when the requirements establish no obligation; do not infer login, "
@@ -305,9 +386,11 @@ def _spec_human(
                 "extensions",
                 "success_guarantee",
                 "minimal_guarantee",
-                "public_contract",
             )
         }
+        current["public_contract"] = _accepted_public_contract_proposal(
+            existing_spec.get("public_contract") or {}
+        )
         base += (
             "\n\n[CURRENT SPECIFICATION — use this as the authoritative baseline. "
             "Return the full specification, but change only what the user feedback asks "
@@ -352,35 +435,57 @@ def normalize_specification(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecIt
             "subject_ref": subject_ref,
             "subject": obligation.subject,
             "obligation": obligation.obligation,
-            "identity_source_kind": obligation.identity_source_kind,
+            "identity_source_kind": "unresolved",
             "requirement_ids": requirement_ids,
         }
-        if obligation.source_authenticate_obligation_ref is not None:
-            normalized_obligation["source_authenticate_obligation_ref"] = (
-                obligation.source_authenticate_obligation_ref
-            )
         identity_obligations.append(normalized_obligation)
 
-    # Refs must exist before source links are resolved. Display labels are never join keys.
-    authenticate_refs = [
-        item["obligation_ref"] for item in identity_obligations
-        if item["obligation"] == "authenticate"
-    ]
-    for item in identity_obligations:
-        if item["obligation"] != "identify":
-            item["identity_source_kind"] = "unresolved"
-            item.pop("source_authenticate_obligation_ref", None)
-        elif item["identity_source_kind"] == "authenticated_context":
-            selected_ref = item.get("source_authenticate_obligation_ref")
-            if selected_ref is not None:
-                if selected_ref not in authenticate_refs:
-                    item["identity_source_kind"] = "unresolved"
-                    item.pop("source_authenticate_obligation_ref", None)
-            else:
-                item["identity_source_kind"] = "unresolved"
-                item.pop("source_authenticate_obligation_ref", None)
-        else:
-            item.pop("source_authenticate_obligation_ref", None)
+    required_values: list[dict[str, object]] = []
+    for position, value in enumerate(spec.public_contract.required_values, start=1):
+        normalized_value: dict[str, object] = {
+            "value_ref": opaque_ref("val", [str(uc["id"]), str(position)]),
+            "name": value.name,
+            "source": value.source,
+            "value_type": value.value_type,
+            "usage": value.usage,
+            "requirement_ids": list(value.requirement_ids),
+        }
+        selected_index = value.identity_obligation_index
+        if selected_index is not None and 1 <= selected_index <= len(identity_obligations):
+            normalized_value["identity_obligation_ref"] = identity_obligations[selected_index - 1]["obligation_ref"]
+        required_values.append(normalized_value)
+
+    # RequiredValue.source is the proposal's sole source of truth. Resolve links
+    # only through explicit proposal-local indexes; labels and requirement IDs
+    # are evidence, never join keys.
+    source_kind = {
+        "caller_input": "caller_input",
+        "authenticated_actor_context": "authenticated_context",
+        "system_result": "system_result",
+    }
+    for position, obligation in enumerate(spec.public_contract.identity_obligations, start=1):
+        accepted = identity_obligations[position - 1]
+        if obligation.obligation != "identify":
+            continue
+        linked_sources = {
+            value.source for value in spec.public_contract.required_values
+            if value.identity_obligation_index == position
+        }
+        if len(linked_sources) != 1:
+            continue
+        source = next(iter(linked_sources))
+        accepted["identity_source_kind"] = source_kind[source]
+        if source != "authenticated_actor_context":
+            continue
+        auth_index = obligation.source_authenticate_obligation_index
+        if auth_index is None or not 1 <= auth_index <= len(identity_obligations):
+            accepted["identity_source_kind"] = "unresolved"
+            continue
+        auth_obligation = identity_obligations[auth_index - 1]
+        if auth_obligation["obligation"] != "authenticate":
+            accepted["identity_source_kind"] = "unresolved"
+            continue
+        accepted["source_authenticate_obligation_ref"] = auth_obligation["obligation_ref"]
 
     return {
         "use_case_id": uc["id"],
@@ -419,8 +524,9 @@ def normalize_specification(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecIt
             for guarantee in spec.minimal_guarantee
         ],
         "public_contract": {
-            **spec.public_contract.model_dump(mode="json", exclude={"identity_obligations"}),
+            **spec.public_contract.model_dump(mode="json", exclude={"identity_obligations", "required_values"}),
             "identity_obligations": identity_obligations,
+            "required_values": required_values,
         },
         "issues": [],
         "repair_iters": 0,
@@ -490,19 +596,41 @@ def _semantic_findings(
     """
     payload = spec_review_payload(cast(dict[str, object], item), requirements, goal_context, constraints)
     reviewer = review_call or validator.review
+    source_rule_id = "spec.public-behavior-completeness"
+    broad_rule_ids = tuple(
+        rule.id for rule in rules.judged_by(
+            rules.WRITE_SPECIFICATIONS, rules.JUDGED_VALIDATOR
+        )
+        if rule.id != source_rule_id
+    )
     review = reviewer(
         rules.WRITE_SPECIFICATIONS,
         payload,
         prefix="semantic",
         source="spec.semantic_validator",
         subject=item.get("use_case_id"),
+        rule_ids=broad_rule_ids,
         confirm_violations=True,
     )
+    findings = list(review.findings)
+    status = validator.UNGROUNDED if review.unexamined else review.status
+    if not findings and status == validator.OK:
+        source_review = reviewer(
+            rules.WRITE_SPECIFICATIONS,
+            payload,
+            prefix="semantic",
+            source="spec.public_behavior_source_validator",
+            subject=item.get("use_case_id"),
+            rule_ids=(source_rule_id,),
+            confirm_violations=False,
+        )
+        findings.extend(source_review.findings)
+        if source_review.status != validator.OK or source_review.unexamined:
+            status = validator.UNGROUNDED
     # A partial verdict is not a clean semantic review. Keep the persisted shape small by
     # representing that existing condition with the existing unvalidated status instead of
     # adding another per-spec audit field.
-    status = validator.UNGROUNDED if review.unexamined else review.status
-    return review.findings, status
+    return findings, status
 
 
 def requirement_view(
@@ -628,6 +756,9 @@ def generate_specification(
                 "public_contract",
             )
         }
+        previous_spec["public_contract"] = _accepted_public_contract_proposal(
+            item.get("public_contract") or {}
+        )
         input_digest = stable_digest(
             {"specification": previous_spec, "findings": sorted(unresolved_keys)}
         )

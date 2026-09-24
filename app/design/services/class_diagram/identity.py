@@ -243,7 +243,7 @@ def _binding_identity_refs(model: BCEModel) -> dict[tuple[Any, ...], str]:
 def _rebase_source_ref(source_ref: str, replacements: Mapping[str, str]) -> str:
     """Rebase only opaque ID tokens in the accepted binding-source grammar."""
 
-    if source_ref.startswith(("context#", "runtime#")):
+    if source_ref.startswith(("value#", "runtime#")):
         return source_ref
     if source_ref.startswith("derived#"):
         match = re.fullmatch(r"(derived#[A-Za-z_][A-Za-z0-9_]*\()(.*)(\))", source_ref)

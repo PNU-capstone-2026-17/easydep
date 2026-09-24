@@ -77,6 +77,7 @@ class IdentityObligationItem(TypedDict):
 
 
 class RequiredValueItem(TypedDict):
+    value_ref: str
     name: str
     source: Literal["caller_input", "authenticated_actor_context", "system_result"]
     value_type: Literal[
@@ -85,6 +86,7 @@ class RequiredValueItem(TypedDict):
     ]
     usage: Literal["control", "result", "both"]
     requirement_ids: list[str]
+    identity_obligation_ref: NotRequired[str]
 
 
 class PublicBehaviorContractItem(TypedDict):

@@ -10,7 +10,10 @@ from app.design.services.class_diagram.scenario import (
     UseCase,
     text,
 )
-from app.design.services.class_diagram.trusted_context import is_trusted_context_ref
+from app.design.services.class_diagram.trusted_context import (
+    directly_available_sources,
+    required_value_catalog,
+)
 from app.design.services.class_diagram.type_system import (
     projected_field_type,
     structured_field_types,
@@ -361,9 +364,9 @@ def _collaboration_bindings(
                     "name": parameter,
                     "type": expected,
                     "stableRef": parameter_stable_refs.get(parameter, ""),
-                    "obligationRef": next(
+                    "requiredValueRef": next(
                         (
-                            text(item.get("obligationRef"))
+                            text(item.get("requiredValueRef"))
                             for item in operation.get("parameters") or []
                             if isinstance(item, dict)
                             and text(item.get("name")) == parameter
@@ -377,10 +380,14 @@ def _collaboration_bindings(
             source_type = _source_type(
                 source_ref, calls[:position], operations, fields_by_type, context.model,
             )
-            if is_trusted_context_ref(source_ref):
-                # Its type and evidence are carried by the finite candidate;
-                # no caller may fabricate a context ref outside that catalog.
-                valid = source_ref in eligible
+            required_value = next((item for item in required_value_catalog(context.use_case)
+                                   if item["sourceRef"] == source_ref), None)
+            if required_value is not None:
+                valid = bool(
+                    source_ref in eligible
+                    and source_ref in {item["sourceRef"] for item in directly_available_sources(context.use_case)}
+                    and types_compatible(required_value["designType"], expected)
+                )
             elif source_ref == runtime_value_source(expected):
                 valid = source_ref in eligible
             elif source_type == "__entry__":
