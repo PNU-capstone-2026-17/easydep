@@ -52,10 +52,14 @@ binding. An authenticated identity source must link through that parameter's exa
 requiredValueRef to an accepted required-value catalog entry whose identityObligationRef
 is this identify obligation. caller_input must bind a canonical actor input;
 system_result must bind a prior accepted call result. Never infer provenance from names.
-For every required value, the cited parameter's requiredValueRef must equal the exact
-accepted valueRef. Catalog entries are evidence, not arbitrary runtime values: direct
-bindings are offered only for eligible server-context entries; caller_input and
-system_result must use their actual actor-input/prior-result dataflow.
+For a required value with usage control or both, the cited Control parameter's
+requiredValueRef must equal the exact accepted valueRef. A result-only value does
+not require a parameter citation: cite the concrete Control return instead. A
+system_result may additionally be cited on a downstream parameter only when the
+supplied call flow shows that exact value produced by an earlier call and the
+parameter receives it. Catalog entries are evidence, not arbitrary runtime values:
+direct bindings are offered only for eligible server-context entries; caller_input
+and system_result must use their actual actor-input/prior-result dataflow.
 If the supplied model does not make the connection clear, return fail or
 ambiguous with one precise reason.  Never invent IDs, fields, operations, or
 calls.  Return only the response schema."""

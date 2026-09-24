@@ -148,10 +148,26 @@ def _required_value_parameter_refs(
             parameter_location = f"{location}#{parameter.get('name')}"
             value = next((item for item in required_value_catalog(context.use_case)
                           if item["valueRef"] == required_ref), None)
-            if value is None or not types_compatible(value["designType"], text(parameter.get("type"))):
+            parameter_type = text(parameter.get("type"))
+            if value is None:
                 findings.append(Finding(
                     "class.operation.required-value",
-                    "requiredValueRef must select an accepted required value with a compatible type",
+                    f"requiredValueRef '{required_ref}' is not in the accepted required-value catalog; "
+                    f"remove it or use an exact accepted valueRef for parameter '{parameter.get('name')}' "
+                    f"(type {parameter_type}).",
+                    parameter_location,
+                ))
+            elif not types_compatible(value["designType"], parameter_type):
+                findings.append(Finding(
+                    "class.operation.required-value",
+                    f"requiredValueRef '{required_ref}' names '{value['name']}' "
+                    f"(source={value['source']}, usage={value['usage']}, "
+                    f"designType={value['designType']}), incompatible with parameter "
+                    f"'{parameter.get('name')}':{parameter_type}. For usage=result, remove the ref "
+                    "from the input and evidence the value via a concrete Control return. For "
+                    "control/both, cite a compatible consuming Control parameter. Keep a system_result "
+                    "on a downstream parameter only when prior-call flow proves it receives that value; "
+                    "do not alter the type just to fit the ref.",
                     parameter_location,
                 ))
             elif (

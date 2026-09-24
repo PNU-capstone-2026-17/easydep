@@ -8,6 +8,15 @@ from app.design.services.class_diagram.public_contract_review import (
 from app.design.services.class_diagram.scenario import build_scenario_index
 
 
+def test_result_only_review_does_not_require_a_parameter_reference():
+    from app.design.services.class_diagram.public_contract_review import _PROMPT
+
+    prompt = " ".join(_PROMPT.split())
+    assert "A result-only value does not require a parameter citation" in prompt
+    assert "For a required value with usage control or both" in prompt
+    assert "For every required value, the cited parameter's requiredValueRef" not in prompt
+
+
 def _scenario(source: str = "caller_input") -> dict:
     return {
         "use_cases": [{"id": "UC1", "name": "Submit", "primary_actor_ref": "ACT1", "primary_actor": "Member"}],

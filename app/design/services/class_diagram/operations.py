@@ -119,11 +119,18 @@ Keep signatures as a closed value flow. A delegated parameter must be available
 from an entry input, an earlier operation result, an explicit precondition, or a
 supported runtime value. Declare a result type when later work needs several
 values produced earlier. Do not invent caller input merely to satisfy a signature.
-Honor `useCase.specification.public_contract.required_values`: cite the exact accepted `valueRef`
-as `requiredValueRef` on the parameter it justifies. These declarations are evidence, not runtime
-values: caller_input values must come from actor-facing steps, and system_result values from prior
-call results. Only a catalog entry marked server_context is directly available for a Boundary-to-Control
-handoff. Do not create a wrapper class or DTO solely to relay a catalog value; a
+Honor `useCase.specification.public_contract.required_values` according to each entry's `usage`.
+For `control` or `both`, put its exact accepted `valueRef` in `requiredValueRef` on the compatible
+Control parameter that receives the value, and bind that parameter in the call. A `result`-only
+value is evidenced by a concrete non-void Control return; do not attach its ref to an input parameter
+just because its name or type looks related. A `system_result` may also be cited on a downstream
+parameter only when the flow shows an earlier operation producing that same value and the parameter
+type is compatible. For a `control` or `both` value that enters at a Boundary, a Boundary annotation
+alone is insufficient: also put the same exact ref on the compatible receiving Control parameter and
+bind it from that Boundary input. Never change a parameter type merely to make a ref compatible.
+These declarations are evidence, not runtime values: caller_input values must come from actor-facing steps, and
+system_result inputs must come from prior call results. Only a catalog entry marked server_context
+is directly available for a Boundary-to-Control handoff. Do not create a wrapper class or DTO solely to relay a catalog value; a
 Session/AuthContext or other context type may be modeled when it has a concrete design
 responsibility beyond relaying one catalog value, even if the requirements do not name it.
 Do not expose server_context values as actor-facing Boundary inputs. Never infer a binding

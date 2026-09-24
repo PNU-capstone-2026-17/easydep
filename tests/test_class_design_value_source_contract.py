@@ -269,6 +269,36 @@ def test_operation_validator_checks_exact_required_value_ref_and_type():
     assert len([f for f in report.findings if f.rule_id == "class.operation.required-value"]) == 1
 
 
+def test_result_only_required_value_mismatch_gives_directional_repair_context():
+    index = build_scenario_index(_scenario("UC92", "Reviewer", [], required_values=[{
+        "value_ref": "val-schedule", "name": "current schedule",
+        "source": "system_result", "value_type": "object", "usage": "result",
+        "requirement_ids": ["R-SCHEDULE"],
+    }]))
+    inventory = {
+        "Classes": [{"className": "ScheduleControl", "stereotype": "Control"}],
+        "DataTypes": [],
+    }
+    fragment = {"DataTypes": [], "Classes": [{"className": "ScheduleControl", "operations": [{
+        "name": "exportSchedule",
+        "parameters": [{
+            "name": "schedule", "type": "ScheduleData", "requiredValueRef": "val-schedule",
+        }],
+        "returnType": "ExportFile",
+        "stepRefs": ["UC92:main:1", "UC92:main:2"],
+    }]}]}
+
+    report = validate_operations(
+        fragment, OperationContext(index, inventory, index.use_case("UC92")),
+    )
+    finding = next(item for item in report.findings if item.rule_id == "class.operation.required-value")
+    assert "usage=result" in finding.message
+    assert "designType=Object" in finding.message
+    assert "parameter 'schedule':ScheduleData" in finding.message
+    assert "remove the ref from the input and evidence the value via a concrete Control return" in finding.message
+    assert "do not alter the type just to fit the ref" in finding.message
+
+
 def test_operation_validator_keeps_server_context_out_of_boundary_signature():
     index = build_scenario_index(_scenario("UC89", "Student", [], required_values=[{
         "value_ref": "val-session", "name": "student id", "source": "authenticated_actor_context",
@@ -604,10 +634,14 @@ def test_operation_payload_exposes_exact_required_value_catalog():
 
 
 def test_operation_prompt_distinguishes_public_contract_value_origins():
-    prompt = operations.operation_prompt()
+    prompt = " ".join(operations.operation_prompt().split())
 
     assert "public_contract.required_values" in prompt
-    assert "system_result values from prior" in prompt
+    assert "For `control` or `both`" in prompt
+    assert "A `result`-only value is evidenced by a concrete non-void Control return" in prompt
+    assert "A `system_result` may also be cited on a downstream parameter" in prompt
+    assert "a Boundary annotation alone is insufficient" in prompt
+    assert "Never change a parameter type merely to make a ref compatible" in prompt
     assert "server_context values as actor-facing Boundary inputs" in prompt
     assert "requiredValueRef" in prompt
 
