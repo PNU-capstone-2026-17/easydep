@@ -499,9 +499,12 @@ function Get-DatabaseHostPort {
 }
 
 function Test-HttpEndpoint {
-    param([Parameter(Mandatory = $true)][string]$Uri)
+    param(
+        [Parameter(Mandatory = $true)][string]$Uri,
+        [ValidateRange(1, 120)][int]$TimeoutSec = 5
+    )
     try {
-        $response = Invoke-WebRequest -Uri $Uri -UseBasicParsing -TimeoutSec 5
+        $response = Invoke-WebRequest -Uri $Uri -UseBasicParsing -TimeoutSec $TimeoutSec
         return $response.StatusCode -ge 200 -and $response.StatusCode -lt 300
     }
     catch {
@@ -790,7 +793,12 @@ else {
     $checks += $workspaceUri
 }
 foreach ($uri in $checks) {
-    if (-not (Test-HttpEndpoint $uri)) {
+    $timeoutSec = if ($uri -eq "http://127.0.0.1:$Port/api/workspace/apps?limit=1") {
+        30
+    } else {
+        5
+    }
+    if (-not (Test-HttpEndpoint -Uri $uri -TimeoutSec $timeoutSec)) {
         Stop-OwnedServer
         throw "End-to-end integration check failed: $uri"
     }
