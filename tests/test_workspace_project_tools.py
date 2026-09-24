@@ -572,6 +572,33 @@ def test_catalog_is_built_once_per_tool_instance(
     assert calls == 1
 
 
+def test_live_trace_projection_is_shared_per_catalog_and_rebuilt_on_refresh(
+    tools: ProjectTools, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    original = project_tools_module.project_artifact_trace
+    calls = 0
+
+    def counted(*args: Any, **kwargs: Any):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(project_tools_module, "project_artifact_trace", counted)
+
+    tools.revision_snapshot()
+    tools.trace_impact(["requirement:REQ-ORDER"], view="editing")
+    tools.revision_relations(["class_diagram:OrderControl"])
+    tools.search_change_context(
+        ["order"], anchor_refs=["requirement:REQ-ORDER"]
+    )
+
+    assert calls == 1
+
+    tools.revision_snapshot(refresh=True)
+
+    assert calls == 2
+
+
 def test_project_content_is_redacted_and_bounded_before_llm_use(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

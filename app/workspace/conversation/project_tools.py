@@ -11,6 +11,7 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import cached_property
 from hashlib import sha256
 from typing import Any, Literal
 
@@ -155,6 +156,14 @@ class _Catalog:
             dict(implementation_traceability)
             if isinstance(implementation_traceability, Mapping)
             else {}
+        )
+
+    @cached_property
+    def live_trace(self) -> ArtifactTrace:
+        """Return the single current-state trace projection for this catalog."""
+
+        return project_artifact_trace(
+            dict(self.state), implementation_rtm=self.implementation_rtm
         )
 
     def add(
@@ -912,9 +921,7 @@ class ProjectTools:
         if refresh:
             self._cached_catalog = None
         catalog = self._catalog()
-        trace = project_artifact_trace(
-            dict(catalog.state), implementation_rtm=catalog.implementation_rtm
-        )
+        trace = catalog.live_trace
         artifact_versions = _revision_artifact_versions(catalog)
         source_snapshot = {
             key: catalog.snapshot.get(key)
@@ -1399,10 +1406,7 @@ class ProjectTools:
             raise ValueError("trace view must be 'editing' or 'testing-evidence'")
 
         catalog = self._catalog()
-        trace = project_artifact_trace(
-            dict(catalog.state),
-            implementation_rtm=catalog.implementation_rtm,
-        )
+        trace = catalog.live_trace
         plans = {
             str(item.get("ref")): item
             for item in _records(catalog.design_rtm.get("change_plan"))
@@ -1665,10 +1669,7 @@ def _trace_ref_for_element(element: _Element | None) -> TraceRef | None:
 def _artifact_context_index(catalog: _Catalog) -> ArtifactContextIndex:
     """Build the shared read-only index from the current accepted snapshot."""
 
-    projected = project_artifact_trace(
-        dict(catalog.state),
-        implementation_rtm=catalog.implementation_rtm,
-    )
+    projected = catalog.live_trace
     finding_nodes: list[TraceNode] = []
     for element in catalog.elements.values():
         if not element.ref.startswith("finding:"):
