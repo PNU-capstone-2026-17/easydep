@@ -29,13 +29,13 @@ def test_scenario_index_splits_actor_entries_and_attaches_extension_steps():
 
     assert [group.id for group in index.groups] == ["UC1:main:1", "UC1:main:4"]
     first = index.groups[0]
-    assert "UC1:extension:2a:2a1" in first.step_ids
+    assert "UC1:extension:2:1:2a1" in first.step_ids
     assert "UC2:main:1" in first.required_step_ids
     assert first.trace_use_case_ids == ("UC1", "UC2")
 
     consecutive = scenario()
     consecutive["use_case_specs"][0]["main_scenario"][1].update({
-        "subject_ref": "Customer",
+        "subject_ref": "ACT1",
         "sentence": "Customer also supplies the order details.",
     })
     consecutive_groups = build_scenario_index(consecutive).groups
@@ -45,11 +45,49 @@ def test_scenario_index_splits_actor_entries_and_attaches_extension_steps():
     )
 
 
+def test_extension_refs_ignore_display_text_and_group_by_anchor_ordinal():
+    raw = scenario()
+    raw["use_case_specs"][0]["extensions"] = [
+        {
+            "label": "a",
+            "branch_step": 2,
+            "condition": "first condition",
+            "handling_steps": [{"sub_step": "a1", "sentence": "First path."}],
+        },
+        {
+            "label": "a",
+            "branch_step": 4,
+            "condition": "second condition",
+            "handling_steps": [{"sub_step": "a1", "sentence": "Second path."}],
+        },
+    ]
+    first = build_scenario_index(raw)
+    raw["use_case_specs"][0]["extensions"][0].update({
+        "label": "renamed first branch", "condition": "updated first condition",
+    })
+    raw["use_case_specs"][0]["extensions"][1].update({
+        "label": "renamed second branch", "condition": "updated second condition",
+    })
+    renamed = build_scenario_index(raw)
+
+    expected = {
+        "UC1:extension:2:1:a1",
+        "UC1:extension:4:1:a1",
+    }
+    assert {step.id for step in first.use_case("UC1").steps if step.extension_ref} == expected
+    assert {step.id for step in renamed.use_case("UC1").steps if step.extension_ref} == expected
+    first_group, second_group = first.groups
+    assert "UC1:extension:2:1:a1" in first_group.step_ids
+    assert "UC1:extension:4:1:a1" not in first_group.step_ids
+    assert "UC1:extension:4:1:a1" in second_group.step_ids
+    assert "UC1:extension:2:1:a1" not in second_group.step_ids
+
+
 def test_scenario_index_keeps_system_steps_before_first_actor_entry():
     value = single_use_case()
     value["use_case_specs"][0]["main_scenario"].insert(0, {
         "step_number": 0,
-        "subject_ref": "System",
+        "subject_ref": "system",
         "sentence": "System shows the request form.",
     })
 
@@ -95,6 +133,32 @@ def test_inventory_contract_does_not_silently_default_structural_decisions():
             "items": [{"name": "Order", "kind": "Entity"}],
             "Relationships": [],
         })
+
+
+def test_inventory_proposal_requires_lower_camel_business_field_names():
+    proposal = {
+        "items": [{
+            "name": "Order",
+            "kind": "Entity",
+            "description": "Persistent order.",
+            "fields": [{"name": "orderId", "type": "UUID"}],
+            "identifier": ["orderId"],
+            "values": [],
+            "useCaseIds": ["UC1"],
+        }],
+        "Relationships": [],
+    }
+
+    assert InventoryProposal.model_validate(proposal).items[0].fields[0].name == "orderId"
+
+    proposal["items"][0]["fields"][0]["name"] = "order_id"
+    with pytest.raises(ValidationError, match="pattern"):
+        InventoryProposal.model_validate(proposal)
+
+    proposal["items"][0]["fields"][0]["name"] = "orderId"
+    proposal["items"][0]["identifier"] = ["order_id"]
+    with pytest.raises(ValidationError, match="pattern"):
+        InventoryProposal.model_validate(proposal)
 
 
 def test_inventory_json_schema_is_strict_and_english_only():

@@ -21,6 +21,7 @@ from langgraph.types import interrupt
 from app.requirements.contracts.request import (
     DeploymentPreferences,
     FeedbackEdit,
+    IdentitySourceAnswer,
     ResourceAnswer,
 )
 from app.requirements.contracts.state import AgentState
@@ -31,7 +32,7 @@ from app.requirements.orchestration.feedback import apply_feedback_upto
 
 
 def _ask(stage: str, summary, *, edit_stage: str | None = None, edit_targets=(),
-         questions=(), semantic_ambiguity_question=None) -> object:
+         questions=(), semantic_ambiguity_question=None, identity_source_question=None) -> object:
     """피드백을 요청하는 interrupt. 재개 값을 그대로 반환한다.
 
     재개 값은 `FeedbackEdit`·`ResourceAnswer`·`DeploymentPreferences` 중 하나다.
@@ -52,6 +53,7 @@ def _ask(stage: str, summary, *, edit_stage: str | None = None, edit_targets=(),
         "edit_targets": list(edit_targets),
         "resource_questions": list(questions),
         "semantic_ambiguity_question": semantic_ambiguity_question,
+        "identity_source_question": identity_source_question,
     })
 
 
@@ -203,15 +205,78 @@ def gate_specs(state: AgentState) -> dict[str, object]:
     # its result.  Do not recalculate it here: interrupt resume re-enters this
     # node and would otherwise duplicate the review call.
     ambiguity = state.get("semantic_ambiguity_question")
+    source_question = state.get("identity_source_question")
     answer = _ask(
         "specs",
         [s["use_case_id"] for s in specs],
         edit_stage="specs",
         edit_targets=[s["use_case_id"] for s in specs if s.get("use_case_id")],
         semantic_ambiguity_question=ambiguity,
+        identity_source_question=source_question,
     )
     if _empty(answer):
+        if source_question:
+            return {
+                "gate_route": "loop",
+                "semantic_ambiguity_question": ambiguity,
+                "identity_source_question": source_question,
+            }
         return {"gate_route": "advance", "semantic_ambiguity_question": ambiguity}
+    if isinstance(answer, IdentitySourceAnswer):
+        if not isinstance(source_question, dict):
+            raise ValueError("There is no current identity-source question to answer.")
+        if (answer.use_case_id != source_question.get("useCaseId")
+                or answer.obligation_ref != source_question.get("obligationRef")):
+            raise ValueError("Identity-source answer does not match the current question.")
+        expected_id = (
+            f"authenticated_context:{answer.source_authenticate_obligation_ref}"
+            if answer.identity_source_kind == "authenticated_context"
+            else answer.identity_source_kind
+        )
+        options = source_question.get("options") or []
+        if not any(isinstance(option, dict) and option.get("id") == expected_id
+                   and option.get("identitySourceKind") == answer.identity_source_kind
+                   and (answer.identity_source_kind != "authenticated_context"
+                        or option.get("sourceAuthenticateObligationRef") == answer.source_authenticate_obligation_ref)
+                   for option in options):
+            raise ValueError("Identity-source choice is not one of the current question options.")
+        st = dict(state)
+        specs = [dict(spec) for spec in st.get("use_case_specs", [])]
+        target_spec = next((spec for spec in specs
+                            if spec.get("use_case_id") == answer.use_case_id), None)
+        if target_spec is None:
+            raise ValueError("Identity-source question refers to a missing use case.")
+        contract = dict(target_spec.get("public_contract") or {})
+        obligations = [dict(item) for item in contract.get("identity_obligations", [])]
+        target = next((item for item in obligations
+                       if item.get("obligation_ref") == answer.obligation_ref
+                       and item.get("obligation") == "identify"), None)
+        if target is None or target.get("identity_source_kind") != "unresolved":
+            raise ValueError("Identity-source obligation is no longer unresolved.")
+        target["identity_source_kind"] = answer.identity_source_kind
+        if answer.source_authenticate_obligation_ref:
+            target["source_authenticate_obligation_ref"] = answer.source_authenticate_obligation_ref
+        else:
+            target.pop("source_authenticate_obligation_ref", None)
+        contract["identity_obligations"] = obligations
+        target_spec["public_contract"] = contract
+        st["use_case_specs"] = specs
+        overrides = dict(st.get("identity_source_overrides") or {})
+        overrides[answer.obligation_ref] = {
+            "identity_source_kind": answer.identity_source_kind,
+            **({"source_authenticate_obligation_ref": answer.source_authenticate_obligation_ref}
+               if answer.source_authenticate_obligation_ref else {}),
+        }
+        st["identity_source_overrides"] = overrides
+        st.update(check_specs(cast(AgentState, st), review_semantic=False))
+        return {
+            "use_case_specs": st["use_case_specs"],
+            "spec_report": st["spec_report"],
+            "semantic_ambiguity_question": st.get("semantic_ambiguity_question"),
+            "identity_source_question": st.get("identity_source_question"),
+            "identity_source_overrides": overrides,
+            "gate_route": "loop",
+        }
     st = dict(state)
     if not isinstance(answer, FeedbackEdit):
         raise TypeError("Specification feedback requires a validated FeedbackEdit.")

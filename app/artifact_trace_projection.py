@@ -10,6 +10,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from app.artifact_trace import ArtifactTrace, TraceNode, TraceRef
+from app.design.services.class_diagram.scenario import _extension_specs
 from app.validation import stable_digest
 
 _OPENAPI_TRACE_ONLY_FIELDS = frozenset({"x-easydep-scenario-step-refs"})
@@ -172,20 +173,14 @@ def _use_cases(nodes: list[TraceNode], specification: Mapping[str, Any]) -> None
                     TraceRef("step", f"{use_case_id}:main:{number}"),
                     [spec_ref, *_refs(step, "requirement", "covered_req_ids")],
                 )
-        for extension in _records(item.get("extensions")):
-            label = _id(extension, "label")
-            if not label:
-                continue
+        for extension, extension_ref in _extension_specs(use_case_id, item):
             for step in _records(extension.get("handling_steps")):
                 sub_step = _id(step, "sub_step")
                 if sub_step:
                     _add(
                         nodes,
-                        TraceRef(
-                            "step",
-                            f"{use_case_id}:extension:{label}:{sub_step}",
-                        ),
-                        [spec_ref],
+                        TraceRef("step", f"{extension_ref}:{sub_step}"),
+                        [spec_ref, *_source_refs(step), *_refs(step, "requirement", "covered_req_ids")],
                     )
 
     traceability = _map(specification.get("traceability"))
@@ -451,17 +446,12 @@ def _deployment(
     graph = _map(bundle.get("workloadGraph"))
     exact_refs = {**fact_refs, **requirement_refs}
     workload_refs: dict[str, TraceRef] = {}
-    workload_tokens: dict[str, set[str]] = {}
     for item in _records(graph.get("workloads")):
         identifier = _id(item, "id")
         if not identifier:
             continue
         workload_ref = TraceRef("workload", identifier)
         workload_refs[identifier] = workload_ref
-        workload_tokens[identifier] = {
-            identifier,
-            *_strings(item.get("sourceRefs"), item.get("source_refs")),
-        }
         _add(nodes, workload_ref, _source_refs(item, exact_refs))
 
     for collection, kind in (
@@ -496,7 +486,8 @@ def _deployment(
                         workload_ref
                         for workload_id, workload_ref in workload_refs.items()
                         if workload_id == item.get("workloadRef")
-                        or bool(source_tokens & workload_tokens[workload_id])
+                        or workload_id in source_tokens
+                        or workload_ref.format() in source_tokens
                     }
                     resource_ref = TraceRef("resource", f"{target_id}:{collection}:{identifier}")
                     _add(

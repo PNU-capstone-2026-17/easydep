@@ -73,6 +73,12 @@ class ClassParameter(ClassModelBase):
     """operation signature의 이름 있는 입력 하나다."""
     name: str = Field(min_length=1, pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
     type: str = Field(min_length=1)
+    # An explicit accepted identity-obligation link; never inferred from the
+    # parameter's display name or type.
+    obligation_ref: str | None = Field(default=None, alias="obligationRef", min_length=1)
+    # Unlike ``obligationRef``, this is an application-issued identity for the
+    # parameter itself.  It is deliberately not used in sourceRef yet.
+    stable_ref: str | None = Field(default=None, alias="stableRef", min_length=1)
 
 
 class ClassOperation(ClassModelBase):
@@ -99,9 +105,13 @@ class ClassOperation(ClassModelBase):
 class AcceptedBCEClass(ClassModelBase):
     """구조 inventory와 operation fragment가 합쳐진 영속 BCE class다."""
     class_name: str = Field(alias="className", min_length=1)
+    # Class fields remain renderer-compatible strings.  Their application
+    # identities live in this aligned sidecar, just as DataType fields do.
+    stable_id: str | None = Field(default=None, alias="stableId", min_length=1)
     stereotype: Literal["Boundary", "Control", "Entity"]
     description: str = ""
     fields: list[str] = Field(default_factory=list)
+    field_refs: list[str] = Field(default_factory=list, alias="fieldRefs")
     use_case_ids: list[str] = Field(alias="use_case_ids", default_factory=list)
     identifier: list[str] = Field(default_factory=list)
     operations: list[ClassOperation] = Field(default_factory=list)
@@ -129,12 +139,25 @@ class AcceptedBCEClass(ClassModelBase):
             )
         return self
 
+    @model_validator(mode="after")
+    def validate_field_refs(self) -> AcceptedBCEClass:
+        if self.field_refs and len(self.field_refs) != len(self.fields):
+            raise ValueError("fieldRefs must align with Class fields")
+        if len(self.field_refs) != len(set(self.field_refs)):
+            raise ValueError("Class fieldRefs must be unique")
+        return self
+
 
 class DataType(ClassModelBase):
     """구조 또는 operation signature가 참조하는 valueObject/enum 선언이다."""
     name: str = Field(min_length=1)
+    # DataType fields are strings for backwards-compatible UML rendering.
+    # ``fieldRefs`` is an aligned, application-managed sidecar rather than a
+    # wire-format migration of those declarations.
+    stable_id: str | None = Field(default=None, alias="stableId", min_length=1)
     kind: Literal["valueObject", "enumeration"]
     fields: list[str] = Field(default_factory=list)
+    field_refs: list[str] = Field(default_factory=list, alias="fieldRefs")
     values: list[str] = Field(default_factory=list)
 
     @field_validator("name")
@@ -153,6 +176,14 @@ class DataType(ClassModelBase):
             raise ValueError("a valueObject needs fields")
         if not self.fields and not self.values:
             raise ValueError("a DataType needs fields and/or values")
+        return self
+
+    @model_validator(mode="after")
+    def validate_field_refs(self) -> DataType:
+        if self.field_refs and len(self.field_refs) != len(self.fields):
+            raise ValueError("fieldRefs must align with DataType fields")
+        if len(self.field_refs) != len(set(self.field_refs)):
+            raise ValueError("DataType fieldRefs must be unique")
         return self
 
 
@@ -298,6 +329,35 @@ class BCEModel(ClassModelBase):
         ]
         if len(operation_stable_ids) != len(set(operation_stable_ids)):
             raise ValueError("operation stableId values must be unique")
+        parameter_stable_refs = [
+            parameter.stable_ref
+            for item in self.Classes
+            for operation in item.operations
+            for parameter in operation.parameters
+            if parameter.stable_ref is not None
+        ]
+        if len(parameter_stable_refs) != len(set(parameter_stable_refs)):
+            raise ValueError("parameter stableRef values must be unique")
+        data_type_stable_ids = [
+            item.stable_id for item in self.DataTypes if item.stable_id is not None
+        ]
+        if len(data_type_stable_ids) != len(set(data_type_stable_ids)):
+            raise ValueError("DataType stableId values must be unique")
+        class_stable_ids = [
+            item.stable_id for item in self.Classes if item.stable_id is not None
+        ]
+        if len(class_stable_ids) != len(set(class_stable_ids)):
+            raise ValueError("Class stableId values must be unique")
+        class_field_refs = [
+            field_ref for item in self.Classes for field_ref in item.field_refs
+        ]
+        if len(class_field_refs) != len(set(class_field_refs)):
+            raise ValueError("Class fieldRefs must be unique")
+        data_type_field_refs = [
+            field_ref for item in self.DataTypes for field_ref in item.field_refs
+        ]
+        if len(data_type_field_refs) != len(set(data_type_field_refs)):
+            raise ValueError("DataType fieldRefs must be unique")
         call_stable_ids = [
             call.stable_id
             for item in self.Collaborations

@@ -5,7 +5,7 @@
   3. 구조화 편집(FeedbackEdit)이 분류 LLM을 건너뛴다 — 자연어 경로는 그대로.
 """
 from app.requirements.orchestration import feedback as fb
-from app.requirements.schemas import FeedbackEdit
+from app.requirements.schemas import Actor, ActorResult, FeedbackEdit
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +110,45 @@ def test_apply_feedback_upto_routes_to_upstream_actors(monkeypatch):
     assert ("actors", "add DBMS actor") in calls   # 피드백이 액터 재생성에 전달됨
 
 
+def test_targeted_actor_feedback_routes_exact_actor_ref_for_rename(monkeypatch):
+    received = {}
+
+    def identify(state, *, feedback, target_ref=None):
+        received.update(feedback=feedback, target_ref=target_ref)
+        return {"actors": state["actors"]}
+
+    monkeypatch.setattr(fb, "identify_actors", identify)
+    state = {"actors": [{"actor_ref": "ACT1", "name": "Member"}]}
+    fb._regenerate_stage(
+        state,
+        fb.FeedbackIntent(
+            stage="actors", scope="local", target_ids=["ACT1"], instruction="Rename to Customer"
+        ),
+    )
+
+    assert received == {"feedback": "Rename to Customer", "target_ref": "ACT1"}
+
+
+def test_targeted_actor_ref_never_falls_back_to_matching_display_name():
+    from app.requirements.modeling.use_cases import identify_actors
+
+    state = {
+        "classified": [{"id": "R1", "text": "A member submits requests."}],
+        "actors": [{"actor_ref": "ACT1", "name": "Member", "description": "Old role"}],
+    }
+
+    def propose(schema, _messages):
+        assert schema is ActorResult
+        # Same display name but another ref is a different identity; it cannot
+        # be silently matched back to the selected ACT1.
+        return ActorResult(actors=[Actor(
+            name="Member", actorRef="ACT2", description="Changed role", sourceRefs=["R1"]
+        )])
+
+    patch = identify_actors(state, target_ref="ACT1", proposal_call=propose)
+    assert [actor["actor_ref"] for actor in patch["actors"]] == ["ACT2"]
+
+
 def test_apply_feedback_upto_clamps_downstream_stage(monkeypatch):
     # 아직 생성 안 된 하위(relationships)를 지목하면 게이트 단계(use_cases)로 클램프.
     edit = FeedbackEdit(
@@ -143,6 +182,7 @@ def test_generate_specs_local_target_preserves_siblings():
             trigger="regenerated",
             main_scenario=[MainScenarioStep(
                 step_number=1,
+                subject_ref="ACT1",
                 sentence="User acts",
                 covered_req_ids=["R1"],
             )],
@@ -150,8 +190,8 @@ def test_generate_specs_local_target_preserves_siblings():
         )
     state = {
         "classified": [{"id": "R1", "text": "x", "type": "FR"}],
-        "use_cases": [{"id": "UC1", "name": "A", "primary_actor": "U", "requirement_ids": ["R1"], "nfr_ids": []},
-                      {"id": "UC2", "name": "B", "primary_actor": "U", "requirement_ids": ["R1"], "nfr_ids": []}],
+        "use_cases": [{"id": "UC1", "name": "A", "primary_actor_ref": "ACT1", "primary_actor": "U", "requirement_ids": ["R1"], "nfr_ids": []},
+                      {"id": "UC2", "name": "B", "primary_actor_ref": "ACT1", "primary_actor": "U", "requirement_ids": ["R1"], "nfr_ids": []}],
         "use_case_specs": [{"use_case_id": "UC1", "name": "A", "trigger": "OLD", "issues": []},
                            {"use_case_id": "UC2", "name": "B", "trigger": "OLD", "issues": []}],
     }

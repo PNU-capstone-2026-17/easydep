@@ -29,6 +29,7 @@ from app.design.cascade import (
 )
 from app.design.graphs.design_graph import (
     StageNotReached,
+    graph as design_graph,
     has_active_session,
     has_design_run,
     reset_design,
@@ -192,6 +193,29 @@ def _repair_stale_sequence_projection(
     # version mismatch has no user decision to make, so regenerate it and stop
     # at the sequence review gate instead of presenting an unrecoverable error.
     return rewind_design(app_id, "sequence_diagram")
+
+
+def _readiness_state_at_active_class_gate(
+    app_id: str,
+    state: ArchitectureState,
+    active_stage: str,
+) -> ArchitectureState:
+    """Restore checkpoint-owned class semantic evidence for an approval read.
+
+    Artifact hydration deliberately rebuilds deterministic checks, while the
+    completed v3 public-contract review is durable graph state.  At the active
+    class gate only, overlay that one check so readiness can validate its
+    model/contract digests without repeating the semantic review.
+    """
+
+    if active_stage != "class_diagram":
+        return state
+    snapshot = design_graph.get_state({"configurable": {"thread_id": app_id}})
+    checkpoint_state = snapshot.values or {}
+    checkpoint_check = checkpoint_state.get("class_diagram_check")
+    if not isinstance(checkpoint_check, dict):
+        return state
+    return cast(ArchitectureState, {**state, "class_diagram_check": checkpoint_check})
 
 
 def _deployment_endpoint_question(
@@ -479,11 +503,16 @@ def resume_design_session(app_id: str, feedback: str = "") -> dict[str, Any]:
         active_stage = session_status(app_id).get("stage")
         if active_stage:
             state = _load_app(app_id)
+            readiness_state = _readiness_state_at_active_class_gate(
+                app_id, state, str(active_stage)
+            )
             if active_stage == "deployment_diagram":
                 endpoint_question = _deployment_endpoint_question(app_id, state)
                 if endpoint_question is not None:
                     return endpoint_question
-            readiness = design_readiness_report(state, stages=[str(active_stage)])
+            readiness = design_readiness_report(
+                readiness_state, stages=[str(active_stage)]
+            )
             findings = list(readiness.get("findings") or [])
             if findings:
                 repaired = _repair_stale_sequence_projection(
@@ -792,6 +821,7 @@ def apply_deployment_sizing_session(
 
 def retry_design_session(
     app_id: str, *, repair_guidance: str | None = None,
+    binding_source_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """실패한 설계 노드부터 재시도하거나 현재 검토 결과를 복원한다."""
     _validate_app_id(app_id)
@@ -816,7 +846,11 @@ def retry_design_session(
             }
         raise ValueError(f"No failed design stage is available to retry. Session: {status}")
     try:
-        return retry_design(app_id, repair_guidance=repair_guidance)
+        return retry_design(
+            app_id,
+            repair_guidance=repair_guidance,
+            binding_source_decision=binding_source_decision,
+        )
     except GenerationStalled:
         raise
     except Exception as error:

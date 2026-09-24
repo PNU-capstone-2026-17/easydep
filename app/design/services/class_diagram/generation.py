@@ -37,6 +37,7 @@ from app.design.services.class_diagram.scenario import (
     UseCase,
     id_key,
 )
+from app.design.services.class_diagram.identity import materialize_pre_collaboration_refs
 from app.design.services.class_diagram.type_system import (
     type_expression_is_well_formed,
     type_is_resolved,
@@ -480,6 +481,7 @@ def _materialize_use_case(
     use_case: UseCase,
     raw: dict[str, Any],
     budget: RepairBudget,
+    binding_source_decision: dict[str, Any] | None = None,
 ) -> Collaboration:
     """임시 calls를 쓰고, 실패하면 operation을 보존한 call-plan 수리를 시작한다."""
 
@@ -488,6 +490,12 @@ def _materialize_use_case(
         previous = _resolved_plan(raw, skeleton)
         return collaboration.materialize(
             index, skeleton, use_case, previous,
+            binding_source_decision=(
+                binding_source_decision
+                if binding_source_decision
+                and binding_source_decision.get("useCaseId") == use_case.id
+                else None
+            ),
         )
     except ValueError as error:
         finding = f"{type(error).__name__}: {error}"
@@ -581,6 +589,7 @@ def _build_uncached(
     inventory: AcceptedInventory,
     *,
     repair_guidance: str | None = None,
+    binding_source_decision: dict[str, Any] | None = None,
 ) -> BCEModel:
     use_cases = sorted(index.use_cases, key=lambda item: id_key(item.id))
     budgets = {use_case.id: RepairBudget(use_case.id) for use_case in use_cases}
@@ -649,7 +658,9 @@ def _build_uncached(
             preview.model_dump(by_alias=True),
             "operations", use_case.id, position + 1, len(use_cases) + 1,
         )
-    skeleton = operations.compose_operation_units(inventory, committed, final=True)
+    skeleton = materialize_pre_collaboration_refs(
+        None, operations.compose_operation_units(inventory, committed, final=True),
+    )
 
     # 2단계: 완성된 operation catalog에서 provisional calls를 구체화한다. actor 없는
     # include는 독립 collaboration을 만들지 않고 부모 수리에서 후보 operation으로 쓰인다.
@@ -669,6 +680,7 @@ def _build_uncached(
                     use_case,
                     raw_by_use_case[use_case.id],
                     budgets[use_case.id],
+                    binding_source_decision,
                 )
             except collaboration.CombinedReplacementRequired as signal:
                 # 같은 call-plan 상태가 반복되면 현재 유스케이스의 operation+calls만
@@ -702,8 +714,11 @@ def _build_uncached(
                     candidate_fragments = list(committed)
                     candidate_fragments[unit_index] = fragment
                     try:
-                        skeleton = operations.compose_operation_units(
-                            inventory, candidate_fragments, final=True,
+                        skeleton = materialize_pre_collaboration_refs(
+                            None,
+                            operations.compose_operation_units(
+                                inventory, candidate_fragments, final=True,
+                            ),
                         )
                     except (Collision, DataTypeCollision) as error:
                         previous = raw
@@ -716,6 +731,7 @@ def _build_uncached(
                         # call-plan 실패로 되돌아간다.
                         value = _materialize_use_case(
                             index, skeleton, use_case, raw, budgets[use_case.id],
+                            binding_source_decision,
                         )
                     except collaboration.CombinedReplacementRequired as repeated:
                         if _same_binding_event(
@@ -829,7 +845,10 @@ def replace_use_case_unit(
         )
         candidate_fragments = {**others, use_case.id: replacement}
         try:
-            skeleton = operations.compose_fragments(inventory, candidate_fragments)
+            skeleton = materialize_pre_collaboration_refs(
+                current,
+                operations.compose_fragments(inventory, candidate_fragments),
+            )
         except (Collision, DataTypeCollision) as error:
             issue = f"{type(error).__name__}: {error}"
             state = stable_digest({"candidate": raw, "finding": issue})
@@ -864,7 +883,11 @@ def replace_use_case_unit(
         return skeleton, accepted
 
 
-def _model_cache_key(index: ScenarioIndex, inventory: AcceptedInventory) -> str:
+def _model_cache_key(
+    index: ScenarioIndex,
+    inventory: AcceptedInventory,
+    binding_source_decision: dict[str, Any] | None = None,
+) -> str:
     return accepted_unit_key(
         "complete-class-model",
         unit_slice=index.raw,
@@ -879,6 +902,7 @@ def _model_cache_key(index: ScenarioIndex, inventory: AcceptedInventory) -> str:
         reasoning_effort=operations.operation_reasoning_effort(),
         max_completion_tokens=operations.operation_max_completion_tokens(),
         extra={
+            "bindingSourceDecision": binding_source_decision,
             "combinedProposalSchema": CombinedUnitProposal.model_json_schema(),
             "operationFragmentSchema": OperationFragment.model_json_schema(),
             "callPlanPrompt": collaboration.CALL_PLAN_PROMPT,
@@ -896,17 +920,24 @@ def build_model(
     *,
     cache: AcceptedUnitCache | None = None,
     repair_guidance: str | None = None,
+    binding_source_decision: dict[str, Any] | None = None,
 ) -> BCEModel:
     """두 단계 생성 결과 전체만 cache하고 hit에서도 최종 검사를 다시 실행한다."""
 
     if cache is None:
         record_cache_outcome(None, operation="InteractionClassModel", unit="class-model")
-        model = _build_uncached(index, inventory, repair_guidance=repair_guidance)
+        model = _build_uncached(
+            index,
+            inventory,
+            repair_guidance=repair_guidance,
+            binding_source_decision=binding_source_decision,
+        )
     else:
         result = cache.get_or_compute(
-            _model_cache_key(index, inventory),
+            _model_cache_key(index, inventory, binding_source_decision),
             lambda: _build_uncached(
                 index, inventory, repair_guidance=repair_guidance,
+                binding_source_decision=binding_source_decision,
             ).model_dump(by_alias=True),
         )
         record_cache_outcome(result, operation="InteractionClassModel", unit="class-model")

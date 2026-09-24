@@ -5,7 +5,9 @@ from copy import deepcopy
 
 from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram.identity import reconcile_stable_ids
-from tests.class_design_fixtures import typed_class_model_payload
+from app.design.services.class_diagram.scenario import build_scenario_index
+from app.design.services.class_diagram.validation.model import validate_class_model
+from tests.class_design_fixtures import single_use_case, typed_class_model_payload
 
 
 def _accepted(payload: dict) -> BCEModel:
@@ -81,6 +83,45 @@ def test_call_insertion_does_not_renumber_existing_stable_ids():
     assert revised_by_steps[("UC1:main:2",)] == prior_by_steps[("UC1:main:2",)]
     revised_ids = list(revised_by_steps.values())
     assert len(revised_ids) == len(set(revised_ids))
+
+
+def test_reconciliation_rebases_result_binding_refs_after_call_identity_match():
+    payload = typed_class_model_payload()
+    collaboration = payload["Collaborations"][0]
+    collaboration["collaborationId"] = "UC1"
+    collaboration["calls"][0]["callId"] = "UC1::call:1"
+    collaboration["calls"][1]["callId"] = "UC1::call:2"
+    collaboration["calls"][1]["parentCallId"] = "UC1::call:1"
+    previous = _accepted(payload)
+    boundary = previous.Classes[0].operations[0]
+    first, second = previous.Collaborations[0].calls
+    first.argument_bindings[0].source_ref = (
+        f"UC1:main:1#{boundary.parameters[0].stable_ref}"
+    )
+    second.argument_bindings[0].source_ref = (
+        f"{first.stable_id}#{boundary.parameters[0].stable_ref}"
+    )
+    revised = previous.model_copy(deep=True)
+    revised_boundary = revised.Classes[0].operations[0]
+    revised_first, revised_second = revised.Collaborations[0].calls
+    revised_first.stable_id = "call_intermediate_source"
+    revised_boundary.parameters[0].stable_ref = "param_intermediate_source"
+    revised_first.argument_bindings[0].source_ref = "UC1:main:1#param_intermediate_source"
+    revised_second.argument_bindings[0].source_ref = (
+        "call_intermediate_source#param_intermediate_source"
+    )
+
+    accepted, _metadata = reconcile_stable_ids(previous, revised)
+
+    accepted_boundary = accepted.Classes[0].operations[0]
+    accepted_first, accepted_second = accepted.Collaborations[0].calls
+    assert accepted_first.stable_id == first.stable_id
+    assert accepted_second.argument_bindings[0].source_ref == (
+        f"{accepted_first.stable_id}#{accepted_boundary.parameters[0].stable_ref}"
+    )
+    report = validate_class_model(accepted, build_scenario_index(single_use_case()))
+    assert not report.errors
+    assert not report.findings
 
 
 def test_ambiguous_duplicate_call_does_not_steal_the_previous_identity():

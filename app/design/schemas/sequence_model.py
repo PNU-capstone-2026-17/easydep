@@ -22,6 +22,7 @@ class SequenceParticipant(SequenceRecord):
     kind: Literal["actor", "boundary", "control", "entity", "database"]
     description: str = ""
     source_class: str = ""
+    participant_ref: str = Field(min_length=1)
 
 
 class SequenceFragment(SequenceRecord):
@@ -29,6 +30,9 @@ class SequenceFragment(SequenceRecord):
     type: Literal["alt", "opt", "loop"]
     branch: Literal["main", "else"] = "main"
     condition: str = Field(min_length=1)
+    # Structural provenance for conditions governed by accepted source data.
+    # The condition prose remains presentation text and is never an identity.
+    condition_ref: str | None = None
 
 
 class SequenceArgument(SequenceRecord):
@@ -51,19 +55,26 @@ class SequenceMessage(SequenceRecord):
     call_id: str = ""
     reply_to: str = ""
     arguments: list[SequenceArgument] = Field(default_factory=list)
+    # Stable accepted identities; presentation fields retain rendering syntax.
+    call_ref: str | None = None
+    operation_ref: str | None = None
 
     @model_validator(mode="after")
     def call_or_return_contract(self) -> SequenceMessage:
-        if self.type in {"sync", "self"}:
+        if self.type in {"sync", "self", "async"}:
             if not is_complete_method_call(self.label):
                 raise ValueError("call label must be a complete method signature")
             if not self.call_id or self.reply_to:
                 raise ValueError("call requires call_id only")
+            if not self.call_ref or not self.operation_ref:
+                raise ValueError("call requires call_ref and operation_ref")
         if self.type == "return":
             if not is_return_value_label(self.label):
                 raise ValueError("return label must be a type identifier")
             if self.call_id or not self.reply_to:
                 raise ValueError("return requires reply_to only")
+            if not self.call_ref or not self.operation_ref:
+                raise ValueError("return requires call_ref and operation_ref")
         return self
 
 

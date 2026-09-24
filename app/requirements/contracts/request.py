@@ -65,6 +65,30 @@ class ResourceAnswer(BaseModel):
         return self
 
 
+class IdentitySourceAnswer(BaseModel):
+    """Typed choice for the source of one identify obligation."""
+
+    use_case_id: str = Field(min_length=1)
+    obligation_ref: str = Field(min_length=1)
+    identity_source_kind: Literal["caller_input", "authenticated_context", "system_result"]
+    source_authenticate_obligation_ref: str | None = None
+
+    @model_validator(mode="after")
+    def _source_reference_matches_kind(self) -> IdentitySourceAnswer:
+        ref = (self.source_authenticate_obligation_ref or "").strip()
+        if self.identity_source_kind == "authenticated_context":
+            if not ref:
+                raise ValueError("authenticated_context requires an authenticate obligation ref")
+            self.source_authenticate_obligation_ref = ref
+        elif ref:
+            raise ValueError("authenticate obligation ref is only valid for authenticated_context")
+        else:
+            self.source_authenticate_obligation_ref = None
+        self.use_case_id = self.use_case_id.strip()
+        self.obligation_ref = self.obligation_ref.strip()
+        return self
+
+
 class InitialCloudConstraints(BaseModel):
     """사용자가 분석 시작 전에 직접 고르는 최소 클라우드 제약.
 
@@ -169,6 +193,8 @@ class AnalyzeRequest(BaseModel):
     resource_answers: dict[str, str] | None = None
     # ConversationAgent가 resource 질문의 자유문장 답으로 분류한 typed 재개 입력.
     resource_answer: ResourceAnswer | None = None
+    # Typed answer to one requirements-stage identity-source question.
+    identity_source_answer: IdentitySourceAnswer | None = None
     thread_id: str | None = None
     # 대화형 게이트(step1 clarify + 각 스텝 피드백) 사용 여부. None이면 서버 기본값(설정)을 따른다.
     # 신규 세션 시작 시에만 의미가 있으며, 이후 재개(answer)는 세션이 시작된 모드를 유지한다.

@@ -13,6 +13,7 @@ from app.config import settings
 from app.design.contracts.api_spec import ApiSpecModel
 from app.design.schemas.class_model import BCEModel
 from app.design.schemas.sequence_model import SequenceCollection
+from app.design.services.class_diagram.scenario import _extension_specs
 from app.llm_connection import build_openhands_llm_connection
 
 from ..domain.implementation_ir import (
@@ -1613,15 +1614,12 @@ def _method_context_evidence(
             step_ref = f"{use_case_id}:main:{step.get('step_number')}"
             if step_ref in step_refs:
                 scenario_steps.append({"ref": step_ref, **step})
-        for extension in value.get("extensions", []):
-            if not isinstance(extension, dict):
-                continue
-            label = str(extension.get("label") or "")
+        for extension, extension_ref in _extension_specs(use_case_id, value):
             for step in extension.get("handling_steps", []):
                 if not isinstance(step, dict):
                     continue
                 sub_step = str(step.get("sub_step") or "")
-                step_ref = f"{use_case_id}:extension:{label}:{sub_step}"
+                step_ref = f"{extension_ref}:{sub_step}"
                 if step_ref in step_refs:
                     scenario_steps.append(
                         {

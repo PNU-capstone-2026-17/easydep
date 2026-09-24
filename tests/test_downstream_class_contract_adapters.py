@@ -10,13 +10,17 @@ from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.erd.mapping import build_logical_model
 from app.design.services.sequence_diagram.projection import project_sequence_model
+from app.design.services.sequence_diagram.validation import (
+    sequence_fragment_condition_consistency,
+)
 
 
 def _collaboration_model() -> dict:
-    return BCEModel.model_validate({
+    result = BCEModel.model_validate({
         "Classes": [
             {
                 "className": "OrderBoundary",
+                "stableId": "class_order_boundary",
                 "stereotype": "Boundary",
                 "use_case_ids": ["UC1"],
                 "operations": [{
@@ -29,6 +33,7 @@ def _collaboration_model() -> dict:
             },
             {
                 "className": "OrderControl",
+                "stableId": "class_order_control",
                 "stereotype": "Control",
                 "use_case_ids": ["UC1"],
                 "operations": [{
@@ -41,6 +46,7 @@ def _collaboration_model() -> dict:
             },
             {
                 "className": "Order",
+                "stableId": "class_order_entity",
                 "stereotype": "Entity",
                 "fields": ["id : UUID"],
                 "identifier": ["id"],
@@ -59,6 +65,7 @@ def _collaboration_model() -> dict:
             "calls": [
                 {
                     "callId": "ignored",
+                    "stableId": "call_submit",
                     "receiverOperationId": "OrderBoundary::submit(request:OrderRequest)",
                     "stepRefs": ["UC1:main:1"],
                     "argumentBindings": [{
@@ -67,25 +74,41 @@ def _collaboration_model() -> dict:
                 },
                 {
                     "callId": "ignored",
+                    "stableId": "call_place",
                     "parentCallId": "place-order::call:1",
                     "receiverOperationId": "OrderControl::place(request:OrderRequest)",
                     "stepRefs": ["UC1:main:2"],
                     "argumentBindings": [{
-                        "parameter": "request", "sourceRef": "place-order::call:1#request",
+                        "parameter": "request", "sourceRef": "call_submit#request",
                     }],
                 },
             ],
         }],
     }).model_dump(by_alias=True)
+    for class_item in result["Classes"]:
+        ids = {
+            "OrderBoundary": ("class_order_boundary", "op_submit"),
+            "OrderControl": ("class_order_control", "op_place"),
+            "Order": ("class_order_entity", ""),
+        }
+        class_item["stableId"] = ids[class_item["className"]][0]
+        for operation in class_item["operations"]:
+            operation["stableId"] = ids[class_item["className"]][1]
+    for collaboration in result["Collaborations"]:
+        for call, stable_id in zip(collaboration["calls"], ("call_submit", "call_place")):
+            call["stableId"] = stable_id
+    return result
 
 
 def _use_case_spec(*, include: bool = False) -> dict:
     result = {
-        "use_cases": [{"id": "UC1", "name": "Place order"}],
+        "use_cases": [{"id": "UC1", "name": "Place order", "primary_actor_ref": "ACT1"}],
         "use_case_specs": [{"use_case_id": "UC1"}],
     }
     if include:
-        result["use_cases"].append({"id": "UC_INCLUDED"})
+        result["use_cases"].append({
+            "id": "UC_INCLUDED", "primary_actor_ref": "ACT1",
+        })
         result["use_case_specs"].append({"use_case_id": "UC_INCLUDED"})
     return result
 
@@ -118,7 +141,7 @@ def test_sequence_projects_collaboration_without_mutating_class_contract():
     assert calls[0]["arguments"][0]["source_kind"] == "input"
     assert calls[0]["arguments"][0]["source_ref"] == "UC1:main:1#request"
     assert calls[1]["arguments"][0]["source_kind"] == "call_parameter"
-    assert calls[1]["arguments"][0]["source_ref"] == "place-order::call:1#request"
+    assert calls[1]["arguments"][0]["source_ref"] == "call_submit#request"
     replies = {
         message["reply_to"]: message["label"]
         for message in sequence["Diagrams"][0]["Messages"]
@@ -140,7 +163,7 @@ def test_sequence_preserves_structured_parameter_projection_as_call_provenance()
     call["receiverOperationId"] = "OrderControl::place(sku:String)"
     call["argumentBindings"] = [{
         "parameter": "sku",
-        "sourceRef": "place-order::call:1#request.sku",
+        "sourceRef": "call_submit#request.sku",
     }]
 
     sequence = _project(_use_case_spec(), class_model)
@@ -153,7 +176,7 @@ def test_sequence_preserves_structured_parameter_projection_as_call_provenance()
         "parameter": "sku",
         "type": "String",
         "source_kind": "call_parameter",
-        "source_ref": "place-order::call:1#request.sku",
+        "source_ref": "call_submit#request.sku",
     }]
 
 
@@ -182,9 +205,7 @@ def test_sequence_projects_an_included_use_case_from_its_scoped_calls():
     ]
     assert [call["target"] for call in calls] == ["OrderBoundary"]
     assert calls[0]["step_ids"] == ["UC_INCLUDED:main:1"]
-    assert calls[0]["arguments"][0]["source_ref"] == (
-        "UC_INCLUDED:main:1#request"
-    )
+    assert calls[0]["arguments"][0]["source_ref"] == "UC1:main:1#request"
 
 
 def test_sequence_combines_multiple_execution_groups_for_one_use_case():
@@ -195,6 +216,7 @@ def test_sequence_combines_multiple_execution_groups_for_one_use_case():
         "entryActor": "Buyer",
         "calls": [{
             "callId": "confirm-order::call:1",
+            "stableId": "call_confirm",
             "receiverOperationId": "OrderBoundary::submit(request:OrderRequest)",
             "stepRefs": ["UC1:main:3"],
             "argumentBindings": [{
@@ -223,10 +245,12 @@ def test_sequence_keeps_actor_and_same_named_entity_as_distinct_lifelines():
     class_model = _collaboration_model()
     class_model["Classes"].append({
         "className": "Buyer",
+        "stableId": "class_buyer_entity",
         "stereotype": "Entity",
         "fields": ["id : UUID"],
         "use_case_ids": ["UC1"],
         "operations": [{
+            "stableId": "op_buyer_can_place",
             "operationId": "ignored",
             "name": "canPlace",
             "parameters": [],
@@ -236,6 +260,7 @@ def test_sequence_keeps_actor_and_same_named_entity_as_distinct_lifelines():
     })
     class_model["Collaborations"][0]["calls"].append({
         "callId": "ignored",
+        "stableId": "call_buyer_can_place",
         "parentCallId": "place-order::call:2",
         "receiverOperationId": "Buyer::canPlace()",
         "stepRefs": ["UC1:main:2"],
@@ -262,17 +287,19 @@ def test_sequence_projects_extension_only_call_and_return_as_opt_fragment():
     class_model = _collaboration_model()
     order = next(item for item in class_model["Classes"] if item["className"] == "Order")
     order["operations"] = [{
+        "stableId": "op_order_requires_review",
         "operationId": "ignored",
         "name": "requiresReview",
         "parameters": [],
         "returnType": "boolean",
-        "stepRefs": ["UC1:extension:2a:2a1"],
+        "stepRefs": ["UC1:extension:2:1:2a1"],
     }]
     class_model["Collaborations"][0]["calls"].append({
         "callId": "ignored",
+        "stableId": "call_order_requires_review",
         "parentCallId": "place-order::call:2",
         "receiverOperationId": "Order::requiresReview()",
-        "stepRefs": ["UC1:extension:2a:2a1"],
+        "stepRefs": ["UC1:extension:2:1:2a1"],
         "argumentBindings": [],
     })
     class_model = BCEModel.model_validate(class_model).model_dump(by_alias=True)
@@ -290,7 +317,8 @@ def test_sequence_projects_extension_only_call_and_return_as_opt_fragment():
     call = next(message for message in messages if message.get("call_id") == "place-order::call:3")
     reply = next(message for message in messages if message.get("reply_to") == "place-order::call:3")
     expected = [{
-        "id": "UC1:extension:2a",
+        "id": "UC1:extension:2:1",
+        "condition_ref": "UC1:extension:2:1",
         "type": "opt",
         "branch": "main",
         "condition": "The order needs manual review",
@@ -308,6 +336,7 @@ def test_sequence_projects_extending_use_case_calls_as_base_opt_fragment():
     )
     boundary["use_case_ids"].append("UC_INCLUDED")
     boundary["operations"].append({
+        "stableId": "op_order_export",
         "operationId": "ignored",
         "name": "export",
         "parameters": [],
@@ -320,6 +349,7 @@ def test_sequence_projects_extending_use_case_calls_as_base_opt_fragment():
         "entryActor": "Buyer",
         "calls": [{
             "callId": "ignored",
+            "stableId": "call_order_export",
             "receiverOperationId": "OrderBoundary::export()",
             "stepRefs": ["UC_INCLUDED:main:1"],
             "argumentBindings": [],
@@ -352,11 +382,21 @@ def test_sequence_projects_extending_use_case_calls_as_base_opt_fragment():
     )
     assert base_call["fragments"] == [{
         "id": "UC1:extend:UC_INCLUDED",
+        "condition_ref": "UC1:extend:UC_INCLUDED",
         "type": "opt",
         "branch": "main",
         "condition": "when the buyer requests an export",
     }]
     assert extending_call["fragments"] == []
+
+    base_diagram = sequence["Diagrams"][0]
+    state = {"usecase_spec": specification}
+    base_call["fragments"][0]["condition"] = "the buyer asks to export"
+    assert sequence_fragment_condition_consistency(base_diagram, state) == []
+    base_call["fragments"][0]["condition_ref"] = "UC1:extend:unknown"
+    assert sequence_fragment_condition_consistency(base_diagram, state)
+    base_call["fragments"][0].pop("condition_ref")
+    assert sequence_fragment_condition_consistency(base_diagram, state)
 
 
 @pytest.mark.parametrize("missing_key", [False, True])

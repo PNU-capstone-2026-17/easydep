@@ -8,6 +8,11 @@ from pydantic import ValidationError
 
 from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram import collaboration, generation, service
+from app.design.services.class_diagram.identity import materialize_pre_collaboration_refs
+from app.design.services.class_diagram.validation.collaboration import (
+    CollaborationContext,
+    _collaboration_bindings,
+)
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
     CombinedUnitProposal,
@@ -24,6 +29,45 @@ from tests.class_design_fixtures import (
     patch_class_design_parser,
     single_use_case,
 )
+
+
+def _first_binding_choice(messages, schema):
+    """Return the first offered source for deterministic service fixtures."""
+    payload = json.loads(messages[-1]["content"])
+    return {
+        choice["choice"]: choice["candidates"][0]
+        for choice in payload["choices"]
+    }
+
+
+def _reject_semantic_binding_choice(messages, schema):
+    payload = json.loads(messages[-1]["content"])
+    return {
+        choice["choice"]: (
+            "NO_MATCH" if "NO_MATCH" in choice["candidates"]
+            else choice["candidates"][0]
+        )
+        for choice in payload["choices"]
+    }
+
+
+def _select_repaired_request_or_no_match(messages, schema):
+    payload = json.loads(messages[-1]["content"])
+    selected = {}
+    for choice in payload["choices"]:
+        candidates = choice["candidates"]
+        target_parameter = choice["target"]["parameter"]
+        request_source = next((
+            value
+            for value, detail in zip(candidates, choice.get("candidateDetails", []))
+            if detail.get("sourceParameter") == "request"
+        ), None)
+        selected[choice["choice"]] = (
+            request_source if target_parameter == "request" and request_source
+            else "NO_MATCH" if "NO_MATCH" in candidates
+            else candidates[0]
+        )
+    return selected
 
 
 def test_call_plan_schema_rejects_cross_actor_entry_operation(monkeypatch):
@@ -141,6 +185,8 @@ def test_vertical_service_persists_calls_and_derives_parameter_provenance(monkey
             return operation_fragment()
         if issubclass(schema, CallPlanProposal):
             return call_plan()
+        if schema.__name__ == "BindingChoices":
+            return _first_binding_choice(_messages, schema)
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
@@ -149,9 +195,15 @@ def test_vertical_service_persists_calls_and_derives_parameter_provenance(monkey
 
     assert len(model["Collaborations"]) == 1
     calls = model["Collaborations"][0]["calls"]
+    boundary_operation = next(
+        operation
+        for owner in model["Classes"]
+        for operation in owner["operations"]
+        if operation["name"] == "submit"
+    )
     assert calls[1]["argumentBindings"] == [{
         "parameter": "request",
-        "sourceRef": "UC1::call:1#request",
+        "sourceRef": f"{calls[0]['stableId']}#{boundary_operation['parameters'][0]['stableRef']}",
     }]
     assert all(item.get("type") != "Dependency" for item in model["Relationships"])
 
@@ -177,6 +229,8 @@ def test_missing_source_repairs_owning_unit_without_call_plan_retry(monkeypatch)
             return proposal
         if issubclass(schema, CallPlanProposal):
             raise TypeError("a missing source must not trigger a call-plan retry")
+        if schema.__name__ == "BindingChoices":
+            return _select_repaired_request_or_no_match(messages, schema)
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
@@ -205,6 +259,8 @@ def test_binding_retry_guidance_reaches_owning_operation_repair(monkeypatch):
             return combined_unit_proposal()
         if issubclass(schema, CallPlanProposal):
             return call_plan()
+        if schema.__name__ == "BindingChoices":
+            return _select_repaired_request_or_no_match(messages, schema)
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
@@ -231,6 +287,8 @@ def test_unchanged_missing_source_stalls_after_one_owning_unit_repair(monkeypatc
             return proposal
         if issubclass(schema, CallPlanProposal):
             raise TypeError("a missing source must not trigger a call-plan retry")
+        if schema.__name__ == "BindingChoices":
+            return _reject_semantic_binding_choice(_messages, schema)
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
@@ -244,7 +302,7 @@ def test_unchanged_missing_source_stalls_after_one_owning_unit_repair(monkeypatc
     assert caught.value.repair_context["code"] == "BINDING_SOURCE_UNAVAILABLE"
     assert caught.value.repair_context["useCaseId"] == "UC1"
     assert caught.value.repair_context["parameter"]["type"]
-    assert caught.value.repair_context["searchedSourceScopes"]
+    assert caught.value.repair_context["availableSources"]
     assert caught.value.repair_context["callIndex"] == 1
 
 
@@ -293,6 +351,8 @@ def test_temporal_parameter_uses_explicit_runtime_clock_when_no_upstream_value(m
             return fragment
         if issubclass(schema, CallPlanProposal):
             return plan
+        if schema.__name__ == "BindingChoices":
+            return _first_binding_choice(_messages, schema)
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
@@ -306,7 +366,7 @@ def test_temporal_parameter_uses_explicit_runtime_clock_when_no_upstream_value(m
     }]
 
 
-def test_structured_parameter_is_derived_from_upstream_fields(monkeypatch):
+def test_structured_parameter_is_not_inferred_from_matching_field_names(monkeypatch):
     inventory_candidate = inventory_proposal()
     inventory_candidate["items"].append({
         "name": "Registration",
@@ -354,20 +414,33 @@ def test_structured_parameter_is_derived_from_upstream_fields(monkeypatch):
             return fragment
         if issubclass(schema, CallPlanProposal):
             return plan
+        if schema.__name__ == "BindingChoices":
+            return _first_binding_choice(_messages, schema)
         raise AssertionError(schema)
 
-    patch_class_design_parser(monkeypatch, fake_parse)
-    model = service.generate_class_model(build_scenario_index(single_use_case()))
-    model = model.model_dump(by_alias=True)
-    binding = model["Collaborations"][0]["calls"][2]["argumentBindings"][0]
-
-    assert binding == {
-        "parameter": "details",
-            "sourceRef": (
-                "derived#RegistrationDetails("
-                "value=UC1::call:2#request.value)"
-            ),
+    index = build_scenario_index(single_use_case())
+    calls = [
+        {"callId": "UC1::call:1", "parentCallId": None,
+         "receiverOperationId": "RegistrationBoundary::submit(value:String)"},
+        {"callId": "UC1::call:2", "parentCallId": "UC1::call:1",
+         "receiverOperationId": "RegistrationControl::register(details:RegistrationDetails)"},
+    ]
+    operations = {
+        "RegistrationBoundary::submit(value:String)": {
+            "parameters": [{"name": "value", "type": "String"}],
+        },
+        "RegistrationControl::register(details:RegistrationDetails)": {
+            "parameters": [{"name": "details", "type": "RegistrationDetails"}],
+        },
     }
+    candidates = collaboration._binding_candidates(
+        {"Classes": [], "DataTypes": [{
+            "name": "RegistrationDetails", "kind": "valueObject",
+            "fields": ["value : String"],
+        }]}, index.use_case("UC1"), None, False, calls, 1,
+        {"name": "details", "type": "RegistrationDetails"}, operations,
+    )
+    assert candidates == []
 
 
 def test_optional_results_use_explicit_unwrap_sources(monkeypatch):
@@ -478,6 +551,8 @@ def test_optional_results_use_explicit_unwrap_sources(monkeypatch):
         "Relationships": [],
         "Collaborations": [],
     }
+    accepted_model = materialize_pre_collaboration_refs(None, BCEModel.model_validate(model))
+    model = accepted_model.model_dump(by_alias=True)
     plan = CallPlanProposal.model_validate({
         "calls": [
             {"receiverOperationId": "RequestBoundary::start()", "parentCallIndex": None},
@@ -500,26 +575,49 @@ def test_optional_results_use_explicit_unwrap_sources(monkeypatch):
         ],
     })
 
+    monkeypatch.setattr(
+        collaboration, "parse_structured",
+        lambda messages, schema, **_kwargs: _first_binding_choice(messages, schema),
+    )
     collaboration_model = collaboration.materialize(
         build_scenario_index(single_use_case()),
-        BCEModel.model_validate(model),
+        accepted_model,
         build_scenario_index(single_use_case()).use_case("UC1"),
         plan,
     ).model_dump(by_alias=True)
 
-    assert collaboration_model["calls"][3]["argumentBindings"] == [
+    calls = collaboration_model["calls"]
+    data_type_refs = {
+        item.name: dict(zip(
+            [field.split(":", 1)[0].strip() for field in item.fields], item.field_refs,
+        ))
+        for item in accepted_model.DataTypes
+    }
+    class_field_refs = {
+        item.class_name: dict(zip(
+            [field.split(":", 1)[0].strip() for field in item.fields], item.field_refs,
+        ))
+        for item in accepted_model.Classes
+    }
+    assert calls[3]["argumentBindings"] == [
         {
             "parameter": "student",
-            "sourceRef": "UC1::call:2#result.unwrap",
+            "sourceRef": f"{calls[1]['stableId']}#result.unwrap",
         },
         {
             "parameter": "failureCode",
-            "sourceRef": "UC1::call:3#result.failureCode.unwrap",
+            "sourceRef": (
+                f"{calls[2]['stableId']}#result."
+                f"{data_type_refs['ValidationResult']['failureCode']}.unwrap"
+            ),
         },
     ]
-    assert collaboration_model["calls"][4]["argumentBindings"] == [{
+    assert calls[4]["argumentBindings"] == [{
         "parameter": "studentId",
-        "sourceRef": "UC1::call:2#result.unwrap.id",
+        "sourceRef": (
+            f"{calls[1]['stableId']}#result.unwrap."
+            f"{class_field_refs['Student']['id']}"
+        ),
     }]
 
     missing_source_model = json.loads(json.dumps(model))
@@ -744,6 +842,7 @@ def test_scalar_parameter_can_use_same_typed_request_fields_with_different_names
         "Relationships": [],
         "Collaborations": [],
     })
+    model = materialize_pre_collaboration_refs(None, model)
     plan = CallPlanProposal.model_validate({
         "calls": [
             {
@@ -758,13 +857,15 @@ def test_scalar_parameter_can_use_same_typed_request_fields_with_different_names
             },
         ],
     })
-    expected_candidates = [
-        "UC1::call:1#request.sourceUnitCode",
-        "UC1::call:1#request.targetUnitCode",
-    ]
+    request_parameter = model.Classes[0].operations[0].parameters[0]
+    request_fields = model.DataTypes[0].field_refs
 
-    def select_source(_group, ambiguous, parameter_types):
+    def select_source(_group, ambiguous, parameter_types, **_kwargs):
         location = "UC1::call:2#code"
+        expected_candidates = [
+            f"{_kwargs['calls'][0]['stableId']}#{request_parameter.stable_ref}.{field_ref}"
+            for field_ref in request_fields
+        ]
         assert ambiguous == {location: expected_candidates}
         assert parameter_types == {location: "String"}
         return {location: expected_candidates[0]}
@@ -777,7 +878,9 @@ def test_scalar_parameter_can_use_same_typed_request_fields_with_different_names
         plan,
     )
 
-    assert result.calls[1].argument_bindings[0].source_ref == expected_candidates[0]
+    assert result.calls[1].argument_bindings[0].source_ref == (
+        f"{result.calls[0].stable_id}#{request_parameter.stable_ref}.{request_fields[0]}"
+    )
 
 
 def test_boundary_handoff_can_select_renamed_compatible_inputs(monkeypatch):
@@ -836,6 +939,7 @@ def test_boundary_handoff_can_select_renamed_compatible_inputs(monkeypatch):
         "Relationships": [],
         "Collaborations": [],
     })
+    model = materialize_pre_collaboration_refs(None, model)
     plan = CallPlanProposal.model_validate({
         "calls": [
             {
@@ -854,21 +958,29 @@ def test_boundary_handoff_can_select_renamed_compatible_inputs(monkeypatch):
             },
         ],
     })
-    first = "UC1::call:1#firstValue"
-    second = "UC1::call:1#secondValue"
+    boundary_parameters = model.Classes[0].operations[0].parameters
+    result_field = model.DataTypes[1].field_refs[0]
 
-    def select_source(_use_case, ambiguous, parameter_types):
+    def select_source(_use_case, ambiguous, parameter_types, **_kwargs):
+        call_ref = _kwargs["calls"][0]["stableId"]
+        first = f"{call_ref}#{boundary_parameters[0].stable_ref}"
+        second = f"{call_ref}#{boundary_parameters[1].stable_ref}"
+        operation_type = f"{call_ref}#{boundary_parameters[2].stable_ref}"
+        result_value = f"{call_ref}#result.{result_field}"
         assert ambiguous == {
-            "UC1::call:2#operand1": [first, second],
-            "UC1::call:2#operand2": [first, second],
+            "UC1::call:2#operand1": [first, second, result_value],
+            "UC1::call:2#operand2": [first, second, result_value],
+            "UC1::call:2#operationType": [operation_type],
         }
         assert parameter_types == {
             "UC1::call:2#operand1": "BigDecimal",
             "UC1::call:2#operand2": "BigDecimal",
+            "UC1::call:2#operationType": "OperationType",
         }
         return {
             "UC1::call:2#operand1": first,
             "UC1::call:2#operand2": second,
+            "UC1::call:2#operationType": operation_type,
         }
 
     monkeypatch.setattr(collaboration, "select_ambiguous_bindings", select_source)
@@ -878,14 +990,14 @@ def test_boundary_handoff_can_select_renamed_compatible_inputs(monkeypatch):
         binding.parameter: binding.source_ref
         for binding in result.calls[1].argument_bindings
     } == {
-        "operand1": first,
-        "operand2": second,
-        "operationType": "UC1::call:1#operation",
+        "operand1": f"{result.calls[0].stable_id}#{boundary_parameters[0].stable_ref}",
+        "operand2": f"{result.calls[0].stable_id}#{boundary_parameters[1].stable_ref}",
+        "operationType": f"{result.calls[0].stable_id}#{boundary_parameters[2].stable_ref}",
     }
 
 
-def test_binding_selection_rejects_duplicate_symmetric_sources(monkeypatch):
-    """Symmetric finite choices must retain distinct operand provenance."""
+def test_binding_selection_allows_reusing_symmetric_source(monkeypatch):
+    """A finite source can legitimately supply multiple parameters."""
 
     first = "UC1::call:1#firstValue"
     second = "UC1::call:1#secondValue"
@@ -895,9 +1007,11 @@ def test_binding_selection_rejects_duplicate_symmetric_sources(monkeypatch):
     }
 
     def fake_parse(_messages, schema, **_kwargs):
-        with pytest.raises(ValidationError, match="sourceRef selections must be unique"):
-            schema.model_validate({"choice1": first, "choice2": first})
-        return {"choice1": first, "choice2": second}
+        parsed = schema.model_validate({"choice1": first, "choice2": first})
+        assert parsed.choice1 == parsed.choice2 == first
+        with pytest.raises(ValidationError):
+            schema.model_validate({"choice1": first, "choice2": "unoffered"})
+        return {"choice1": first, "choice2": first}
 
     monkeypatch.setattr(collaboration, "parse_structured", fake_parse)
     index = build_scenario_index(single_use_case())
@@ -911,11 +1025,11 @@ def test_binding_selection_rejects_duplicate_symmetric_sources(monkeypatch):
         },
     ) == {
         "UC1::call:2#operand1": first,
-        "UC1::call:2#operand2": second,
+        "UC1::call:2#operand2": first,
     }
 
 
-def test_binding_candidates_require_matching_names_for_ancestor_uuid_values():
+def test_binding_candidates_include_finite_type_compatible_ancestor_values():
     specification = single_use_case()
     specification["use_case_specs"][0]["preconditions"] = [
         "The student is authenticated."
@@ -925,11 +1039,13 @@ def test_binding_candidates_require_matching_names_for_ancestor_uuid_values():
     calls = [
         {
             "callId": "UC1::call:1",
+            "stableId": "call-source",
             "parentCallId": None,
             "receiverOperationId": "RegistrationControl::swap()",
         },
         {
             "callId": "UC1::call:2",
+            "stableId": "call-target",
             "parentCallId": "UC1::call:1",
             "receiverOperationId": "Registration::find(studentId:UUID)",
         },
@@ -937,13 +1053,13 @@ def test_binding_candidates_require_matching_names_for_ancestor_uuid_values():
     operations = {
         "RegistrationControl::swap()": {
             "parameters": [
-                {"name": "offeringId", "type": "UUID"},
-                {"name": "studentId", "type": "UUID"},
+                {"name": "offeringId", "type": "UUID", "stableRef": "param-offering"},
+                {"name": "studentId", "type": "UUID", "stableRef": "param-student"},
             ],
             "returnType": "SwapResult",
         },
         "Registration::find(studentId:UUID)": {
-            "parameters": [target],
+            "parameters": [{**target, "stableRef": "param-target"}],
             "returnType": "void",
         },
     }
@@ -955,6 +1071,7 @@ def test_binding_candidates_require_matching_names_for_ancestor_uuid_values():
                     "name": "SwapResult",
                     "kind": "valueObject",
                     "fields": ["registrationId : UUID", "studentId : UUID"],
+                    "fieldRefs": ["field-registration", "field-student"],
                 }
             ],
         },
@@ -967,10 +1084,10 @@ def test_binding_candidates_require_matching_names_for_ancestor_uuid_values():
         operations=operations,
     )
 
-    assert "UC1::call:1#offeringId" not in candidates
-    assert "UC1::call:1#result.registrationId" not in candidates
-    assert "UC1::call:1#studentId" in candidates
-    assert "UC1::call:1#result.studentId" in candidates
+    assert "call-source#param-offering" in candidates
+    assert "call-source#result.field-registration" in candidates
+    assert "call-source#param-student" in candidates
+    assert "call-source#result.field-student" in candidates
     assert "UC1:precondition:1#studentId" not in candidates
 
     no_value_model = {"Classes": [], "DataTypes": []}
@@ -1028,3 +1145,213 @@ def test_binding_candidates_require_matching_names_for_ancestor_uuid_values():
         no_value_model, index.use_case("UC1"), None, False, nested_calls, 3,
         nested_target, nested_operations,
     ) == []
+
+
+def test_control_to_entity_renamed_singleton_uses_finite_selection(monkeypatch):
+    """A renamed Control value reaches Entity only after a bounded choice."""
+
+    specification = single_use_case()
+    specification["use_case_specs"][0]["preconditions"] = [
+        "Authenticated StudentIdentity is available in trusted request context."
+    ]
+    specification["use_case_specs"][0]["public_contract"] = {
+        "identity_obligations": [{
+            "obligation_ref": "ob-student", "subject_ref": "sub-student",
+            "subject": "display-only", "obligation": "authenticate",
+            "requirement_ids": ["REQ-1"],
+        }],
+        "required_values": [],
+    }
+    index = build_scenario_index(specification)
+    model = BCEModel.model_validate({
+        "Classes": [
+            {
+                "className": "RegistrationBoundary",
+                "stereotype": "Boundary",
+                "use_case_ids": ["UC1"],
+                "operations": [{
+                    "operationId": "ignored", "name": "submit", "parameters": [],
+                    "returnType": "void", "stepRefs": ["UC1:main:1"],
+                }],
+            },
+            {
+                "className": "RegistrationControl",
+                "stereotype": "Control",
+                "use_case_ids": ["UC1"],
+                "operations": [{
+                    "operationId": "ignored", "name": "swap",
+                        "parameters": [{
+                            "name": "currentStudent", "type": "StudentIdentity",
+                            "obligationRef": "ob-student",
+                        }],
+                    "returnType": "void", "stepRefs": ["UC1:main:2"],
+                }],
+            },
+            {
+                "className": "Registration",
+                "stereotype": "Entity",
+                "use_case_ids": ["UC1"],
+                "operations": [{
+                    "operationId": "ignored", "name": "swapOffering",
+                    "parameters": [{"name": "student", "type": "StudentIdentity"}],
+                    "returnType": "void", "stepRefs": ["UC1:main:2"],
+                }],
+            },
+        ],
+        "DataTypes": [{
+            "name": "StudentIdentity", "kind": "valueObject", "fields": ["token : String"],
+        }], "Relationships": [], "Collaborations": [],
+    })
+    model = materialize_pre_collaboration_refs(None, model)
+    plan = CallPlanProposal.model_validate({"calls": [
+        {"receiverOperationId": "RegistrationBoundary::submit()", "parentCallIndex": None},
+        {
+            "receiverOperationId": "RegistrationControl::swap(currentStudent:StudentIdentity)",
+            "parentCallIndex": 1,
+        },
+        {
+            "receiverOperationId": "Registration::swapOffering(student:StudentIdentity)",
+            "parentCallIndex": 2,
+        },
+    ]})
+
+    def select_source(_use_case, ambiguous, _parameter_types, **kwargs):
+        location = "UC1::call:3#student"
+        source_call = kwargs["calls"][1]
+        source_parameter = model.Classes[1].operations[0].parameters[0]
+        source_ref = f"{source_call['stableId']}#{source_parameter.stable_ref}"
+        assert ambiguous[location] == [source_ref]
+        assert source_ref in ambiguous[location]
+        assert location in kwargs["semantic_locations"]
+        return {key: values[0] for key, values in ambiguous.items()}
+
+    monkeypatch.setattr(collaboration, "select_ambiguous_bindings", select_source)
+    result = collaboration.materialize(index, model, index.use_case("UC1"), plan)
+
+    assert result.calls[2].argument_bindings[0].source_ref == (
+        f"{result.calls[1].stable_id}#{model.Classes[1].operations[0].parameters[0].stable_ref}"
+    )
+
+
+def test_binding_candidates_ignore_stale_ancestor_operation_during_validation():
+    """A replaced operation is an invalid collaboration, not a KeyError."""
+
+    index = build_scenario_index(single_use_case())
+    calls = [
+        {
+            "callId": "UC1::call:1", "parentCallId": None,
+            "receiverOperationId": "OldControl::swap(oldId:String)",
+        },
+        {
+            "callId": "UC1::call:2", "parentCallId": "UC1::call:1",
+            "receiverOperationId": "Registration::swap(registrationId:String)",
+        },
+    ]
+    assert collaboration._binding_candidates(
+        {"Classes": [], "DataTypes": []},
+        index.use_case("UC1"),
+        actor_step=None,
+        is_root=False,
+        calls=calls,
+        call_index=1,
+        parameter={"name": "registrationId", "type": "String"},
+        operations={
+            "Registration::swap(registrationId:String)": {
+                "parameters": [{"name": "registrationId", "type": "String"}],
+                "returnType": "void",
+            },
+        },
+    ) == []
+
+
+def test_stable_source_refs_do_not_change_when_parameter_names_change():
+    index = build_scenario_index(single_use_case())
+    calls = [{
+        "callId": "UC1::call:1", "stableId": "call-stable-1",
+        "receiverOperationId": "Boundary::send(value:String)",
+        "parentCallId": None,
+    }, {
+        "callId": "UC1::call:2", "stableId": "call-stable-2",
+        "receiverOperationId": "Control::receive(other:String)",
+        "parentCallId": "UC1::call:1",
+    }]
+    source_parameter = {"name": "value", "type": "String", "stableRef": "param-stable-1"}
+    target_parameter = {"name": "other", "type": "String", "stableRef": "param-stable-2"}
+    operations = {
+        "Boundary::send(value:String)": {
+            "stereotype": "boundary", "parameters": [source_parameter],
+        },
+        "Control::receive(other:String)": {
+            "stereotype": "control", "parameters": [target_parameter],
+        },
+    }
+    candidates = lambda: collaboration._binding_candidates(
+        {"Classes": [], "DataTypes": []}, index.use_case("UC1"), None, False,
+        calls, 1, target_parameter, operations,
+    )
+    before = candidates()
+    source_parameter["name"] = "renamedValue"
+    target_parameter["name"] = "renamedTarget"
+
+    assert before == candidates() == ["call-stable-1#param-stable-1"]
+
+
+def test_collaboration_validator_rejects_wrong_stable_field_ref():
+    index = build_scenario_index(single_use_case())
+    model = BCEModel.model_validate({
+        "Classes": [{
+            "className": "RequestBoundary", "stereotype": "Boundary",
+            "stableId": "class-boundary", "use_case_ids": ["UC1"],
+            "operations": [{
+                "operationId": "ignored", "stableId": "operation-boundary",
+                "name": "send", "parameters": [{
+                    "name": "request", "type": "RequestData", "stableRef": "param-request",
+                }], "returnType": "void", "stepRefs": ["UC1:main:1"],
+            }],
+        }, {
+            "className": "RequestControl", "stereotype": "Control",
+            "stableId": "class-control", "use_case_ids": ["UC1"],
+            "operations": [{
+                "operationId": "ignored", "stableId": "operation-control",
+                "name": "consume", "parameters": [{
+                    "name": "payload", "type": "String", "stableRef": "param-payload",
+                }], "returnType": "void", "stepRefs": ["UC1:main:2"],
+            }],
+        }],
+        "DataTypes": [{
+            "name": "RequestData", "stableId": "dtype-request",
+            "kind": "valueObject", "fields": ["payload : String"],
+            "fieldRefs": ["field-payload"],
+        }],
+        "Relationships": [], "Collaborations": [],
+    })
+    boundary_op, control_op = [
+        operation for owner in model.Classes for operation in owner.operations
+    ]
+    collaboration_model = {
+        "collaborationId": "UC1", "useCaseIds": ["UC1"], "entryActor": "Member",
+        "calls": [{
+            "callId": "UC1::call:1", "stableId": "call-stable-boundary",
+            "receiverOperationId": boundary_op.operation_id,
+            "stepRefs": ["UC1:main:1"],
+            "argumentBindings": [{
+                "parameter": "request", "sourceRef": "UC1:main:1#param-request",
+            }],
+        }, {
+            "callId": "UC1::call:2", "stableId": "call-stable-control",
+            "parentCallId": "UC1::call:1",
+            "receiverOperationId": control_op.operation_id,
+            "stepRefs": ["UC1:main:2"],
+            "argumentBindings": [{
+                "parameter": "payload",
+                "sourceRef": "call-stable-boundary#param-request.field-wrong",
+            }],
+        }],
+    }
+    findings = _collaboration_bindings(
+        collaboration_model,
+        CollaborationContext(index, model.model_dump(by_alias=True), index.use_case("UC1")),
+    )
+
+    assert len(findings) == 1
+    assert findings[0].location == "UC1::call:2#payload"

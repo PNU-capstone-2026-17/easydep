@@ -1,6 +1,7 @@
 """Deterministic sequence projections from accepted class designs."""
 from __future__ import annotations
 
+import json
 from copy import deepcopy
 
 from app.design.schemas.class_model import BCEModel
@@ -12,6 +13,14 @@ from app.design.services.class_diagram.proposals import (
     InventoryProposal,
     OperationFragment,
 )
+
+
+def _first_binding_choice(messages, _schema):
+    payload = json.loads(messages[-1]["content"])
+    return {
+        choice["choice"]: choice["candidates"][0]
+        for choice in payload["choices"]
+    }
 from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.sequence_diagram.methods import is_return_value_label
 from app.design.services.sequence_diagram.projection import (
@@ -19,6 +28,8 @@ from app.design.services.sequence_diagram.projection import (
     sequence_findings,
 )
 from app.design.services.sequence_diagram.validation import (
+    sequence_argument_data_flow,
+    sequence_fragment_condition_consistency,
     validate_sequence_model,
 )
 from tests.class_design_fixtures import (
@@ -43,6 +54,8 @@ def _accepted_model(monkeypatch):
             return operation_fragment()
         if issubclass(schema, CallPlanProposal):
             return call_plan()
+        if schema.__name__ == "BindingChoices":
+            return _first_binding_choice(_messages, schema)
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
@@ -55,6 +68,8 @@ def _accepted_multiple_root_model(monkeypatch):
             return inventory_proposal()
         if schema is CombinedUnitProposal:
             return multiple_root_combined_proposal()
+        if schema.__name__ == "BindingChoices":
+            return _first_binding_choice(_messages, schema)
         raise AssertionError(schema)
 
     patch_class_design_parser(monkeypatch, fake_parse)
@@ -119,14 +134,14 @@ def test_multiple_roots_project_in_order_to_one_use_case_diagram(monkeypatch):
         "condition": "The member requests an alternate receipt",
         "handling_steps": [{
             "sub_step": "3a1",
-            "subject_ref": "System",
+            "subject_ref": "system",
             "sentence": "System prepares the alternate receipt.",
         }],
     }]
     payload = class_model.model_dump(by_alias=True)
     calls = payload["Collaborations"][0]["calls"]
-    calls[2]["stepRefs"] = ["UC1:extension:3a:3a1"]
-    calls[3]["stepRefs"] = ["UC1:main:4", "UC1:extension:3a:3a1"]
+    calls[2]["stepRefs"] = ["UC1:extension:3:1:3a1"]
+    calls[3]["stepRefs"] = ["UC1:main:4", "UC1:extension:3:1:3a1"]
     conditional = project_sequence_model(
         build_scenario_index(scenario), BCEModel.model_validate(payload),
     )
@@ -135,8 +150,46 @@ def test_multiple_roots_project_in_order_to_one_use_case_diagram(monkeypatch):
         if message.call_id == "UC1::call:4"
     )
     assert [fragment.id for fragment in inherited.fragments] == [
-        "UC1:extension:3a"
+        "UC1:extension:3:1"
     ]
+    assert inherited.fragments[0].condition_ref == "UC1:extension:3:1"
+
+
+def test_source_condition_ref_is_structural_and_condition_text_is_display_only(monkeypatch):
+    class_model = _accepted_multiple_root_model(monkeypatch)
+    scenario = single_use_case()
+    scenario["use_case_specs"][0]["extensions"] = [{
+        "label": "3a",
+        "branch_step": 3,
+        "condition": "The member requests an alternate receipt",
+        "handling_steps": [{
+            "sub_step": "3a1",
+            "subject_ref": "system",
+            "sentence": "System prepares the alternate receipt.",
+        }],
+    }]
+    payload = class_model.model_dump(by_alias=True)
+    calls = payload["Collaborations"][0]["calls"]
+    calls[2]["stepRefs"] = ["UC1:extension:3:1:3a1"]
+    calls[3]["stepRefs"] = ["UC1:main:4", "UC1:extension:3:1:3a1"]
+    sequence = project_sequence_model(
+        build_scenario_index(scenario), BCEModel.model_validate(payload),
+    ).model_dump()
+    state = {"usecase_spec": scenario}
+    call = next(
+        message for message in sequence["Diagrams"][0]["Messages"]
+        if message.get("call_id") == "UC1::call:4"
+    )
+    fragment = call["fragments"][0]
+    assert fragment["condition_ref"] == "UC1:extension:3:1"
+
+    fragment["condition"] = "The member asks for another kind of receipt"
+    assert sequence_fragment_condition_consistency(sequence["Diagrams"][0], state) == []
+
+    fragment["condition_ref"] = "UC1:extension:3:2"
+    assert sequence_fragment_condition_consistency(sequence["Diagrams"][0], state)
+    fragment.pop("condition_ref")
+    assert sequence_fragment_condition_consistency(sequence["Diagrams"][0], state)
 
 
 def test_nested_generic_is_a_valid_return_label():
@@ -171,3 +224,25 @@ def test_collection_validation_rejects_duplicate_call_ids(monkeypatch):
     assert "sequence.call-return-links" in {
         finding.rule_id for finding in report.findings
     }
+
+
+def test_projection_preserves_stable_source_refs_and_rejects_wrong_ref(monkeypatch):
+    sequence, state = _projected_contract(monkeypatch)
+    arguments = [
+        argument
+        for message in sequence["Diagrams"][0]["Messages"]
+        for argument in message.get("arguments", [])
+    ]
+    assert arguments
+    source_ref = arguments[0]["source_ref"]
+    source_id, _, _ = source_ref.partition("#")
+    stable_ids = {
+        call["stableId"]
+        for collaboration in state["extracted_bce_classes"]["Collaborations"]
+        for call in collaboration["calls"]
+    }
+    assert source_id in stable_ids or source_id.startswith("UC1:")
+
+    arguments[0]["source_ref"] = f"{source_id}#unknown-stable-ref"
+    findings = sequence_argument_data_flow(sequence["Diagrams"][0], state)
+    assert any(finding.rule_id == "sequence.argument-data-flow" for finding in findings)

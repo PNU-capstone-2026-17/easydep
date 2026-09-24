@@ -52,6 +52,7 @@ def _actor_result() -> ActorResult:
     return ActorResult(actors=[
         Actor(
             name="Member",
+            actor_ref="ACT1",
             description="A registered service member.",
             sourceRefs=["R1"],
         )
@@ -62,6 +63,7 @@ def _use_case_result(*, traced: bool = True) -> UseCaseResult:
     return UseCaseResult(use_cases=[
         UseCase(
             name="Submit request",
+            primary_actor_ref="ACT1",
             primary_actor="Member",
             goal="submit a service request",
             requirement_ids=["R1"] if traced else [],
@@ -76,6 +78,7 @@ def _clean_spec(trigger: str = "Member submits a request") -> UseCaseSpec:
         main_scenario=[
             MainScenarioStep(
                 step_number=1,
+                subject_ref="ACT1",
                 sentence="Member submits a service request.",
                 covered_req_ids=["R1"],
             )
@@ -90,6 +93,7 @@ def _use_case_item(identifier: str, name: str) -> dict[str, object]:
     return {
         "id": identifier,
         "name": name,
+        "primary_actor_ref": "ACT1",
         "primary_actor": "Member",
         "supporting_actors": [],
         "level": "user_goal",
@@ -145,13 +149,17 @@ def test_refinement_public_services_accept_typed_proposals_and_preserve_patch_sh
 
 
 def test_actor_and_use_case_public_services_preserve_calls_and_accepted_json() -> None:
-    """actor와 use-case proposal은 정상 입력에서 각각 1회만 호출된다."""
+    """actor/use-case proposal과 requirement trace가 공개 계약 순서로 호출된다."""
 
     schemas: list[type] = []
 
     def propose(schema, _messages):
         schemas.append(schema)
-        return _actor_result() if schema is ActorResult else _use_case_result()
+        if schema is ActorResult:
+            return _actor_result()
+        if schema is UseCaseResult:
+            return _use_case_result()
+        raise AssertionError(schema)
 
     classified = [{"id": "R1", "text": "Members submit requests.", "type": "FR"}]
     actor_patch = use_cases.identify_actors(
@@ -164,9 +172,11 @@ def test_actor_and_use_case_public_services_preserve_calls_and_accepted_json() -
     assert schemas == [ActorResult, UseCaseResult]
     assert actor_patch == {
         "actors": [{
+            "actor_ref": "ACT1",
             "name": "Member",
             "description": "A registered service member.",
             "parent_actor": None,
+            "parent_actor_ref": None,
             "source_refs": ["R1"],
         }],
         "phase": "actors",
@@ -174,6 +184,8 @@ def test_actor_and_use_case_public_services_preserve_calls_and_accepted_json() -
     assert use_case_patch["use_cases"] == [{
         "id": "UC1",
         "name": "Submit request",
+        "primary_actor_ref": "ACT1",
+        "supporting_actor_refs": [],
         "primary_actor": "Member",
         "supporting_actors": [],
         "level": "user_goal",
@@ -194,17 +206,17 @@ def test_step2_trace_audits_overlap_and_propagate_the_run_context(monkeypatch) -
     def propose(schema, _messages):
         if schema is UseCaseResult:
             return UseCaseResult(use_cases=[
-                UseCase(name="Browse", primary_actor="Member", goal="browse"),
-                UseCase(name="Enroll", primary_actor="Member", goal="enroll"),
+                UseCase(name="Browse", primary_actor_ref="ACT1", primary_actor="Member", goal="browse"),
+                UseCase(name="Enroll", primary_actor_ref="ACT1", primary_actor="Member", goal="enroll"),
             ])
         with lock:
             index = len(audited)
-            requirement_id, use_case_name = (("R1", "Browse"), ("R2", "Enroll"))[index]
+            requirement_id, use_case_ref = (("R1", "UC1"), ("R2", "UC2"))[index]
             audited.append((requirement_id, telemetry.current_run()))
         barrier.wait()
         return schema.model_validate({
             "requirement_id": requirement_id,
-            "realized_by_use_case_names": [use_case_name],
+            "realized_by_use_case_refs": [use_case_ref],
         })
 
     state: AgentState = {
@@ -213,6 +225,7 @@ def test_step2_trace_audits_overlap_and_propagate_the_run_context(monkeypatch) -
             {"id": "R2", "text": "Members enroll in offerings.", "type": "FR"},
         ],
         "actors": [{
+            "actor_ref": "ACT1",
             "name": "Member",
             "description": "member",
             "parent_actor": None,
@@ -297,6 +310,7 @@ def test_relationship_repair_is_one_bounded_selection_rerun() -> None:
 
     state = {
         "actors": [{
+            "actor_ref": "ACT1",
             "name": "Member",
             "description": "member",
             "parent_actor": None,
@@ -312,6 +326,7 @@ def test_relationship_repair_is_one_bounded_selection_rerun() -> None:
                 "use_case_id": identifier,
                 "main_scenario": [{
                     "step_number": index,
+                    "subject_ref": "system",
                     "sentence": "System validates the request.",
                     "covered_req_ids": ["R1"],
                 }],

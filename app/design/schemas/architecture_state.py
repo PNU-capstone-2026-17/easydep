@@ -44,6 +44,8 @@ class ArchitectureState(TypedDict, total=False):
     # One-shot guidance for retrying a failed class-generation checkpoint. The
     # extract node clears it in the same checkpoint update that accepts a model.
     class_binding_repair_guidance: str
+    # One-shot structured answer to a class argument-source question.
+    class_binding_source_decision: dict[str, Any]
     class_diagram_puml: str
     class_diagram_syntax_valid: bool
     class_diagram_syntax_errors: list[str]

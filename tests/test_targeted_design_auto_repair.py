@@ -5,7 +5,7 @@ from dataclasses import replace
 from app.design import service
 from app.design.graphs import subgraphs
 from app.design.knowledge.detectors import Finding
-from app.design.nodes.artifact import DesignArtifactSpec, check_node
+from app.design.nodes.artifact import DesignArtifactSpec, check_node, merge_model
 from app.validation import stable_digest
 
 
@@ -14,6 +14,125 @@ def _finding(model, _state):
     if item.get("broken"):
         return [Finding("api.contract", "contract mismatch", "create")]
     return []
+
+
+def test_batch_aware_repair_receives_the_exact_repair_batch() -> None:
+    received: list[list[Finding]] = []
+
+    spec = DesignArtifactSpec(
+        stage="api_spec",
+        model_key="api_spec_model",
+        content_key="api_spec",
+        valid_key="api_spec_syntax_valid",
+        errors_key="api_spec_syntax_errors",
+        feedback_key="api_spec_feedback",
+        empty={},
+        extract=lambda _state: {},
+        revise=lambda model, _feedback, _state, _targets: model,
+        render=str,
+        validate=lambda _content: {"syntax_valid": True, "syntax_errors": []},
+        check=lambda model, _state: (
+            [] if model.get("broken")
+            else [Finding("api.contract", "contract mismatch", "create")]
+        ),
+        repair=lambda model, _feedback, _state, _targets: model,
+        repair_batch=lambda model, _feedback, _state, _targets, batch: (
+            received.append(list(batch)) or {**model, "broken": True}
+        ),
+        check_key="api_spec_check",
+    )
+
+    check_node(spec)({"api_spec_model": {"broken": False}})
+
+    assert [[item.rule_id for item in batch] for batch in received] == [["api.contract"]]
+
+
+def test_batch_repair_splits_class_findings_by_mapped_use_case_without_diagrams() -> None:
+    received: list[tuple[set[str], list[str]]] = []
+
+    def check(model, _state):
+        return [
+            Finding("class.public-contract-semantic", "missing contract", use_case_id)
+            for use_case_id, broken in model["broken"].items()
+            if broken
+        ]
+
+    def repair(model, _feedback, _state, targets, batch):
+        received.append((set(targets), [item.location for item in batch]))
+        return {
+            **model,
+            "broken": {
+                use_case_id: False if use_case_id in targets else broken
+                for use_case_id, broken in model["broken"].items()
+            },
+        }
+
+    spec = DesignArtifactSpec(
+        stage="class_diagram",
+        model_key="class_diagram_model",
+        content_key="class_diagram",
+        valid_key="class_diagram_syntax_valid",
+        errors_key="class_diagram_syntax_errors",
+        feedback_key="class_diagram_feedback",
+        empty={},
+        extract=lambda _state: {},
+        revise=lambda model, _feedback, _state, _targets: model,
+        render=str,
+        validate=lambda _content: {"syntax_valid": True, "syntax_errors": []},
+        check=check,
+        repair=lambda model, _feedback, _state, _targets: model,
+        repair_batch=repair,
+        repair_target_mapper=lambda _model, _state, findings: {
+            item.location for item in findings
+        },
+        check_key="class_diagram_check",
+    )
+
+    check_node(spec)({"class_diagram_model": {"broken": {"UC5": True, "UC9": True}}})
+
+    assert received == [({"UC5"}, ["UC5"]), ({"UC9"}, ["UC9"])]
+
+
+def test_batch_repair_keeps_its_operation_change_while_legacy_repair_still_merges() -> None:
+    original = {
+        "Classes": [{"className": "RegistrationControl", "broken": True}],
+        "Collaborations": [{"collaborationId": "UC5"}],
+    }
+    revised = {
+        "Classes": [{"className": "RegistrationControl", "broken": False}],
+        "Collaborations": [{"collaborationId": "UC5"}],
+    }
+    spec = DesignArtifactSpec(
+        stage="class_diagram",
+        model_key="class_diagram_model",
+        content_key="class_diagram",
+        valid_key="class_diagram_syntax_valid",
+        errors_key="class_diagram_syntax_errors",
+        feedback_key="class_diagram_feedback",
+        empty={},
+        extract=lambda _state: {},
+        revise=lambda model, _feedback, _state, _targets: model,
+        render=str,
+        validate=lambda _content: {"syntax_valid": True, "syntax_errors": []},
+        elements={
+            "Classes": lambda item: item["className"],
+            "Collaborations": lambda item: item["collaborationId"],
+        },
+    )
+
+    batch_spec = replace(
+        spec,
+        check=lambda model, _state: [
+            Finding("class.public-contract-semantic", "missing contract", "UC5")
+        ] if model["Classes"][0]["broken"] else [],
+        repair=lambda model, _feedback, _state, _targets: model,
+        repair_batch=lambda *_args: revised,
+        repair_target_mapper=lambda _model, _state, _findings: {"UC5"},
+    )
+    result = check_node(batch_spec)({"class_diagram_model": original})
+
+    assert result["class_diagram_model"]["Classes"] == revised["Classes"]
+    assert merge_model(spec, original, revised, {"UC5"})["Classes"] == original["Classes"]
 
 
 def test_targeted_revision_repairs_only_matching_technical_finding(monkeypatch):

@@ -10,8 +10,12 @@ from app.design.schemas.class_model import BCEModel, Collaboration
 from app.design.services.class_diagram import collaboration, generation, inventory, operations
 from app.design.services.class_diagram import feedback as feedback_stage
 from app.design.services.class_diagram.cache import AcceptedUnitCache
-from app.design.services.class_diagram.identity import reconcile_stable_ids
-from app.design.services.class_diagram.proposals import CallPlanProposal
+from app.design.services.class_diagram.identity import (
+    materialize_pre_collaboration_refs,
+    reconcile_stable_ids,
+)
+from app.design.services.class_diagram.models import AcceptedFragment
+from app.design.services.class_diagram.proposals import CallPlanProposal, FeedbackScope
 from app.design.services.class_diagram.scenario import ScenarioIndex, UseCase, id_key
 from app.design.services.class_diagram.validation.collaboration import (
     COLLABORATION_CHECKS,
@@ -231,7 +235,10 @@ def _complete_collaborations(
 ) -> BCEModel:
     """국소 call-plan 수리부터 결합 유스케이스 교체까지 자동으로 이어 간다."""
 
-    skeleton = BCEModel.model_validate({**_payload(model), "Collaborations": []})
+    skeleton = materialize_pre_collaboration_refs(
+        model,
+        BCEModel.model_validate({**_payload(model), "Collaborations": []}),
+    )
     standalone = _standalone(index)
     accepted = {
         use_case.id: value
@@ -371,6 +378,7 @@ def generate_class_model(
     *,
     cache: AcceptedUnitCache | None = None,
     repair_guidance: str | None = None,
+    binding_source_decision: dict[str, Any] | None = None,
 ) -> BCEModel:
     """inventory 한 번과 유스케이스별 결합 호출로 수락 BCE 모델을 생성한다."""
 
@@ -389,6 +397,7 @@ def generate_class_model(
                 accepted_inventory,
                 cache=cache,
                 repair_guidance=repair_guidance,
+                binding_source_decision=binding_source_decision,
             ),
         ),
         index,
@@ -434,12 +443,20 @@ def revise_class_model(
     targets: AbstractSet[str],
     *,
     cache: AcceptedUnitCache | None = None,
+    operation_use_case_ids: AbstractSet[str] | None = None,
 ) -> BCEModel:
     """피드백이 지정한 inventory·operation·유스케이스 협업만 교체한다."""
 
     if not feedback.strip():
         return current
-    scope = feedback_stage.feedback_scope(index, current, feedback, targets)
+    if operation_use_case_ids is None:
+        scope = feedback_stage.feedback_scope(index, current, feedback, targets)
+    else:
+        selected = set(operation_use_case_ids)
+        known = {use_case.id for use_case in index.use_cases}
+        if not selected or not selected <= known:
+            raise ValueError("Operation repair scope selected an unknown use case.")
+        scope = FeedbackScope(kind="operation", ids=sorted(selected, key=id_key))
     accepted_inventory = feedback_stage.inventory_from_model(current)
     if scope.kind == "inventory":
         revised_inventory = feedback_stage.propose_inventory_revision(
@@ -478,7 +495,10 @@ def revise_class_model(
         # operation fragments and call topology first; only collaborations
         # made invalid by the new inventory enter the existing repair path.
         fragments = feedback_stage.fragments_from_model(index, current)
-        skeleton = operations.compose_fragments(revised_inventory, fragments)
+        skeleton = materialize_pre_collaboration_refs(
+            current, operations.compose_fragments(revised_inventory, fragments),
+            targeted_refs=targets,
+        )
         existing = {item.collaboration_id: item for item in current.Collaborations}
         existing, unresolved = _rematerialize_preserved_collaborations(
             index, current, skeleton, existing, _standalone(index),
@@ -508,12 +528,21 @@ def revise_class_model(
         for use_case_id in sorted(selected_ids, key=id_key):
             use_case = index.use_case(use_case_id)
             others = {key: value for key, value in fragments.items() if key != use_case_id}
+            previous = fragments.get(use_case_id)
+            if previous is not None:
+                others[use_case_id] = AcceptedFragment(
+                    use_case_id=use_case_id,
+                    payload={
+                        "DataTypes": previous.as_payload().get("DataTypes") or [],
+                        "Classes": [],
+                    },
+                )
             base = operations.compose_fragments(accepted_inventory, others)
-            fragments[use_case_id] = operations.checked_fragment(
+            replacement = operations.checked_fragment(
                 index,
                 accepted_inventory,
                 use_case,
-                previous=fragments.get(use_case_id),
+                previous=previous,
                 findings=[f"User feedback: {feedback}"],
                 reserved=operations.reserved_operations(base),
                 reserved_types=list(_payload(base).get("DataTypes") or []),
@@ -521,7 +550,26 @@ def revise_class_model(
                 operation="InteractionOperationFeedback",
                 cache=cache,
             )
-        skeleton = operations.compose_fragments(accepted_inventory, fragments)
+            prior_types = {
+                str(item.get("name") or ""): item
+                for item in (previous.as_payload().get("DataTypes") or []) if isinstance(item, dict)
+            } if previous is not None else {}
+            replacement_payload = replacement.as_payload()
+            replacement_types = {
+                str(item.get("name") or ""): item
+                for item in replacement_payload.get("DataTypes") or [] if isinstance(item, dict)
+            }
+            fragments[use_case_id] = AcceptedFragment(
+                use_case_id=use_case_id,
+                payload={
+                    **replacement_payload,
+                    "DataTypes": list((prior_types | replacement_types).values()),
+                },
+            )
+        composed = operations.compose_fragments(accepted_inventory, fragments)
+        skeleton = materialize_pre_collaboration_refs(
+            current, composed, targeted_refs=targets,
+        )
         operation_ids = {
             operation.operation_id
             for item in skeleton.Classes
@@ -555,7 +603,11 @@ def revise_class_model(
         )
         directive = ""
     else:
-        skeleton = BCEModel.model_validate({**_payload(current), "Collaborations": []})
+        skeleton = materialize_pre_collaboration_refs(
+            current,
+            BCEModel.model_validate({**_payload(current), "Collaborations": []}),
+            targeted_refs=targets,
+        )
         selected_ids = set(scope.ids) or {item.id for item in _standalone(index)}
         selected_use_cases = [
             use_case for use_case in _standalone(index) if use_case.id in selected_ids

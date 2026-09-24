@@ -137,7 +137,7 @@ def test_sequence_bce_flow_rejects_distinct_boundary_to_boundary_call():
     assert "boundary → boundary" in findings[0].message
 
 
-def test_actor_cannot_invoke_boundary_display_operation():
+def test_boundary_direction_is_not_inferred_from_english_operation_name():
     model = {
         "Participants": [
             {"name": "User", "alias": "user", "kind": "actor"},
@@ -150,8 +150,7 @@ def test_actor_cannot_invoke_boundary_display_operation():
 
     findings = sequence_validation.sequence_boundary_operation_direction(model, STATE)
 
-    assert len(findings) == 1
-    assert "출력 오퍼레이션" in findings[0].message
+    assert findings == []
 
 
 def test_persisted_collaboration_defines_boundary_call_direction():
@@ -413,6 +412,35 @@ def test_message_methods_rejects_nonexistent_method():
     assert "deleteOrder" in findings[0].message
 
 
+def test_message_methods_accepts_declared_signature_with_renamed_display_name():
+    model = {
+        "Participants": [
+            {"name": "Order workflow", "alias": "control", "kind": "control", "source_class": "OrderControl"},
+        ],
+        "Messages": [
+            {"source": "boundary", "target": "control", "label": "createOrder(items: List)", "type": "sync"},
+        ],
+    }
+
+    assert sequence_validation.sequence_message_methods(model, STATE) == []
+
+
+def test_message_methods_requires_explicit_class_reference():
+    model = {
+        "Participants": [
+            {"name": "OrderControl", "kind": "control"},
+        ],
+        "Messages": [
+            {"source": "boundary", "target": "OrderControl", "label": "createOrder(items: List)", "type": "sync"},
+        ],
+    }
+
+    findings = sequence_validation.sequence_message_methods(model, STATE)
+    assert len(findings) == 1
+    assert findings[0].rule_id == "sequence.message-labels-match-methods"
+    assert "source_class" in findings[0].message
+
+
 def test_message_methods_rejects_hallucinated_parameter_content():
     """괄호만 온전한 임의 문자열은 클래스의 실제 메서드로 인정하지 않는다."""
     model = {
@@ -590,7 +618,9 @@ def test_usecase_coverage_accepts_explicit_narrative_step_without_method_call():
         }],
     }
 
-    assert sequence_validation.sequence_usecase_coverage(model, state) == []
+    findings = sequence_validation.sequence_usecase_coverage(model, state)
+    assert len(findings) == 1
+    assert "missing stable call_ref or operation_ref" in findings[0].message
 
 
 def test_usecase_coverage_requires_each_traced_operation_family():
@@ -607,13 +637,13 @@ def test_usecase_coverage_requires_each_traced_operation_family():
         },
         "extracted_bce_classes": {"Classes": [
             {"className": "RequestBoundary", "operations": [{
-                "name": "submit", "stepRefs": ["UC1:main:1"],
+                "name": "submit", "operationId": "submit-id", "stableId": "op-submit", "stepRefs": ["UC1:main:1"],
             }]},
             {"className": "RequestControl", "operations": [{
-                "name": "handle", "stepRefs": ["UC1:main:2"],
+                "name": "handle", "operationId": "handle-id", "stableId": "op-handle", "stepRefs": ["UC1:main:2"],
             }]},
             {"className": "Record", "operations": [{
-                "name": "find", "stepRefs": ["UC1:main:2"],
+                "name": "find", "operationId": "find-id", "stableId": "op-find", "stepRefs": ["UC1:main:2"],
             }]},
         ]},
     }
@@ -626,17 +656,17 @@ def test_usecase_coverage_requires_each_traced_operation_family():
             {"name": "Record", "alias": "record", "kind": "entity", "source_class": "Record"},
         ],
         "Messages": [
-            {"source": "actor", "target": "boundary", "type": "sync", "label": "submit()", "step_ids": ["UC1:main:1"]},
-            {"source": "boundary", "target": "control", "type": "sync", "label": "handle()", "step_ids": ["UC1:main:2"]},
+            {"source": "actor", "target": "boundary", "type": "sync", "label": "renamed()", "call_ref": "call-submit", "operation_ref": "op-submit", "step_ids": ["UC1:main:1"]},
+            {"source": "boundary", "target": "control", "type": "sync", "label": "other()", "call_ref": "call-handle", "operation_ref": "op-handle", "step_ids": ["UC1:main:2"]},
         ],
     }
 
     findings = sequence_validation.sequence_usecase_coverage(model, state)
 
-    assert [finding.location for finding in findings] == ["Record::find"]
+    assert [finding.location for finding in findings] == ["op-find"]
     model["Messages"].append({
         "source": "control", "target": "record", "type": "sync",
-        "label": "find()", "step_ids": ["UC1:main:2"],
+        "label": "different label()", "call_ref": "call-find", "operation_ref": "op-find", "step_ids": ["UC1:main:2"],
     })
     assert sequence_validation.sequence_usecase_coverage(model, state) == []
 
@@ -654,11 +684,13 @@ def test_usecase_coverage_uses_persisted_collaboration_calls_as_authority():
             "Classes": [
                 {"className": "RequestBoundary", "operations": [{
                     "operationId": "boundary-submit",
+                    "stableId": "op-submit",
                     "name": "submit",
                     "stepRefs": ["UC1:main:1"],
                 }]},
                 {"className": "Record", "operations": [{
                     "operationId": "record-find",
+                    "stableId": "op-find",
                     "name": "find",
                     "stepRefs": ["UC1:main:2"],
                 }]},
@@ -666,6 +698,7 @@ def test_usecase_coverage_uses_persisted_collaboration_calls_as_authority():
             "Collaborations": [{
                 "useCaseIds": ["UC1"],
                 "calls": [{
+                    "stableId": "call-submit",
                     "receiverOperationId": "boundary-submit",
                     "stepRefs": ["UC1:main:1", "UC1:main:2"],
                 }],
@@ -684,7 +717,9 @@ def test_usecase_coverage_uses_persisted_collaboration_calls_as_authority():
             "source": "actor",
             "target": "boundary",
             "type": "sync",
-            "label": "submit()",
+            "label": "arbitrary label()",
+            "call_ref": "call-submit",
+            "operation_ref": "op-submit",
             "step_ids": ["UC1:main:1", "UC1:main:2"],
         }],
     }
@@ -723,6 +758,29 @@ def test_fragment_condition_rejects_missing_condition():
     findings = sequence_validation.sequence_fragment_condition_consistency(model, STATE)
     assert len(findings) == 1
     assert findings[0].rule_id == "sequence.fragment-condition-consistency"
+
+
+def test_fragment_condition_allows_paraphrased_text_with_same_fragment_ref():
+    model = {
+        "Messages": [
+            {
+                "source": "A", "target": "B", "label": "validate()",
+                "fragments": [{
+                    "id": "UC1:main:2:opt:1", "type": "opt", "branch": "main",
+                    "condition": "payment is authorized",
+                }],
+            },
+            {
+                "source": "B", "target": "C", "label": "persist()",
+                "fragments": [{
+                    "id": "UC1:main:2:opt:1", "type": "opt", "branch": "main",
+                    "condition": "the payment has approval",
+                }],
+            },
+        ],
+    }
+
+    assert sequence_validation.sequence_fragment_condition_consistency(model, STATE) == []
 
 
 # ---------------------------------------------------------------------------
@@ -824,6 +882,8 @@ def test_extension_replaying_its_anchor_operation_is_rejected():
                 "target": "Control",
                 "label": "validate(input:String)",
                 "type": "sync",
+                "call_ref": "call-anchor",
+                "operation_ref": "op-validate",
                 "step_ids": ["UC1:main:1"],
                 "fragments": [],
             },
@@ -832,9 +892,11 @@ def test_extension_replaying_its_anchor_operation_is_rejected():
                 "target": "Control",
                 "label": "validate(input:String)",
                 "type": "sync",
-                "step_ids": ["UC1:extension:1a:1a1"],
+                "call_ref": "call-extension",
+                "operation_ref": "op-validate",
+                "step_ids": ["UC1:extension:1:1:1a1"],
                 "fragments": [{
-                    "id": "invalid",
+                    "id": "UC1:extension:1:1",
                     "type": "opt",
                     "branch": "main",
                     "condition": "invalid input",
@@ -866,7 +928,7 @@ def test_extension_retry_inside_loop_is_not_treated_as_duplicate_operation():
                 "source": "A",
                 "target": "B",
                 "label": "submit()",
-                "step_ids": ["UC1:extension:1a:1a1"],
+                "step_ids": ["UC1:extension:1:1:1a1"],
                 "fragments": [{"id": "retry", "type": "loop", "branch": "main", "condition": "retry"}],
             },
         ],
@@ -1057,7 +1119,7 @@ def test_argument_data_flow_rejects_incompatible_preceding_result():
 
     findings = sequence_validation.sequence_argument_data_flow(model, state)
 
-    assert any("타입 'String'" in finding.message for finding in findings)
+    assert any("stable 호출 원천" in finding.message for finding in findings)
 
 
 def test_argument_data_flow_rejects_result_returned_to_another_participant():
@@ -1095,11 +1157,10 @@ def test_argument_data_flow_rejects_result_returned_to_another_participant():
 
     findings = sequence_validation.sequence_argument_data_flow(model, state)
 
-    assert any("'Control'에게 반환" in finding.message for finding in findings)
-    assert any("'Boundary'가 사용할 수 없음" in finding.message for finding in findings)
+    assert any("stable 호출 원천" in finding.message for finding in findings)
 
 
-def test_argument_data_flow_accepts_precondition_with_matching_parameter_suffix():
+def test_argument_data_flow_rejects_name_based_precondition_reference():
     state = {
         "usecase_spec": {
             "use_case_specs": [{
@@ -1134,7 +1195,10 @@ def test_argument_data_flow_accepts_precondition_with_matching_parameter_suffix(
         },
     ])
 
-    assert sequence_validation.sequence_argument_data_flow(model, state) == []
+    findings = sequence_validation.sequence_argument_data_flow(model, state)
+
+    assert len(findings) == 1
+    assert "stable ref가 아님" in findings[0].message
 
 
 def test_actor_led_step_requires_an_actor_originated_call():
@@ -1144,6 +1208,7 @@ def test_actor_led_step_requires_an_actor_originated_call():
                 "use_case_id": "UC1",
                 "main_scenario": [{
                     "step_number": 4,
+                    "subject_ref": "ACT9",
                     "sentence": "Purchaser browses and buys stock from the web site.",
                 }],
                 "extensions": [],
@@ -1152,7 +1217,7 @@ def test_actor_led_step_requires_an_actor_originated_call():
     }
     model = {
         "Participants": [
-            {"name": "Purchaser", "alias": "actor1", "kind": "actor"},
+            {"name": "Different display name", "alias": "actor1", "kind": "actor", "participant_ref": "ACT9"},
             {"name": "BuyScreen", "alias": "b1", "kind": "boundary"},
             {"name": "PurchaseControl", "alias": "c1", "kind": "control"},
         ],
@@ -1167,6 +1232,18 @@ def test_actor_led_step_requires_an_actor_originated_call():
     assert len(findings) == 1
     assert findings[0].location == "UC1:main:4"
 
+    model["Messages"][0]["source"] = "actor1"
+    assert sequence_validation.sequence_actor_step_involvement(model, state) == []
+    state["usecase_spec"]["use_case_specs"][0]["main_scenario"][0]["subject_ref"] = "ACT8"
+    wrong_ref = sequence_validation.sequence_actor_step_involvement(model, state)
+    assert len(wrong_ref) == 1
+    assert "no actor participant has that participant_ref" in wrong_ref[0].message
+    state["usecase_spec"]["use_case_specs"][0]["main_scenario"][0]["subject_ref"] = "ACT9"
+    model["Participants"][0].pop("participant_ref")
+    missing_ref = sequence_validation.sequence_actor_step_involvement(model, state)
+    assert len(missing_ref) == 1
+    assert "lack participant_ref" in missing_ref[0].message
+
 
 def test_distinct_main_actor_steps_cannot_reuse_one_boundary_operation():
     state = {
@@ -1174,8 +1251,8 @@ def test_distinct_main_actor_steps_cannot_reuse_one_boundary_operation():
             "use_case_specs": [{
                 "use_case_id": "UC1",
                 "main_scenario": [
-                    {"step_number": 1, "sentence": "The user requests a purchase."},
-                    {"step_number": 2, "sentence": "The user confirms the purchase."},
+                    {"step_number": 1, "subject_ref": "ACT1", "sentence": "The user requests a purchase."},
+                    {"step_number": 2, "subject_ref": "ACT1", "sentence": "The user confirms the purchase."},
                 ],
                 "extensions": [],
             }]
@@ -1183,7 +1260,7 @@ def test_distinct_main_actor_steps_cannot_reuse_one_boundary_operation():
     }
     model = {
         "Participants": [
-            {"name": "User", "alias": "user", "kind": "actor"},
+            {"name": "Renamed display name", "alias": "user", "kind": "actor", "participant_ref": "ACT1"},
             {"name": "PurchaseScreen", "alias": "screen", "kind": "boundary"},
         ],
         "Messages": [
@@ -1198,11 +1275,8 @@ def test_distinct_main_actor_steps_cannot_reuse_one_boundary_operation():
         ],
     }
 
-    findings = sequence_validation.sequence_actor_step_involvement(model, state)
-
-    assert len(findings) == 1
-    assert findings[0].location == "UC1:main:2"
-    assert "동일 Boundary 호출" in findings[0].message
+    assert sequence_validation.sequence_actor_step_involvement(model, state) == []
+    assert sequence_validation.sequence_step_operation_distinctness(model, state) == []
 
 
 def test_system_response_trace_is_not_a_second_actor_action():
@@ -1242,8 +1316,8 @@ def test_repeated_actor_step_can_reuse_the_only_boundary_operation():
             "use_case_specs": [{
                 "use_case_id": "UC1",
                 "main_scenario": [
-                    {"step_number": 1, "sentence": "Monitor requests a health probe."},
-                    {"step_number": 2, "sentence": "Monitor requests the health probe again."},
+                    {"step_number": 1, "subject_ref": "ACT2", "sentence": "Monitor requests a health probe."},
+                    {"step_number": 2, "subject_ref": "ACT2", "sentence": "Monitor requests the health probe again."},
                 ],
                 "extensions": [],
             }]
@@ -1254,7 +1328,7 @@ def test_repeated_actor_step_can_reuse_the_only_boundary_operation():
     }
     model = {
         "Participants": [
-            {"name": "Monitor", "alias": "monitor", "kind": "actor"},
+                {"name": "Renamed actor", "alias": "monitor", "kind": "actor", "participant_ref": "ACT2"},
             {
                 "name": "HealthApi",
                 "alias": "health",
@@ -1293,7 +1367,7 @@ def test_flow_order_rejects_reversed_main_step_and_late_extension():
             {"source": "A", "target": "B", "label": "one()", "step_ids": ["UC1:main:1"]},
             {"source": "A", "target": "B", "label": "three()", "step_ids": ["UC1:main:3"]},
             {"source": "A", "target": "B", "label": "two()", "step_ids": ["UC1:main:2"]},
-            {"source": "A", "target": "B", "label": "extension()", "step_ids": ["UC1:extension:1a:1a1"]},
+            {"source": "A", "target": "B", "label": "extension()", "step_ids": ["UC1:extension:1:1:1a1"]},
         ],
     }
 
@@ -1351,12 +1425,12 @@ def test_flow_order_allows_outer_return_after_nested_later_step():
             {
                 "source": "Actor", "target": "Boundary", "type": "sync",
                 "label": "submit()", "call_id": "root",
-                "step_ids": ["UC1:main:1", "UC1:extension:1a:1a1"],
+                "step_ids": ["UC1:main:1", "UC1:extension:1:1:1a1"],
             },
             {
                 "source": "Boundary", "target": "Control", "type": "sync",
                 "label": "alternate()", "call_id": "extension",
-                "step_ids": ["UC1:extension:1a:1a2"],
+                "step_ids": ["UC1:extension:1:1:1a2"],
             },
             {
                 "source": "Boundary", "target": "Control", "type": "sync",
@@ -1400,9 +1474,9 @@ def test_flow_order_allows_extension_nested_in_active_later_main_call():
             {
                 "source": "Control", "target": "Audit", "type": "sync",
                 "label": "recordFailure()", "call_id": "failure",
-                "step_ids": ["UC1:extension:1a:1a1"],
+                "step_ids": ["UC1:extension:1:1:1a1"],
                 "fragments": [{
-                    "id": "UC1:extension:1a", "type": "opt",
+                    "id": "UC1:extension:1:1", "type": "opt",
                     "branch": "main", "condition": "credentials are invalid",
                 }],
             },
@@ -1442,7 +1516,7 @@ def test_flow_order_reports_extension_when_branch_main_step_is_missing():
             "source": "A",
             "target": "B",
             "label": "extension()",
-            "step_ids": ["UC1:extension:2a:2a1"],
+            "step_ids": ["UC1:extension:2:1:2a1"],
         }],
     }
 
@@ -1524,7 +1598,7 @@ def test_fragment_reports_one_root_finding_for_one_sided_alt():
     assert findings[0].location == "failure"
 
 
-def test_fragment_rejects_identical_alt_branch_conditions():
+def test_identical_alt_condition_prose_is_not_semantic_authority():
     model = {
         "Messages": [
             {
@@ -1548,8 +1622,7 @@ def test_fragment_rejects_identical_alt_branch_conditions():
 
     findings = sequence_validation.sequence_fragment_condition_consistency(model, STATE)
 
-    assert len(findings) == 1
-    assert "상호 배타적이지 않음" in findings[0].message
+    assert findings == []
 
 
 def test_extension_trigger_without_main_flow_uses_opt_not_alt():
@@ -1557,8 +1630,10 @@ def test_extension_trigger_without_main_flow_uses_opt_not_alt():
         "usecase_spec": {
             "use_case_specs": [{
                 "use_case_id": "UC1",
+                "main_scenario": [{"step_number": 3}],
                 "extensions": [{
                     "label": "3a",
+                    "branch_step": 3,
                     "condition": "Web failure",
                     "handling_steps": [{"sub_step": "3a1"}, {"sub_step": "3a2"}],
                 }],
@@ -1569,17 +1644,17 @@ def test_extension_trigger_without_main_flow_uses_opt_not_alt():
         "Messages": [
             {
                 "source": "A", "target": "B", "label": "report()",
-                "step_ids": ["UC1:extension:3a:3a1"],
+                "step_ids": ["UC1:extension:3:1:3a1"],
                 "fragments": [{
-                    "id": "ext3a", "type": "alt", "branch": "main",
-                    "condition": "Web failure",
+                    "id": "UC1:extension:3:1", "type": "alt", "branch": "main",
+                    "condition": "presentation wording unrelated to the source condition",
                 }],
             },
             {
                 "source": "B", "target": "A", "label": "retry()",
-                "step_ids": ["UC1:extension:3a:3a2"],
+                "step_ids": ["UC1:extension:3:1:3a2"],
                 "fragments": [{
-                    "id": "ext3a", "type": "alt", "branch": "else",
+                    "id": "UC1:extension:3:1", "type": "alt", "branch": "else",
                     "condition": "Web setup succeeds",
                 }],
             },
@@ -1608,4 +1683,28 @@ def test_unresolved_flow_step_blocks_behavior_generation_and_is_not_coverage_deb
 
     assert sequence_validation.sequence_usecase_coverage(model, state) == []
     findings = sequence_validation.sequence_unresolved_steps(model, state)
-    assert [finding.location for finding in findings] == ["UC1:extension:4a:4a1"]
+    assert [finding.location for finding in findings] == ["UC1:extension:4:1:4a1"]
+
+
+def test_extension_step_refs_are_anchor_based_and_ignore_label_or_condition_text():
+    state = {
+        "usecase_spec": {
+            "use_case_specs": [{
+                "use_case_id": "UC1",
+                "extensions": [{
+                    "label": "3a",
+                    "branch_step": 3,
+                    "condition": "first wording",
+                    "handling_steps": [{"sub_step": "3a1", "sentence": "Handle it."}],
+                }],
+            }],
+        },
+    }
+    original = sequence_validation._known_flow_step_ids(state)
+    assert "UC1:extension:3:1:3a1" in original
+    assert "UC1:extension:3a:3a1" not in original
+
+    extension = state["usecase_spec"]["use_case_specs"][0]["extensions"][0]
+    extension["label"] = "renamed"
+    extension["condition"] = "entirely different wording"
+    assert sequence_validation._known_flow_step_ids(state) == original

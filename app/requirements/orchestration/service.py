@@ -18,11 +18,14 @@ from app.requirements.contracts.request import (
     AnalyzeRequest,
     DeploymentPreferences,
     FeedbackEdit,
+    IdentitySourceAnswer,
     ResourceAnswer,
 )
 from app.requirements.modeling.specifications import (
+    apply_identity_source_overrides,
     check_specs,
     generate_specification,
+    identity_source_question,
 )
 from app.requirements.orchestration.graph import (
     capture_analysis_checkpoint,
@@ -122,6 +125,7 @@ def analyze_requirements(req: AnalyzeRequest) -> dict[str, object]:
             ("edit", req.edit),
             ("resource_answers", req.resource_answers),
             ("resource_answer", req.resource_answer),
+            ("identity_source_answer", req.identity_source_answer),
             (
                 "deployment_preferences",
                 req.deployment_preferences if not req.requirements else None,
@@ -135,13 +139,15 @@ def analyze_requirements(req: AnalyzeRequest) -> dict[str, object]:
         )
 
     # 재개 경로 — 자연어(answer) · 구조화 편집(edit) · 되묻기의 답(resource_answers).
-    resume: str | FeedbackEdit | ResourceAnswer | DeploymentPreferences | None = (
+    resume: str | FeedbackEdit | ResourceAnswer | IdentitySourceAnswer | DeploymentPreferences | None = (
         req.answer if req.answer is not None else req.edit
     )
     if resume is None and req.resource_answers is not None:
         resume = ResourceAnswer(answers=req.resource_answers)
     if resume is None and req.resource_answer is not None:
         resume = req.resource_answer
+    if resume is None and req.identity_source_answer is not None:
+        resume = req.identity_source_answer
     if resume is None and req.deployment_preferences is not None and not req.requirements:
         resume = req.deployment_preferences
     with langsmith_metrics.trace_metadata(
@@ -270,6 +276,28 @@ def _revise_local_spec_from_artifacts(
         actors,
         edit.instruction,
     )
+    persisted_source_overrides: dict[str, dict[str, str]] = {}
+    for prior_spec in specs:
+        if not isinstance(prior_spec, dict):
+            continue
+        prior_contract = prior_spec.get("public_contract")
+        prior_obligations = prior_contract.get("identity_obligations", []) if isinstance(prior_contract, dict) else []
+        for obligation in prior_obligations:
+            if not isinstance(obligation, dict) or obligation.get("obligation") != "identify":
+                continue
+            kind = obligation.get("identity_source_kind")
+            ref = obligation.get("obligation_ref")
+            auth_ref = obligation.get("source_authenticate_obligation_ref")
+            if kind in ("caller_input", "system_result") and isinstance(ref, str):
+                persisted_source_overrides[ref] = {"identity_source_kind": str(kind)}
+            elif kind == "authenticated_context" and isinstance(ref, str) and isinstance(auth_ref, str):
+                persisted_source_overrides[ref] = {
+                    "identity_source_kind": "authenticated_context",
+                    "source_authenticate_obligation_ref": auth_ref,
+                }
+    revised_spec = apply_identity_source_overrides(
+        [revised_spec], persisted_source_overrides
+    )[0]
     revised_specs = list(specs)
     target_index = next(
         index
@@ -298,6 +326,7 @@ def _revise_local_spec_from_artifacts(
         "use_cases": use_cases,
         "use_case_specs": revised_specs,
         "spec_report": check_specs({"use_case_specs": revised_specs})["spec_report"],
+        "identity_source_question": identity_source_question({"use_case_specs": revised_specs}),
         "saved_stages": list(saved),
     }
     if "traceability" in artifact:

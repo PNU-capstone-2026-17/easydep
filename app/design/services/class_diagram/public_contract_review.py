@@ -21,6 +21,8 @@ from app.design.services.class_diagram.cache import (
     record_cache_outcome,
 )
 from app.design.services.class_diagram.scenario import ScenarioIndex, UseCase, text
+from app.design.services.class_diagram.type_system import referenced_type_names
+from app.design.services.class_diagram.trusted_context import trusted_context_sources
 from app.design.services.class_diagram.validation.model import operation_catalog
 from app.design.services.common.structured import parse_structured
 from app.llm_connection import build_llm_connection
@@ -28,18 +30,25 @@ from app.llm_profiles import effective_temperature
 from app.validation import Finding, stable_digest
 
 
-_EVIDENCE_VERSION = "class-public-contract-review/v1"
+_EVIDENCE_VERSION = "class-public-contract-review/v3"
 _PROMPT = """You independently review whether an accepted class-model use-case
 slice closes every public-contract obligation owned by the class stage.  The
 requirements/API/implementation stages own the authentication policy expressed
 by identity obligations of kind authenticate; do not require a class operation
 or collaboration mapping for that policy precondition.  Do not accept a claim merely
-because a DTO, principal, or method has a similar name.  For every obligation,
-cite the accepted operation and collaboration call that realize it; cite a
-parameter or declared field when that is the evidence for the value/identity.
+because a DTO, principal, or method has a similar name. For every obligation,
+cite operationRef (the operation's stableId), its operationId, and callRef (the
+call's stableId); cite parameterRef (the parameter's stableRef) and DataType
+fieldRef when those declarations are evidence. A fieldRef must belong to the
+concrete return or input parameter type cited by that mapping.
 For required_values with usage control or both, cite the Control call that receives
 the value, its exact parameter, and that call's argument binding. For usage result
 or both, cite a Control operation with a concrete non-void return type.
+For identify identity obligations, cite a Control parameter and its exact argument
+binding. The obligation's identity_source_kind is authoritative: authenticated_context
+must bind context#<source_authenticate_obligation_ref>; caller_input must bind a
+canonical actor input; system_result must bind a prior accepted call result. An
+unresolved source cannot pass. Never infer provenance from names or rationale.
 If the supplied model does not make the connection clear, return fail or
 ambiguous with one precise reason.  Never invent IDs, fields, operations, or
 calls.  Return only the response schema."""
@@ -48,11 +57,11 @@ calls.  Return only the response schema."""
 class _ReviewMapping(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
     obligation_id: str = Field(alias="obligationId", min_length=1)
+    operation_ref: str = Field(alias="operationRef", min_length=1)
     operation_id: str = Field(alias="operationId", min_length=1)
-    call_id: str = Field(alias="callId", min_length=1)
-    parameter_name: str | None = Field(default=None, alias="parameterName")
-    field_owner: str | None = Field(default=None, alias="fieldOwner")
-    field_name: str | None = Field(default=None, alias="fieldName")
+    call_ref: str = Field(alias="callRef", min_length=1)
+    parameter_ref: str | None = Field(default=None, alias="parameterRef")
+    field_ref: str | None = Field(default=None, alias="fieldRef")
     rationale: str = Field(min_length=1)
 
 
@@ -87,19 +96,16 @@ def _obligations(use_case: UseCase) -> list[dict[str, Any]]:
     return result
 
 
-def _fields(model: dict[str, Any]) -> dict[str, set[str]]:
-    result: dict[str, set[str]] = {}
-    for owner in model.get("Classes") or []:
+def _fields(model: dict[str, Any]) -> dict[str, dict[str, str]]:
+    result: dict[str, dict[str, str]] = {}
+    for owner in [*(model.get("Classes") or []), *(model.get("DataTypes") or [])]:
         if not isinstance(owner, Mapping):
             continue
-        name = text(owner.get("className"))
-        declared: set[str] = set()
-        for field in owner.get("fields") or []:
-            raw = text(field)
-            field_name, _separator, _field_type = raw.partition(":")
-            if field_name.strip():
-                declared.add(field_name.strip())
-        result[name] = declared
+        name = text(owner.get("className") or owner.get("name"))
+        declared = {text(ref): text(field).partition(":")[2].strip()
+                    for field, ref in zip(owner.get("fields") or [], owner.get("fieldRefs") or []) if text(ref)}
+        if name and declared:
+            result[name] = declared
     return result
 
 
@@ -116,12 +122,55 @@ def _slice(model: dict[str, Any], use_case: UseCase) -> dict[str, Any]:
         ]
         if operations:
             classes.append({"className": text(owner.get("className")), "operations": operations})
+    type_expressions = [text(parameter.get("type")) for owner in classes for operation in owner["operations"]
+                        for parameter in operation.get("parameters") or [] if isinstance(parameter, Mapping)]
+    type_expressions.extend(text(operation.get("returnType")) for owner in classes for operation in owner["operations"])
+    used_types = set().union(*(referenced_type_names(item) for item in type_expressions)) if type_expressions else set()
+    data_types = [dict(item) for item in model.get("DataTypes") or []
+                  if isinstance(item, Mapping) and text(item.get("name")) in used_types]
     collaboration = next(
         (dict(item) for item in model.get("Collaborations") or []
          if isinstance(item, Mapping) and text(item.get("collaborationId")) == use_case.id),
         {},
     )
-    return {"Classes": classes, "Collaboration": collaboration}
+    return {"Classes": classes, "DataTypes": data_types, "Collaboration": collaboration}
+
+
+def _actor_input_sources(model: dict[str, Any], use_case: UseCase) -> set[str]:
+    """Stable input provenance rooted at this UC's accepted Boundary entries."""
+    collaboration = next((item for item in model.get("Collaborations") or []
+                          if isinstance(item, Mapping) and text(item.get("collaborationId")) == use_case.id), {})
+    operations = operation_catalog(model)
+    sources: set[str] = set()
+    for call in collaboration.get("calls") or []:
+        if not isinstance(call, Mapping) or text(call.get("parentCallId")):
+            continue
+        operation = operations.get(text(call.get("receiverOperationId")))
+        if not operation or text(operation.get("stereotype")).casefold() != "boundary":
+            continue
+        for parameter in operation.get("parameters") or []:
+            if not isinstance(parameter, Mapping):
+                continue
+            ref = text(parameter.get("stableRef"))
+            if not ref:
+                continue
+            for step_ref in call.get("stepRefs") or []:
+                if text(step_ref).startswith(f"{use_case.id}:"):
+                    sources.add(f"{text(step_ref)}#{ref}")
+            if text(call.get("stableId")):
+                sources.add(f"{text(call.get('stableId'))}#{ref}")
+    return sources
+
+
+def _prior_result_source(source_ref: str, calls: dict[str, Any], target_ref: str, operations: dict[str, dict[str, Any]]) -> bool:
+    source_call_ref, separator, suffix = source_ref.partition("#")
+    if not separator or suffix not in {"result", "result.unwrap"}:
+        return False
+    ordered = list(calls)
+    if source_call_ref not in ordered or target_ref not in ordered or ordered.index(source_call_ref) >= ordered.index(target_ref):
+        return False
+    operation = operations.get(text(calls[source_call_ref].get("receiverOperationId")))
+    return bool(operation and text(operation.get("returnType")) and text(operation.get("returnType")).casefold() != "void")
 
 
 def _review_key(index: ScenarioIndex, model: dict[str, Any], use_case: UseCase) -> str:
@@ -137,12 +186,42 @@ def _review_key(index: ScenarioIndex, model: dict[str, Any], use_case: UseCase) 
     )
 
 
+def _review_payload(index: ScenarioIndex, model: dict[str, Any], use_case: UseCase) -> dict[str, Any]:
+    """The finite reviewer input, shared unchanged by its one correction pass."""
+    del index  # The use-case slice is already fully determined by model and use_case.
+    return {
+        "useCaseId": use_case.id,
+        "publicContractObligations": _obligations(use_case),
+        "acceptedFragmentAndCollaboration": _slice(model, use_case),
+    }
+
+
 def _review_one(index: ScenarioIndex, model: dict[str, Any], use_case: UseCase) -> _ReviewResponse:
-    payload = {"useCaseId": use_case.id, "publicContractObligations": _obligations(use_case), "acceptedFragmentAndCollaboration": _slice(model, use_case)}
+    payload = _review_payload(index, model, use_case)
     parsed = parse_structured(
         [{"role": "system", "content": _PROMPT}, {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
         _ReviewResponse, operation="ClassPublicContractReview",
         metadata={"useCaseId": use_case.id, "executionSlice": use_case.id},
+    )
+    return _ReviewResponse.model_validate(parsed)
+
+
+def _correct_review_one(
+    index: ScenarioIndex, model: dict[str, Any], use_case: UseCase,
+    previous: _ReviewResponse, diagnostic: str,
+) -> _ReviewResponse:
+    """Make one bounded evidence correction; the verifier remains authoritative."""
+    payload = _review_payload(index, model, use_case) | {
+        "previousResponse": previous.model_dump(by_alias=True),
+        "validatorDiagnostic": diagnostic,
+    }
+    parsed = parse_structured(
+        [
+            {"role": "system", "content": _PROMPT + "\nYour previous response failed the deterministic validator. Correct only its evidence against the same supplied finite slice and return the response schema."},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ],
+        _ReviewResponse, operation="ClassPublicContractReview",
+        metadata={"useCaseId": use_case.id, "executionSlice": use_case.id, "correction": True},
     )
     return _ReviewResponse.model_validate(parsed)
 
@@ -155,43 +234,88 @@ def _verify_response(model: dict[str, Any], use_case: UseCase, response: _Review
     if set(mapped) != expected or len(mapped) != len(set(mapped)):
         return "The reviewer did not map every public-contract obligation exactly once."
     operations = operation_catalog(model)
+    operations_by_ref = {
+        text(operation.get("stableId")): operation
+        for owner in model.get("Classes") or [] if isinstance(owner, Mapping)
+        for operation in owner.get("operations") or [] if isinstance(operation, Mapping)
+        if text(operation.get("stableId"))
+    }
     collaboration = next((item for item in model.get("Collaborations") or [] if isinstance(item, Mapping) and text(item.get("collaborationId")) == use_case.id), {})
-    calls = {text(item.get("callId")): item for item in collaboration.get("calls") or [] if isinstance(item, Mapping)}
+    calls = {text(item.get("stableId")): item for item in collaboration.get("calls") or [] if isinstance(item, Mapping)}
     fields = _fields(model)
     obligations = {item["obligationId"]: item for item in _obligations(use_case)}
     for mapping in response.mappings:
+        stable_operation = operations_by_ref.get(mapping.operation_ref)
         operation = operations.get(mapping.operation_id)
-        if operation is None:
-            return f"Reviewer cited unknown operation '{mapping.operation_id}'."
-        call = calls.get(mapping.call_id)
+        if (stable_operation is None or operation is None
+                or text(stable_operation.get("operationId")) != mapping.operation_id
+                or text(operation.get("stableId")) != mapping.operation_ref):
+            return f"Reviewer operationRef '{mapping.operation_ref}' does not identify operationId '{mapping.operation_id}'."
+        call = calls.get(mapping.call_ref)
         if call is None or text(call.get("receiverOperationId")) != mapping.operation_id:
-            return f"Reviewer cited call '{mapping.call_id}' that does not invoke '{mapping.operation_id}'."
-        if mapping.parameter_name is not None and mapping.parameter_name not in {text(item.get("name")) for item in operation.get("parameters") or [] if isinstance(item, Mapping)}:
-            return f"Reviewer cited missing parameter '{mapping.parameter_name}' on '{mapping.operation_id}'."
-        if (mapping.field_owner is None) != (mapping.field_name is None):
-            return "Reviewer field evidence must include both owner and field name."
-        if mapping.field_owner is not None and mapping.field_name not in fields.get(mapping.field_owner, set()):
-            return f"Reviewer cited missing field '{mapping.field_owner}.{mapping.field_name}'."
+            return f"Reviewer cited callRef '{mapping.call_ref}' that does not invoke '{mapping.operation_id}'."
+        parameters = [item for item in operation.get("parameters") or [] if isinstance(item, Mapping)]
+        cited_parameter = next((item for item in parameters if text(item.get("stableRef")) == mapping.parameter_ref), None) if mapping.parameter_ref else None
+        if mapping.parameter_ref and cited_parameter is None:
+            return f"Reviewer cited unknown parameterRef '{mapping.parameter_ref}' on '{mapping.operation_id}'."
         obligation = obligations[mapping.obligation_id]
+        identity = obligation.get("kind") == "identity" and text(obligation.get("obligation")).casefold() == "identify"
+        if identity:
+            if not mapping.parameter_ref or cited_parameter is None:
+                return f"Identity obligation '{mapping.obligation_id}' must cite its exact parameterRef."
+            if text(operation.get("stereotype")).casefold() != "control":
+                return f"Identity obligation '{mapping.obligation_id}' must map to a Control call."
+            parameter_name = text(cited_parameter.get("name"))
+            binding = next((item for item in call.get("argumentBindings") or []
+                            if isinstance(item, Mapping) and text(item.get("parameter")) == parameter_name), None)
+            if binding is None:
+                return f"Identity obligation '{mapping.obligation_id}' has no exact argument binding for its cited parameter."
+            source_kind = text(obligation.get("identity_source_kind")).casefold()
+            source_ref = text(binding.get("sourceRef"))
+            declared_kind = text(binding.get("sourceKind")).casefold()
+            if source_kind == "unresolved" or source_kind not in {"caller_input", "authenticated_context", "system_result"}:
+                return f"Identity obligation '{mapping.obligation_id}' has unresolved or unsupported identity source; clarification is required."
+            if source_kind == "authenticated_context":
+                auth_ref = text(obligation.get("source_authenticate_obligation_ref"))
+                valid_auth = auth_ref and trusted_context_sources(
+                    use_case, parameter_name, text(cited_parameter.get("type")), obligation_ref=auth_ref,
+                )
+                if not valid_auth or source_ref != f"context#{auth_ref}" or declared_kind != "authenticated_context":
+                    return f"Identity obligation '{mapping.obligation_id}' must bind the exact accepted authenticate context source."
+            elif source_kind == "caller_input":
+                root_inputs = _actor_input_sources(model, use_case)
+                if source_ref not in root_inputs or declared_kind != "use_case_input":
+                    return f"Identity obligation '{mapping.obligation_id}' must bind a canonical actor input source."
+            else:
+                if not _prior_result_source(source_ref, calls, mapping.call_ref, operations) or declared_kind != "earlier_step_result":
+                    return f"Identity obligation '{mapping.obligation_id}' must bind a prior accepted call result."
+        if mapping.field_ref:
+            type_expression = text(cited_parameter.get("type")) if cited_parameter else text(operation.get("returnType"))
+            possible_types = referenced_type_names(type_expression)
+            if not any(mapping.field_ref in fields.get(owner, {}) for owner in possible_types):
+                return f"Reviewer fieldRef '{mapping.field_ref}' does not belong to the cited concrete type."
         usage = text(obligation.get("usage")).casefold() if obligation.get("kind") == "required_value" else ""
         if usage in {"control", "both"}:
             if text(operation.get("stereotype")).casefold() != "control":
                 return f"Required value '{mapping.obligation_id}' must be mapped to a Control call."
-            if mapping.parameter_name is None:
+            if cited_parameter is None:
                 return f"Required value '{mapping.obligation_id}' must cite its Control parameter."
+            parameter_name = text(cited_parameter.get("name"))
             bound_parameters = {
                 text(binding.get("parameter")) for binding in call.get("argumentBindings") or []
                 if isinstance(binding, Mapping)
             }
-            if mapping.parameter_name not in bound_parameters:
-                return f"Required value '{mapping.obligation_id}' is not bound on call '{mapping.call_id}'."
+            if parameter_name not in bound_parameters:
+                return f"Required value '{mapping.obligation_id}' is not bound on callRef '{mapping.call_ref}'."
             if text(obligation.get("source")).casefold() == "authenticated_actor_context":
-                context_refs = {
-                    text(binding.get("sourceRef")) for binding in call.get("argumentBindings") or []
-                    if isinstance(binding, Mapping)
-                    and text(binding.get("parameter")) == mapping.parameter_name
-                }
-                if not any(source_ref.startswith("context#") for source_ref in context_refs):
+                source_ref = text(cited_parameter.get("obligationRef"))
+                binding = next((item for item in call.get("argumentBindings") or []
+                                if isinstance(item, Mapping) and text(item.get("parameter")) == parameter_name), None)
+                accepted = source_ref and trusted_context_sources(
+                    use_case, parameter_name, text(cited_parameter.get("type")), obligation_ref=source_ref,
+                )
+                if (not accepted or not binding or text(binding.get("sourceRef")) != f"context#{source_ref}"
+                        or text(binding.get("sourceKind")).casefold() != "authenticated_context"):
                     return f"Required value '{mapping.obligation_id}' must use trusted context for its Control parameter."
         if usage in {"result", "both"} and (
             text(operation.get("stereotype")).casefold() != "control"
@@ -224,7 +348,13 @@ def review_public_contract_closure(
             continue
         key = _review_key(index, model, use_case)
         def compute() -> dict[str, Any]:
-            return _review_one(index, model, use_case).model_dump(by_alias=True)
+            # Keep an invalid first attempt out of the accepted-unit cache.  At
+            # most one correction is made, and only its final response is kept.
+            response = _review_one(index, model, use_case)
+            diagnostic = _verify_response(model, use_case, response)
+            if diagnostic:
+                response = _correct_review_one(index, model, use_case, response, diagnostic)
+            return response.model_dump(by_alias=True)
         try:
             if cache is None:
                 record_cache_outcome(None, operation="ClassPublicContractReview", unit=use_case.id)

@@ -31,15 +31,19 @@ class RequirementItem(TypedDict):
 
 
 class ActorItem(TypedDict):
+    actor_ref: str
     """도출된 액터(역할). FR에서만 도출한다. SuD(설계 대상 시스템)는 액터가 아님."""
 
     name: str
     description: str
     parent_actor: str | None  # 일반화(상속) 부모 액터, 없으면 None
+    parent_actor_ref: NotRequired[str | None]
     source_refs: list[str]  # Accepted requirement IDs supporting this actor role.
 
 
 class UseCaseItem(TypedDict):
+    primary_actor_ref: str
+    supporting_actor_refs: list[str]
     """도출된 유스케이스 (user-goal 고도). FR 추적성·NFR 제약을 담는다."""
 
     id: str
@@ -61,8 +65,14 @@ class GuaranteeItem(TypedDict):
 
 
 class IdentityObligationItem(TypedDict):
+    obligation_ref: str
+    subject_ref: str
     subject: str
     obligation: Literal["identify", "authenticate", "act_on_behalf"]
+    identity_source_kind: Literal[
+        "caller_input", "authenticated_context", "system_result", "unresolved"
+    ]
+    source_authenticate_obligation_ref: NotRequired[str | None]
     requirement_ids: list[str]
 
 
@@ -187,6 +197,10 @@ class AgentState(TypedDict):
     # envelope there, because only the Workspace owns catalog versions.
     semantic_ambiguity_question: NotRequired[dict]
     semantic_ambiguity_questioned: NotRequired[bool]
+    # Deterministic typed identity-source question and user-selected source overrides,
+    # keyed by minted obligation_ref so local specification regeneration preserves answers.
+    identity_source_question: NotRequired[dict | None]
+    identity_source_overrides: NotRequired[dict[str, dict[str, str]]]
     # 4단계 — 관계 식별(LLM) + 검증 요약 + 다이어그램 렌더(결정론)
     relationships: dict  # {associations, includes, extends, generalizations, derived_use_cases}
     relationship_report: dict  # check_relationships의 관계 검증 집계

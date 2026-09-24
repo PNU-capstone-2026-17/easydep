@@ -19,8 +19,8 @@ from app.requirements.schemas import (
 
 def _actors() -> list[dict]:
     return [
-        {"name": "User", "description": "general", "parent_actor": None},
-        {"name": "Member", "description": "specialized", "parent_actor": "User"},
+        {"actor_ref": "ACT1", "name": "User", "description": "general", "parent_actor": None, "parent_actor_ref": None},
+        {"actor_ref": "ACT2", "name": "Member", "description": "specialized", "parent_actor": "User", "parent_actor_ref": "ACT1"},
     ]
 
 
@@ -34,7 +34,9 @@ def _use_case(
     return {
         "id": identifier,
         "name": name,
+        "primary_actor_ref": {"User": "ACT1", "Member": "ACT2"}.get(actor, "ACT1"),
         "primary_actor": actor,
+        "supporting_actor_refs": [],
         "supporting_actors": [],
         "level": "user_goal",
         "goal": name,
@@ -43,9 +45,18 @@ def _use_case(
 
 
 def _spec(identifier: str, steps: list[dict], **overrides) -> dict:
+    normalized_steps = [
+        {
+            **step,
+            "subject_ref": step.get("subject_ref") or (
+                "system" if str(step.get("sentence") or "").casefold().startswith("system") else "ACT1"
+            ),
+        }
+        for step in steps
+    ]
     return {
         "use_case_id": identifier,
-        "main_scenario": steps,
+        "main_scenario": normalized_steps,
         "extensions": [],
         "issues": [],
         "semantic_status": "ok",
@@ -450,7 +461,7 @@ def test_confirmed_relationship_defect_stops_after_a_clean_selection_repair():
 
 def test_extend_selection_is_bounded_to_existing_ids_and_exact_base_step(monkeypatch):
     state = {
-        "actors": [{"name": "Actor", "description": "a", "parent_actor": None}],
+        "actors": [{"actor_ref": "ACT1", "name": "Actor", "description": "a", "parent_actor": None, "parent_actor_ref": None}],
         "classified": [
             {"id": "FR-B", "type": "FR", "text": "View the schedule."},
             {"id": "FR-E", "type": "FR", "text": "Optionally export it."},
@@ -490,8 +501,8 @@ def test_extend_selection_is_bounded_to_existing_ids_and_exact_base_step(monkeyp
     assert extend["extending_use_case_id"] == "UC-EXT"
     assert extend["extension_point"] == "main:4"
     assert extend["step_refs"][0]["sentence"] == "System presents the current schedule."
-    assert ("Actor", "UC-EXT") not in {
-        (item["actor"], item["use_case_id"]) for item in rel["associations"]
+    assert ("ACT1", "UC-EXT") not in {
+        (item["actor_ref"], item["use_case_id"]) for item in rel["associations"]
     }
 
 
@@ -530,13 +541,39 @@ def test_actor_projection_uses_canonical_participation_and_generalization(monkey
         {"actors": _actors(), "use_cases": use_cases, "use_case_specs": []}
     )["relationships"]
 
-    assert {(item["actor"], item["use_case_id"]) for item in rel["associations"]} == {
-        ("User", "UC-G"),
-        ("Member", "UC-M"),
+    assert {(item["actor_ref"], item["use_case_id"]) for item in rel["associations"]} == {
+        ("ACT1", "UC-G"),
+        ("ACT2", "UC-M"),
     }
-    assert [(item["parent"], item["child"]) for item in rel["generalizations"]] == [
-        ("User", "Member")
+    assert [(item["parent_actor_ref"], item["child_actor_ref"]) for item in rel["generalizations"]] == [
+        ("ACT1", "ACT2")
     ]
+
+
+def test_actor_names_are_labels_and_refs_preserve_identity(monkeypatch):
+    monkeypatch.setattr(s4, "invoke_structured", lambda *_: pytest.fail("no accepted specs"))
+    actors = _actors()
+    actors[0]["name"] = "Same display name"
+    actors[1]["name"] = "Same display name"
+    use_cases = [
+        _use_case("UC-A", "Action A", actor="Renamed user"),
+        _use_case("UC-B", "Action B", actor="Renamed member"),
+    ]
+    use_cases[0]["primary_actor_ref"] = "ACT1"
+    use_cases[1]["primary_actor_ref"] = "ACT2"
+    rel = s4.identify_relationships(
+        {"actors": actors, "use_cases": use_cases, "use_case_specs": []}
+    )["relationships"]
+    assert {(item["actor_ref"], item["use_case_id"]) for item in rel["associations"]} == {
+        ("ACT1", "UC-A"), ("ACT2", "UC-B")
+    }
+    rendered = diagram_service.render_diagram({
+        "actors": actors,
+        "use_cases": use_cases,
+        "relationships": rel,
+    })["diagram"]
+    aliases = re.findall(r'actor "Same display name" as (\S+)', rendered)
+    assert len(aliases) == len(set(aliases)) == 2
 
 
 def test_renderer_preserves_input_order_and_previous_extend_notation():
@@ -621,8 +658,8 @@ def test_unaccepted_specs_do_not_reach_the_model(monkeypatch):
 def test_aliases_are_collision_proof_and_empty_projection_is_complete():
     collision_diagram = diagram_service.render_diagram({
         "actors": [
-            {"name": "actor-one", "description": "a"},
-            {"name": "actor one", "description": "b"},
+            {"actor_ref": "ACT1", "name": "actor-one", "description": "a"},
+            {"actor_ref": "ACT2", "name": "actor one", "description": "b"},
         ],
         "use_cases": [_use_case("UC-1", "Compare", actor="actor-one")],
         "relationships": {},

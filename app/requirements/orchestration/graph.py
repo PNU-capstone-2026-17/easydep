@@ -37,6 +37,7 @@ from app.requirements.config import settings
 from app.requirements.contracts.request import (
     DeploymentPreferences,
     FeedbackEdit,
+    IdentitySourceAnswer,
     ResourceAnswer,
 )
 from app.requirements.contracts.state import AgentState
@@ -474,6 +475,7 @@ ARTIFACT_KEYS = (
     "use_case_specs",
     "spec_report",
     "semantic_ambiguity_question",
+    "identity_source_question",
     "relationships",
     "relationship_report",
     "diagram",
@@ -584,7 +586,7 @@ def start_analysis(
 
 
 def resume_analysis(
-    answer: str | FeedbackEdit | ResourceAnswer | DeploymentPreferences,
+    answer: str | FeedbackEdit | ResourceAnswer | IdentitySourceAnswer | DeploymentPreferences,
     thread_id: str,
     *,
     persist: bool = False,

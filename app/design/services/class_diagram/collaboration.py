@@ -21,6 +21,7 @@ from app.design.services.class_diagram.scenario import (
     UseCase,
     text,
 )
+from app.design.services.class_diagram.identity import materialize_pre_binding_call_refs
 from app.design.services.class_diagram.trusted_context import trusted_context_sources
 from app.design.services.class_diagram.type_system import (
     projected_field_type,
@@ -32,11 +33,9 @@ from app.design.services.class_diagram.validation.collaboration import (
     CollaborationContext,
 )
 from app.design.services.class_diagram.validation.model import (
-    derived_value_source,
     operation_catalog,
     optional_inner_type,
     runtime_value_source,
-    type_can_default,
 )
 from app.design.services.common.structured import parse_structured
 from app.llm_connection import build_llm_connection
@@ -76,8 +75,14 @@ execution, do not invent one in the call plan.
 
 BINDING_PROMPT = """
 Select one sourceRef for each supplied finite choice. Prefer the source whose
-name and role match the receiver parameter. Return no explanation.
+meaning, type, and structural provenance match the receiver parameter and the
+use-case evidence. The same sourceRef may be selected for multiple parameters
+when one value legitimately supplies each. Select NO_MATCH when no offered
+source can be justified.
+Return no explanation.
 """.strip()
+
+NO_BINDING_SOURCE = "NO_MATCH"
 
 PARENT_SELECTION_PROMPT = """
 Choose whether one supplied earlier call should become the parent of the rejected
@@ -461,35 +466,6 @@ def _ancestors(calls: list[dict[str, Any]], index: int) -> list[dict[str, Any]]:
     return result
 
 
-def _field_matches_parameter(parameter: str, owner_type: str, field: str) -> bool:
-    """``User.id``처럼 타입 이름이 붙으면 parameter와 같은 field인지 확인한다."""
-
-    def normalize(value: str) -> str:
-        return "".join(
-            character for character in value.casefold() if character.isalnum()
-        )
-
-    expected = normalize(parameter)
-    return expected in {normalize(field), normalize(owner_type + field)}
-
-
-def _requires_named_provenance(parameter_name: str, target_type: str) -> bool:
-    """Keep opaque identifiers from binding by type alone."""
-
-    normalized_name = "".join(
-        character for character in parameter_name.casefold() if character.isalnum()
-    )
-    normalized_type = "".join(
-        character for character in target_type.casefold() if character.isalnum()
-    )
-    return (
-        types_compatible(target_type, "UUID")
-        or normalized_name.endswith("id")
-        or normalized_type.endswith("id")
-        or "identity" in normalized_type
-    )
-
-
 def _is_boundary_control_handoff(
     calls: list[dict[str, Any]],
     call_index: int,
@@ -529,77 +505,118 @@ def _binding_candidates(
     name = text(parameter.get("name"))
     target_type = text(parameter.get("type"))
     fields_by_type = structured_field_types(model)
+    field_refs_by_type: dict[str, dict[str, str]] = {}
+    for item in [*(model.get("Classes") or []), *(model.get("DataTypes") or [])]:
+        if not isinstance(item, dict):
+            continue
+        type_name = text(item.get("className") or item.get("name"))
+        fields = item.get("fields") or []
+        refs = item.get("fieldRefs") or []
+        field_refs = {
+            field.strip().partition(":")[0].strip(): text(ref)
+            for field, ref in zip(fields, refs)
+            if field.strip().partition(":")[0].strip() and text(ref)
+        }
+        if type_name and field_refs:
+            field_refs_by_type[type_name] = field_refs
+
+    def stable_field_path(root_type: str, path: str) -> str:
+        current_type = root_type
+        refs: list[str] = []
+        for component in path.split("."):
+            field_ref = field_refs_by_type.get(current_type, {}).get(component)
+            if not field_ref:
+                return ""
+            refs.append(field_ref)
+            current_type = projected_field_type(current_type, component, fields_by_type)
+        return ".".join(refs)
+
     candidates: list[str] = []
-    named_sources: dict[str, list[tuple[str, str]]] = {}
-    renamed_handoff_sources: list[str] = []
-
-    def add_named(source_name: str, source_type: str, source_ref: str) -> None:
-        named_sources.setdefault(source_name.casefold(), []).append((source_type, source_ref))
-
-    if is_root and actor_step:
-        candidates.append(f"{actor_step}#{name}")
+    target_parameter_ref = text(parameter.get("stableRef"))
+    if is_root and actor_step and target_parameter_ref:
+        candidates.append(f"{actor_step}#{target_parameter_ref}")
     ancestors = _ancestors(calls, call_index)
     boundary_handoff = _is_boundary_control_handoff(calls, call_index, operations)
-    for ancestor_position, ancestor in enumerate(ancestors):
-        operation = operations[text(ancestor.get("receiverOperationId"))]
+    for ancestor in ancestors:
+        operation = operations.get(text(ancestor.get("receiverOperationId")))
+        if operation is None:
+            # Validation can inspect a stale collaboration while an owning
+            # operation fragment is being replaced.  A missing operation is
+            # reported by the collaboration contract; it is not a value source.
+            continue
         for source in operation.get("parameters") or []:
             if not isinstance(source, dict):
                 continue
-            source_name = text(source.get("name"))
             source_type = text(source.get("type"))
-            source_ref = f"{ancestor['callId']}#{source_name}"
-            add_named(source_name, source_type, source_ref)
+            source_ref = (
+                f"{text(ancestor.get('stableId'))}#{text(source.get('stableRef'))}"
+                if text(ancestor.get("stableId")) and text(source.get("stableRef"))
+                else ""
+            )
+            if not source_ref:
+                continue
             compatible = types_compatible(source_type, target_type)
-            if _field_matches_parameter(name, "", source_name) and compatible:
+            # A parent call is the finite structural scope for a direct value
+            # handoff.  Its formal name is evidence for semantic selection,
+            # not an eligibility gate: harmless renames (for example
+            # currentRegistrationId -> registrationId) must remain selectable.
+            # materialize() deliberately does not auto-bind a name-mismatched
+            # candidate, even when this leaves just one candidate.
+            if compatible:
                 candidates.append(source_ref)
-            elif (
-                ancestor_position == 0
-                and boundary_handoff
-                and compatible
-            ):
-                renamed_handoff_sources.append(source_ref)
             for field_path in fields_by_type.get(source_type, {}):
                 projected = projected_field_type(source_type, field_path, fields_by_type)
-                field_ref = f"{source_ref}.{field_path}"
-                add_named(field_path, projected, field_ref)
+                stable_path = stable_field_path(source_type, field_path)
+                if not stable_path:
+                    continue
+                field_ref = f"{source_ref}.{stable_path}"
                 if types_compatible(projected, target_type):
                     candidates.append(field_ref)
                 elif types_compatible(optional_inner_type(projected), target_type):
                     candidates.append(field_ref + ".unwrap")
-    if not candidates:
-        candidates.extend(renamed_handoff_sources)
     # 하나의 유스케이스가 여러 사용자 입력으로 나뉘면 뒤 입력에서 앞 입력의 값을
     # 다시 사용할 수 있다. 예를 들어 첫 요청에서 받은 주문 ID를 다음 선택 요청 뒤의
-    # Control 호출에 전달하는 경우다. 이전 root의 입력 중 이름과 타입이 모두 맞는
-    # 값만 후보에 넣어, 같은 uuid 타입이라는 이유만으로 무관한 ID를 연결하지 않는다.
+    # Control 호출에 전달하는 경우다. 이전 root의 입력은 call/parameter ref로
+    # 식별하고 타입 호환성으로 범위를 좁힌 뒤, 여러 후보는 아래 selector가 판단한다.
     for earlier in calls[:call_index]:
         if text(earlier.get("parentCallId")):
             continue
-        operation = operations[text(earlier.get("receiverOperationId"))]
+        operation = operations.get(text(earlier.get("receiverOperationId")))
+        if operation is None:
+            continue
         for source in operation.get("parameters") or []:
             if not isinstance(source, dict):
                 continue
             source_name = text(source.get("name"))
             source_type = text(source.get("type"))
-            source_ref = f"{earlier['callId']}#{source_name}"
-            if (
-                source_name.casefold() == name.casefold()
-                and types_compatible(source_type, target_type)
-            ):
+            source_ref = (
+                f"{text(earlier.get('stableId'))}#{text(source.get('stableRef'))}"
+                if text(earlier.get("stableId")) and text(source.get("stableRef"))
+                else ""
+            )
+            if not source_ref:
+                continue
+            if types_compatible(source_type, target_type):
                 candidates.append(source_ref)
             for field_path in fields_by_type.get(source_type, {}):
                 projected = projected_field_type(source_type, field_path, fields_by_type)
-                if not _field_matches_parameter(name, source_type, field_path):
+                stable_path = stable_field_path(source_type, field_path)
+                if not stable_path:
                     continue
-                field_ref = f"{source_ref}.{field_path}"
+                field_ref = f"{source_ref}.{stable_path}"
                 if types_compatible(projected, target_type):
                     candidates.append(field_ref)
                 elif types_compatible(optional_inner_type(projected), target_type):
                     candidates.append(field_ref + ".unwrap")
     for earlier in reversed(calls[:call_index]):
-        operation = operations[text(earlier.get("receiverOperationId"))]
+        operation = operations.get(text(earlier.get("receiverOperationId")))
+        if operation is None:
+            continue
         return_type = text(operation.get("returnType"))
-        result_ref = f"{earlier['callId']}#result"
+        stable_call_ref = text(earlier.get("stableId"))
+        if not stable_call_ref:
+            continue
+        result_ref = f"{stable_call_ref}#result"
         if return_type.casefold() != "void" and types_compatible(return_type, target_type):
             candidates.append(result_ref)
         elif types_compatible(optional_inner_type(return_type), target_type):
@@ -614,36 +631,25 @@ def _binding_candidates(
             projected = projected_field_type(
                 projection_type, field_path, fields_by_type,
             )
-            field_ref = f"{projection_ref}.{field_path}"
-            add_named(field_path, projected, field_ref)
-            if _field_matches_parameter(name, projection_type, field_path):
-                if types_compatible(projected, target_type):
-                    candidates.append(field_ref)
-                elif types_compatible(optional_inner_type(projected), target_type):
-                    candidates.append(field_ref + ".unwrap")
-    target_fields = fields_by_type.get(target_type, {})
-    if not candidates and target_fields:
-        mappings: dict[str, str] = {}
-        for field, expected in target_fields.items():
-            matching = [
-                source_ref for source_type, source_ref in named_sources.get(field.casefold(), [])
-                if types_compatible(source_type, expected)
-            ]
-            if matching:
-                mappings[field] = matching[0]
-            elif runtime_value_source(expected):
-                mappings[field] = runtime_value_source(expected)
-            elif not type_can_default(expected):
-                break
-        else:
-            candidates.append(derived_value_source(target_type, mappings))
+            stable_path = stable_field_path(projection_type, field_path)
+            if not stable_path:
+                continue
+            field_ref = f"{projection_ref}.{stable_path}"
+            if types_compatible(projected, target_type):
+                candidates.append(field_ref)
+            elif types_compatible(optional_inner_type(projected), target_type):
+                candidates.append(field_ref + ".unwrap")
     if not candidates and runtime_value_source(target_type):
         candidates.append(runtime_value_source(target_type))
-    if not candidates and boundary_handoff:
+    if boundary_handoff:
         candidates.extend(
             source.source_ref
             for source in trusted_context_sources(
-                use_case, name, target_type, actors=actor_contracts,
+                use_case,
+                name,
+                target_type,
+                obligation_ref=text(parameter.get("obligationRef")),
+                actors=actor_contracts,
             )
         )
     return list(dict.fromkeys(candidates))
@@ -671,23 +677,106 @@ def _binding_search_scopes(
     return scopes
 
 
-def _candidate_detail(source_ref: str, target_type: str) -> dict[str, Any]:
-    """Describe an already-compatible finite candidate without widening it."""
+def _candidate_source_kind(source_ref: str, calls: list[dict[str, Any]]) -> str:
+    """Return the only user-selectable provenance kinds for a finite source."""
 
     if source_ref.startswith("context#"):
-        kind = "trusted_context"
-        evidence = source_ref.partition("#")[2].rsplit(":", 1)[0]
-    elif source_ref.startswith("runtime#"):
-        kind, evidence = "runtime_value", ""
-    elif source_ref.startswith("derived#"):
-        kind, evidence = "derived_value", ""
-    elif "#result" in source_ref:
-        kind, evidence = "previous_result", ""
+        return "authenticated_context"
+    if source_ref.startswith("derived#"):
+        return "derive_from_existing_inputs"
+    if source_ref.startswith("runtime#"):
+        return "runtime_value"
+    _source_call_id, separator, path = source_ref.partition("#")
+    if separator and path.startswith("result"):
+        return "earlier_step_result"
+    # A formal parameter on any ancestor call represents a value originally
+    # introduced by the use-case input path.  It may cross several BCE calls,
+    # but remains a caller-provided value rather than a new computed source.
+    return "use_case_input"
+
+
+def _candidate_detail(
+    source_ref: str,
+    target_type: str,
+    calls: list[dict[str, Any]],
+    operations: dict[str, dict[str, Any]],
+    model: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Describe an already-compatible finite candidate without widening it."""
+
+    detail: dict[str, Any] = {
+        "sourceRef": source_ref,
+        "targetType": target_type,
+        "sourceKind": _candidate_source_kind(source_ref, calls),
+    }
+    if source_ref.startswith("context#"):
+        detail.update({
+            "kind": "trusted_context",
+            "obligationRef": source_ref.partition("#")[2],
+            "evidenceRef": source_ref.partition("#")[2],
+        })
+        return detail
+    if source_ref.startswith("runtime#"):
+        detail["kind"] = "runtime_value"
+        return detail
+    if source_ref.startswith("derived#"):
+        detail["kind"] = "derived_value"
+        return detail
+    source_call_id, separator, path = source_ref.partition("#")
+    source_call = next(
+        (call for call in calls if text(call.get("stableId")) == source_call_id),
+        None,
+    )
+    if source_call is None:
+        detail["kind"] = "actor_entry_input" if separator else "unknown"
+        return detail
+    operation = operations.get(text(source_call.get("receiverOperationId")), {})
+    field_names_by_ref = {
+        text(field_ref): field.strip().partition(":")[0].strip()
+        for item in [
+            *((model or {}).get("Classes") or []),
+            *((model or {}).get("DataTypes") or []),
+        ]
+        if isinstance(item, dict)
+        for field, field_ref in zip(
+            item.get("fields") or [], item.get("fieldRefs") or [],
+        )
+        if text(field_ref)
+    }
+    detail.update({
+        "kind": "previous_result" if path.startswith("result") else "call_parameter",
+        "sourceCallStableId": source_call_id,
+        "sourceOperationId": source_call.get("receiverOperationId"),
+        "sourceClass": operation.get("className"),
+        "sourceStereotype": operation.get("stereotype"),
+    })
+    if path.startswith("result"):
+        source_path = ["result", *path.split(".")[1:]]
+        detail["sourceDeclaredType"] = operation.get("returnType")
     else:
-        kind, evidence = "request_or_prior_parameter", ""
-    detail: dict[str, Any] = {"sourceRef": source_ref, "kind": kind, "type": target_type}
-    if evidence:
-        detail["evidenceRef"] = evidence
+        source_parameter_ref, _dot, rest = path.partition(".")
+        declared_type = next(
+            (
+                item.get("type") for item in operation.get("parameters") or []
+                if isinstance(item, dict)
+                and text(item.get("stableRef")) == source_parameter_ref
+            ),
+            None,
+        )
+        if declared_type:
+            detail["sourceDeclaredType"] = declared_type
+        detail["sourceParameter"] = next((
+            text(item.get("name")) for item in operation.get("parameters") or []
+            if isinstance(item, dict)
+            and text(item.get("stableRef")) == source_parameter_ref
+        ), "")
+        source_path = [detail["sourceParameter"], *rest.split(".")] if rest else [
+            detail["sourceParameter"],
+        ]
+    detail["sourcePath"] = ".".join(
+        field_names_by_ref.get(component, component)
+        for component in source_path if component
+    )
     return detail
 
 
@@ -695,51 +784,63 @@ def select_ambiguous_bindings(
     use_case: UseCase,
     ambiguous: dict[str, list[str]],
     parameter_types: dict[str, str] | None = None,
+    *,
+    calls: list[dict[str, Any]] | None = None,
+    operations: dict[str, dict[str, Any]] | None = None,
+    semantic_locations: set[str] | None = None,
+    model: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     fields: dict[str, tuple[Any, Any]] = {}
     choices: list[dict[str, Any]] = []
     locations: dict[str, str] = {}
-    candidate_groups: dict[frozenset[str], list[str]] = {}
+    call_by_id = {text(call.get("callId")): call for call in calls or []}
     for position, (parameter, candidates) in enumerate(sorted(ambiguous.items()), start=1):
         field_name = f"choice{position}"
-        values = tuple(dict.fromkeys(candidates))
+        values = tuple(dict.fromkeys([
+            *candidates,
+            *([NO_BINDING_SOURCE] if parameter in (semantic_locations or set()) else []),
+        ]))
         fields[field_name] = (
             Literal.__getitem__(values), Field(description=f"Source for {parameter}"),
         )
         choices.append({
             "choice": field_name,
-            "parameter": parameter,
+            "target": {
+                "location": parameter,
+                "parameter": parameter.partition("#")[2],
+                "type": (parameter_types or {}).get(parameter, ""),
+                "receiverOperationId": call_by_id.get(
+                    parameter.partition("#")[0],
+                ).get("receiverOperationId") if parameter.partition("#")[0] in call_by_id else None,
+                "receiverClass": operations.get(text(call_by_id.get(
+                    parameter.partition("#")[0],
+                ).get("receiverOperationId")), {}).get("className")
+                if parameter.partition("#")[0] in call_by_id else None,
+            },
             "candidates": list(values),
             "candidateDetails": [
                 _candidate_detail(
                     value,
                     (parameter_types or {}).get(parameter, ""),
+                    calls or [],
+                    operations or {},
+                    model,
                 )
+                if value != NO_BINDING_SOURCE else {
+                    "sourceRef": NO_BINDING_SOURCE,
+                    "kind": "no_match",
+                    "meaning": "No offered source is semantically justified.",
+                }
                 for value in values
             ],
         })
         locations[field_name] = parameter
-        candidate_groups.setdefault(frozenset(values), []).append(field_name)
-    uniqueness_groups = tuple(
-        tuple(field_names)
-        for candidate_set, field_names in candidate_groups.items()
-        if len(field_names) >= 2 and len(candidate_set) >= len(field_names)
-    )
     finite_choices = _finite_schema(
         "FiniteBindingChoices", __config__=ConfigDict(extra="forbid"), **fields,
     )
 
     class BindingChoices(finite_choices):
-        @model_validator(mode="after")
-        def require_distinct_sources_for_symmetric_choices(self) -> BindingChoices:
-            for field_names in uniqueness_groups:
-                selected = [getattr(self, field_name) for field_name in field_names]
-                if len(set(selected)) != len(selected):
-                    raise ValueError(
-                        "sourceRef selections must be unique when parameters have "
-                        "the same finite candidate set"
-                    )
-            return self
+        pass
 
     schema = BindingChoices
     parsed = parse_structured(
@@ -747,6 +848,15 @@ def select_ambiguous_bindings(
             {"role": "system", "content": BINDING_PROMPT},
             {"role": "user", "content": json.dumps({
                 "collaborationId": use_case.id, "choices": choices,
+                "steps": [
+                    {"id": step.id, "sentence": step.sentence}
+                    for step in use_case.steps
+                ],
+                "publicContract": (
+                    use_case.specification.get("public_contract")
+                    or use_case.specification.get("publicContract")
+                    or {}
+                ),
             }, ensure_ascii=False)},
         ],
         schema,
@@ -763,11 +873,50 @@ def select_ambiguous_bindings(
     return {locations[field_name]: source_ref for field_name, source_ref in selected.items()}
 
 
+def _matching_binding_source_kind(
+    decision: dict[str, Any] | None,
+    *,
+    use_case_id: str,
+    actor_entry_index: int,
+    call_index: int,
+    parameter_index: int,
+    receiver_operation_id: str,
+    parameter_name: str,
+) -> str | None:
+    """Use an answer only for the exact questioned binding slot."""
+
+    if not isinstance(decision, dict):
+        return None
+    if all(decision.get(key) == value for key, value in {
+        "useCaseId": use_case_id,
+        "actorEntryIndex": actor_entry_index,
+        "callIndex": call_index,
+        "parameterIndex": parameter_index,
+    }.items()) and (
+        not decision.get("receiverOperationId")
+        or decision.get("receiverOperationId") == receiver_operation_id
+    ) and (
+        not decision.get("parameterName")
+        or decision.get("parameterName") == parameter_name
+    ):
+        source_kind = text(decision.get("sourceKind"))
+        if source_kind in {
+            "use_case_input",
+            "authenticated_context",
+            "earlier_step_result",
+            "derive_from_existing_inputs",
+        }:
+            return source_kind
+    return None
+
+
 def materialize(
     index: ScenarioIndex,
     model: BCEModel,
     use_case: UseCase,
     plan: CallPlanProposal,
+    *,
+    binding_source_decision: dict[str, Any] | None = None,
 ) -> Collaboration:
     """flat multiple-root 계획을 canonical call·step·binding 협업으로 만든다."""
 
@@ -858,8 +1007,14 @@ def materialize(
             control_roots.add(assignments[position])
     if control_roots != set(range(len(groups))):
         raise ValueError("each Boundary root must delegate to Control")
+    # Calls now have their complete structural identity (including parent
+    # links).  Issue stable IDs before finite binding candidates and the
+    # selector see them; persisted sourceRefs use these stable IDs.
+    materialize_pre_binding_call_refs(model, use_case.id, calls)
     ambiguous: dict[str, list[str]] = {}
     parameter_types: dict[str, str] = {}
+    semantic_locations: set[str] = set()
+    binding_slots: dict[str, dict[str, int]] = {}
     for call_index, call in enumerate(calls):
         operation = operations[call["receiverOperationId"]]
         group = groups[assignments[call_index + 1]]
@@ -872,6 +1027,25 @@ def materialize(
                 index.raw.get("actors") or [],
             )
             location = f"{call['callId']}#{text(parameter.get('name'))}"
+            binding_slots[location] = {
+                "actorEntryIndex": assignments[call_index + 1],
+                "callIndex": call_index,
+                "parameterIndex": parameter_index,
+            }
+            requested_source_kind = _matching_binding_source_kind(
+                binding_source_decision,
+                use_case_id=use_case.id,
+                actor_entry_index=assignments[call_index + 1],
+                call_index=call_index,
+                parameter_index=parameter_index,
+                receiver_operation_id=call["receiverOperationId"],
+                parameter_name=text(parameter.get("name")),
+            )
+            if requested_source_kind:
+                candidates = [
+                    source_ref for source_ref in candidates
+                    if _candidate_source_kind(source_ref, calls) == requested_source_kind
+                ]
             if not candidates:
                 raise BindingSourceViolation({
                     "code": "BINDING_SOURCE_UNAVAILABLE",
@@ -894,20 +1068,27 @@ def materialize(
                         "context, an earlier result, a supported runtime value, or a "
                         "derivable structured value."
                     ),
-                }, repair_slot={
-                    "actorEntryIndex": assignments[call_index + 1],
-                    "callIndex": call_index,
-                    "parameterIndex": parameter_index,
-                })
-            if len(candidates) == 1:
+                }, repair_slot=binding_slots[location])
+            is_root_binding = call_index + 1 in root_set
+            if is_root_binding and len(candidates) == 1:
                 call["argumentBindings"].append({
                     "parameter": text(parameter.get("name")), "sourceRef": candidates[0],
                 })
             else:
                 ambiguous[location] = candidates
                 parameter_types[location] = text(parameter.get("type"))
+                if not is_root_binding:
+                    semantic_locations.add(location)
     selected = (
-        select_ambiguous_bindings(use_case, ambiguous, parameter_types)
+        select_ambiguous_bindings(
+            use_case,
+            ambiguous,
+            parameter_types,
+            calls=calls,
+            operations=operations,
+            semantic_locations=semantic_locations,
+            model=model_payload,
+        )
         if ambiguous else {}
     )
     for call in calls:
@@ -916,8 +1097,19 @@ def materialize(
         for parameter in operation.get("parameters") or []:
             name = text(parameter.get("name"))
             if name not in existing:
+                source_ref = selected[f"{call['callId']}#{name}"]
+                if source_ref == NO_BINDING_SOURCE:
+                    raise BindingSourceViolation({
+                        "code": "BINDING_SOURCE_UNAVAILABLE",
+                        "useCaseId": use_case.id,
+                        "location": f"{call['callId']}#{name}",
+                        "receiverOperationId": call["receiverOperationId"],
+                        "parameter": {"name": name, "type": text(parameter.get("type"))},
+                        "availableSources": ambiguous[f"{call['callId']}#{name}"],
+                        "instruction": "No finite compatible source was semantically justified.",
+                    }, repair_slot=binding_slots[f"{call['callId']}#{name}"])
                 call["argumentBindings"].append({
-                    "parameter": name, "sourceRef": selected[f"{call['callId']}#{name}"],
+                    "parameter": name, "sourceRef": source_ref,
                 })
     trace_ids = list(dict.fromkeys(
         [use_case.id, *(value for group in groups for value in group.trace_use_case_ids)]
@@ -1029,7 +1221,7 @@ def _cache_key(
             "bindingMaxCompletionTokens": min(
                 settings.design_class_collaboration_max_completion_tokens, 2048,
             ),
-            "bindingCandidateVersion": 3,
+            "bindingCandidateVersion": 5,
         },
     )
 

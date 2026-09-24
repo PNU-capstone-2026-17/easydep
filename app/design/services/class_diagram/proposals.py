@@ -10,9 +10,6 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.design.schemas.class_model import ClassParameter
-
-
 def structured_field(value: object) -> dict[str, str]:
     """Return the single structured representation used at LLM boundaries.
 
@@ -54,9 +51,13 @@ class Proposal(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+LOWER_CAMEL_CASE_PATTERN = r"^[a-z][A-Za-z0-9]*$"
+LowerCamelCaseName = Annotated[str, Field(pattern=LOWER_CAMEL_CASE_PATTERN)]
+
+
 class InventoryField(Proposal):
     """One name-and-type field declared by an inventory item."""
-    name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
+    name: LowerCamelCaseName
     type: str = Field(min_length=1)
 
 
@@ -66,7 +67,7 @@ class InventoryItem(Proposal):
     kind: Literal["Boundary", "Control", "Entity", "valueObject", "enumeration"]
     description: str
     fields: list[InventoryField]
-    identifier: list[str]
+    identifier: list[LowerCamelCaseName]
     values: list[str]
     use_case_ids: list[str] = Field(alias="useCaseIds")
 
@@ -106,10 +107,19 @@ class InventoryProposal(Proposal):
 StepRef = Annotated[str, Field(min_length=1)]
 
 
+class OperationParameterProposal(Proposal):
+    """Transient operation input; persisted parameters retain their legacy contract."""
+
+    name: LowerCamelCaseName
+    type: str = Field(min_length=1)
+    obligation_ref: str | None = Field(default=None, alias="obligationRef", min_length=1)
+    stable_ref: str | None = Field(default=None, alias="stableRef", min_length=1)
+
+
 class OperationProposal(Proposal):
     """Method contract to add to one class and its supporting step references."""
-    name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_]*$")
-    parameters: list[ClassParameter] = Field(default_factory=list)
+    name: LowerCamelCaseName
+    parameters: list[OperationParameterProposal] = Field(default_factory=list)
     return_type: str = Field(alias="returnType", min_length=1)
     step_refs: list[StepRef] = Field(alias="stepRefs", min_length=1)
 

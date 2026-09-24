@@ -306,6 +306,9 @@ def _extract_class_model(state: ArchitectureState) -> dict[str, Any]:
         repair_guidance=(
             state.get("class_binding_repair_guidance") or None
         ),
+        binding_source_decision=(
+            state.get("class_binding_source_decision") or None
+        ),
     ).model_dump(by_alias=True)
 
 
@@ -326,6 +329,39 @@ def _revise_class_state(
         targets,
         cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
     ).model_dump(by_alias=True)
+
+
+def _repair_class_batch(
+    current: dict[str, Any],
+    feedback: str,
+    state: ArchitectureState,
+    targets: set[str],
+    batch: list[ArtifactFinding],
+) -> dict[str, Any]:
+    """Keep public-contract repair on its owning use-case operation fragment."""
+
+    index = _class_index(state)
+    known_use_case_ids = {use_case.id for use_case in index.use_cases}
+    semantic_use_case_ids = {
+        str(finding.location).strip()
+        for finding in batch
+        if finding.rule_id == "class.public-contract-semantic"
+        and str(finding.location).strip() in known_use_case_ids
+    }
+    if batch and all(
+        finding.rule_id == "class.public-contract-semantic"
+        and str(finding.location).strip() in known_use_case_ids
+        for finding in batch
+    ):
+        return revise_class_model(
+            _stored_class_model(current),
+            index,
+            feedback,
+            targets,
+            cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
+            operation_use_case_ids=semantic_use_case_ids,
+        ).model_dump(by_alias=True)
+    return _revise_class_state(current, feedback, state, targets)
 
 
 def _class_model_findings(
@@ -557,6 +593,7 @@ CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
     check=_class_model_findings,
     check_evidence=_class_semantic_evidence,
     repair=_revise_class_state,
+    repair_batch=_repair_class_batch,
     repair_target_mapper=_class_repair_targets,
     check_key="class_diagram_check",
 )

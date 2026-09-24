@@ -227,6 +227,7 @@ def _source_type(
     previous_calls: list[dict[str, Any]],
     operations: dict[str, dict[str, Any]],
     fields_by_type: dict[str, dict[str, str]],
+    model: dict[str, Any] | None = None,
 ) -> str:
     derived_type, field_sources = derived_value_parts(source_ref)
     if derived_type:
@@ -241,7 +242,9 @@ def _source_type(
                 return ""
             if nested == runtime_value_source(expected):
                 continue
-            actual = _source_type(nested, previous_calls, operations, fields_by_type)
+            actual = _source_type(
+                nested, previous_calls, operations, fields_by_type, model,
+            )
             if not actual or not types_compatible(actual, expected):
                 return ""
         return derived_type
@@ -251,7 +254,7 @@ def _source_type(
     if ":precondition:" in source_id:
         return "__precondition__"
     source_call = next(
-        (call for call in previous_calls if text(call.get("callId")) == source_id), None,
+        (call for call in previous_calls if text(call.get("stableId")) == source_id), None,
     )
     if source_call is None:
         return "__entry__"
@@ -260,13 +263,31 @@ def _source_type(
         source_type = text(operation.get("returnType"))
         field_path = path.removeprefix("result.") if path.startswith("result.") else ""
     else:
-        parameter_name, dot, field_path = path.partition(".")
+        parameter_ref, dot, field_path = path.partition(".")
         source_type = next((
             text(parameter.get("type")) for parameter in operation.get("parameters") or []
-            if isinstance(parameter, dict) and text(parameter.get("name")) == parameter_name
+            if isinstance(parameter, dict)
+            and text(parameter.get("stableRef")) == parameter_ref
         ), "")
         if not dot:
             field_path = ""
+    field_types_by_owner: dict[str, dict[str, str]] = {}
+    for item in [
+        *((model or {}).get("Classes") or []),
+        *((model or {}).get("DataTypes") or []),
+    ]:
+        if not isinstance(item, dict):
+            continue
+        owner = text(item.get("className") or item.get("name"))
+        refs = {
+            text(field_ref): text(field).partition(":")[2].strip()
+            for field, field_ref in zip(
+                item.get("fields") or [], item.get("fieldRefs") or [],
+            )
+            if text(field_ref)
+        }
+        if owner and refs:
+            field_types_by_owner[owner] = refs
     # optional<T> 자체뿐 아니라 그 안의 field도 명시적으로 unwrap한 뒤 참조한다.
     # ``result.unwrap.id``는 optional<User> 결과의 User.id를 뜻한다.
     if field_path.startswith("unwrap."):
@@ -277,10 +298,18 @@ def _source_type(
     unwrap = field_path == "unwrap" or field_path.endswith(".unwrap")
     if unwrap:
         field_path = "" if field_path == "unwrap" else field_path.removesuffix(".unwrap")
-    resolved = (
-        projected_field_type(source_type, field_path, fields_by_type)
-        if field_path else source_type
-    )
+    if field_path:
+        resolved = source_type
+        for field_ref in field_path.split("."):
+            owner_fields = next((
+                fields for owner, fields in field_types_by_owner.items()
+                if types_compatible(owner, resolved)
+            ), {})
+            resolved = owner_fields.get(field_ref, "")
+            if not resolved:
+                return ""
+    else:
+        resolved = source_type
     return optional_inner_type(resolved) if unwrap else resolved
 
 
@@ -297,6 +326,10 @@ def _collaboration_bindings(
         operation = operations.get(text(call.get("receiverOperationId")), {})
         parameter_types = {
             text(parameter.get("name")): text(parameter.get("type"))
+            for parameter in operation.get("parameters") or [] if isinstance(parameter, dict)
+        }
+        parameter_stable_refs = {
+            text(parameter.get("name")): text(parameter.get("stableRef"))
             for parameter in operation.get("parameters") or [] if isinstance(parameter, dict)
         }
         root_position = _root_index(calls, position)
@@ -324,11 +357,26 @@ def _collaboration_bindings(
                 position == root_position,
                 calls,
                 position,
-                {"name": parameter, "type": expected},
+                {
+                    "name": parameter,
+                    "type": expected,
+                    "stableRef": parameter_stable_refs.get(parameter, ""),
+                    "obligationRef": next(
+                        (
+                            text(item.get("obligationRef"))
+                            for item in operation.get("parameters") or []
+                            if isinstance(item, dict)
+                            and text(item.get("name")) == parameter
+                        ),
+                        "",
+                    ),
+                },
                 operations,
                 context.index.raw.get("actors") or [],
             ))
-            source_type = _source_type(source_ref, calls[:position], operations, fields_by_type)
+            source_type = _source_type(
+                source_ref, calls[:position], operations, fields_by_type, context.model,
+            )
             if is_trusted_context_ref(source_ref):
                 # Its type and evidence are carried by the finite candidate;
                 # no caller may fabricate a context ref outside that catalog.
@@ -338,7 +386,7 @@ def _collaboration_bindings(
             elif source_type == "__entry__":
                 valid = bool(
                     actor_step
-                    and source_ref == f"{actor_step}#{parameter}"
+                    and source_ref == f"{actor_step}#{parameter_stable_refs.get(parameter, '')}"
                     and source_ref in eligible
                 )
             elif source_type == "__precondition__":

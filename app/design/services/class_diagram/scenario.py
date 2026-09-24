@@ -31,10 +31,12 @@ class Step:
     id: str
     use_case_id: str
     subject: str
+    subject_ref: str
     sentence: str
     order: int
     branch: str
     condition: str = ""
+    extension_ref: str = ""
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,7 @@ class UseCase:
     id: str
     name: str
     primary_actor: str
+    primary_actor_ref: str
     specification: dict[str, Any]
     steps: tuple[Step, ...]
     precondition_refs: tuple[str, ...]
@@ -88,7 +91,11 @@ class ScenarioIndex:
         return frozenset(step.id for use_case in self.use_cases for step in use_case.steps)
 
 
-def _steps(use_case_id: str, specification: dict[str, Any]) -> tuple[Step, ...]:
+def _steps(
+    use_case_id: str,
+    specification: dict[str, Any],
+    actor_names: dict[str, str],
+) -> tuple[Step, ...]:
     result: list[Step] = []
     order = 0
     for raw in specification.get("main_scenario") or []:
@@ -97,31 +104,51 @@ def _steps(use_case_id: str, specification: dict[str, Any]) -> tuple[Step, ...]:
         result.append(Step(
             id=f"{use_case_id}:main:{raw['step_number']}",
             use_case_id=use_case_id,
-            subject=text(raw.get("subject_ref")),
+            subject=("System" if text(raw.get("subject_ref")) == "system"
+                     else actor_names.get(text(raw.get("subject_ref")), "")),
+            subject_ref=text(raw.get("subject_ref")),
             sentence=text(raw.get("sentence") or raw.get("description")),
             order=order,
             branch="main",
         ))
         order += 1
-    for extension in specification.get("extensions") or []:
-        if not isinstance(extension, dict):
-            continue
+    for extension, extension_ref in _extension_specs(use_case_id, specification):
         label = text(extension.get("label"))
         condition = text(extension.get("condition"))
         for raw in extension.get("handling_steps") or []:
-            if not label or not isinstance(raw, dict) or raw.get("sub_step") is None:
+            if not isinstance(raw, dict) or raw.get("sub_step") is None:
                 continue
             result.append(Step(
-                id=f"{use_case_id}:extension:{label}:{raw['sub_step']}",
+                id=f"{extension_ref}:{raw['sub_step']}",
                 use_case_id=use_case_id,
-                subject=text(raw.get("subject_ref")),
+                subject=("System" if text(raw.get("subject_ref")) == "system"
+                         else actor_names.get(text(raw.get("subject_ref")), "")),
+                subject_ref=text(raw.get("subject_ref")),
                 sentence=text(raw.get("sentence") or raw.get("description")),
                 order=order,
                 branch=label,
                 condition=condition,
+                extension_ref=extension_ref,
             ))
             order += 1
     return tuple(result)
+
+
+def _extension_specs(
+    use_case_id: str, specification: dict[str, Any],
+) -> list[tuple[dict[str, Any], str]]:
+    """Return extensions paired with identity from their anchor and sibling order."""
+    ordinals: dict[str, int] = {}
+    result: list[tuple[dict[str, Any], str]] = []
+    for extension in specification.get("extensions") or []:
+        if not isinstance(extension, dict):
+            continue
+        anchor = text(extension.get("branch_step"))
+        if not anchor:
+            raise ValueError(f"extension in {use_case_id} requires branch_step")
+        ordinals[anchor] = ordinals.get(anchor, 0) + 1
+        result.append((extension, f"{use_case_id}:extension:{anchor}:{ordinals[anchor]}"))
+    return result
 
 
 def _preconditions(use_case_id: str, specification: dict[str, Any]) -> tuple[str, ...]:
@@ -142,17 +169,13 @@ def _actor_steps(use_case: UseCase) -> set[str]:
     시스템 호출의 결과이므로 별도 호출 루트를 만들지 않는다.
     """
 
-    actor = use_case.primary_actor.casefold()
-    if not actor:
+    actor_ref = use_case.primary_actor_ref
+    if not actor_ref:
         return set()
     main_steps = [step for step in use_case.steps if step.branch == "main"]
     candidates = [
         position for position, step in enumerate(main_steps)
-        if step.subject.casefold() == actor
-        or (
-            not step.subject
-            and re.match(rf"^(?:the )?{re.escape(actor)}\b", step.sentence.casefold())
-        )
+        if step.subject_ref == actor_ref
     ]
     if not candidates:
         return set()
@@ -169,39 +192,24 @@ def _actor_steps(use_case: UseCase) -> set[str]:
     return entries
 
 
-def _aliases(use_cases: tuple[UseCase, ...]) -> dict[str, str]:
-    candidates: dict[str, set[str]] = {}
-    for use_case in use_cases:
-        for alias in (use_case.id, use_case.name):
-            if alias:
-                candidates.setdefault(alias.casefold(), set()).add(use_case.id)
-    return {alias: next(iter(ids)) for alias, ids in candidates.items() if len(ids) == 1}
-
-
 def _relationships(
     raw: dict[str, Any], use_cases: tuple[UseCase, ...],
 ) -> tuple[Relationship, ...]:
     source = raw.get("relationships")
     if not isinstance(source, dict):
         return ()
-    aliases = _aliases(use_cases)
+    accepted_ids = {use_case.id for use_case in use_cases}
     result: list[Relationship] = []
     for kind, collection, child_keys in (
-        ("include", "includes", ("included_use_case_id", "included_use_case", "includedUseCase")),
-        ("extend", "extends", ("extending_use_case_id", "extending_use_case", "extendingUseCase")),
+        ("include", "includes", "included_use_case_id"),
+        ("extend", "extends", "extending_use_case_id"),
     ):
         for item in source.get(collection) or []:
             if not isinstance(item, dict):
                 continue
-            base_raw = text(
-                item.get("base_use_case_id")
-                or item.get("base_use_case")
-                or item.get("baseUseCase")
-            )
-            child_raw = text(next((item.get(key) for key in child_keys if item.get(key)), ""))
-            base_id = aliases.get(base_raw.casefold(), "")
-            child_id = aliases.get(child_raw.casefold(), "")
-            if not base_id or not child_id or base_id == child_id:
+            base_id = text(item.get("base_use_case_id"))
+            child_id = text(item.get(child_keys))
+            if base_id not in accepted_ids or child_id not in accepted_ids or base_id == child_id:
                 continue
             anchors = {
                 f"{base_id}:{text(ref.get('step_ref'))}"
@@ -264,15 +272,13 @@ def _groups(
             owner_by_step.update({step.id: root for step in main_steps})
         # extension handling은 branch_step을 포함하는 actor slice에 붙인다. 별도 group으로
         # 떼면 조건 분기의 call/return이 주 흐름과 인과적으로 분리된다.
-        for extension in use_case.specification.get("extensions") or []:
-            if not isinstance(extension, dict):
-                continue
+        for extension, extension_ref in _extension_specs(use_case.id, use_case.specification):
             branch_step = text(extension.get("branch_step"))
-            label = text(extension.get("label"))
             owner = owner_by_step.get(f"{use_case.id}:main:{branch_step}")
-            if owner and label:
+            if owner and extension_ref:
                 grouped[owner].extend(
-                    step.id for step in use_case.steps if step.branch == label
+                    step.id for step in use_case.steps
+                    if step.extension_ref == extension_ref
                 )
         for group_id, base_steps in grouped.items():
             actor_step = group_id if group_id in actor_steps else None
@@ -325,6 +331,11 @@ def build_scenario_index(raw: dict[str, Any]) -> ScenarioIndex:
         for item in raw.get("use_cases") or []
         if isinstance(item, dict) and text(item.get("id"))
     }
+    actor_names = {
+        text(actor.get("actor_ref")): text(actor.get("name"))
+        for actor in raw.get("actors") or []
+        if isinstance(actor, dict) and text(actor.get("actor_ref")) and text(actor.get("name"))
+    }
     use_cases: list[UseCase] = []
     seen: set[str] = set()
     specifications = sorted(
@@ -346,8 +357,11 @@ def build_scenario_index(raw: dict[str, Any]) -> ScenarioIndex:
             primary_actor=text(
                 specification.get("primary_actor") or summary.get("primary_actor")
             ),
+            primary_actor_ref=text(
+                specification.get("primary_actor_ref") or summary.get("primary_actor_ref")
+            ),
             specification=specification,
-            steps=_steps(use_case_id, specification),
+            steps=_steps(use_case_id, specification, actor_names),
             precondition_refs=_preconditions(use_case_id, specification),
         ))
     # raw relationship은 이름 또는 ID를 사용할 수 있다. 모든 use case를 수락한 뒤에만

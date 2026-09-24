@@ -422,6 +422,10 @@ class _CollaborationState:
             for position, call in enumerate(self.calls, start=1)
         }
         aliases = dict(self.aliases)
+        stable_call_ids = {
+            _text(call.get("stableId")) for call in self.calls
+            if _text(call.get("stableId"))
+        }
         for call in self.calls:
             aliases[new_ids[id(call)]] = call
         for call in self.calls:
@@ -438,6 +442,11 @@ class _CollaborationState:
                 if not isinstance(binding, MutableMapping):
                     continue
                 source, separator, suffix = _text(binding.get("sourceRef")).partition("#")
+                # Stable sourceRefs identify calls by stableId and must survive
+                # callId re-indexing.  Only legacy callId-prefixed references
+                # are rewritten below.
+                if source in stable_call_ids:
+                    continue
                 source_call = aliases.get(source)
                 if separator and source_call is not None:
                     binding["sourceRef"] = f"{new_ids[id(source_call)]}#{suffix}"

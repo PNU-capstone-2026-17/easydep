@@ -51,7 +51,16 @@ def _regenerate_stage(state: AgentState, intent: FeedbackIntent) -> None:
     instr = intent.instruction
     targets = intent.target_ids if intent.scope == "local" else None
     if intent.stage == "actors":
-        state.update(cast(AgentState, identify_actors(state, feedback=instr)))
+        # Actor identity edits are deliberately singular: the workspace has
+        # already validated the catalog ACTn, and modeling must not reconstruct
+        # identity from a mutable label or feedback prose.
+        if targets is not None and len(targets) != 1:
+            raise ValueError("Targeted actor feedback requires exactly one actorRef.")
+        state.update(cast(AgentState, identify_actors(
+            state,
+            feedback=instr,
+            target_ref=targets[0] if targets else None,
+        )))
     elif intent.stage == "use_cases":
         state.update(cast(AgentState, identify_use_cases(state, feedback=instr, target_ids=targets)))
     elif intent.stage == "specs":

@@ -18,10 +18,17 @@ dataset_names 로 로드한다. 결정론/목킹 테스트는 shopping_mall 세�
 import os
 
 import pytest
+from pydantic import ValidationError
 from conftest import dataset_names, load_dataset
 
 from app.requirements.modeling import use_cases as s2
-from app.requirements.schemas import Actor, ActorResult, UseCase, UseCaseResult
+from app.requirements.schemas import Actor, ActorResult, UseCase as _UseCaseSchema, UseCaseResult
+
+
+def UseCase(**values):
+    """Build test proposals with the single actor catalog's explicit ref by default."""
+    values.setdefault("primary_actor_ref", "ACT1")
+    return _UseCaseSchema(**values)
 
 # 결정론/목킹 테스트가 고정으로 쓰는 세트 (id R1..R5, N1..N2 를 이 테스트들이 참조).
 SAMPLE_CLASSIFIED = load_dataset("shopping_mall")["classified"]
@@ -85,9 +92,9 @@ def test_coverage_no_fr_is_full():
 # ---------------------------------------------------------------------------
 def test_identify_actors_uses_structural_sources_and_canonical_parent(monkeypatch):
     result = ActorResult(actors=[
-        Actor(name="Member", description="specialized role", parent_actor="  user ",
+        Actor(name="Member", actor_ref="ACT1", description="specialized role", parent_actor="  user ", parent_actor_ref="ACT2",
               source_refs=["NFR1", "FR1"]),
-        Actor(name="User", description="general role", source_refs=["NFR1"]),
+        Actor(name="User", actor_ref="ACT2", description="general role", source_refs=["NFR1"]),
     ])
     monkeypatch.setattr(s2, "invoke_structured", lambda schema, messages: result)
 
@@ -100,14 +107,90 @@ def test_identify_actors_uses_structural_sources_and_canonical_parent(monkeypatc
 
     member = next(actor for actor in out["actors"] if actor["name"] == "Member")
     assert member["parent_actor"] == "User"
+    assert member["actor_ref"] == "ACT1"
     assert member["source_refs"] == ["FR1", "NFR1"]
+
+
+def test_targeted_actor_rename_preserves_accepted_actor_ref():
+    renamed = Actor(
+        name="Account Member", actor_ref="ACT1", description="renamed role",
+        source_refs=["FR1"],
+    )
+
+    actors, dangling = s2.normalize_actors(
+        [renamed], {"FR1"},
+        [{"actor_ref": "ACT1", "name": "User", "description": "old", "parent_actor": None, "source_refs": ["FR1"]}],
+    )
+
+    assert dangling == []
+    assert actors[0]["actor_ref"] == "ACT1"
+    assert actors[0]["name"] == "Account Member"
+
+
+def test_actor_normalization_keeps_same_display_name_roles_distinct():
+    raw = [
+        Actor(name="Operator", actor_ref="proposal-a", description="first", source_refs=["R1"]),
+        Actor(name="Operator", actor_ref="proposal-b", description="second", source_refs=["R2"]),
+    ]
+
+    actors, dangling = s2.normalize_actors(raw, {"R1", "R2"})
+
+    assert dangling == []
+    assert [(actor["actor_ref"], actor["name"], actor["description"]) for actor in actors] == [
+        ("ACT1", "Operator", "first"),
+        ("ACT2", "Operator", "second"),
+    ]
+
+
+def test_actor_proposal_requires_ref_and_rejects_duplicate_refs():
+    with pytest.raises(ValidationError):
+        Actor(name="Operator", description="role", source_refs=["R1"])
+
+    actors, dangling = s2.normalize_actors(
+        [
+            Actor(name="First", actor_ref="same", description="one", source_refs=["R1"]),
+            Actor(name="Second", actor_ref="same", description="two", source_refs=["R2"]),
+        ],
+        {"R1", "R2"},
+    )
+
+    assert len(actors) == 1
+    assert dangling == ["duplicate actorRef same"]
+
+
+def test_parent_actor_uses_exact_parent_ref_with_duplicate_names():
+    raw = [
+        Actor(name="Member", actor_ref="member", description="child", parent_actor="Operator",
+              parent_actor_ref="operator-b", source_refs=["R1"]),
+        Actor(name="Operator", actor_ref="operator-a", description="first", source_refs=["R2"]),
+        Actor(name="Operator", actor_ref="operator-b", description="second", source_refs=["R3"]),
+    ]
+
+    actors, dangling = s2.normalize_actors(raw, {"R1", "R2", "R3"})
+    member = actors[0]
+
+    assert dangling == []
+    assert member["parent_actor"] == "Operator"
+    assert member["parent_actor_ref"] == "ACT3"
+
+
+def test_accepted_actor_catalog_without_refs_does_not_synthesize_ids():
+    proposed = UseCase(name="Submit", primary_actor="User", primary_actor_ref="ACT1",
+                       goal="submit", requirement_ids=["R1"])
+
+    normalized, dangling = s2.normalize_use_cases(
+        [proposed], [{"name": "User", "description": "role", "parent_actor": None}], {"R1"}, set()
+    )
+
+    assert normalized == []
+    assert dangling == ["accepted actor catalog contains a missing actor_ref"]
 
 
 def test_identify_actors_shapes_dicts(monkeypatch):
     result = ActorResult(
         actors=[
-            Actor(name="Registered User", description="shopper", source_refs=["R1"]),
-            Actor(name="Address Service", description="external", source_refs=["R3"]),
+            Actor(name="Registered User", actor_ref="ACT1", description="shopper", source_refs=["R1"]),
+            Actor(name="Address Service", actor_ref="ACT2", description="external", source_refs=["R3"]),
         ]
     )
     monkeypatch.setattr(s2, "invoke_structured", lambda schema, messages: result)
@@ -153,7 +236,7 @@ def test_identify_use_cases_assigns_ids_and_maps_fields(monkeypatch):
     monkeypatch.setattr(s2, "invoke_structured", lambda schema, messages: result)
 
     out = s2.identify_use_cases(
-        {"classified": SAMPLE_CLASSIFIED, "actors": [{"name": "Registered User", "kind": "primary", "description": "s"}]}
+        {"classified": SAMPLE_CLASSIFIED, "actors": [{"actor_ref": "ACT1", "name": "Registered User", "kind": "primary", "description": "s"}]}
     )
     ucs = out["use_cases"]
 
@@ -170,7 +253,8 @@ def test_identify_use_cases_assigns_ids_and_maps_fields(monkeypatch):
 def test_identify_use_cases_prunes_unused_actors_but_keeps_ancestors(monkeypatch):
     monkeypatch.setattr(s2, "invoke_structured", lambda schema, messages: UseCaseResult(use_cases=[
         UseCase(
-            name="Submit request", primary_actor="Customer",
+            name="Submit request", primary_actor="Customer", primary_actor_ref="ACT2",
+            supporting_actor_refs=["ACT3"],
             supporting_actors=["Notification Provider"], goal="submit a request",
             requirement_ids=["R1"],
         )
@@ -179,10 +263,10 @@ def test_identify_use_cases_prunes_unused_actors_but_keeps_ancestors(monkeypatch
     out = s2.identify_use_cases({
         "classified": [{"id": "R1", "text": "A customer submits a request.", "type": "FR"}],
         "actors": [
-            {"name": "Account Holder", "description": "base role", "parent_actor": None},
-            {"name": "Customer", "description": "requester", "parent_actor": "Account Holder"},
-            {"name": "Notification Provider", "description": "external service", "parent_actor": None},
-            {"name": "Unused Role", "description": "not involved", "parent_actor": None},
+            {"actor_ref": "ACT1", "name": "Account Holder", "description": "base role", "parent_actor": None},
+            {"actor_ref": "ACT2", "name": "Customer", "description": "requester", "parent_actor": "Account Holder", "parent_actor_ref": "ACT1"},
+            {"actor_ref": "ACT3", "name": "Notification Provider", "description": "external service", "parent_actor": None},
+            {"actor_ref": "ACT4", "name": "Unused Role", "description": "not involved", "parent_actor": None},
         ],
     })
 
@@ -193,13 +277,13 @@ def test_identify_use_cases_prunes_unused_actors_but_keeps_ancestors(monkeypatch
 
 def test_local_use_case_edit_prunes_actors_the_same_way(monkeypatch):
     monkeypatch.setattr(s2, "invoke_structured", lambda schema, messages: UseCaseResult(use_cases=[
-        UseCase(name="Submit request", primary_actor="Customer", goal="submit a request",
+        UseCase(name="Submit request", primary_actor="Customer", primary_actor_ref="ACT2", goal="submit a request",
                 requirement_ids=["R1"])
     ]))
     actors = [
-        {"name": "Account Holder", "description": "base role", "parent_actor": None},
-        {"name": "Customer", "description": "requester", "parent_actor": "Account Holder"},
-        {"name": "Unused Role", "description": "not involved", "parent_actor": None},
+        {"actor_ref": "ACT1", "name": "Account Holder", "description": "base role", "parent_actor": None},
+        {"actor_ref": "ACT2", "name": "Customer", "description": "requester", "parent_actor": "Account Holder", "parent_actor_ref": "ACT1"},
+        {"actor_ref": "ACT3", "name": "Unused Role", "description": "not involved", "parent_actor": None},
     ]
 
     out = s2.identify_use_cases({
@@ -221,20 +305,72 @@ def test_identify_use_cases_retries_a_dangling_actor_reference_once(monkeypatch)
     def fake(schema, _messages):
         nonlocal calls
         calls += 1
-        primary = "Unknown actor" if calls == 1 else "  customer "
+        primary = "Customer"
+        primary_ref = "ACT999" if calls == 1 else "ACT1"
         return UseCaseResult(use_cases=[
-            UseCase(name="Submit request", primary_actor=primary, goal="submit a request",
+            UseCase(name="Submit request", primary_actor=primary, primary_actor_ref=primary_ref, goal="submit a request",
                     requirement_ids=["R1"]),
         ])
 
     monkeypatch.setattr(s2, "invoke_structured", fake)
     out = s2.identify_use_cases({
         "classified": [{"id": "R1", "text": "A customer submits a request.", "type": "FR"}],
-        "actors": [{"name": "Customer", "description": "requester", "source_refs": ["R1"]}],
+        "actors": [{"actor_ref": "ACT1", "name": "Customer", "description": "requester", "source_refs": ["R1"]}],
     })
 
     assert out["use_cases"][0]["primary_actor"] == "Customer"
     assert calls == 2
+
+
+def test_use_case_actor_relations_resolve_duplicate_names_by_ref():
+    actors = [
+        {"actor_ref": "ACT1", "name": "Operator", "description": "first", "parent_actor": None},
+        {"actor_ref": "ACT2", "name": "Operator", "description": "second", "parent_actor": None},
+    ]
+    proposed = UseCase(
+        name="Approve request", primary_actor="Operator", primary_actor_ref="ACT2",
+        goal="approve a request", requirement_ids=["R1"],
+    )
+
+    normalized, dangling = s2.normalize_use_cases([proposed], actors, {"R1"}, set())
+
+    assert dangling == []
+    assert normalized[0].primary_actor_ref == "ACT2"
+    assert normalized[0].primary_actor == "Operator"
+
+
+def test_use_case_actor_name_only_is_rejected_when_display_name_is_ambiguous():
+    actors = [
+        {"actor_ref": "ACT1", "name": "Operator", "description": "first", "parent_actor": None},
+        {"actor_ref": "ACT2", "name": "Operator", "description": "second", "parent_actor": None},
+    ]
+    proposed = UseCase(name="Approve request", primary_actor="Operator", primary_actor_ref=None, goal="approve", requirement_ids=["R1"])
+
+    normalized, dangling = s2.normalize_use_cases([proposed], actors, {"R1"}, set())
+
+    assert normalized == []
+    assert dangling == ["missing primaryActorRef for Operator"]
+
+
+def test_actor_reference_defects_keep_duplicate_use_case_names_separate():
+    defects = s2._actor_reference_defects({
+        "actors": [{"actor_ref": "ACT1", "name": "Student"}],
+        "use_cases": [
+            {
+                "id": "UC1", "name": "Manage registration",
+                "primary_actor_ref": "MISSING-1", "supporting_actor_refs": [],
+            },
+            {
+                "id": "UC2", "name": "Manage registration",
+                "primary_actor_ref": "MISSING-2", "supporting_actor_refs": [],
+            },
+        ],
+    })
+
+    assert defects == {
+        ("UC1", "primary_actor", "MISSING-1"),
+        ("UC2", "primary_actor", "MISSING-2"),
+    }
 
 
 def test_explicit_sign_in_goal_is_kept_as_a_use_case(monkeypatch):
@@ -251,7 +387,7 @@ def test_explicit_sign_in_goal_is_kept_as_a_use_case(monkeypatch):
             {"id": "R1", "text": "A user can sign in.", "type": "FR"},
             {"id": "R2", "text": "A user can view account details.", "type": "FR"},
         ],
-        "actors": [{"name": "User", "description": "account holder", "source_refs": ["R1", "R2"]}],
+        "actors": [{"actor_ref": "ACT1", "name": "User", "description": "account holder", "source_refs": ["R1", "R2"]}],
     })
 
     assert {use_case["name"] for use_case in out["use_cases"]} == {"Sign in", "View account"}
@@ -283,7 +419,7 @@ def test_identify_use_cases_local_edit_preserves_siblings(monkeypatch):
 
     out = s2.identify_use_cases(
         {"classified": SAMPLE_CLASSIFIED,
-         "actors": [{"name": "U", "kind": "primary", "description": "d"}],
+         "actors": [{"actor_ref": "ACT1", "name": "U", "kind": "primary", "description": "d"}],
          "use_cases": existing},
         feedback="결제를 UC2에 포함", target_ids=["UC2"],
     )
@@ -309,7 +445,7 @@ def test_identify_use_cases_local_edit_reindexes_on_count_change(monkeypatch):
     out = s2.identify_use_cases(
         {
             "classified": SAMPLE_CLASSIFIED,
-            "actors": [{"name": "U", "description": "actor", "source_refs": ["R1"]}],
+            "actors": [{"actor_ref": "ACT1", "name": "U", "description": "actor", "source_refs": ["R1"]}],
             "use_cases": existing,
         },
         feedback="UC1을 둘로 쪼개줘", target_ids=["UC1"],
@@ -336,7 +472,7 @@ def test_local_split_preserves_siblings_and_allocates_only_new_target_ids(monkey
     out = s2.identify_use_cases(
         {
             "classified": SAMPLE_CLASSIFIED,
-            "actors": [{"name": "U", "description": "student", "source_refs": ["R1"]}],
+            "actors": [{"actor_ref": "ACT1", "name": "U", "description": "student", "source_refs": ["R1"]}],
             "use_cases": existing,
         },
         feedback="Split UC2 into request and confirmation goals.",
@@ -381,9 +517,10 @@ def test_actor_goal_audit_can_restore_an_explicit_omitted_goal(monkeypatch):
             return _uc_result(["R1"])
         return s2.RequirementTraceSlice(
             requirement_id="R2",
-            missing_use_case=s2.MissingUseCaseCandidate(
-                name="Handle R2",
-                primary_actor="U",
+                missing_use_case=s2.MissingUseCaseCandidate(
+                    name="Handle R2",
+                    primary_actor_ref="ACT1",
+                    primary_actor="U",
                 goal="complete R2",
             ),
         )
@@ -395,7 +532,7 @@ def test_actor_goal_audit_can_restore_an_explicit_omitted_goal(monkeypatch):
                 {"id": "R1", "text": "start one operation", "type": "FR"},
                 {"id": "R2", "text": "start another operation", "type": "FR"},
             ],
-            "actors": [{"name": "U", "kind": "primary", "description": "d"}],
+            "actors": [{"actor_ref": "ACT1", "name": "U", "kind": "primary", "description": "d"}],
         }
     )
     covered = {rid for uc in out["use_cases"] for rid in uc["requirement_ids"]}
@@ -414,7 +551,7 @@ def test_orphan_audit_maps_an_explicit_cross_cutting_fr_without_adding_a_use_cas
         if schema is UseCaseResult:
             return _uc_result(["R1"], ["R2"])
         return s2.RequirementTraceSlice(
-            requirement_id="R3", constrains_use_case_names=["UC1", "UC2"]
+            requirement_id="R3", constrains_use_case_refs=["UC1", "UC2"]
         )
 
     monkeypatch.setattr(s2, "invoke_structured", fake)
@@ -429,7 +566,7 @@ def test_orphan_audit_maps_an_explicit_cross_cutting_fr_without_adding_a_use_cas
                     "type": "FR",
                 },
             ],
-            "actors": [{"name": "U", "description": "actor", "source_refs": ["R1"]}],
+            "actors": [{"actor_ref": "ACT1", "name": "U", "description": "actor", "source_refs": ["R1"]}],
         }
     )
 
@@ -445,7 +582,7 @@ def test_a_shared_mandatory_action_is_realized_by_each_named_goal(monkeypatch):
             return _uc_result(["R1"], ["R2"])
         return s2.RequirementTraceSlice(
             requirement_id="R3",
-            realized_by_use_case_names=["UC1", "UC2"],
+            realized_by_use_case_refs=["UC1", "UC2"],
         )
 
     monkeypatch.setattr(s2, "invoke_structured", fake)
@@ -460,7 +597,7 @@ def test_a_shared_mandatory_action_is_realized_by_each_named_goal(monkeypatch):
                     "type": "FR",
                 },
             ],
-            "actors": [{"name": "U", "description": "actor", "source_refs": ["R1"]}],
+            "actors": [{"actor_ref": "ACT1", "name": "U", "description": "actor", "source_refs": ["R1"]}],
         }
     )
 
@@ -486,7 +623,7 @@ def test_trace_slice_can_remove_an_unsupported_broad_multi_mapping(monkeypatch):
                     "type": "FR",
                 },
             ],
-            "actors": [{"name": "U", "description": "actor", "source_refs": ["R1"]}],
+            "actors": [{"actor_ref": "ACT1", "name": "U", "description": "actor", "source_refs": ["R1"]}],
         }
     )
 
@@ -508,7 +645,7 @@ def test_actor_domain_fact_is_not_mislabeled_as_a_global_constraint(monkeypatch)
                 {"id": "R2", "text": "A student is a university member.", "type": "FR"},
             ],
             "actors": [
-                {"name": "Student", "description": "member", "source_refs": ["R1", "R2"]}
+                {"actor_ref": "ACT1", "name": "Student", "description": "member", "source_refs": ["R1", "R2"]}
             ],
         }
     )
@@ -529,7 +666,7 @@ def test_nfr_labeled_actor_fact_is_not_mislabeled_as_a_constraint(monkeypatch):
                 {"id": "R1", "text": "A member views available courses.", "type": "FR"},
                 {"id": "N1", "text": "A student is a university member.", "type": "NFR"},
             ],
-            "actors": [{"name": "Student", "description": "member", "source_refs": ["N1"]}],
+            "actors": [{"actor_ref": "ACT1", "name": "Student", "description": "member", "source_refs": ["N1"]}],
         }
     )
 
@@ -542,7 +679,7 @@ def test_constraint_slice_attaches_only_an_explicitly_scoped_nfr(monkeypatch):
             return _uc_result(["R1"])
         return s2.RequirementTraceSlice(
             requirement_id="N1",
-            constrains_use_case_names=["UC1"],
+            constrains_use_case_refs=["UC1"],
         )
 
     monkeypatch.setattr(s2, "invoke_structured", fake)
@@ -556,11 +693,96 @@ def test_constraint_slice_attaches_only_an_explicitly_scoped_nfr(monkeypatch):
                     "type": "NFR",
                 },
             ],
-            "actors": [{"name": "U", "description": "actor", "source_refs": ["R1"]}],
+            "actors": [{"actor_ref": "ACT1", "name": "U", "description": "actor", "source_refs": ["R1"]}],
         }
     )
 
     assert out["use_cases"][0]["nfr_ids"] == ["N1"]
+
+
+def test_trace_refs_select_one_duplicate_display_name_without_name_fanout(monkeypatch):
+    """RTM edges are attached by UC id, so a label collision is harmless."""
+    def fake(schema, _messages):
+        if schema is UseCaseResult:
+            return UseCaseResult(use_cases=[
+                UseCase(name="Manage request", primary_actor="U", goal="first", requirement_ids=["R1"]),
+                UseCase(name="Manage request", primary_actor="U", goal="second", requirement_ids=["R2"]),
+            ])
+        return s2.RequirementTraceSlice(
+            requirement_id="N1", constrains_use_case_refs=["UC2"]
+        )
+
+    monkeypatch.setattr(s2, "invoke_structured", fake)
+    out = s2.identify_use_cases({
+        "classified": [
+            {"id": "R1", "text": "A user starts the first request.", "type": "FR"},
+            {"id": "R2", "text": "A user starts the second request.", "type": "FR"},
+            {"id": "N1", "text": "The second request completes quickly.", "type": "NFR"},
+        ],
+        "actors": [{"actor_ref": "ACT1", "name": "U", "description": "actor", "source_refs": ["R1", "R2"]}],
+    })
+
+    assert out["constraint_applicability"] == {"N1": ["UC2"]}
+    assert [item["nfr_ids"] for item in out["use_cases"]] == [[], ["N1"]]
+
+
+def test_trace_refs_survive_a_display_name_rename(monkeypatch):
+    def fake(schema, messages):
+        if schema is UseCaseResult:
+            return UseCaseResult(use_cases=[
+                UseCase(name="Renamed request", primary_actor="U", goal="complete", requirement_ids=["R1"]),
+            ])
+        assert "UC1: Renamed request" in str(messages[1].content)
+        return s2.RequirementTraceSlice(
+            requirement_id="N1", constrains_use_case_refs=["UC1"]
+        )
+
+    monkeypatch.setattr(s2, "invoke_structured", fake)
+    out = s2.identify_use_cases({
+        "classified": [
+            {"id": "R1", "text": "A user starts a request.", "type": "FR"},
+            {"id": "N1", "text": "The request completes quickly.", "type": "NFR"},
+        ],
+            "actors": [{"actor_ref": "ACT1", "name": "U", "description": "actor", "source_refs": ["R1"]}],
+    })
+
+    assert out["use_cases"][0]["id"] == "UC1"
+    assert out["use_cases"][0]["nfr_ids"] == ["N1"]
+
+
+def test_actor_repair_precedes_rtm_id_assignment(monkeypatch):
+    """An actor repair may change cardinality, but cannot shift a pre-audit RTM edge."""
+    calls = {"use_case": 0}
+
+    def fake(schema, messages):
+        if schema is UseCaseResult:
+            calls["use_case"] += 1
+            if calls["use_case"] == 1:
+                return UseCaseResult(use_cases=[
+                    UseCase(name="Discard", primary_actor="Unknown", primary_actor_ref="ACT999", goal="bad", requirement_ids=["R1"]),
+                    UseCase(name="Keep", primary_actor="U", goal="good", requirement_ids=["R1"]),
+                ])
+            return UseCaseResult(use_cases=[
+                UseCase(name="Keep", primary_actor="U", goal="good", requirement_ids=["R1"]),
+            ])
+        assert "UC1: Keep" in str(messages[1].content)
+        assert "Discard" not in str(messages[1].content)
+        return s2.RequirementTraceSlice(
+            requirement_id="N1", constrains_use_case_refs=["UC1"]
+        )
+
+    monkeypatch.setattr(s2, "invoke_structured", fake)
+    out = s2.identify_use_cases({
+        "classified": [
+            {"id": "R1", "text": "A user completes a request.", "type": "FR"},
+            {"id": "N1", "text": "The request completes quickly.", "type": "NFR"},
+        ],
+            "actors": [{"actor_ref": "ACT1", "name": "U", "description": "actor", "source_refs": ["R1"]}],
+    })
+
+    assert [(item["id"], item["name"], item["nfr_ids"]) for item in out["use_cases"]] == [
+        ("UC1", "Keep", ["N1"])
+    ]
 
 
 def test_actor_goal_audit_runs_without_a_coverage_iteration_budget(monkeypatch):
@@ -568,7 +790,7 @@ def test_actor_goal_audit_runs_without_a_coverage_iteration_budget(monkeypatch):
 
     out = s2.identify_use_cases({
         "classified": SAMPLE_CLASSIFIED,
-        "actors": [{"name": "U", "description": "actor", "source_refs": ["R1"]}],
+        "actors": [{"actor_ref": "ACT1", "name": "U", "description": "actor", "source_refs": ["R1"]}],
     })
     covered = {rid for uc in out["use_cases"] for rid in uc["requirement_ids"]}
     assert covered == {"R1"}   # 예산 소진, 나머지는 이후 check_coverage가 고아로 표면화
@@ -582,6 +804,7 @@ def _reviewed_state():
         ],
         "actors": [
             {
+                "actor_ref": "ACT1",
                 "name": "User",
                 "description": "requester",
                 "parent_actor": None,
@@ -592,6 +815,8 @@ def _reviewed_state():
             {
                 "id": "UC1",
                 "name": "Submit request badly",
+                "primary_actor_ref": "ACT1",
+                "supporting_actor_refs": [],
                 "primary_actor": "User",
                 "supporting_actors": [],
                 "level": "user_goal",
@@ -607,6 +832,8 @@ def _candidate_use_case(**updates):
     candidate = {
         "id": "UC1",
         "name": "Submit request",
+        "primary_actor_ref": "ACT1",
+        "supporting_actor_refs": [],
         "primary_actor": "User",
         "supporting_actors": [],
         "level": "user_goal",
@@ -682,7 +909,7 @@ def test_model_review_keeps_original_when_the_single_repair_does_not_improve(mon
     "candidate",
     [
         _candidate_use_case(requirement_ids=["UNKNOWN"]),
-        _candidate_use_case(primary_actor="Unknown actor"),
+        _candidate_use_case(primary_actor="Unknown actor", primary_actor_ref="ACT999"),
     ],
     ids=["unknown-requirement", "new-actor-reference"],
 )

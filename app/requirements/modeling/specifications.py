@@ -19,6 +19,7 @@ LLM 출력을 그대로 믿지 않고 검증·반성한다:
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections import Counter
@@ -101,7 +102,9 @@ def _resolve(ids: list[str], by_id: dict[str, RequirementItem]) -> str:
     return "\n".join(lines) or "- (none)"
 
 
-def validate_specification(spec: dict[str, object]) -> list[str]:
+def validate_specification(
+    spec: dict[str, object], allowed_subject_refs: set[str] | None = None,
+) -> list[str]:
     """명세를 결정론적으로 점검한다(생성은 LLM 휴리스틱, 이 점검은 확정적).
 
     판정은 `knowledge/detectors.py`가 한다 — 규칙과 검출기가 지식베이스에 함께 있어야
@@ -111,6 +114,35 @@ def validate_specification(spec: dict[str, object]) -> list[str]:
     사실이 **주석에만** 있었다. 그래서 지적을 받는 사람은 그 한계를 알 수 없었다.
     """
     findings = [f.as_issue() for f in detectors.spec_findings(spec)]
+    allowed = (allowed_subject_refs or set()) | {"system"}
+    step_groups: list[tuple[str, object]] = []
+    main = spec.get("main_scenario")
+    if isinstance(main, list):
+        step_groups.extend((f"main_scenario[{index}]", step) for index, step in enumerate(main))
+    extensions = spec.get("extensions")
+    if isinstance(extensions, list):
+        for ext_index, extension in enumerate(extensions):
+            if not isinstance(extension, dict):
+                continue
+            handling = extension.get("handling_steps")
+            if isinstance(handling, list):
+                step_groups.extend(
+                    (f"extensions[{ext_index}].handling_steps[{step_index}]", step)
+                    for step_index, step in enumerate(handling)
+                )
+    for location, step in step_groups:
+        if not isinstance(step, dict):
+            continue
+        subject_ref = step.get("subject_ref")
+        is_actor_ref = isinstance(subject_ref, str) and re.fullmatch(r"ACT\d+", subject_ref)
+        if (
+            not isinstance(subject_ref, str)
+            or (allowed_subject_refs is not None and subject_ref not in allowed)
+            or (allowed_subject_refs is None and subject_ref != "system" and not is_actor_ref)
+        ):
+            findings.append(
+                f"[step-subject-ref] {location} must use an accepted actor ref or 'system'."
+            )
     findings.extend(_public_contract_findings(spec))
     return findings
 
@@ -141,6 +173,35 @@ def _public_contract_findings(spec: dict[str, object]) -> list[str]:
                     "[public-contract-integrity] "
                     f"{collection}[{index}] cites requirement IDs not linked as functional "
                     f"requirements to this use case: {', '.join(unsupported)}."
+                )
+
+    obligations = contract.get("identity_obligations")
+    if isinstance(obligations, list):
+        valid_auth_refs = [
+            entry.get("obligation_ref") for entry in obligations
+            if isinstance(entry, dict) and entry.get("obligation") == "authenticate"
+            and isinstance(entry.get("obligation_ref"), str)
+        ]
+        valid_source_kinds = {
+            "caller_input", "authenticated_context", "system_result", "unresolved"
+        }
+        for index, entry in enumerate(obligations):
+            if not isinstance(entry, dict) or entry.get("obligation") != "identify":
+                continue
+            kind = entry.get("identity_source_kind", "unresolved")
+            source_ref = entry.get("source_authenticate_obligation_ref")
+            if kind not in valid_source_kinds:
+                findings.append(
+                    f"[public-contract-integrity] identity_obligations[{index}] has an invalid identity_source_kind."
+                )
+            elif kind == "authenticated_context":
+                if not valid_auth_refs or source_ref not in valid_auth_refs:
+                    findings.append(
+                        f"[public-contract-integrity] identity_obligations[{index}] must reference a same-use-case authenticate obligation."
+                    )
+            elif source_ref is not None:
+                findings.append(
+                    f"[public-contract-integrity] identity_obligations[{index}] has an authenticate reference without authenticated_context source."
                 )
 
     values = contract.get("required_values")
@@ -179,8 +240,17 @@ def _spec_human(
     feedback: str = "",
 ) -> str:
     """명세 생성용 user 프롬프트(유스케이스 + FR/NFR). feedback 시 재생성 지시를 얹는다."""
-    actor = next((a for a in actors if a.get("name") == uc.get("primary_actor")), None)
+    primary_actor_ref = uc.get("primary_actor_ref")
+    actor = next((a for a in actors if a.get("actor_ref") == primary_actor_ref), None)
     actor_desc = f"{actor['name']} — {actor['description']}" if actor else uc.get("primary_actor", "")
+    accepted_refs = list(dict.fromkeys(
+        [primary_actor_ref, *(uc.get("supporting_actor_refs") or [])]
+    ))
+    actor_catalog = [
+        f"- {ref}: {next((a.get('name', '') for a in actors if a.get('actor_ref') == ref), '')}"
+        for ref in accepted_refs if isinstance(ref, str) and ref
+    ]
+    actor_catalog_text = "\n".join(actor_catalog) or "- (none)"
     neighbouring_goals = uc.get("_neighboring_goals") or []
     scope = (
         f"Current goal boundary: implement ONLY {uc['name']} — {uc.get('goal', '')}."
@@ -206,6 +276,8 @@ def _spec_human(
         f"Use case: {uc['name']}\n"
         f"{scope}\n"
         f"Primary actor: {actor_desc}\n"
+        f"Finite actor catalog for step subject_ref values (the system sentinel is 'system'):\n"
+        f"{actor_catalog_text}\n"
         f"Goal: {uc.get('goal', '')}\n\n"
         f"Functional requirements it covers:\n{_resolve(uc.get('requirement_ids', []), by_id)}\n\n"
         f"Non-functional constraints:\n{_resolve(uc.get('nfr_ids', []), by_id)}\n\n"
@@ -217,6 +289,7 @@ def _spec_human(
         "subject exercises delegated authority for a different subject, not authentication alone. "
         "For each value, cite requirement IDs and report its source (caller_input, "
         "authenticated_actor_context, or system_result), type, and use (control, result, or both). "
+        + prompts.IDENTITY_SOURCE_INSTRUCTIONS + " "
         "A caller supplied identifier remains untrusted input and is not proof of identity. "
         "Leave lists empty when the requirements establish no obligation; do not infer login, "
         "authorization, identity checks, or required values."
@@ -246,6 +319,69 @@ def _spec_human(
 
 def normalize_specification(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecItem:
     """구조화 출력을 정리(_clean)해 상태 dict로 조립한다(issues는 이후 계산)."""
+    # Refs are minted from accepted source identity, never from the displayed
+    # subject label. requirement_ids remain evidence references and are not
+    # copied into either identity field.
+    identity_obligations: list[dict[str, object]] = []
+    used_obligation_refs: set[str] = set()
+
+    def opaque_ref(prefix: str, parts: list[str]) -> str:
+        encoded = json.dumps(parts, ensure_ascii=False, separators=(",", ":"))
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:20]
+        return f"{prefix}_{digest}"
+
+    for position, obligation in enumerate(spec.public_contract.identity_obligations, start=1):
+        requirement_ids = list(obligation.requirement_ids)
+        position_key = [str(uc["id"]), str(position)]
+        stable_subject_ref = opaque_ref("sub", position_key)
+        subject_ref = obligation.subject_ref
+        if not isinstance(subject_ref, str) or not re.fullmatch(r"sub_[0-9a-f]{20}", subject_ref):
+            subject_ref = stable_subject_ref
+
+        obligation_ref = obligation.obligation_ref
+        if not isinstance(obligation_ref, str) or not re.fullmatch(r"ob_[0-9a-f]{20}", obligation_ref):
+            obligation_ref = opaque_ref("ob", position_key)
+        # Guard duplicate proposals and the vanishingly unlikely digest clash.
+        collision_index = 1
+        while obligation_ref in used_obligation_refs:
+            obligation_ref = opaque_ref("ob", [*position_key, str(collision_index)])
+            collision_index += 1
+        used_obligation_refs.add(obligation_ref)
+        normalized_obligation = {
+            "obligation_ref": obligation_ref,
+            "subject_ref": subject_ref,
+            "subject": obligation.subject,
+            "obligation": obligation.obligation,
+            "identity_source_kind": obligation.identity_source_kind,
+            "requirement_ids": requirement_ids,
+        }
+        if obligation.source_authenticate_obligation_ref is not None:
+            normalized_obligation["source_authenticate_obligation_ref"] = (
+                obligation.source_authenticate_obligation_ref
+            )
+        identity_obligations.append(normalized_obligation)
+
+    # Refs must exist before source links are resolved. Display labels are never join keys.
+    authenticate_refs = [
+        item["obligation_ref"] for item in identity_obligations
+        if item["obligation"] == "authenticate"
+    ]
+    for item in identity_obligations:
+        if item["obligation"] != "identify":
+            item["identity_source_kind"] = "unresolved"
+            item.pop("source_authenticate_obligation_ref", None)
+        elif item["identity_source_kind"] == "authenticated_context":
+            selected_ref = item.get("source_authenticate_obligation_ref")
+            if selected_ref is not None:
+                if selected_ref not in authenticate_refs:
+                    item["identity_source_kind"] = "unresolved"
+                    item.pop("source_authenticate_obligation_ref", None)
+            else:
+                item["identity_source_kind"] = "unresolved"
+                item.pop("source_authenticate_obligation_ref", None)
+        else:
+            item.pop("source_authenticate_obligation_ref", None)
+
     return {
         "use_case_id": uc["id"],
         "name": uc["name"],
@@ -254,14 +390,16 @@ def normalize_specification(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecIt
         "preconditions": [normalize_text(p) for p in spec.preconditions],
         "trigger": normalize_text(spec.trigger),
         "main_scenario": [
-            {"step_number": s.step_number, "sentence": normalize_text(s.sentence),
+            {"step_number": s.step_number, "subject_ref": s.subject_ref,
+             "sentence": normalize_text(s.sentence),
              "covered_req_ids": s.covered_req_ids}
             for s in spec.main_scenario
         ],
         "extensions": [
             {"label": normalize_text(e.label), "branch_step": e.branch_step,
              "condition": normalize_text(e.condition),
-             "handling_steps": [{"sub_step": h.sub_step, "sentence": normalize_text(h.sentence)}
+             "handling_steps": [{"sub_step": h.sub_step, "subject_ref": h.subject_ref,
+                                 "sentence": normalize_text(h.sentence)}
                                 for h in e.handling_steps],
              "outcome": e.outcome, "resume_at_step": e.resume_at_step}
             for e in spec.extensions
@@ -280,7 +418,10 @@ def normalize_specification(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecIt
             }
             for guarantee in spec.minimal_guarantee
         ],
-        "public_contract": spec.public_contract.model_dump(mode="json"),
+        "public_contract": {
+            **spec.public_contract.model_dump(mode="json", exclude={"identity_obligations"}),
+            "identity_obligations": identity_obligations,
+        },
         "issues": [],
         "repair_iters": 0,
         # _check가 곧 덮어쓴다. 조립 시점에는 아직 아무 검증도 안 했다.
@@ -372,15 +513,23 @@ def requirement_view(
     return [{"id": rid, "text": by_id[rid]["text"]} for rid in ids if rid in by_id]
 
 
+def _accepted_step_subject_refs(uc: UseCaseItem) -> set[str]:
+    refs = [uc.get("primary_actor_ref"), *(uc.get("supporting_actor_refs") or [])]
+    return {ref for ref in refs if isinstance(ref, str) and ref}
+
+
 def _check(
     item: UseCaseSpecItem,
     requirements: list[dict[str, object]] | None = None,
     goal_context: dict[str, object] | None = None,
     constraints: list[dict[str, object]] | None = None,
     review_call: SemanticReviewCall | None = None,
+    allowed_subject_refs: set[str] | None = None,
 ) -> tuple[list[str], str]:
     """정적(결정론) + 의미(LLM) 검증을 병합한 (issues, 의미검증 상태)."""
-    static_findings = validate_specification(cast(dict[str, object], item))
+    static_findings = validate_specification(
+        cast(dict[str, object], item), allowed_subject_refs
+    )
     if static_findings:
         return static_findings, validator.PENDING
     findings, status = _semantic_findings(
@@ -455,7 +604,8 @@ def generate_specification(
         spec: UseCaseSpec = propose(UseCaseSpec, messages)
         item = normalize_specification(spec, uc)
         item["issues"], item["semantic_status"] = _check(
-            item, requirements, goal_context, constraints, reviewer
+            item, requirements, goal_context, constraints, reviewer,
+            _accepted_step_subject_refs(uc),
         )
         return item
 
@@ -546,8 +696,13 @@ def generate_specification(
             )
         }
         candidate_digest = stable_digest(candidate_spec)
-        current_static = validate_specification(cast(dict[str, object], item))
-        candidate_static = validate_specification(cast(dict[str, object], candidate))
+        allowed_subject_refs = _accepted_step_subject_refs(uc)
+        current_static = validate_specification(
+            cast(dict[str, object], item), allowed_subject_refs
+        )
+        candidate_static = validate_specification(
+            cast(dict[str, object], candidate), allowed_subject_refs
+        )
         advanced_to_semantic_review = bool(current_static) and not candidate_static
         repeated = ledger.candidate_seen(
             input_digest=input_digest,
@@ -755,11 +910,16 @@ def generate_specs(
     # use_cases 입력 순서 유지: 재생성분 우선, 아니면 기존 spec 유지(local 피드백 시 형제 보존).
     specs = [results.get(uc["id"]) or existing.get(uc["id"]) for uc in use_cases]
     specs = [s for s in specs if s is not None]
+    specs = apply_identity_source_overrides(
+        specs, state.get("identity_source_overrides")
+    )
     return {"use_case_specs": specs, "phase": "specs"}
 
 
 @contract("check_specs", requires=("use_case_specs",), produces=("spec_report",))
-def check_specs(state: AgentState) -> ModelingStagePatch:
+def check_specs(
+    state: AgentState, *, review_semantic: bool = True,
+) -> ModelingStagePatch:
     """생성된 명세의 검증 결과를 집계한다(결정론 요약 노드).
 
     generate_specs가 반성 루프로 이미 정적+의미 검증·수리했고, 이 노드는 그 결과(잔여 issues·
@@ -796,9 +956,110 @@ def check_specs(state: AgentState) -> ModelingStagePatch:
     # issue the same LLM call again merely to redisplay the same question.
     return {
         "spec_report": report,
-        "semantic_ambiguity_question": find_source_grounded_semantic_ambiguity(state),
+        "semantic_ambiguity_question": (
+            find_source_grounded_semantic_ambiguity(state)
+            if review_semantic else state.get("semantic_ambiguity_question")
+        ),
+        "identity_source_question": identity_source_question(state),
         "phase": "check_specs",
     }
+
+
+def _identity_source_options(spec: dict[str, object], obligation: dict[str, object]) -> list[dict[str, str]]:
+    """Build finite options from this UC's minted authenticate refs, never labels."""
+    contract = spec.get("public_contract")
+    entries = contract.get("identity_obligations", []) if isinstance(contract, dict) else []
+    authenticate_refs = sorted({
+        str(item.get("obligation_ref")) for item in entries
+        if isinstance(item, dict) and item.get("obligation") == "authenticate"
+        and isinstance(item.get("obligation_ref"), str)
+    })
+    options = [
+        {
+            "id": "caller_input", "label": "Caller supplied input",
+            "description": "The caller supplies the identifier; it is not proof of identity.",
+            "identitySourceKind": "caller_input",
+        },
+        {
+            "id": "system_result", "label": "System result",
+            "description": "The system determines or returns the identity as part of this use case.",
+            "identitySourceKind": "system_result",
+        },
+    ]
+    options.extend({
+        "id": f"authenticated_context:{ref}",
+        "label": "Authenticated context",
+        "description": "Use the subject established by this authenticate obligation.",
+        "identitySourceKind": "authenticated_context",
+        "sourceAuthenticateObligationRef": ref,
+    } for ref in authenticate_refs)
+    return options
+
+
+def identity_source_question(state: AgentState) -> dict[str, object] | None:
+    """Return the next unresolved identify source choice, in stable spec order."""
+    for spec in state.get("use_case_specs") or []:
+        if not isinstance(spec, dict):
+            continue
+        contract = spec.get("public_contract")
+        obligations = contract.get("identity_obligations", []) if isinstance(contract, dict) else []
+        for item in obligations:
+            if (not isinstance(item, dict) or item.get("obligation") != "identify"
+                    or item.get("identity_source_kind") != "unresolved"):
+                continue
+            options = _identity_source_options(spec, item)
+            use_case_id = str(spec.get("use_case_id") or "")
+            use_case_name = str(spec.get("name") or "")
+            identity_subject = str(item.get("subject") or "")
+            return {
+                "useCaseId": use_case_id,
+                "useCaseName": use_case_name,
+                "obligationRef": str(item.get("obligation_ref") or ""),
+                "identitySubject": identity_subject,
+                "requirementIds": list(item.get("requirement_ids") or []),
+                # Names are display context only. The saved opaque obligation refs
+                # and finite options remain the sole answer/matching authority.
+                "prompt": (
+                    f"For {use_case_id} — {use_case_name}, where does the identity "
+                    f"for {identity_subject} come from?"
+                ),
+                "options": options,
+            }
+    return None
+
+
+def apply_identity_source_overrides(
+    specs: list[UseCaseSpecItem], overrides: dict[str, dict[str, str]] | None,
+) -> list[UseCaseSpecItem]:
+    """Apply accepted typed choices after normalization, without another model pass."""
+    if not overrides:
+        return specs
+    for spec in specs:
+        contract = spec.get("public_contract")
+        obligations = contract.get("identity_obligations", []) if isinstance(contract, dict) else []
+        authenticate_refs = {
+            item.get("obligation_ref") for item in obligations
+            if isinstance(item, dict) and item.get("obligation") == "authenticate"
+            and isinstance(item.get("obligation_ref"), str)
+        }
+        for item in obligations:
+            if not isinstance(item, dict) or item.get("obligation") != "identify":
+                continue
+            override = overrides.get(str(item.get("obligation_ref") or ""))
+            if not override:
+                continue
+            item["identity_source_kind"] = override["identity_source_kind"]
+            item.pop("source_authenticate_obligation_ref", None)
+            if override["identity_source_kind"] == "authenticated_context":
+                source_ref = override.get("source_authenticate_obligation_ref")
+                if isinstance(source_ref, str) and source_ref in authenticate_refs:
+                    item["source_authenticate_obligation_ref"] = source_ref
+                else:
+                    # Regeneration may remove or replace the authenticate
+                    # obligation. Reopen the choice instead of retaining a
+                    # stale or cross-use-case authenticated-context answer.
+                    item["identity_source_kind"] = "unresolved"
+    return specs
 
 
 def find_source_grounded_semantic_ambiguity(

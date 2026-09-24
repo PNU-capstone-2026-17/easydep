@@ -424,6 +424,20 @@ def test_operation_contract_rejects_duplicate_parameter_names():
         OperationFragment.model_validate(fragment)
 
 
+def test_operation_proposal_requires_lower_camel_business_names():
+    assert OperationFragment.model_validate(operation_fragment())
+
+    fragment = operation_fragment()
+    fragment["Classes"][0]["operations"][0]["name"] = "submit_request"
+    with pytest.raises(ValueError, match="pattern"):
+        OperationFragment.model_validate(fragment)
+
+    fragment = operation_fragment()
+    fragment["Classes"][0]["operations"][0]["parameters"][0]["name"] = "request_data"
+    with pytest.raises(ValueError, match="pattern"):
+        OperationFragment.model_validate(fragment)
+
+
 def test_operation_contract_rejects_duplicate_class_declarations():
     fragment = operation_fragment()
     fragment["Classes"].append({

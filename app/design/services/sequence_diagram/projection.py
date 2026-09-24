@@ -31,11 +31,7 @@ from app.design.services.class_diagram.scenario import (
     id_key,
     text,
 )
-from app.design.services.class_diagram.validation.model import (
-    derived_value_parts,
-    derived_value_source,
-    operation_catalog,
-)
+from app.design.services.class_diagram.validation.model import operation_catalog
 
 __all__ = [
     "SequenceArgument",
@@ -91,7 +87,8 @@ def _extension_fragments(index: ScenarioIndex) -> dict[str, dict[str, dict[str, 
             if step.branch == "main" or not step.condition:
                 continue
             result[use_case.id][step.id] = {
-                "id": f"{use_case.id}:extension:{step.branch}",
+                "id": step.extension_ref,
+                "condition_ref": step.extension_ref,
                 "type": "opt",
                 "branch": "main",
                 "condition": step.condition,
@@ -115,6 +112,7 @@ def _project_collaboration(
     operations: dict[str, dict[str, Any]],
     use_case_id: str,
     fragments: dict[str, dict[str, str]],
+    actor_ref: str = "",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """call tree 하나를 깊이 우선 call/return 메시지와 participant로 펼친다.
 
@@ -138,6 +136,10 @@ def _project_collaboration(
         operation_id = text(call.get("receiverOperationId"))
         if operation_id not in operations:
             raise ValueError(f"unknown receiver operation: {operation_id}")
+        if not text(call.get("stableId")):
+            raise ValueError(f"accepted call has no stableId: {call_id}")
+        if not text(operations[operation_id].get("stableId")):
+            raise ValueError(f"accepted operation has no stableId: {operation_id}")
         if parent_id:
             if parent_id not in seen:
                 raise ValueError("parent call must precede its child")
@@ -154,12 +156,15 @@ def _project_collaboration(
     actor = text(collaboration.get("entryActor"))
     actor_alias = _alias(actor) if actor else ""
     if actor:
+        if not actor_ref:
+            raise ValueError(f"accepted actor has no actor_ref for {use_case_id}: {actor}")
         participants[actor_alias] = {
             "name": actor,
             "alias": actor_alias,
             "kind": "actor",
             "description": "",
             "source_class": "",
+            "participant_ref": actor_ref,
         }
 
     def participant(operation: dict[str, Any]) -> str:
@@ -182,10 +187,16 @@ def _project_collaboration(
             "kind": operation["stereotype"],
             "description": "",
             "source_class": owner,
+            "participant_ref": text(operation.get("classStableId")),
         }
+        if not participants[alias]["participant_ref"]:
+            raise ValueError(f"accepted class has no stableId: {owner}")
         return alias
 
     messages: list[dict[str, Any]] = []
+    stable_call_ids = {
+        text(call.get("stableId")) or text(call.get("callId")) for call in calls
+    }
     all_step_ids = {
         text(ref) for call in calls for ref in call.get("stepRefs") or []
     }
@@ -198,6 +209,8 @@ def _project_collaboration(
         """한 call과 모든 자식을 기록한 다음 정확히 한 return을 닫는다."""
         call = call_by_id[call_id]
         operation = operations[text(call.get("receiverOperationId"))]
+        call_ref = text(call.get("stableId"))
+        operation_ref = text(operation.get("stableId"))
         callee = participant(operation)
         refs = [text(ref) for ref in call.get("stepRefs") or []]
         fragment_path = [dict(item) for item in inherited_fragments or []]
@@ -209,7 +222,7 @@ def _project_collaboration(
                 "parameter": text(binding.get("parameter")),
                 "type": _parameter_type(operation, text(binding.get("parameter"))),
                 "source_kind": _argument_kind(
-                    text(binding.get("sourceRef")), set(call_by_id), all_step_ids,
+                    text(binding.get("sourceRef")), stable_call_ids, all_step_ids,
                 ),
                 "source_ref": text(binding.get("sourceRef")),
             }
@@ -230,6 +243,8 @@ def _project_collaboration(
             "call_id": call_id,
             "reply_to": "",
             "arguments": arguments,
+            "call_ref": call_ref,
+            "operation_ref": operation_ref,
         })
         # 깊이 우선 순회는 activation stack과 같은 call/return 중첩을 자연스럽게 만든다.
         for child_id in children.get(call_id, []):
@@ -247,6 +262,8 @@ def _project_collaboration(
             "call_id": "",
             "reply_to": call_id,
             "arguments": [],
+            "call_ref": call_ref,
+            "operation_ref": operation_ref,
         })
 
     for root in roots:
@@ -296,57 +313,26 @@ def _scoped_include_collaboration(
     ]
     if not selected:
         return None
-    # 원본 call 위치에 의존하지 않는 child 전용 canonical ID를 만든다. 선택하지 않은
-    # 부모 call을 가리키는 provenance는 child 첫 step 입력으로 바꾼다.
-    id_map = {
-        text(call.get("callId")): f"{owner}:scoped::call:{position}"
-        for position, call in enumerate(selected, start=1)
-    }
-    first_step = next(
-        (
-            text(ref)
-            for call in selected for ref in call.get("stepRefs") or []
-            if text(ref).startswith(f"{owner}:")
-        ),
-        f"{owner}:root",
-    )
+    # This is a view of the accepted collaboration: call identity and source
+    # provenance stay intact, while an omitted parent simply becomes a root.
+    selected_ids = {text(call.get("callId")) for call in selected}
     calls: list[dict[str, Any]] = []
-
-    def remap_source(source_ref: str, fallback_name: str) -> str:
-        derived_type, mappings = derived_value_parts(source_ref)
-        if derived_type:
-            return derived_value_source(
-                derived_type,
-                {
-                    field: remap_source(nested, field)
-                    for field, nested in mappings.items()
-                },
-            )
-        if source_ref.startswith("runtime#"):
-            return source_ref
-        source_id, separator, suffix = source_ref.partition("#")
-        if source_id in id_map:
-            return id_map[source_id] + (f"#{suffix}" if separator else "")
-        if separator:
-            return f"{first_step}#{fallback_name}"
-        return source_ref
 
     for call in selected:
         old_id = text(call.get("callId"))
-        parent = id_map.get(text(call.get("parentCallId")))
+        parent_id = text(call.get("parentCallId"))
+        parent = parent_id if parent_id in selected_ids else None
         bindings: list[dict[str, str]] = []
         for binding in call.get("argumentBindings") or []:
             if not isinstance(binding, dict):
                 continue
-            source_ref = text(binding.get("sourceRef"))
-            source_ref = remap_source(
-                source_ref, text(binding.get("parameter")),
-            )
             bindings.append({
-                "parameter": text(binding.get("parameter")), "sourceRef": source_ref,
+                "parameter": text(binding.get("parameter")),
+                "sourceRef": text(binding.get("sourceRef")),
             })
         calls.append({
-            "callId": id_map[old_id],
+            "callId": old_id,
+            "stableId": text(call.get("stableId")) or None,
             "parentCallId": parent,
             "receiverOperationId": text(call.get("receiverOperationId")),
             "stepRefs": [
@@ -391,6 +377,7 @@ def _embed_extending_use_cases(
         )
         fragment = {
             "id": f"{relationship.base_id}:extend:{relationship.child_id}",
+            "condition_ref": f"{relationship.base_id}:extend:{relationship.child_id}",
             "type": "opt",
             "branch": "main",
             "condition": condition,
@@ -440,6 +427,14 @@ def project_sequence_model(
     # label과 participant owner는 이 승인 catalog에서만 나온다.
     model_payload = class_model.model_dump(by_alias=True)
     operations = operation_catalog(model_payload)
+    classes_by_name = {
+        text(item.get("className")): item
+        for item in model_payload.get("Classes") or [] if isinstance(item, dict)
+    }
+    for operation in operations.values():
+        operation["classStableId"] = text(
+            classes_by_name.get(text(operation.get("className")), {}).get("stableId")
+        )
     collaborations = [
         item for item in model_payload.get("Collaborations") or [] if isinstance(item, dict)
     ]
@@ -473,6 +468,7 @@ def project_sequence_model(
         owner = scope[0]
         messages, participants = _project_collaboration(
             collaboration, operations, owner, fragments.get(owner, {}),
+            index.use_case(owner).primary_actor_ref,
         )
         _merge_diagram(
             diagrams, owner, index.use_case(owner).name, messages, participants,

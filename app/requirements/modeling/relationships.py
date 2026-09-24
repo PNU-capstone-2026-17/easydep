@@ -320,14 +320,14 @@ def _actor_projection(
     use_cases: list[dict], actors: list[dict]
 ) -> tuple[list[dict], list[dict], list[str], list[str]]:
     """Project canonical actor participation and specialization facts."""
-    actor_names = {str(actor.get("name") or "") for actor in actors}
+    actor_refs = {str(actor.get("actor_ref") or "") for actor in actors}
     parent_by_child = {
-        str(actor["name"]): str(actor["parent_actor"])
+        str(actor["actor_ref"]): str(actor["parent_actor_ref"])
         for actor in actors
-        if actor.get("name") and actor.get("parent_actor") in actor_names
+        if actor.get("actor_ref") and actor.get("parent_actor_ref") in actor_refs
     }
     generalizations = [
-        {"parent": parent, "child": child, "kind": "actor"}
+        {"parent_actor_ref": parent, "child_actor_ref": child, "kind": "actor"}
         for child, parent in parent_by_child.items()
     ]
 
@@ -336,40 +336,40 @@ def _actor_projection(
     for use_case in use_cases:
         use_case_id = str(use_case["id"])
         participants = [
-            use_case.get("primary_actor"),
-            *(use_case.get("supporting_actors") or []),
+            use_case.get("primary_actor_ref"),
+            *(use_case.get("supporting_actor_refs") or []),
         ]
         for actor_value in participants:
-            actor_name = str(actor_value or "")
-            if not actor_name:
+            actor_ref = str(actor_value or "")
+            if not actor_ref:
                 continue
-            if actor_name not in actor_names:
-                dropped.append(f"unknown actor {actor_name} for use case {use_case_id}")
+            if actor_ref not in actor_refs:
+                dropped.append(f"unknown actor {actor_ref} for use case {use_case_id}")
                 continue
-            pair = (actor_name, use_case_id)
+            pair = (actor_ref, use_case_id)
             if pair not in declared:
                 declared.append(pair)
 
     declared_set = set(declared)
     associations = [
-        {"actor": actor_name, "use_case_id": use_case_id}
-        for actor_name, use_case_id in declared
+        {"actor_ref": actor_ref, "use_case_id": use_case_id}
+        for actor_ref, use_case_id in declared
         if not any(
             (ancestor, use_case_id) in declared_set
-            for ancestor in _ancestor_names(actor_name, parent_by_child)
+            for ancestor in _ancestor_names(actor_ref, parent_by_child)
         )
     ]
-    associated = {actor for actor, _ in declared}
-    for actor_name, _ in declared:
+    associated = {actor_ref for actor_ref, _ in declared}
+    for actor_ref, _ in declared:
         associated.update(
             child
             for child in parent_by_child
-            if actor_name in _ancestor_names(child, parent_by_child)
+            if actor_ref in _ancestor_names(child, parent_by_child)
         )
     orphan_actors = [
         str(actor["name"])
         for actor in actors
-        if str(actor["name"]) not in associated
+        if str(actor["actor_ref"]) not in associated
     ]
     return associations, generalizations, dropped, orphan_actors
 
@@ -718,13 +718,13 @@ def _suppress_redundant_associations(
     associations: list[dict], relations: dict[str, list[dict]], actors: list[dict]
 ) -> tuple[list[dict], list[dict]]:
     """Hide a relation-owned duplicate entry point for the same actor lineage."""
-    actor_names = {str(actor.get("name") or "") for actor in actors}
+    actor_refs = {str(actor.get("actor_ref") or "") for actor in actors}
     parent_by_child = {
-        str(actor["name"]): str(actor["parent_actor"])
+        str(actor["actor_ref"]): str(actor["parent_actor_ref"])
         for actor in actors
-        if actor.get("name") and actor.get("parent_actor") in actor_names
+        if actor.get("actor_ref") and actor.get("parent_actor_ref") in actor_refs
     }
-    pairs = {(str(item["actor"]), str(item["use_case_id"])) for item in associations}
+    pairs = {(str(item["actor_ref"]), str(item["use_case_id"])) for item in associations}
     bases_by_target: dict[str, list[tuple[str, str]]] = defaultdict(list)
     for relation in relations["includes"]:
         bases_by_target[str(relation["included_use_case_id"])].append(
@@ -738,7 +738,7 @@ def _suppress_redundant_associations(
     kept: list[dict] = []
     suppressed: list[dict] = []
     for association in associations:
-        actor = str(association["actor"])
+        actor = str(association["actor_ref"])
         target = str(association["use_case_id"])
         lineage = {actor, *_ancestor_names(actor, parent_by_child)}
         inherited = next(
@@ -755,7 +755,7 @@ def _suppress_redundant_associations(
         base_id, kind = inherited
         suppressed.append(
             {
-                "actor": actor,
+                "actor_ref": actor,
                 "use_case_id": target,
                 "via_use_case_id": base_id,
                 "relation_kind": kind,
@@ -1083,19 +1083,19 @@ def check_relationships(state: AgentState) -> ModelingStagePatch:
     rel = state.get("relationships") or {}
     use_cases = cast(list[dict], state.get("use_cases") or [])
     declared_supporting = {
-        (str(actor), str(use_case["id"]))
+        (str(actor_ref), str(use_case["id"]))
         for use_case in use_cases
-        for actor in use_case.get("supporting_actors", []) or []
+        for actor_ref in use_case.get("supporting_actor_refs", []) or []
     }
     associations = {
-        (str(item.get("actor") or ""), str(item.get("use_case_id") or ""))
+        (str(item.get("actor_ref") or ""), str(item.get("use_case_id") or ""))
         for item in rel.get("associations", [])
     }
-    actor_names = {str(actor.get("name") or "") for actor in state.get("actors") or []}
+    actor_refs = {str(actor.get("actor_ref") or "") for actor in state.get("actors") or []}
     parent_by_child = {
-        str(actor["name"]): str(actor["parent_actor"])
+        str(actor["actor_ref"]): str(actor["parent_actor_ref"])
         for actor in state.get("actors") or []
-        if actor.get("name") and actor.get("parent_actor") in actor_names
+        if actor.get("actor_ref") and actor.get("parent_actor_ref") in actor_refs
     }
     bases_by_target: dict[str, set[str]] = defaultdict(set)
     for relation in [*rel.get("includes", []), *rel.get("extends", [])]:

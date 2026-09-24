@@ -232,6 +232,8 @@ class DesignArtifactSpec:
     #: stages with owned local repair leave this unset so the generic graph
     #: cannot start a second whole-model correction loop.
     repair: Callable[[Any, str, ArchitectureState, set[str]], Any] | None = None
+    #: Optional automatic repair seam that receives the exact typed finding batch.
+    repair_batch: Callable[[Any, str, ArchitectureState, set[str], list[Finding]], Any] | None = None
     #: Optional adapter for findings nested inside top-level merge units.
     repair_target_mapper: Callable[[dict, ArchitectureState, list[Finding]], set[str]] | None = None
     #: 모델이 만들어진 뒤, 검사 전에 **다른 산출물과 대사**하는 후크. 그래프에서
@@ -384,6 +386,10 @@ def extract_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict
             # typed validation boundary, so consuming guidance here is atomic
             # with checkpointing that accepted model.
             result["class_binding_repair_guidance"] = ""
+        if spec.stage == "class_diagram" and state.get(
+            "class_binding_source_decision"
+        ):
+            result["class_binding_source_decision"] = None
         return result
 
     return node
@@ -731,24 +737,31 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
             if len(targets) > 1:
                 # 같은 종류의 결함이 여러 유스케이스에 있어도 한 번에 하나만 고친다.
                 target = min(targets)
-                diagram = next(
-                    (
-                        item
-                        for item in (model.get("Diagrams") or [])
-                        if isinstance(item, dict)
-                        and str(item.get("use_case_id") or "").strip() == target
-                    ),
-                    {},
-                )
-                local_keys = {
-                    _finding_key(finding)
-                    for finding in spec.check(diagram, state)
-                }
-                batch = [
-                    finding
-                    for finding in batch
-                    if _finding_key(finding) in local_keys
-                ]
+                if spec.repair_target_mapper:
+                    batch = [
+                        finding
+                        for finding in batch
+                        if target in spec.repair_target_mapper(model, state, [finding])
+                    ]
+                else:
+                    diagram = next(
+                        (
+                            item
+                            for item in (model.get("Diagrams") or [])
+                            if isinstance(item, dict)
+                            and str(item.get("use_case_id") or "").strip() == target
+                        ),
+                        {},
+                    )
+                    local_keys = {
+                        _finding_key(finding)
+                        for finding in spec.check(diagram, state)
+                    }
+                    batch = [
+                        finding
+                        for finding in batch
+                        if _finding_key(finding) in local_keys
+                    ]
                 targets = {target}
             finding_keys_before = _repair_finding_keys(findings)
             input_digest = stable_digest(
@@ -793,10 +806,17 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                     f"{repair_directive(batch)}\n\n[REPAIR STRATEGY]\n{strategy}\n\n"
                     f"[ACCUMULATED REPAIR HISTORY]\n{ledger.prompt_context()}"
                 )
-                revised = spec.repair(model, directive, state, targets)
+                if spec.repair_batch is not None:
+                    revised = spec.repair_batch(model, directive, state, targets, batch)
+                    # Batch callbacks own a typed, already-bounded revision
+                    # contract; element-name merging would discard operation
+                    # changes whose owner is not the use-case id.
+                    candidate = revised
+                else:
+                    revised = spec.repair(model, directive, state, targets)
+                    candidate = merge_model(spec, model, revised, targets)
                 # 컬렉션이면 finding이 속한 유스케이스만 LLM 출력을 받아들인다. 대상
                 # 추론이 불가능한 컬렉션 수준 결함만 기존처럼 전체 수정한다.
-                candidate = merge_model(spec, model, revised, targets)
             except Exception as exc:  # noqa: BLE001 - 검증 실패가 스테이지를 죽이면 안 된다
                 error = f"{type(exc).__name__}: {exc}"
                 waiting = transient_llm_error(exc)

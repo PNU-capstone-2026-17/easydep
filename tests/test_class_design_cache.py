@@ -192,3 +192,47 @@ def test_operation_cache_validation_accepts_a_declared_reserved_type():
     )
 
     assert accepted.as_payload()["Classes"]
+
+
+def test_targeted_operation_repairs_undeclared_return_type_without_changing_declarations(monkeypatch):
+    """Targeted revisions use the shared type-only preflight before BCE checks."""
+
+    from app.design.services.class_diagram import generation, operations
+    from app.design.services.class_diagram.models import AcceptedInventory
+    from app.design.services.class_diagram.scenario import build_scenario_index
+    from tests.class_design_fixtures import operation_fragment, single_use_case
+
+    index = build_scenario_index(single_use_case())
+    inventory = AcceptedInventory.from_payload({
+        "Classes": [
+            {"className": "RequestBoundary", "stereotype": "Boundary"},
+            {"className": "RequestControl", "stereotype": "Control"},
+        ],
+        "DataTypes": [],
+        "Relationships": [],
+    })
+    candidate = operation_fragment()
+    candidate["Classes"][0]["operations"][0]["returnType"] = "DropOutcome"
+    declarations = candidate["DataTypes"]
+    monkeypatch.setattr(operations, "_propose_fragment", lambda *_args, **_kwargs: candidate)
+
+    def repair_response(messages, _schema, **_kwargs):
+        assert "DropOutcome" in messages[1]["content"]
+        return {"corrections": [{
+            "path": "/fragment/Classes/0/operations/0/returnType",
+            "correctedType": "RequestResult",
+        }]}
+
+    monkeypatch.setattr(generation, "parse_structured", repair_response)
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        operations, "run_checks", lambda *_args, **_kwargs: SimpleNamespace(errors=[], findings=[])
+    )
+    payload = operations._checked_fragment_uncached(
+        index,
+        inventory.as_payload(),
+        index.use_case("UC1"),
+    )
+    assert payload["Classes"][0]["operations"][0]["returnType"] == "RequestResult"
+    assert payload["DataTypes"] == declarations

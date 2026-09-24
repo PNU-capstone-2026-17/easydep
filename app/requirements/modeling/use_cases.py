@@ -33,6 +33,8 @@ class _MissingUseCaseCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str = Field(min_length=1)
+    primary_actor_ref: str = Field(min_length=1)
+    supporting_actor_refs: list[str] = Field(default_factory=list)
     primary_actor: str = Field(min_length=1)
     supporting_actors: list[str] = Field(default_factory=list)
     goal: str = Field(min_length=1)
@@ -44,10 +46,10 @@ class _RequirementTraceSlice(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     requirement_id: str = Field(min_length=1)
-    realized_by_use_case_names: list[str] = Field(default_factory=list)
+    realized_by_use_case_refs: list[str] = Field(default_factory=list)
     # None means this requirement has no UC relationship (for example an actor/domain fact).
     # [] means it is explicitly a system-wide constraint with no justified UC-local target.
-    constrains_use_case_names: list[str] | None = None
+    constrains_use_case_refs: list[str] | None = None
     missing_use_case: _MissingUseCaseCandidate | None = None
 
 
@@ -92,50 +94,69 @@ def _actor_key(value: str | None) -> str:
 
 
 def normalize_actors(
-    raw_actors: list[Actor], accepted_ids: set[str]
+    raw_actors: list[Actor], accepted_ids: set[str], existing_actors: list[ActorItem] | None = None
 ) -> tuple[list[ActorItem], list[str]]:
     """Actor proposal의 identity·parent·source reference를 canonicalize한다."""
     records: dict[str, dict] = {}
     dangling: list[str] = []
+    seen_refs: set[str] = set()
     for actor in raw_actors:
         name = " ".join(actor.name.split())
-        key = _actor_key(name)
-        if not key:
+        proposal_ref = str(actor.actor_ref or "").strip()
+        if not name:
             dangling.append("blank actor name")
             continue
-        if key not in records:
-            source_refs = _accepted_source_refs(actor.source_refs, accepted_ids)
-            records[key] = {
-                "name": name,
-                "description": actor.description,
-                "parent_actor": actor.parent_actor,
-                "source_refs": source_refs,
-            }
-            if not source_refs:
-                dangling.append(name)
-        else:
-            records[key]["source_refs"] = sorted(
-                set(records[key]["source_refs"])
-                | set(_accepted_source_refs(actor.source_refs, accepted_ids))
-            )
+        if not proposal_ref:
+            dangling.append(f"missing actorRef for {name}")
+            continue
+        if proposal_ref in seen_refs:
+            dangling.append(f"duplicate actorRef {proposal_ref}")
+            continue
+        seen_refs.add(proposal_ref)
+        source_refs = _accepted_source_refs(actor.source_refs, accepted_ids)
+        records[proposal_ref] = {
+            "name": name,
+            "description": actor.description,
+            "parent_actor_ref": actor.parent_actor_ref,
+            "parent_actor": actor.parent_actor,
+            "source_refs": source_refs,
+        }
+        if not source_refs:
+            dangling.append(name)
 
     actors: list[ActorItem] = []
-    for key, record in records.items():
+    existing_refs = {str(actor.get("actor_ref")) for actor in (existing_actors or []) if actor.get("actor_ref")}
+    refs_by_key: dict[str, str] = {}
+    next_id = 1
+    for proposal_ref in records:
+        if proposal_ref and proposal_ref in existing_refs:
+            refs_by_key[proposal_ref] = proposal_ref
+            continue
+        while f"ACT{next_id}" in existing_refs or f"ACT{next_id}" in refs_by_key.values():
+            next_id += 1
+        refs_by_key[proposal_ref] = f"ACT{next_id}"
+        next_id += 1
+    for proposal_ref, record in records.items():
         if not record["source_refs"]:
             continue
-        parent_key = _actor_key(record["parent_actor"])
-        if parent_key == key:
+        parent_ref = str(record["parent_actor_ref"] or "").strip()
+        if record["parent_actor"] and not parent_ref:
+            dangling.append(f"{record['name']} parent actor requires parentActorRef")
+            parent = None
+        elif parent_ref and parent_ref not in records:
+            dangling.append(f"{record['name']} parentActorRef {parent_ref}")
+            parent = None
+        elif parent_ref == proposal_ref:
             dangling.append(record["name"])
             parent = None
-        elif parent_key and parent_key not in records:
-            dangling.append(str(record["parent_actor"]))
-            parent = None
         else:
-            parent = records[parent_key]["name"] if parent_key else None
+            parent = records[parent_ref]["name"] if parent_ref else None
         actors.append({
+            "actor_ref": refs_by_key[proposal_ref],
             "name": record["name"],
             "description": record["description"],
             "parent_actor": parent,
+            "parent_actor_ref": refs_by_key.get(parent_ref) if parent_ref else None,
             "source_refs": record["source_refs"],
         })
     return actors, dangling
@@ -148,23 +169,39 @@ def normalize_use_cases(
     constraint_ids: set[str],
 ) -> tuple[list[UseCase], list[str]]:
     """새 actor를 만들지 않고 use-case의 actor 참조를 canonical 이름으로 해소한다."""
-    known = {_actor_key(actor["name"]): actor["name"] for actor in actors}
+    by_ref = {
+        str(actor["actor_ref"]): actor
+        for actor in actors
+        if actor.get("actor_ref")
+    }
     use_cases = []
     dangling: list[str] = []
+    if len(by_ref) != len(actors):
+        return [], ["accepted actor catalog contains a missing actor_ref"]
     for use_case in raw_use_cases:
-        primary = known.get(_actor_key(use_case.primary_actor))
-        if primary is None:
-            dangling.append(use_case.primary_actor)
+        primary_actor = by_ref.get(use_case.primary_actor_ref) if use_case.primary_actor_ref else None
+        if primary_actor is None:
+            dangling.append(use_case.primary_actor_ref or f"missing primaryActorRef for {use_case.primary_actor}")
             continue
+        support_refs: list[str] = []
+        proposed_support = list(zip(use_case.supporting_actor_refs, use_case.supporting_actors))
+        if len(use_case.supporting_actor_refs) != len(use_case.supporting_actors):
+            dangling.extend(
+                f"missing supportingActorRef for {name}"
+                for name in use_case.supporting_actors[len(use_case.supporting_actor_refs):]
+            )
         supporting: list[str] = []
-        for actor in use_case.supporting_actors:
-            canonical = known.get(_actor_key(actor))
-            if canonical is None:
-                dangling.append(actor)
-            elif canonical not in supporting:
-                supporting.append(canonical)
+        for ref, actor_name in proposed_support:
+            actor_item = by_ref.get(ref) if ref else None
+            if actor_item is None:
+                dangling.append(actor_name)
+            elif actor_item["actor_ref"] not in support_refs:
+                support_refs.append(actor_item["actor_ref"])
+                supporting.append(actor_item["name"])
         use_cases.append(use_case.model_copy(update={
-            "primary_actor": primary,
+            "primary_actor": primary_actor["name"],
+            "primary_actor_ref": primary_actor["actor_ref"],
+            "supporting_actor_refs": support_refs,
             "supporting_actors": supporting,
             "requirement_ids": [
                 ref for ref in dict.fromkeys(use_case.requirement_ids) if ref in functional_ids
@@ -178,35 +215,35 @@ def _actors_referenced_by_use_cases(
     actors: list[ActorItem], use_cases: list[UseCase | UseCaseItem]
 ) -> list[ActorItem]:
     """Keep participating actors and the generalization context they inherit from."""
-    by_key = {
-        _actor_key(actor.get("name")): actor
+    by_ref = {
+        str(actor.get("actor_ref")): actor
         for actor in actors
-        if _actor_key(actor.get("name"))
+        if actor.get("actor_ref")
     }
     retained: set[str] = set()
     for use_case in use_cases:
         if isinstance(use_case, dict):
             references = (
-                str(use_case.get("primary_actor") or ""),
-                *[str(value) for value in use_case.get("supporting_actors") or []],
+                str(use_case.get("primary_actor_ref") or ""),
+                *[str(value) for value in use_case.get("supporting_actor_refs") or []],
             )
         else:
-            references = (use_case.primary_actor, *use_case.supporting_actors)
+            references = (use_case.primary_actor_ref or "", *use_case.supporting_actor_refs)
         retained.update(
-            _actor_key(reference)
+            reference
             for reference in references
-            if _actor_key(reference)
+            if reference
         )
     pending = list(retained)
     while pending:
-        actor = by_key.get(pending.pop())
-        parent = _actor_key(actor.get("parent_actor")) if actor else ""
+        actor = by_ref.get(pending.pop())
+        parent = str(actor.get("parent_actor_ref") or "") if actor else ""
         if parent and parent not in retained:
             retained.add(parent)
             pending.append(parent)
     return [
         actor for actor in actors
-        if _actor_key(actor.get("name")) in retained
+        if str(actor.get("actor_ref") or "") in retained
     ]
 
 
@@ -235,7 +272,7 @@ def _retry_dangling_actor_refs(
 
 def _actor_repair_prompt(base_human: str, raw_actors) -> Callable[[list[str]], str]:
     proposed = "\n".join(
-        f"- {actor.name} [parent: {actor.parent_actor or 'none'}; sourceRefs: {actor.source_refs}]"
+        f"- {actor.actor_ref}: {actor.name} [parentActorRef: {actor.parent_actor_ref or 'none'}; sourceRefs: {actor.source_refs}]"
         for actor in raw_actors
     ) or "- (none)"
 
@@ -243,7 +280,8 @@ def _actor_repair_prompt(base_human: str, raw_actors) -> Callable[[list[str]], s
         return (
             f"{base_human}\n\n[ACTOR IDENTITY REPAIR]\n"
             "Return the same actor proposal, correcting only blank, duplicate, or dangling "
-            "actor identities and parentActor references. Do not derive additional roles. "
+            "actor identities and parentActorRef references. Keep distinct actor refs separate, "
+            "even when display names match. Do not derive additional roles. "
             "Every sourceRefs entry must be an accepted requirement ID.\n\n"
             f"[CURRENT ACTORS]\n{proposed}\n\n[IDENTITIES TO CORRECT]\n{', '.join(dangling)}"
         )
@@ -275,12 +313,17 @@ def _use_case_repair_prompt(base_human: str, raw_use_cases, actors: list[ActorIt
 def _trace_slice(
     requirement: RequirementItem,
     accepted_requirements: list[RequirementItem],
-    raw_use_cases: list[UseCase],
+    use_case_catalog: list[UseCaseItem],
+    actor_catalog: list[ActorItem],
     proposal_call: StructuredProposalCall,
 ) -> _RequirementTraceSlice:
     proposed = "\n".join(
-        f"- {use_case.name} [primary: {use_case.primary_actor}; goal: {use_case.goal}]"
-        for use_case in raw_use_cases
+        f"- {use_case['id']}: {use_case['name']} "
+        f"[primary: {use_case['primary_actor_ref']} ({use_case['primary_actor']}); goal: {use_case['goal']}]"
+        for use_case in use_case_catalog
+    ) or "- (none)"
+    actor_refs = "\n".join(
+        f"- {actor['actor_ref']}: {actor['name']}" for actor in actor_catalog
     ) or "- (none)"
     context = "\n".join(
         _requirement_line(item)
@@ -297,7 +340,7 @@ def _trace_slice(
                 else prompts.CONSTRAINT_TRACE_SLICE_SYSTEM
             )),
             HumanMessage(content=(
-                f"[FIXED PROPOSED USE CASES]\n{proposed}\n\n"
+                f"[ACTOR CATALOG]\n{actor_refs}\n\n[FIXED PROPOSED USE CASES]\n{proposed}\n\n"
                 f"[{'FUNCTIONAL REQUIREMENT' if functional else 'NON-FUNCTIONAL CONSTRAINT'} "
                 f"UNDER AUDIT]\n"
                 f"{_requirement_line(requirement)}\n\n"
@@ -318,10 +361,18 @@ def _audit_requirement_traceability(
     functional_requirements: list[RequirementItem],
     constraints: list[RequirementItem],
     raw_use_cases: list[UseCase],
+    use_case_refs: list[str],
+    actor_catalog: list[ActorItem],
     functional_audit_ids: list[str],
     proposal_call: StructuredProposalCall,
 ) -> tuple[list[UseCase], dict[str, set[str]]]:
     """Review ambiguous requirements and keep realization and constraint edges separate."""
+    if len(raw_use_cases) != len(use_case_refs):
+        raise ValueError("every proposed use case must have one provisional UC id")
+    use_case_catalog = [
+        normalize_use_case(use_case, use_case_ref)
+        for use_case, use_case_ref in zip(raw_use_cases, use_case_refs, strict=True)
+    ]
     accepted_requirements = functional_requirements + constraints
     by_id = {requirement["id"]: requirement for requirement in accepted_requirements}
     constraint_ids = [constraint["id"] for constraint in constraints]
@@ -334,7 +385,8 @@ def _audit_requirement_traceability(
                 telemetry.bind_context(_trace_slice),
                 by_id[requirement_id],
                 accepted_requirements,
-                raw_use_cases,
+                use_case_catalog,
+                actor_catalog,
                 proposal_call,
             ): requirement_id
             for requirement_id in task_ids
@@ -350,7 +402,7 @@ def _audit_requirement_traceability(
                     subject=requirement_id,
                 )
 
-    known_names = {_actor_key(use_case.name) for use_case in raw_use_cases}
+    known_refs = set(use_case_refs)
     accepted: dict[str, _RequirementTraceSlice] = {}
     for requirement_id, decision in decisions.items():
         if requirement_id in constraint_ids and decision.missing_use_case is not None:
@@ -360,28 +412,24 @@ def _audit_requirement_traceability(
                 subject=requirement_id,
             )
             continue
-        realized_keys = {
-            _actor_key(name) for name in decision.realized_by_use_case_names
-        }
-        constrained_keys = {
-            _actor_key(name) for name in (decision.constrains_use_case_names or [])
-        }
-        unknown = sorted((realized_keys | constrained_keys) - known_names)
+        realized_refs = set(decision.realized_by_use_case_refs)
+        constrained_refs = set(decision.constrains_use_case_refs or [])
+        unknown = sorted((realized_refs | constrained_refs) - known_refs)
         if unknown:
             telemetry.record_degradation(
                 "use_cases.traceability_slice",
-                f"unknown use-case names: {unknown}",
+                f"unknown use-case refs: {unknown}",
                 subject=requirement_id,
             )
             continue
-        if realized_keys and constrained_keys:
+        if realized_refs and constrained_refs:
             telemetry.record_degradation(
                 "use_cases.traceability_slice",
                 "one requirement returned both realization and constraint edges",
                 subject=requirement_id,
             )
             continue
-        if requirement_id in constraint_ids and realized_keys:
+        if requirement_id in constraint_ids and realized_refs:
             telemetry.record_degradation(
                 "use_cases.traceability_slice",
                 "a non-functional constraint claimed realization by a use case",
@@ -393,24 +441,20 @@ def _audit_requirement_traceability(
     functional_ids = set(functional_audit_ids)
     nfr_ids_to_audit = set(constraint_ids)
     realization_targets = {
-        requirement_id: {
-            _actor_key(name) for name in decision.realized_by_use_case_names
-        }
+        requirement_id: set(decision.realized_by_use_case_refs)
         for requirement_id, decision in accepted.items()
     }
     constraint_targets = {
-        requirement_id: {
-            _actor_key(name) for name in (decision.constrains_use_case_names or [])
-        }
+        requirement_id: set(decision.constrains_use_case_refs or [])
         for requirement_id, decision in accepted.items()
         if (
-            decision.constrains_use_case_names is not None
-            and not decision.realized_by_use_case_names
+            decision.constrains_use_case_refs is not None
+            and not decision.realized_by_use_case_refs
             and decision.missing_use_case is None
         )
     }
     updated: list[UseCase] = []
-    for use_case in raw_use_cases:
+    for use_case, use_case_ref in zip(raw_use_cases, use_case_refs, strict=True):
         requirement_ids = [
             requirement_id
             for requirement_id in use_case.requirement_ids
@@ -421,12 +465,11 @@ def _audit_requirement_traceability(
             for requirement_id in use_case.nfr_ids
             if requirement_id not in accepted or requirement_id not in nfr_ids_to_audit
         ]
-        use_case_key = _actor_key(use_case.name)
         for requirement_id in functional_audit_ids:
-            if use_case_key in realization_targets.get(requirement_id, set()):
+            if use_case_ref in realization_targets.get(requirement_id, set()):
                 requirement_ids.append(requirement_id)
         for requirement_id in constraint_ids:
-            if use_case_key in constraint_targets.get(requirement_id, set()):
+            if use_case_ref in constraint_targets.get(requirement_id, set()):
                 nfr_ids.append(requirement_id)
         updated.append(use_case.model_copy(update={
             "requirement_ids": list(dict.fromkeys(requirement_ids)),
@@ -445,12 +488,15 @@ def _audit_requirement_traceability(
             continue
         updated.append(UseCase(
             name=candidate.name,
+            primary_actor_ref=candidate.primary_actor_ref,
+            supporting_actor_refs=candidate.supporting_actor_refs,
             primary_actor=candidate.primary_actor,
             supporting_actors=candidate.supporting_actors,
             goal=candidate.goal,
             requirement_ids=[requirement_id],
             nfr_ids=[],
         ))
+        use_case_refs.append(f"UC{len(use_case_refs) + 1}")
         existing_names.add(_actor_key(candidate.name))
     return updated, constraint_targets
 
@@ -460,6 +506,7 @@ def identify_actors(
     state: AgentState,
     feedback: str = "",
     *,
+    target_ref: str | None = None,
     proposal_call: StructuredProposalCall | None = None,
 ) -> ModelingStagePatch:
     """수락된 role/domain 사실과 actor 목표에서 외부 역할을 도출한다."""
@@ -468,12 +515,36 @@ def identify_actors(
     if not classified:
         return {"actors": [], "phase": "actors"}
 
+    normalized_target_ref = str(target_ref or "").strip() or None
+    existing_actors = state.get("actors") or []
+    if normalized_target_ref and normalized_target_ref not in {
+        str(actor.get("actor_ref") or "").strip() for actor in existing_actors
+    }:
+        raise ValueError(f"Targeted actor feedback references unknown actorRef: {normalized_target_ref}")
+    target_constraint = (
+        "\n\n[TARGETED ACTOR IDENTITY]\n"
+        f"The selected actorRef is {normalized_target_ref}. Return that exact actorRef for "
+        "the selected actor, including when its display name changes. Do not substitute a "
+        "different actorRef based on matching names or feedback text. If the requested change "
+        "would delete this actor, state that deletion cannot be represented by this targeted "
+        "identity-preserving edit rather than silently assigning another actorRef."
+        if normalized_target_ref
+        else ""
+    )
+
     human = prompts.apply_user_feedback(
         "Accepted requirements:\n"
         f"{_listing(classified)}\n\n"
+        "Existing actor catalog (preserve each actorRef for the same role, including a targeted rename):\n"
+        + "\n".join(
+            f"- {actor.get('actor_ref')}: {actor['name']} — {actor.get('description', '')}"
+            for actor in existing_actors
+        )
+        + "\n\n"
         "Use a requirement as actor evidence only when it states an external role, a role "
         "specialization/domain fact, or an actor goal. Quality and deployment constraints alone "
-        "do not create actors. Return sourceRefs containing only accepted requirement IDs.",
+        "do not create actors. Return sourceRefs containing only accepted requirement IDs."
+        + target_constraint,
         feedback,
     )
     system = (
@@ -489,7 +560,7 @@ def identify_actors(
     actors = _retry_dangling_actor_refs(
         schema=ActorResult,
         raw_items=result.actors,
-        canonicalize=lambda items: normalize_actors(items, accepted_ids),
+        canonicalize=lambda items: normalize_actors(items, accepted_ids, existing_actors),
         repair_prompt=_actor_repair_prompt(human, result.actors),
         extract=lambda repaired: repaired.actors,
         proposal_call=propose,
@@ -502,6 +573,8 @@ def normalize_use_case(use_case: UseCase, uid: str) -> UseCaseItem:
     return {
         "id": uid,
         "name": use_case.name,
+        "primary_actor_ref": use_case.primary_actor_ref or "",
+        "supporting_actor_refs": use_case.supporting_actor_refs,
         "primary_actor": use_case.primary_actor,
         "supporting_actors": use_case.supporting_actors,
         "level": use_case.level,
@@ -635,7 +708,8 @@ def identify_use_cases(
         }
 
     actor_listing = "\n".join(
-        f"- {actor['name']}: {actor['description']}" for actor in actors
+        f"- {actor.get('actor_ref') or f'ACT{index}'} | {actor['name']}: {actor['description']}"
+        for index, actor in enumerate(actors, 1)
     ) or "- (none identified)"
     human = (
         f"Actors:\n{actor_listing}\n\n"
@@ -659,7 +733,24 @@ def identify_use_cases(
             HumanMessage(content=prompts.apply_user_feedback(human, feedback)),
         ],
     )
-    raw_use_cases = result.use_cases
+    # Resolve actor identities before issuing the UC ids consumed by the RTM audit.
+    # The repair is allowed to remove invalid proposals, so issuing ids before it would
+    # make a later positional pairing able to move a trace edge to another use case.
+    raw_use_cases = _retry_dangling_actor_refs(
+        schema=UseCaseResult,
+        raw_items=result.use_cases,
+        canonicalize=lambda items: normalize_use_cases(
+            items,
+            actors,
+            {requirement["id"] for requirement in fr},
+            {requirement["id"] for requirement in nfr},
+        ),
+        repair_prompt=_use_case_repair_prompt(human, result.use_cases, actors),
+        extract=lambda repaired: repaired.use_cases,
+        proposal_call=propose,
+    )
+    # Assign canonical UC ids before RTM review; trace responses may select only these ids.
+    provisional_use_case_refs = [f"UC{index}" for index in range(1, len(raw_use_cases) + 1)]
     claim_counts = Counter(
         requirement_id
         for use_case in raw_use_cases
@@ -672,41 +763,23 @@ def identify_use_cases(
     )
     if audit_ids or nfr:
         raw_use_cases, constraint_targets = _audit_requirement_traceability(
-            fr, nfr, raw_use_cases, audit_ids, propose
+            fr, nfr, raw_use_cases, provisional_use_case_refs, actors, audit_ids, propose
         )
     else:
         constraint_targets = {}
-    use_cases = _retry_dangling_actor_refs(
-        schema=UseCaseResult,
-        raw_items=raw_use_cases,
-        canonicalize=lambda items: normalize_use_cases(
-            items,
-            actors,
-            {requirement["id"] for requirement in fr},
-            {requirement["id"] for requirement in nfr},
-        ),
-        repair_prompt=_use_case_repair_prompt(human, raw_use_cases, actors),
-        extract=lambda repaired: repaired.use_cases,
-        proposal_call=propose,
-    )
     use_case_items = [
-        normalize_use_case(use_case, f"UC{index}")
-        for index, use_case in enumerate(use_cases, 1)
+        normalize_use_case(use_case, provisional_use_case_refs[index])
+        for index, use_case in enumerate(raw_use_cases)
     ]
-    ids_by_name: dict[str, list[str]] = {}
-    for item in use_case_items:
-        ids_by_name.setdefault(_actor_key(item["name"]), []).append(item["id"])
     constraint_applicability = {
         requirement_id: [
-            item["id"]
-            for item in use_case_items
-            if _actor_key(item["name"]) in targets
+            item["id"] for item in use_case_items if item["id"] in targets
         ]
         for requirement_id, targets in constraint_targets.items()
-        if not targets or any(target in ids_by_name for target in targets)
+        if not targets or any(target in {item["id"] for item in use_case_items} for target in targets)
     }
     return {
-        "actors": _actors_referenced_by_use_cases(actors, use_cases),
+        "actors": _actors_referenced_by_use_cases(actors, raw_use_cases),
         "use_cases": use_case_items,
         "constraint_applicability": constraint_applicability,
         "phase": "use_cases",
@@ -754,18 +827,21 @@ def _model_review(
 def _actor_reference_defects(state: AgentState) -> set[tuple[str, str, str]]:
     """Return use-case actor links that do not resolve to a preserved actor."""
     known = {
-        _actor_key(actor.get("name"))
+        str(actor.get("actor_ref") or "")
         for actor in (state.get("actors") or [])
-        if _actor_key(actor.get("name"))
+        if actor.get("actor_ref")
     }
     defects: set[tuple[str, str, str]] = set()
     for use_case in state.get("use_cases") or []:
-        use_case_key = _actor_key(use_case.get("name"))
-        primary = _actor_key(use_case.get("primary_actor"))
+        # Use-case names are presentation text and may legitimately repeat.
+        # Review repair must key a newly introduced actor defect to the
+        # accepted UC identity that existed before the review.
+        use_case_key = str(use_case.get("id") or "")
+        primary = str(use_case.get("primary_actor_ref") or "")
         if not primary or primary not in known:
             defects.add((use_case_key, "primary_actor", primary))
-        for supporting_actor in use_case.get("supporting_actors") or []:
-            supporting = _actor_key(supporting_actor)
+        for supporting_actor in use_case.get("supporting_actor_refs") or []:
+            supporting = str(supporting_actor)
             if not supporting or supporting not in known:
                 defects.add((use_case_key, "supporting_actor", supporting))
     return defects

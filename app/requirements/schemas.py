@@ -25,6 +25,9 @@ from app.requirements.contracts.request import (
     FeedbackEdit as FeedbackEdit,
 )
 from app.requirements.contracts.request import (
+    IdentitySourceAnswer as IdentitySourceAnswer,
+)
+from app.requirements.contracts.request import (
     InitialCloudConstraints as InitialCloudConstraints,
 )
 from app.requirements.contracts.request import (
@@ -105,6 +108,8 @@ class Actor(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     name: str = Field(description="Actor role name, e.g. 'Registered User'.")
+    actor_ref: str = Field(min_length=1, alias="actorRef", description="Unique proposal-local actor ref, e.g. ACT1.")
+    parent_actor_ref: str | None = Field(default=None, alias="parentActorRef", description="Exact actor ref of the parent role, when supplied.")
     description: str = Field(description="One sentence describing the actor's role.")
     parent_actor: str | None = Field(
         default=None,
@@ -119,9 +124,12 @@ class Actor(BaseModel):
 
 
 class UseCase(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
     """user-goal(EBP) 고도의 유스케이스. FR을 묶고 NFR을 제약으로 참조한다."""
 
     name: str = Field(description="Active-verb goal phrase, e.g. 'Place an order'.")
+    primary_actor_ref: str | None = Field(default=None, alias="primaryActorRef", description="Exact actor ref from the supplied actor catalog.")
+    supporting_actor_refs: list[str] = Field(default_factory=list, alias="supportingActorRefs", description="Exact actor refs from the supplied actor catalog.")
     primary_actor: str = Field(
         description="Name of the primary actor (must be one of the given actors)."
     )
@@ -327,8 +335,11 @@ class MainScenarioStep(BaseModel):
     """주 성공 시나리오의 한 스텝."""
 
     step_number: int = Field(description="Sequential step number starting at 1.")
+    subject_ref: str = Field(
+        description="Exact accepted actor_ref for the step subject, or 'system' for the system."
+    )
     sentence: str = Field(
-        description="One plain black-box business action. Subject is the primary actor "
+        description="One plain black-box business action. Subject is a supplied use-case actor "
         "or 'System'. No markdown/bold/asterisks, no UI widgets, no protocols "
         "(HTTP/SQL) or internal components (Server, Database)."
     )
@@ -359,6 +370,9 @@ class ExtensionHandlingStep(BaseModel):
     """확장 흐름의 처리 스텝."""
 
     sub_step: str = Field(description="Cockburn hierarchical code, e.g. '3a1', '3a2'.")
+    subject_ref: str = Field(
+        description="Exact accepted actor_ref for the step subject, or 'system' for the system."
+    )
     sentence: str = Field(
         description="One plain black-box action handling the condition. Same style rules "
         "as a main-scenario step; no 'Success!'/'Fail!' tokens in the prose."
@@ -465,6 +479,10 @@ class IdentityObligation(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    # These refs are optional in a model proposal. The deterministic normalizer
+    # assigns them at first acceptance, where the owning use-case ID is known.
+    obligation_ref: str | None = Field(default=None, min_length=1)
+    subject_ref: str | None = Field(default=None, min_length=1)
     subject: str = Field(min_length=1, description="Person or party whose identity matters.")
     obligation: Literal["identify", "authenticate", "act_on_behalf"] = Field(
         description=(
@@ -472,6 +490,24 @@ class IdentityObligation(BaseModel):
             "identity; act_on_behalf means one subject exercises delegated authority for a "
             "different subject. Authentication alone is not delegation."
         )
+    )
+    identity_source_kind: Literal[
+        "caller_input", "authenticated_context", "system_result", "unresolved"
+    ] = Field(
+        default="unresolved",
+        description=(
+            "For an identify obligation, identify where the selected subject comes from. "
+            "Use unresolved unless the functional requirement clearly establishes the source. "
+            "authenticated_context requires an explicit source_authenticate_obligation_ref "
+            "that selects an authenticate obligation in this use case."
+        ),
+    )
+    source_authenticate_obligation_ref: str | None = Field(
+        default=None,
+        description=(
+            "Optional exact obligation_ref selected from a supplied same-use-case authenticate "
+            "obligation. Never invent or infer this reference."
+        ),
     )
     requirement_ids: list[str] = Field(
         min_length=1,

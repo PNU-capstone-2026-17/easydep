@@ -11,6 +11,7 @@ from app.design.schemas.class_model import BCEModel
 from app.design.services.class_diagram import feedback as feedback_stage
 from app.design.services.class_diagram import generation, service
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
+from app.design.services.class_diagram.models import AcceptedFragment
 from app.design.services.class_diagram.proposals import (
     CallPlanProposal,
     CombinedUnitCall,
@@ -68,6 +69,71 @@ def test_exact_operation_and_call_targets_resolve_without_scope_llm(monkeypatch)
     assert call_scope == FeedbackScope(kind="collaboration", ids=["UC1"])
     assert legacy_operation_scope == operation_scope
     assert legacy_call_scope == call_scope
+
+
+def test_ordinary_class_feedback_still_uses_the_scope_classifier(monkeypatch) -> None:
+    index = build_scenario_index(single_use_case())
+    with pytest.raises(RuntimeError, match="scope classifier called"):
+        monkeypatch.setattr(
+            feedback_stage,
+            "feedback_scope",
+            lambda *_args: (_ for _ in ()).throw(RuntimeError("scope classifier called")),
+        )
+        service.revise_class_model(BCEModel(), index, "Revise the model.", set())
+
+
+def test_operation_feedback_retains_later_fragment_types_as_context(monkeypatch) -> None:
+    """A replacement may use a DTO which the next selected unit used to declare."""
+    index = build_scenario_index({
+        "use_cases": [
+            {"id": "UC1", "name": "Search", "primary_actor_ref": "ACT1", "primary_actor": "Member"},
+            {"id": "UC8", "name": "Join waitlist", "primary_actor_ref": "ACT1", "primary_actor": "Member"},
+        ],
+        "use_case_specs": [
+            {"use_case_id": "UC1", "main_scenario": [{"step_number": 1, "subject_ref": "ACT1", "sentence": "Member searches."}], "extensions": []},
+            {"use_case_id": "UC8", "main_scenario": [{"step_number": 1, "subject_ref": "ACT1", "sentence": "Member joins the waitlist."}], "extensions": []},
+        ],
+        "relationships": {"includes": [], "extends": []},
+    })
+    current = BCEModel.model_validate({
+        "Classes": [
+            {"className": "SearchBoundary", "stereotype": "Boundary", "use_case_ids": ["UC1"], "operations": []},
+            {"className": "WaitlistControl", "stereotype": "Control", "use_case_ids": ["UC8"], "operations": []},
+        ],
+        "DataTypes": [], "Relationships": [], "Collaborations": [],
+    })
+    waitlist_type = {"name": "WaitlistEntryDto", "kind": "valueObject", "fields": ["id : String"], "values": []}
+    obsolete_type = {"name": "ObsoleteDto", "kind": "valueObject", "fields": ["id : String"], "values": []}
+    fragments = {
+        "UC1": AcceptedFragment("UC1", {"DataTypes": [], "Classes": []}),
+        "UC8": AcceptedFragment("UC8", {"DataTypes": [waitlist_type, obsolete_type], "Classes": []}),
+    }
+    monkeypatch.setattr(
+        feedback_stage,
+        "feedback_scope",
+        lambda *_args: FeedbackScope(kind="operation", ids=["UC1", "UC8"]),
+    )
+    monkeypatch.setattr(feedback_stage, "fragments_from_model", lambda *_args: fragments)
+
+    def replacement(_index, _inventory, use_case, **_kwargs):
+        if use_case.id == "UC1":
+            return AcceptedFragment("UC1", {"DataTypes": [], "Classes": [{
+                "className": "SearchBoundary", "operations": [{
+                    "name": "search", "parameters": [], "returnType": "WaitlistEntryDto", "stepRefs": ["UC1:main:1"],
+                }],
+            }]})
+        return AcceptedFragment("UC8", {"DataTypes": [], "Classes": [{
+            "className": "WaitlistControl", "operations": [{
+                "name": "join", "parameters": [], "returnType": "void", "stepRefs": ["UC8:main:1"],
+            }],
+        }]})
+
+    monkeypatch.setattr(service.operations, "checked_fragment", replacement)
+
+    revised = service.revise_class_model(current, index, "Revise both operations.", set())
+
+    assert {item.name for item in revised.DataTypes} == {"WaitlistEntryDto"}
+    assert revised.Classes[0].operations[0].return_type == "WaitlistEntryDto"
 
 
 def test_selected_legacy_collaboration_keeps_its_id_and_rebinds_parent_ids(

@@ -40,7 +40,7 @@ def test_scenario_index_is_the_immutable_typed_boundary_for_raw_specs():
     terminal_receipt = single_use_case()
     terminal_receipt["use_case_specs"][0]["main_scenario"].append({
         "step_number": 3,
-        "subject_ref": "Member",
+        "subject_ref": "ACT1",
         "sentence": "Member receives the result.",
     })
     receipt_index = build_scenario_index(terminal_receipt)
@@ -49,19 +49,36 @@ def test_scenario_index_is_the_immutable_typed_boundary_for_raw_specs():
 
     actor_alias = single_use_case()
     actor_alias["use_cases"][0]["primary_actor"] = "Registered Member"
-    actor_alias["use_case_specs"][0]["main_scenario"][0].pop("subject_ref")
-    actor_alias["use_case_specs"][0]["main_scenario"][1].pop("subject_ref")
     actor_alias["use_case_specs"][0]["extensions"] = [{
         "label": "2a",
         "branch_step": 2,
         "condition": "The result is unavailable",
         "handling_steps": [{
             "sub_step": "2a1",
+            "subject_ref": "system",
             "sentence": "System informs the member.",
         }],
     }]
     alias_index = build_scenario_index(actor_alias)
-    assert "UC1:extension:2a:2a1" in alias_index.groups[0].required_step_ids
+    assert "UC1:extension:2:1:2a1" in alias_index.groups[0].required_step_ids
+
+
+def test_async_message_requires_stable_references_but_activation_does_not():
+    async_message = SequenceMessage(
+        source="A", target="B", label="send()", type="async",
+        use_case_ids=["UC1"], call_id="legacy-call",
+        call_ref="call-stable", operation_ref="operation-stable",
+    )
+    assert async_message.call_ref == "call-stable"
+    with pytest.raises(ValidationError, match="call_ref and operation_ref"):
+        SequenceMessage(
+            source="A", target="B", label="send()", type="async",
+            use_case_ids=["UC1"], call_id="legacy-call",
+        )
+    activation = SequenceMessage(
+        source="A", target="B", label="", type="activate", use_case_ids=["UC1"],
+    )
+    assert activation.call_ref is None
 
 
 def test_e1_checkpoint_has_twelve_use_case_generation_units():
@@ -89,6 +106,25 @@ def test_scenario_index_rejects_duplicate_structured_use_case_specs():
 
     with pytest.raises(ValueError, match="duplicate use-case specification"):
         build_scenario_index(raw)
+
+
+def test_scenario_relations_require_exact_use_case_ids():
+    raw = single_use_case()
+    raw["use_cases"].append({"id": "UC2", "name": "Other"})
+    raw["use_case_specs"].append({"use_case_id": "UC2", "main_scenario": [], "extensions": []})
+    raw["relationships"] = {
+        "includes": [{"base_use_case_id": "UC1", "included_use_case_id": "UC2"}],
+        "extends": [],
+    }
+    assert [(item.base_id, item.child_id) for item in build_scenario_index(raw).relationships] == [
+        ("UC1", "UC2")
+    ]
+
+    raw["relationships"]["includes"] = [{
+        "base_use_case": "Submit request",
+        "included_use_case": "Other",
+    }]
+    assert build_scenario_index(raw).relationships == ()
 
 
 def test_bce_model_canonicalizes_generated_ids_and_round_trips_json():

@@ -73,7 +73,7 @@ def render_diagram(state: AgentState) -> ModelingStagePatch:
     if not use_cases:
         return {"diagram": "@startuml\n@enduml", "phase": "diagram"}
 
-    actor_alias = {str(actor["name"]): _san(str(actor["name"])) for actor in actors}
+    actor_alias = {str(actor["actor_ref"]): _san(str(actor["actor_ref"])) for actor in actors}
     use_cases_by_id = {str(use_case["id"]): use_case for use_case in use_cases}
     derived = cast(list[dict[str, object]], rel.get("derived_use_cases") or [])
     derived_by_id = {str(item["use_case_id"]): item for item in derived}
@@ -90,29 +90,29 @@ def render_diagram(state: AgentState) -> ModelingStagePatch:
         if base_id in use_cases_by_id and point and point not in extension_points[base_id]:
             extension_points[base_id].append(point)
 
-    primary_names = {str(use_case.get("primary_actor") or "") for use_case in use_cases}
-    supporting_names = {
-        str(actor)
+    primary_refs = {str(use_case.get("primary_actor_ref") or "") for use_case in use_cases}
+    supporting_refs = {
+        str(actor_ref)
         for use_case in use_cases
-        for actor in cast(list[object], use_case.get("supporting_actors") or [])
+        for actor_ref in cast(list[object], use_case.get("supporting_actor_refs") or [])
     }
     primary = [
         actor
         for actor in actors
-        if str(actor["name"]) in primary_names
-        or str(actor["name"]) not in supporting_names
+        if str(actor["actor_ref"]) in primary_refs
+        or str(actor["actor_ref"]) not in supporting_refs
     ]
     supporting = [
         actor
         for actor in actors
-        if str(actor["name"]) in supporting_names
-        and str(actor["name"]) not in primary_names
+        if str(actor["actor_ref"]) in supporting_refs
+        and str(actor["actor_ref"]) not in primary_refs
     ]
 
     lines = ["@startuml", "left to right direction"]
     for actor in primary:
         name = str(actor["name"])
-        lines.append(f'actor "{_plantuml_label(name)}" as {actor_alias[name]}')
+        lines.append(f'actor "{_plantuml_label(name)}" as {actor_alias[str(actor["actor_ref"])]}')
     lines.append("rectangle System {")
     for use_case in use_cases:
         use_case_id = str(use_case["id"])
@@ -133,21 +133,21 @@ def render_diagram(state: AgentState) -> ModelingStagePatch:
     lines.append("}")
     for actor in supporting:
         name = str(actor["name"])
-        lines.append(f'actor "{_plantuml_label(name)}" as {actor_alias[name]}')
+        lines.append(f'actor "{_plantuml_label(name)}" as {actor_alias[str(actor["actor_ref"])]}')
 
     for association in cast(list[dict[str, object]], rel.get("associations") or []):
-        actor_name = str(association.get("actor") or "")
+        actor_ref = str(association.get("actor_ref") or "")
         use_case_id = str(association.get("use_case_id") or "")
         associated_use_case = use_cases_by_id.get(use_case_id)
-        if actor_name not in actor_alias or associated_use_case is None:
+        if actor_ref not in actor_alias or associated_use_case is None:
             continue
         supporting_actors = cast(
-            list[object], associated_use_case.get("supporting_actors") or []
+            list[object], associated_use_case.get("supporting_actor_refs") or []
         )
-        if actor_name in supporting_actors:
-            lines.append(f"{uc_alias[use_case_id]} --- {actor_alias[actor_name]}")
+        if actor_ref in supporting_actors:
+            lines.append(f"{uc_alias[use_case_id]} --- {actor_alias[actor_ref]}")
         else:
-            lines.append(f"{actor_alias[actor_name]} --- {uc_alias[use_case_id]}")
+            lines.append(f"{actor_alias[actor_ref]} --- {uc_alias[use_case_id]}")
     for include in cast(list[dict[str, object]], rel.get("includes") or []):
         base_id = str(include.get("base_use_case_id") or "")
         included_id = str(include.get("included_use_case_id") or "")
@@ -165,8 +165,8 @@ def render_diagram(state: AgentState) -> ModelingStagePatch:
     ):
         if generalization.get("kind") != "actor":
             continue
-        parent = str(generalization.get("parent") or "")
-        child = str(generalization.get("child") or "")
+        parent = str(generalization.get("parent_actor_ref") or "")
+        child = str(generalization.get("child_actor_ref") or "")
         if parent in actor_alias and child in actor_alias:
             lines.append(f"{actor_alias[parent]} <|-- {actor_alias[child]}")
     lines.append("@enduml")

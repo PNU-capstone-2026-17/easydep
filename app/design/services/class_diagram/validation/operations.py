@@ -130,6 +130,49 @@ def _operation_references(
     return findings
 
 
+def _trusted_context_parameter_refs(
+    fragment: dict[str, Any], context: OperationContext,
+) -> list[Finding]:
+    """Validate explicit trust links without inspecting any display name/type."""
+
+    contract = context.use_case.specification.get("public_contract")
+    obligations = (
+        contract.get("identity_obligations")
+        if isinstance(contract, dict) and isinstance(contract.get("identity_obligations"), list)
+        else []
+    )
+    authenticate_refs = {
+        text(item.get("obligation_ref"))
+        for item in obligations
+        if isinstance(item, dict)
+        and text(item.get("obligation")) == "authenticate"
+        and text(item.get("obligation_ref"))
+    }
+    findings: list[Finding] = []
+    for operation in _fragment_operations(fragment, context.inventory):
+        location = f"{context.use_case.id}:{operation['className']}.{operation.get('name')}"
+        for parameter in operation.get("parameters") or []:
+            if not isinstance(parameter, dict):
+                continue
+            obligation_ref = text(parameter.get("obligationRef"))
+            if not obligation_ref:
+                continue
+            parameter_location = f"{location}#{parameter.get('name')}"
+            if obligation_ref not in authenticate_refs:
+                findings.append(Finding(
+                    "class.operation.trusted-context",
+                    "obligationRef must cite an accepted authenticate obligation in this use case",
+                    parameter_location,
+                ))
+            if text(operation.get("stereotype")) != "Control":
+                findings.append(Finding(
+                    "class.operation.trusted-context",
+                    "a trusted-context obligationRef is allowed only on a Control parameter",
+                    parameter_location,
+                ))
+    return findings
+
+
 def _operation_coverage(
     fragment: dict[str, Any], context: OperationContext,
 ) -> list[Finding]:
@@ -154,6 +197,7 @@ def _operation_coverage(
 OPERATION_CHECKS = (
     CheckSpec("class.operation.data-types", _operation_data_types),
     CheckSpec("class.operation.references", _operation_references),
+    CheckSpec("class.operation.trusted-context", _trusted_context_parameter_refs),
     CheckSpec("class.operation.coverage", _operation_coverage),
 )
 

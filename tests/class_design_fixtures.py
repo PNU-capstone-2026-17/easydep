@@ -10,8 +10,8 @@ from __future__ import annotations
 def scenario() -> dict:
     return {
         "use_cases": [
-            {"id": "UC1", "name": "Manage order", "primary_actor": "Customer"},
-            {"id": "UC2", "name": "Validate order", "primary_actor": ""},
+            {"id": "UC1", "name": "Manage order", "primary_actor_ref": "ACT1", "primary_actor": "Customer"},
+            {"id": "UC2", "name": "Validate order", "primary_actor_ref": "ACT1", "primary_actor": "Customer"},
         ],
         "use_case_specs": [
             {
@@ -24,11 +24,11 @@ def scenario() -> dict:
                 }],
                 "minimal_guarantee": [],
                 "main_scenario": [
-                    {"step_number": 1, "subject_ref": "Customer", "sentence": "Customer submits an order."},
-                    {"step_number": 2, "subject_ref": "System", "sentence": "System validates the order."},
-                    {"step_number": 3, "subject_ref": "System", "sentence": "System returns the result."},
-                    {"step_number": 4, "subject_ref": "Customer", "sentence": "Customer requests the receipt."},
-                    {"step_number": 5, "subject_ref": "System", "sentence": "System returns the receipt."},
+                    {"step_number": 1, "subject_ref": "ACT1", "sentence": "Customer submits an order."},
+                    {"step_number": 2, "subject_ref": "system", "sentence": "System validates the order."},
+                    {"step_number": 3, "subject_ref": "system", "sentence": "System returns the result."},
+                    {"step_number": 4, "subject_ref": "ACT1", "sentence": "Customer requests the receipt."},
+                    {"step_number": 5, "subject_ref": "system", "sentence": "System returns the receipt."},
                 ],
                 "extensions": [{
                     "label": "2a",
@@ -36,7 +36,7 @@ def scenario() -> dict:
                     "condition": "The order is invalid",
                     "handling_steps": [{
                         "sub_step": "2a1",
-                        "subject_ref": "System",
+                        "subject_ref": "system",
                         "sentence": "System returns the rejection.",
                     }],
                 }],
@@ -45,7 +45,7 @@ def scenario() -> dict:
                 "use_case_id": "UC2",
                 "main_scenario": [{
                     "step_number": 1,
-                    "subject_ref": "System",
+                    "subject_ref": "system",
                     "sentence": "System checks order constraints.",
                 }],
                 "extensions": [],
@@ -65,13 +65,13 @@ def scenario() -> dict:
 def single_use_case() -> dict:
     return {
         "use_cases": [{
-            "id": "UC1", "name": "Submit request", "primary_actor": "Member",
+            "id": "UC1", "name": "Submit request", "primary_actor_ref": "ACT1", "primary_actor": "Member",
         }],
         "use_case_specs": [{
             "use_case_id": "UC1",
             "main_scenario": [
-                {"step_number": 1, "subject_ref": "Member", "sentence": "Member submits a request."},
-                {"step_number": 2, "subject_ref": "System", "sentence": "System returns the result."},
+                {"step_number": 1, "subject_ref": "ACT1", "sentence": "Member submits a request."},
+                {"step_number": 2, "subject_ref": "system", "sentence": "System returns the result."},
             ],
             "extensions": [],
         }],
@@ -86,22 +86,22 @@ def multiple_entry_use_case() -> dict:
     value["use_case_specs"][0]["main_scenario"] = [
         {
             "step_number": 1,
-            "subject_ref": "Member",
+            "subject_ref": "ACT1",
             "sentence": "Member submits a request.",
         },
         {
             "step_number": 2,
-            "subject_ref": "System",
+            "subject_ref": "system",
             "sentence": "System returns the result.",
         },
         {
             "step_number": 3,
-            "subject_ref": "Member",
+            "subject_ref": "ACT1",
             "sentence": "Member asks for a receipt.",
         },
         {
             "step_number": 4,
-            "subject_ref": "System",
+            "subject_ref": "system",
             "sentence": "System returns the receipt.",
         },
     ]
@@ -364,11 +364,13 @@ def typed_sequence_model_payload() -> dict:
                 "alias": "Buyer",
                 "kind": "actor",
                 "source_class": "",
+                "participant_ref": "ACT1",
             }, {
                 "name": "OrderBoundary",
                 "alias": "OrderBoundary",
                 "kind": "boundary",
                 "source_class": "OrderBoundary",
+                "participant_ref": "class_order_boundary",
             }],
             "Messages": [{
                 "source": "Buyer",
@@ -378,6 +380,8 @@ def typed_sequence_model_payload() -> dict:
                 "use_case_ids": ["UC1"],
                 "step_ids": ["UC1:main:1"],
                 "call_id": "place-order::call:1",
+                "call_ref": "call_submit",
+                "operation_ref": "operation_submit",
                 "arguments": [{
                     "parameter": "request",
                     "type": "OrderRequest",
@@ -392,6 +396,8 @@ def typed_sequence_model_payload() -> dict:
                 "use_case_ids": ["UC1"],
                 "step_ids": ["UC1:main:1"],
                 "reply_to": "place-order::call:1",
+                "call_ref": "call_submit",
+                "operation_ref": "operation_submit",
             }],
             "UnresolvedSteps": [],
             "NarrativeSteps": [],

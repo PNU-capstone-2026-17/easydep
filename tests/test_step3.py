@@ -31,13 +31,17 @@ from app.requirements.schemas import (
 
 def _uc(uc_id, name="Do thing", actor="User", goal="g", reqs=None, nfrs=None):
     return {
-        "id": uc_id, "name": name, "primary_actor": actor, "level": "user_goal",
+        "id": uc_id, "name": name, "primary_actor_ref": "ACT1", "primary_actor": actor, "level": "user_goal",
         "goal": goal, "requirement_ids": reqs or [], "nfr_ids": nfrs or [],
     }
 
 
 def _step(n, sentence="actor acts", reqs=None):
-    return MainScenarioStep(step_number=n, sentence=sentence, covered_req_ids=reqs or [])
+    subject_ref = "system" if sentence.casefold().startswith("system") else "ACT1"
+    return MainScenarioStep(
+        step_number=n, subject_ref=subject_ref, sentence=sentence,
+        covered_req_ids=reqs or [],
+    )
 
 
 def _guarantee(sentence="done", reqs=None):
@@ -72,7 +76,7 @@ def test_generate_specs_maps_fields_and_shapes_extensions(monkeypatch):
         extensions=[
             Extension(
                 label="2a", branch_step=2, condition="payment is declined",
-                handling_steps=[ExtensionHandlingStep(sub_step="2a1", sentence="System shows a decline message")],
+                handling_steps=[ExtensionHandlingStep(sub_step="2a1", subject_ref="system", sentence="System shows a decline message")],
                 outcome="resume", resume_at_step=2,
             )
         ],
@@ -88,13 +92,13 @@ def test_generate_specs_maps_fields_and_shapes_extensions(monkeypatch):
     assert out["phase"] == "specs"
     s = specs[0]
     assert s["use_case_id"] == "UC1"
-    # 주 시나리오는 step_number/sentence/covered_req_ids 구조
-    assert s["main_scenario"][0] == {"step_number": 1, "sentence": "User submits the order", "covered_req_ids": ["R2"]}
+    # 주 시나리오는 step_number/subject_ref/sentence/covered_req_ids 구조
+    assert s["main_scenario"][0] == {"step_number": 1, "subject_ref": "ACT1", "sentence": "User submits the order", "covered_req_ids": ["R2"]}
     # 확장은 분기/종료가 구조 필드로
     ext = s["extensions"][0]
     assert ext["label"] == "2a" and ext["branch_step"] == 2
     assert ext["outcome"] == "resume" and ext["resume_at_step"] == 2
-    assert ext["handling_steps"] == [{"sub_step": "2a1", "sentence": "System shows a decline message"}]
+    assert ext["handling_steps"] == [{"sub_step": "2a1", "subject_ref": "system", "sentence": "System shows a decline message"}]
     # 참조가 유효하므로 무결성 위반 없음
     assert s["issues"] == []
 
@@ -287,7 +291,7 @@ def _spec(main, exts, **over):
 
 
 def test_validate_spec_flags_bad_references():
-    main = [{"step_number": 1, "sentence": "actor acts"}, {"step_number": 2, "sentence": "system responds"}]
+    main = [{"step_number": 1, "subject_ref": "ACT1", "sentence": "actor acts"}, {"step_number": 2, "subject_ref": "system", "sentence": "system responds"}]
     exts = [
         {"label": "1a", "branch_step": 9, "outcome": "fail", "resume_at_step": None},       # 분기 스텝 없음
         {"label": "2a", "branch_step": 2, "outcome": "resume", "resume_at_step": None},      # resume인데 target 없음
@@ -304,19 +308,19 @@ def test_validate_spec_flags_bad_references():
 
 def test_validate_spec_flags_ui_branch_control():
     main = [
-        {"step_number": 1, "sentence": "User clicks the submit button"},          # UI: click, button
-        {"step_number": 2, "sentence": "System proceeds if the cart is valid"},    # 분기: if
+        {"step_number": 1, "subject_ref": "ACT1", "sentence": "User clicks the submit button"},          # UI: click, button
+        {"step_number": 2, "subject_ref": "system", "sentence": "System proceeds if the cart is valid"},    # 분기: if
     ]
     exts = [{
         "label": "2a", "branch_step": 2, "condition": "c", "outcome": "fail", "resume_at_step": None,
-        "handling_steps": [{"sub_step": "2a1", "sentence": "System shows Fail! on the screen"}],  # 제어토큰 + UI: screen
+        "handling_steps": [{"sub_step": "2a1", "subject_ref": "system", "sentence": "System shows Fail! on the screen"}],  # 제어토큰 + UI: screen
     }]
     joined = " ".join(validate_specification(_spec(main, exts)))
     assert "UI terms" in joined and "branch word" in joined and "control token" in joined
 
 
 def test_validate_spec_does_not_treat_a_domain_field_as_ui_mechanics():
-    main = [{"step_number": 1, "sentence": "The system modifies the requested record fields"}]
+    main = [{"step_number": 1, "subject_ref": "system", "sentence": "The system modifies the requested record fields"}]
 
     issues = validate_specification(_spec(main, []))
 
@@ -324,7 +328,7 @@ def test_validate_spec_does_not_treat_a_domain_field_as_ui_mechanics():
 
 
 def test_validate_spec_flags_missing_contract():
-    main = [{"step_number": 1, "sentence": "actor acts"}]
+    main = [{"step_number": 1, "subject_ref": "ACT1", "sentence": "actor acts"}]
     issues = validate_specification(
         _spec(main, [], preconditions=[], success_guarantee=[])
     )
@@ -455,7 +459,7 @@ def test_specs_do_not_collide_when_use_case_names_are_the_same(monkeypatch):
 # ---------------------------------------------------------------------------
 def _bad_spec():
     # UI 용어(click/button) 포함 → 정적 위반
-    return _clean_spec(main_scenario=[MainScenarioStep(step_number=1, sentence="User clicks the button")])
+    return _clean_spec(main_scenario=[MainScenarioStep(step_number=1, subject_ref="ACT1", sentence="User clicks the button")])
 
 
 def test_reflection_loop_repairs_until_clean(monkeypatch):
@@ -585,7 +589,7 @@ def test_reflection_loop_keeps_static_to_semantic_validation_progress(monkeypatc
 
     invalid_extension = Extension(
         label="2a", branch_step=2, condition="criteria are absent",
-        handling_steps=[ExtensionHandlingStep(sub_step="2a1", sentence="System requests criteria")],
+        handling_steps=[ExtensionHandlingStep(sub_step="2a1", subject_ref="system", sentence="System requests criteria")],
         outcome="fail",
     )
     valid_extension = invalid_extension.model_copy(update={"branch_step": 1, "label": "1a"})

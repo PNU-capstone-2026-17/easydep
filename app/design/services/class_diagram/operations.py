@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
@@ -46,14 +45,10 @@ from app.design.services.class_diagram.type_system import (
     field_type,
     referenced_type_names,
     structure_type_contract,
-    structured_field_types,
-    types_compatible,
 )
 from app.design.services.class_diagram.validation import OPERATION_CHECKS, OperationContext
 from app.design.services.class_diagram.validation.model import (
     class_name,
-    runtime_value_source,
-    type_can_default,
 )
 from app.design.services.common import fields
 from app.design.services.common.structured import parse_structured
@@ -91,6 +86,8 @@ reservedOperations are signatures already accepted for other use cases, not an
 exhaustive list of allowed operations. Reuse an exact reserved signature when it
 has the required behavior; otherwise add a distinct operation for this use case.
 Never edit an existing reserved signature.
+Use lowerCamelCase for every new operation and parameter name (for example,
+submitOrder and orderId); do not use snake_case.
 
 Follow the standard BCE roles: Boundary receives actor-facing input, Control
 coordinates the use-case flow, and Entity may own explicitly selected persistent
@@ -124,7 +121,7 @@ supported runtime value. Declare a result type when later work needs several
 values produced earlier. Do not invent caller input merely to satisfy a signature.
 Honor `useCase.specification.public_contract.required_values`: caller_input values
 must come from actor-facing steps, authenticated_actor_context may enter Control only
-through matching availableTrustedContext evidence, and system_result values are produced
+through an exact obligationRef selected from availableTrustedContext, and system_result values are produced
 outputs, never request inputs or trusted context. Do not treat a caller-supplied identifier
 as proof of identity or invent authentication or delegation absent a cited obligation.
 An actorEntry names the caller role; it does not itself supply that actor's identifier.
@@ -132,12 +129,13 @@ When the steps refer to the current actor without explicitly providing an identi
 model that actor-scoped responsibility without an identity parameter. Do not move an
 unsourced internal identity parameter to the root Boundary merely to create a source.
 Only a subject explicitly selected or provided by the scenario is caller input.
-An explicit use-case precondition may instead provide trusted server context to a
-Control operation. Keep that parameter internal to the Control call; never add it to
+Only an availableTrustedContext entry with an explicit authenticate obligation may provide
+trusted server context to a Control operation. Assign its exact obligationRef to that
+internal parameter only when the supplied evidence justifies it; never add it to
 the actor-facing Boundary operation or expose it as an HTTP caller input. Do not infer
-trusted context from an actor name alone. `availableTrustedContext` contains the only
-evidence that may justify it. A listed source still requires a typed parameter whose
-subject matches that evidence, and is internal to the Boundary-to-Control handoff.
+trusted context from an actor name, prose, parameter name, or type. `availableTrustedContext`
+contains the only obligation refs that may justify it, and the parameter must be internal
+to a Boundary-to-Control handoff.
 
 When this use case reuses a reserved operation, include that operation in the
 fragment with its exact supplied name, parameters, and returnType, plus this use
@@ -308,7 +306,7 @@ def _operation_payload(
         ),
         "valueSourcePolicy": {
             "requestInputs": "actor-facing Boundary parameters declared by the scenario",
-            "trustedContext": "only availableTrustedContext with structural typed-subject evidence; Control handoff only",
+            "trustedContext": "only an exact availableTrustedContext obligationRef; internal Boundary-to-Control handoff only",
             "previousResults": "an earlier collaboration operation result",
             "runtimeValues": "supported clock values only",
             "derivedValues": "a DataType whose required fields have eligible sources",
@@ -323,144 +321,6 @@ def _operation_payload(
         )
         payload["findings"] = findings
     return payload
-
-
-def _canonicalize_downstream_input_types(
-    candidate: dict[str, Any],
-    inventory: dict[str, Any],
-) -> dict[str, Any]:
-    """호출할 수 없는 layer별 DTO 대신 근거 있는 upstream DTO를 재사용하도록 정규화한다."""
-
-    for class_set in candidate.get("Classes") or []:
-        if not isinstance(class_set, dict):
-            continue
-        class_set["operations"] = [
-            operation
-            for operation in class_set.get("operations") or []
-            if isinstance(operation, dict)
-            and re.sub(
-                r"[^a-z0-9]",
-                "",
-                text(operation.get("name")).casefold(),
-            )
-            not in {"none", "noop", "notapplicable"}
-        ]
-    candidate["Classes"] = [
-        class_set
-        for class_set in candidate.get("Classes") or []
-        if isinstance(class_set, dict) and class_set.get("operations")
-    ]
-    local_types = {
-        text(item.get("name")): item
-        for item in candidate.get("DataTypes") or []
-        if isinstance(item, dict) and text(item.get("name"))
-    }
-    if not local_types:
-        return candidate
-    fields_by_type = structured_field_types(
-        {
-            "Classes": inventory.get("Classes") or [],
-            "DataTypes": [
-                *(inventory.get("DataTypes") or []),
-                *(candidate.get("DataTypes") or []),
-            ],
-        }
-    )
-    stereotypes = {
-        class_name(item): text(item.get("stereotype"))
-        for item in inventory.get("Classes") or []
-        if isinstance(item, dict)
-    }
-    class_sets = [item for item in candidate.get("Classes") or [] if isinstance(item, dict)]
-
-    def parameter_types(allowed: set[str]) -> list[str]:
-        return list(
-            dict.fromkeys(
-                text(parameter.get("type"))
-                for class_set in class_sets
-                if stereotypes.get(text(class_set.get("className"))) in allowed
-                for operation in class_set.get("operations") or []
-                if isinstance(operation, dict)
-                for parameter in operation.get("parameters") or []
-                if isinstance(parameter, dict) and text(parameter.get("type"))
-            )
-        )
-
-    for class_set in class_sets:
-        stereotype = stereotypes.get(text(class_set.get("className")), "")
-        if stereotype not in {"Control", "Entity"}:
-            continue
-        allowed = {"Boundary"} if stereotype == "Control" else {"Boundary", "Control"}
-        upstream_types = parameter_types(allowed)
-        named_upstream: dict[str, set[str]] = {}
-        for source_type in upstream_types:
-            for name, source_field_type in fields_by_type.get(source_type, {}).items():
-                named_upstream.setdefault(name.casefold(), set()).add(source_field_type)
-        for operation in class_set.get("operations") or []:
-            if not isinstance(operation, dict):
-                continue
-            for parameter in operation.get("parameters") or []:
-                if not isinstance(parameter, dict):
-                    continue
-                target_type = text(parameter.get("type"))
-                target_fields = fields_by_type.get(target_type, {})
-                if target_type not in local_types or not target_fields:
-                    continue
-                fully_derived = all(
-                    any(
-                        types_compatible(source, expected)
-                        for source in named_upstream.get(name.casefold(), set())
-                    )
-                    or runtime_value_source(expected)
-                    or type_can_default(expected)
-                    for name, expected in target_fields.items()
-                )
-                if fully_derived:
-                    continue
-                replacements: list[tuple[int, str]] = []
-                for source_type in upstream_types:
-                    source_fields = fields_by_type.get(source_type, {})
-                    if not source_fields:
-                        continue
-                    overlap = sum(
-                        1
-                        for name, source_type_value in source_fields.items()
-                        if name in target_fields
-                        and types_compatible(source_type_value, target_fields[name])
-                    )
-                    if overlap:
-                        replacements.append((overlap, source_type))
-                if not replacements:
-                    continue
-                best_size = max(size for size, _source in replacements)
-                best = sorted({source for size, source in replacements if size == best_size})
-                if len(best) == 1:
-                    parameter["type"] = best[0]
-
-    referenced = {
-        name
-        for class_set in class_sets
-        for operation in class_set.get("operations") or []
-        if isinstance(operation, dict)
-        for expression in [
-            *(text(parameter.get("type")) for parameter in operation.get("parameters") or []),
-            text(operation.get("returnType")),
-        ]
-        for name in referenced_type_names(expression)
-        if name in local_types
-    }
-    pending = list(referenced)
-    while pending:
-        owner = pending.pop()
-        for raw_field in local_types[owner].get("fields") or []:
-            for target in referenced_type_names(field_type(raw_field)):
-                if target in local_types and target not in referenced:
-                    referenced.add(target)
-                    pending.append(target)
-    candidate["DataTypes"] = [
-        item for item in candidate.get("DataTypes") or [] if text(item.get("name")) in referenced
-    ]
-    return candidate
 
 
 def _reuse_reserved_operation_signatures(
@@ -712,7 +572,6 @@ def normalize_operation_fragment(
         if text(item.get("name")) not in fixed_names
     ]
     candidate = _reuse_reserved_operation_signatures(candidate, reserved)
-    candidate = _canonicalize_downstream_input_types(candidate, inventory_payload)
     actor_entry_refs = {
         group.actor_step
         for group in index.groups
@@ -815,10 +674,9 @@ def _propose_fragment(
         for item in candidate.get("DataTypes") or []
         if text(item.get("name")) not in fixed_names
     ]
-    # 4. 하류 DTO가 실제 상류 값에서 만들어질 수 있는지 보고 불필요한 layer DTO를
-    # 재사용 가능한 입력 타입으로 정규화한다. 새 LLM 호출은 발생하지 않는다.
+    # 4. Reserved signatures are reused exactly; authored DTO parameter types
+    # remain intact for the validator to accept or diagnose.
     candidate = _reuse_reserved_operation_signatures(candidate, reserved)
-    candidate = _canonicalize_downstream_input_types(candidate, inventory)
     actor_entry_refs = {
         group.actor_step
         for group in index.groups
@@ -917,6 +775,20 @@ def _checked_fragment_uncached(
                 else f"{operation}Repair"
             ),
         )
+        # Keep the generic unresolved-type repair in front of both targeted and
+        # combined-unit validation. The local import avoids a module import cycle:
+        # generation owns the shared type-only repair prompt and schema.
+        from app.design.services.class_diagram.generation import (
+            _repair_invalid_type_fields,
+        )
+
+        repaired = _repair_invalid_type_fields(
+            {"fragment": candidate},
+            AcceptedInventory.from_payload(inventory),
+            reserved_types or [],
+            use_case_id=use_case.id,
+        )
+        candidate = repaired.get("fragment", candidate)
         report = run_checks(OPERATION_CHECKS, candidate, context)
         if report.errors:
             raise RuntimeError("; ".join(report.errors))
@@ -1048,6 +920,7 @@ def _validate_accepted_fragment(
                             {
                                 "name": parameter.get("name"),
                                 "type": parameter.get("type"),
+                                "obligationRef": parameter.get("obligationRef"),
                             }
                             for parameter in operation.get("parameters") or []
                             if isinstance(parameter, dict)
@@ -1334,6 +1207,15 @@ def _compose(
                 if existing is not None:
                     if _operation_signature(existing) != _operation_signature(proposed):
                         raise _Collision(owner, text(proposed.get("name")))
+                    # The method signature deliberately excludes provenance,
+                    # but an accepted fragment must not silently discard an
+                    # explicit obligation link while merging its step refs.
+                    if any(
+                        text(parameter.get("obligationRef"))
+                        for parameter in proposed.get("parameters") or []
+                        if isinstance(parameter, dict)
+                    ):
+                        existing["parameters"] = deepcopy(proposed.get("parameters") or [])
                     existing["stepRefs"] = list(
                         dict.fromkeys(
                             [

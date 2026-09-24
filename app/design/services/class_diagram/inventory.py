@@ -50,6 +50,8 @@ typed state and identifiers name declared fields. Declare a valueObject or
 enumeration here only when an Entity field transitively requires it. Request,
 criteria, summary, result, and export types belong to the later use-case
 operation task and must not be declared in this inventory.
+Use lowerCamelCase for every new business field name and identifier (for example,
+orderId); do not use snake_case.
 Use non-empty fields and no values for a valueObject. Use non-empty values and
 no fields for an enumeration.
 

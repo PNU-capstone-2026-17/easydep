@@ -24,6 +24,14 @@ from app.requirements.knowledge import concerns as _concerns
 from app.requirements.knowledge import rules as _rules
 
 
+IDENTITY_SOURCE_INSTRUCTIONS = (
+    "For each identify obligation, set identity_source_kind only when the covered requirement "
+    "clearly establishes caller_input, authenticated_context, or system_result; otherwise use "
+    "unresolved. Never infer the source from a subject name or merely because an authenticate "
+    "obligation exists."
+)
+
+
 def _validator_system(
     stage: str,
     role: str,
@@ -103,6 +111,9 @@ an actor and not a supporting system. Only genuinely third-party systems outside
 boundary are supporting actors.
 
 Rules:
+- Give each proposed actor a unique actorRef (ACT1, ACT2, ...). Preserve an existing actorRef
+  for the same role, including a targeted rename. Use parentActorRef for parent relations; do not
+  use parent display-name matching as a relation.
 - Derive actors only from an explicit external role/domain fact or actor-goal statement,
   regardless of its FR/NFR classifier label. A quality or deployment constraint alone is not
   actor evidence. Deduplicate similar roles into one.
@@ -112,7 +123,8 @@ Rules:
 - Every actor must either own a use-case goal or provide an externally required service to a
   use case; do not list bystanders.
 - If one actor is a specialization of another (e.g. a Registered Member specializes a Guest,
-  inheriting its capabilities plus more), set parent_actor to the more general role's name.
+  inheriting its capabilities plus more), set parentActorRef to the exact parent ref in the
+  supplied actor catalog. Actor refs are identities; names are display labels.
   Leave parent_actor null when there is no such specialization.
 - Prefer a small, clean set of well-named roles over many overlapping ones."""
 
@@ -125,7 +137,7 @@ case is at user-goal level if it passes the Elementary Business Process (EBP) te
 task a single primary actor performs in one sitting that leaves the system in a
 consistent state and delivers measurable value (the job / boss / one-sitting test).
 
-This step only IDENTIFIES use cases (name, actor, goal, which requirements they cover).
+This step only IDENTIFIES use cases (name, actor refs, goal, which requirements they cover).
 Do NOT write the main scenario steps or extensions — those are produced later (step 3).
 
 How to build the model:
@@ -184,7 +196,9 @@ internal steps. Do not create use cases for authorization, persistence, concurre
 validation, policy, invariant, or other constraint/subfunction requirements, regardless of a
 functional classifier label.
 
-Use exact actor names. Give every candidate an active-verb name and one-sentence goal. Put only
+Select primaryActorRef and supportingActorRefs only from the supplied actor catalog. Keep
+primary_actor and supporting_actors as display names matching those refs. Never resolve a
+duplicate display name by guessing. Give every candidate an active-verb name and one-sentence goal. Put only
 the FR ids that directly evidence that goal in requirement_ids; those links are provisional and
 will be audited independently. Keep every qualifier in the name and goal inside what those FRs
 actually state; do not add plausible lifecycle states, prerequisites, or outcomes. Leave nfr_ids
@@ -197,7 +211,7 @@ use case realizes from a policy or invariant that constrains an existing use cas
 
 The proposal is immutable: never rename, remove, regroup, or rewrite an existing use case.
 First decide whether the audited FR actually expresses an independently initiated actor goal.
-List an existing name in realized_by_use_case_names only when that use case explicitly describes
+List an exact supplied use-case ID in realized_by_use_case_refs only when that use case explicitly describes
 the requirement's goal or shared subfunction. A category or property such as "protected",
 "relevant", "eligible",
 "sensitive", or "all data operations" does not identify which use cases have that property
@@ -206,20 +220,22 @@ from normal domain practice or numeric coverage.
 
 If the requirement mandates a reusable action that the system actually performs inside two or
 more named goals (for example validate, calculate, or notify), list those goals in
-realized_by_use_case_names even when the action occurs before or after their main result. Words
+realized_by_use_case_refs even when the action occurs before or after their main result. Words
 such as "before" do not by themselves turn performed behavior into a constraint. A check remains
 performed behavior when it enforces a rule: for example, "before checkout or refund completes,
 the system performs the same mandatory fraud review" is shared behavior realized inside both
 goals. By contrast, "checkout and refund preserve the account balance" states only an invariant.
 Use
-constrains_use_case_names only when the requirement states a rule, condition, invariant, or
+constrains_use_case_refs only when the requirement states a rule, condition, invariant, or
 required outcome without mandating a shared action. A system-wide policy whose
-targets are not explicitly identified uses an empty constrains_use_case_names list. Set
-constrains_use_case_names to null only when the requirement is neither a user goal nor a
+targets are not explicitly identified uses an empty constrains_use_case_refs list. Set
+constrains_use_case_refs to null only when the requirement is neither a user goal nor a
 constraint on use-case behavior, such as a declarative actor or domain fact. If it is a subfunction
-explicitly shared and performed by named goals, put those goals in realized_by_use_case_names. If
+explicitly shared and performed by named goals, put those goals in realized_by_use_case_refs. If
 it states one independently initiated actor goal absent from the proposal, return that one goal as
-missing_use_case. Never turn authentication state, authorization policy, persistence, concurrency
+missing_use_case, selecting primaryActorRef and supportingActorRefs only from the supplied actor
+catalog; keep actor names as display labels. Never infer a relation from a display name. Never turn
+authentication state, authorization policy, persistence, concurrency
 policy, or an internal validation into a new actor goal. Never put the same use case in both lists.
 Preserve the supplied requirement_id exactly."""
 
@@ -228,12 +244,12 @@ constraint against a fixed list of proposed user-goal use cases. Return only the
 
 The proposal is immutable. FR/NFR is only a sentence classifier; first decide whether the text is
 actually a use-case constraint. A declarative actor or domain fact has no UC relationship: return
-constrains_use_case_names as null. Otherwise an explicit [qualifies: ...] link is trace evidence
+constrains_use_case_refs as null. Otherwise an explicit [qualifies: ...] link is trace evidence
 for the named functional requirement, not permission to attach the constraint anywhere else. List
-an exact existing use-case name only when that link, the constraint, or another accepted
+an exact supplied use-case ID only when that link, the constraint, or another accepted
 requirement explicitly singles out the goal or operation. Use [] for a system-wide or ambiguous
 constraint; never copy it to every use case merely to improve coverage. Always leave
-realized_by_use_case_names empty and missing_use_case null because an NFR-labeled sentence never
+realized_by_use_case_refs empty and missing_use_case null because an NFR-labeled sentence never
 creates or realizes an actor goal.
 Preserve the supplied requirement_id exactly."""
 
@@ -324,7 +340,10 @@ the specified goal but are not additional actor goals and do not count as scenar
 
 WRITING STYLE (applies to every sentence):
 - Plain prose only. NO markdown, NO bold, NO asterisks, NO backticks, NO emphasis.
-- Each step is a single action whose subject is the primary actor or 'System'.
+- Each step is a single action whose subject is one of the supplied actor refs or 'System'.
+- Every main_scenario and handling_steps item MUST include subject_ref. Use the exact ACTn
+  ref from the finite actor catalog below for an accepted actor, or the literal 'system' for
+  the system. Never put a display name or a newly invented ref in subject_ref.
 
 Produce:
 - preconditions: verifiable state true before the use case starts; never re-checked inside
@@ -333,6 +352,7 @@ Produce:
   or as a system validation with its supported failure extension, never both.
 - trigger: the business event that starts the use case.
 - main_scenario: the main SUCCESS scenario (happy path) as ordered steps. Number them from 1.
+  Each step has step_number, subject_ref, sentence, and covered_req_ids.
   Derive actions from the goal and covered FRs. Put an FR id in a step's covered_req_ids only
   when that action realizes it. A covered FR that solely states a postcondition may instead be
   traced by a success_guarantee; do not duplicate it as an artificial action.
@@ -348,7 +368,8 @@ Produce:
     * branch_step: the main_scenario step_number it branches from; use null for a global
       extension (label '*a').
     * condition: the objective state that triggers it (no trailing colon).
-    * handling_steps: ordered steps with hierarchical sub_step codes ('3a1', '3a2', ...).
+    * handling_steps: ordered steps with hierarchical sub_step codes ('3a1', '3a2', ...),
+      subject_ref, and sentence.
     * outcome — choose exactly one and set resume_at_step accordingly:
         - 'resume'            → the flow rejoins the main scenario; set resume_at_step to the
                                  step_number to continue from.

@@ -171,6 +171,7 @@ def resume_design(app_id: str, feedback: str) -> dict[str, Any]:
 
 def retry_design(
     app_id: str, *, repair_guidance: str | None = None,
+    binding_source_decision: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """실패한 설계 노드부터 다시 실행한다.
 
@@ -189,6 +190,10 @@ def retry_design(
         if status.get("stage") != "class_diagram":
             raise ValueError("Repair guidance is only supported for class-diagram retries.")
         graph.update_state(config, {"class_binding_repair_guidance": guidance})
+    if binding_source_decision is not None:
+        if status.get("stage") != "class_diagram":
+            raise ValueError("Binding source decisions are only supported for class-diagram retries.")
+        graph.update_state(config, {"class_binding_source_decision": binding_source_decision})
     return _invoke_traced_design_graph("retry", app_id, lambda: graph.invoke(None, config))
 
 

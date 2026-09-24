@@ -351,3 +351,26 @@ def test_semantic_receiver_aliases_require_one_candidate_and_keep_raw_spelling()
             "receiverOperationId": "CourseOffering::audit()",
             "stepRefs": ["UC3:main:3"],
         }])
+
+
+def test_patch_reindexing_preserves_stable_call_source_refs() -> None:
+    model = _model()
+    calls = model["Collaborations"][0]["calls"]
+    calls[1]["stableId"] = "call-stable-source"
+    calls[3]["argumentBindings"][0]["sourceRef"] = "call-stable-source#result"
+
+    result = apply_structured_patches(model, [{
+        "operation": "insert_call_before",
+        "target": "UC3:main:1",
+        "anchor": "EnrollmentControl::change()",
+        "receiverOperationId": "EnrollmentBoundary::start()",
+        "stepRefs": ["UC3:main:2"],
+        "argumentBindings": [],
+    }])
+    patched_calls = result["Collaborations"][0]["calls"]
+
+    assert patched_calls[1]["callId"] == "UC3:main:1::call:2"
+    assert patched_calls[2]["stableId"] == "call-stable-source"
+    assert patched_calls[4]["argumentBindings"][0]["sourceRef"] == (
+        "call-stable-source#result"
+    )
