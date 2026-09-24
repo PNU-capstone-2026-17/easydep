@@ -545,7 +545,7 @@ def _owner_workspace_guidance(
         "- Preserve generated public declarations: never change or delete an existing public signature. Within the assigned write scope (files or roots), adding only the smallest constructor, accessor, or helper declaration needed is permitted.",
         "- Choose one legal conventional implementation and edit it; do not enumerate alternatives or delay the edit for theoretical choices.",
         (
-            "- Batch related source reads into as few tool calls as practical, and use build/test results rather than file counts as completion evidence."
+            "- Use build/test results rather than file counts as completion evidence."
             if owner_tool_mode != "editor"
             else ""
         ),
