@@ -5,8 +5,35 @@ from dataclasses import replace
 from app.design import service
 from app.design.graphs import subgraphs
 from app.design.knowledge.detectors import Finding
-from app.design.nodes.artifact import DesignArtifactSpec, check_node, merge_model
+from app.design.nodes.artifact import (
+    DesignArtifactSpec,
+    check_node,
+    merge_model,
+    repair_directive,
+)
 from app.validation import stable_digest
+
+
+def test_public_contract_value_reference_repair_preserves_signature_but_updates_provenance() -> None:
+    directive = repair_directive([
+        Finding(
+            "class.public-contract-semantic",
+            "Required value 'value:1' must cite its exact accepted valueRef on the parameter.",
+            "UC3",
+        )
+    ])
+
+    assert "operation names, parameter names and types" in directive
+    assert (
+        "`requiredValueRef` is provenance metadata, not part of an operation signature"
+        in directive
+    )
+    assert "propagate its exact valueRef to every operation" in directive
+    assert "including downstream collaborator calls" in directive
+    assert "Use flow and step evidence, not name matching" in directive
+
+    unrelated = repair_directive([Finding("class.other", "A different issue.", "UC1")])
+    assert "requiredValueRef` is provenance metadata" in unrelated
 
 
 def _finding(model, _state):

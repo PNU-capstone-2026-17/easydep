@@ -174,9 +174,13 @@ def repair_directive(findings: list[Finding]) -> str:
     return (
         "[YOUR PREVIOUS OUTPUT FAILED THESE CHECKS]\n"
         f"{listed}\n\n"
-        "Fix every one of them. Keep everything that was already correct — the same "
-        "classes, data types, operation signatures, relationships, collaborations, "
-        "and order — and do not introduce new violations."
+        "Fix every one of them. Preserve class and DataType declarations, operation names, "
+        "parameter names and types, return types, relationships, collaborations, and order. "
+        "`requiredValueRef` is provenance metadata, not part of an operation signature: "
+        "for each accepted RequiredValue, propagate its exact valueRef to every operation "
+        "parameter that consumes or passes that same value in the use-case flow, including "
+        "downstream collaborator calls. Use flow and step evidence, not name matching. "
+        "Do not change other operation contracts or introduce new violations."
     )
 
 
