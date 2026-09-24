@@ -2903,16 +2903,27 @@ class WorkspaceService:
 
         if restart_stage == RestartStage.REQUIREMENTS:
             state = artifact_repository.load_state(target_app_id)
+            saved_preferences = repository.get_deployment_preferences(target_app_id)
+            initial_cloud_inputs = branch.get("initial_cloud_inputs") or {}
+            payload = {
+                "text": str(state.get("requirements_text") or ""),
+                "resource_constraints_text": str(
+                    state.get("resource_constraints_text") or ""
+                ),
+            }
+            if saved_preferences:
+                payload["deployment_preferences"] = saved_preferences
+                payload["resource_constraints_text"] = str(
+                    saved_preferences.get("resource_constraints_text")
+                    or payload["resource_constraints_text"]
+                )
+            elif initial_cloud_inputs:
+                payload.update(initial_cloud_inputs)
             next_command = self.submit(
                 target_app_id,
                 action="message",
                 stage="requirements",
-                payload={
-                    "text": str(state.get("requirements_text") or ""),
-                    "resource_constraints_text": str(
-                        state.get("resource_constraints_text") or ""
-                    ),
-                },
+                payload=payload,
             )
         elif restart_stage == RestartStage.DESIGN:
             next_command = self.submit(
@@ -3064,6 +3075,11 @@ class WorkspaceService:
                     if provider and region
                     else None
                 )
+                deployment_preferences = (
+                    DeploymentPreferences.model_validate(payload["deployment_preferences"])
+                    if payload.get("deployment_preferences")
+                    else None
+                )
                 request = AnalyzeRequest(
                     requirements=lines or [text],
                     thread_id=app_id,
@@ -3071,6 +3087,7 @@ class WorkspaceService:
                     feedback_gates=True,
                     resource_constraints_text=str(payload.get("resource_constraints_text") or ""),
                     cloud_constraints=cloud_constraints,
+                    deployment_preferences=deployment_preferences,
                 )
             progress = self._requirements_progress_reporter(app_id, str(command["command_id"]))
             with requirements_telemetry.progress_scope(progress):

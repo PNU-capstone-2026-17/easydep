@@ -2300,6 +2300,83 @@ def test_inactive_targeted_design_review_advances_without_restarting(monkeypatch
     assert calls == []
 
 
+def test_requirements_restart_restores_original_cloud_inputs_and_prefers_saved_choices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    branch = {
+        "source_app_id": "source-app",
+        "target_app_id": "target-app",
+        "initial_cloud_inputs": {
+            "provider": "aws",
+            "region": "ap-northeast-2",
+            "monthly_budget_amount": 500,
+            "monthly_budget_currency": "USD",
+            "resource_constraints_text": "Use the existing pilot environment.",
+        },
+    }
+    state = {
+        "requirements_text": "Build the requested service.",
+        "resource_constraints_text": "Use the existing pilot environment.",
+    }
+    submitted: list[dict[str, Any]] = []
+    monkeypatch.setattr(workspace_module, "create_restart_branch", lambda *_args: branch)
+    monkeypatch.setattr(artifact_repository, "load_state", lambda _app_id: state)
+    monkeypatch.setattr(repository, "get_deployment_preferences", lambda _app_id: None)
+    service = WorkspaceService()
+    monkeypatch.setattr(
+        service,
+        "submit",
+        lambda app_id, **kwargs: submitted.append({"app_id": app_id, **kwargs})
+        or {"command_id": "restart-requirements-command"},
+    )
+    try:
+        result = service._rerun_from_stage(
+            {
+                "app_id": "source-app",
+                "payload": {"restart_stage": "requirements"},
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert result["started_command_id"] == "restart-requirements-command"
+    assert submitted[0]["payload"] == {
+        "text": "Build the requested service.",
+        "resource_constraints_text": "Use the existing pilot environment.",
+        "provider": "aws",
+        "region": "ap-northeast-2",
+        "monthly_budget_amount": 500,
+        "monthly_budget_currency": "USD",
+    }
+
+    saved_preferences = {
+        "mode": "alternatives",
+        "targets": [{"provider": "gcp", "region": "asia-northeast3", "zones": []}],
+        "monthly_budget_amount": 700,
+        "monthly_budget_currency": "KRW",
+        "resource_constraints_text": "Use the updated deployment choices.",
+    }
+    submitted.clear()
+    monkeypatch.setattr(
+        repository, "get_deployment_preferences", lambda _app_id: saved_preferences
+    )
+    service = WorkspaceService()
+    monkeypatch.setattr(
+        service,
+        "submit",
+        lambda app_id, **kwargs: submitted.append({"app_id": app_id, **kwargs})
+        or {"command_id": "restart-requirements-command"},
+    )
+    try:
+        service._rerun_from_stage(
+            {"app_id": "source-app", "payload": {"restart_stage": "requirements"}}
+        )
+    finally:
+        service.shutdown()
+    assert submitted[0]["payload"]["deployment_preferences"] == saved_preferences
+    assert "provider" not in submitted[0]["payload"]
+
+
 def test_design_operation_exposes_existing_llm_timing_events(monkeypatch) -> None:
     events = []
     monkeypatch.setattr(

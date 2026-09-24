@@ -125,12 +125,18 @@ def create_restart_branch(
 ) -> dict[str, Any]:
     """선택한 단계를 다시 실행할 새 앱을 그 직전 시점에서 만든다."""
 
-    return _clone(source_app_id, _PREVIOUS_STAGE[RestartStage(stage)])
+    return _clone(
+        source_app_id,
+        _PREVIOUS_STAGE[RestartStage(stage)],
+        preserve_initial_cloud_inputs=RestartStage(stage) == RestartStage.REQUIREMENTS,
+    )
 
 
 def _clone(
     source_app_id: str,
     completed_stage: CheckpointStage | None,
+    *,
+    preserve_initial_cloud_inputs: bool = False,
 ) -> dict[str, Any]:
     """원본을 잠근 동안 앱 입력과 최신 산출물을 한 시점 기준으로 복사한다."""
 
@@ -154,6 +160,32 @@ def _clone(
         missing = [item for item in required_types if item not in latest]
         if missing:
             raise ValueError("The selected checkpoint is incomplete: " + ", ".join(missing))
+
+        initial_cloud_inputs: dict[str, Any] | None = None
+        if preserve_initial_cloud_inputs:
+            initial_command = session.scalar(
+                select(WorkspaceCommand)
+                .where(
+                    WorkspaceCommand.app_id == source_app_id,
+                    WorkspaceCommand.stage == "requirements",
+                    WorkspaceCommand.action == "message",
+                )
+                .order_by(WorkspaceCommand.created_at.asc(), WorkspaceCommand.command_id.asc())
+                .limit(1)
+            )
+            initial_payload = {}
+            if initial_command and isinstance(initial_command.payload, dict):
+                initial_payload = initial_command.payload
+            if initial_payload.get("provider") and initial_payload.get("region"):
+                initial_cloud_inputs = {
+                    "provider": str(initial_payload["provider"]),
+                    "region": str(initial_payload["region"]),
+                    "monthly_budget_amount": initial_payload.get("monthly_budget_amount"),
+                    "monthly_budget_currency": str(
+                        initial_payload.get("monthly_budget_currency") or "USD"
+                    ),
+                    "resource_constraints_text": source.resource_constraints_text or "",
+                }
 
         session.add(
             App(
@@ -217,13 +249,16 @@ def _clone(
             job_id=implementation_job_id,
         )
 
-    return {
+    result = {
         "source_app_id": source_app_id,
         "target_app_id": target_app_id,
         "checkpoint_stage": completed_stage.value if completed_stage else None,
         "entry_command_id": entry_command_id,
         "implementation_job_id": implementation_job_id,
     }
+    if initial_cloud_inputs is not None:
+        result["initial_cloud_inputs"] = initial_cloud_inputs
+    return result
 
 
 def _add_entry_command(
