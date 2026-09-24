@@ -120,8 +120,8 @@ def test_workspace_semantic_ambiguity_is_version_pinned_two_choice_with_free_tex
     )
     monkeypatch.setattr(
         workspace_service.ProjectTools,
-        "current_revision_target",
-        lambda _self, ref: target if ref == "use_case_spec:UC1" else None,
+        "normalize_revision_targets",
+        lambda _self, refs, **_kwargs: [target] if list(refs) == ["use_case_spec:UC1"] else [],
     )
     candidate = {
         "useCaseId": "UC1",
