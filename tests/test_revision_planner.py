@@ -92,7 +92,9 @@ def test_same_snapshot_and_interpretation_produce_identical_read_only_plan() -> 
     second = planner.plan(intent)
 
     assert first.plan_digest == second.plan_digest
-    assert first.status == "ready_local"
+    assert first.status == "needs_confirmation"
+    assert "free_text_revision_requires_confirmation" in first.reason_codes
+    assert "confirm" in first.explanation.lower()
     assert [target.ref for target in first.downstream_targets] == ["api_spec:createOrder"]
     assert tools.write_calls == 0
 
@@ -224,7 +226,8 @@ def test_persisted_deployment_workload_is_a_local_design_target() -> None:
         )
     )
 
-    assert plan.status == "ready_local"
+    assert plan.status == "needs_confirmation"
+    assert "free_text_revision_requires_confirmation" in plan.reason_codes
     assert [target.ref for target in plan.authority_targets] == [workload.ref]
     assert plan.execution_mode == "targeted_revision"
 
@@ -279,7 +282,10 @@ def test_design_feedback_routes_exact_spec_edit_back_to_requirements_confirmatio
     assert [target.ref for target in plan.downstream_targets] == [
         "class_diagram:Order"
     ]
-    assert plan.reason_codes == ["earlier_delivery_stage_requires_confirmation"]
+    assert plan.reason_codes == [
+        "earlier_delivery_stage_requires_confirmation",
+        "free_text_revision_requires_confirmation",
+    ]
 
 
 def test_explicit_api_path_value_outside_contract_routes_to_boundary_confirmation() -> None:

@@ -82,7 +82,17 @@ def _class_binding_question() -> Question:
         source_execution_id="design-run-1",
         detected_at={"stage": "design", "artifact_ref": target.ref},
         base_revisions=[{"artifact_type": "USECASE_SPEC", "version_id": 7}],
-        trigger={"category": "class_binding_source"},
+        trigger={
+            "category": "class_binding_source",
+            "binding_slot": {
+                "useCaseId": "UC1",
+                "actorEntryIndex": 0,
+                "callIndex": 1,
+                "parameterIndex": 0,
+                "receiverOperationId": "CourseControl.register",
+                "parameterName": "courseId",
+            },
+        },
         authority_candidates=[target],
         prompt="Where should this value come from?",
         decision_policy={
@@ -159,6 +169,129 @@ class _Tools:
 
     def validate_targets(self, targets):
         return {"valid": self.valid, "valid_refs": [item["ref"] for item in targets]}
+
+
+def _identity_source_candidate() -> dict[str, Any]:
+    return {
+        "useCaseId": "UC1",
+        "obligationRef": "identify-student",
+        "requirementIds": ["FR-1"],
+        "prompt": "Where does the student identity come from?",
+        "options": [
+            {
+                "id": "caller_input",
+                "label": "Supplied by the caller",
+                "description": "The caller supplies the identity.",
+                "identitySourceKind": "caller_input",
+            },
+            {
+                "id": "authenticated_context:authenticate-student",
+                "label": "Authenticated student context",
+                "description": "Use the established authenticated student.",
+                "identitySourceKind": "authenticated_context",
+                "sourceAuthenticateObligationRef": "authenticate-student",
+            },
+        ],
+    }
+
+
+class _IdentityTools(_Tools):
+    version = 7
+
+    def current_revision_target(self, ref):
+        assert ref == "use_case_spec:UC1"
+        target = _target()
+        return target.model_copy(update={"artifact_version_id": self.version})
+
+
+def _identity_source_command() -> dict[str, Any]:
+    candidate = _identity_source_candidate()
+    service = WorkspaceService()
+    try:
+        question = service._identity_source_question("app-1", candidate)
+    finally:
+        service.shutdown()
+    assert question is not None
+    return {
+        "command_id": "identity-question",
+        "app_id": "app-1",
+        "action": "message",
+        "stage": "requirements",
+        "status": "AWAITING_INPUT",
+        "payload": {},
+        "result": {
+            "feedback_question": question.model_dump(mode="json"),
+            "identity_source_question": candidate,
+        },
+    }
+
+
+def test_identity_source_option_resumes_typed_answer_without_revision_plan(monkeypatch) -> None:
+    monkeypatch.setattr(workspace_module, "ProjectTools", _IdentityTools)
+    source = _identity_source_command()
+    service = WorkspaceService()
+    try:
+        action, payload, stage = service._route_identity_source_answer(
+            "app-1",
+            {"action_id": "identity-question", "feedback_option_id": "authenticated_context:authenticate-student"},
+            None,
+            source,
+            source,
+            source["result"]["identity_source_question"],
+        )
+    finally:
+        service.shutdown()
+    assert (action, stage) == ("message", "requirements")
+    assert payload["identity_source_answer"] == {
+        "use_case_id": "UC1",
+        "obligation_ref": "identify-student",
+        "identity_source_kind": "authenticated_context",
+        "source_authenticate_obligation_ref": "authenticate-student",
+    }
+    assert payload["_conversation_outcome"] == {"kind": "identity_source_retry"}
+    assert "revision_plan" not in payload
+    assert "feedback_decision" not in payload
+
+
+def test_identity_source_rejects_stale_artifact_or_foreign_question(monkeypatch) -> None:
+    monkeypatch.setattr(workspace_module, "ProjectTools", _IdentityTools)
+    source = _identity_source_command()
+    _IdentityTools.version = 8
+    service = WorkspaceService()
+    try:
+        _, stale, _ = service._route_identity_source_answer(
+            "app-1", {"feedback_option_id": "caller_input"}, None, source, source,
+            source["result"]["identity_source_question"],
+        )
+        foreign = {**source, "app_id": "other-app"}
+        _, wrong_app, _ = service._route_identity_source_answer(
+            "app-1", {"feedback_option_id": "caller_input"}, None, source, foreign,
+            source["result"]["identity_source_question"],
+        )
+    finally:
+        _IdentityTools.version = 7
+        service.shutdown()
+    assert stale["_conversation_outcome"]["kind"] == "clarification"
+    assert wrong_app["_conversation_outcome"]["kind"] == "clarification"
+
+
+def test_identity_source_rejects_tampered_option_and_nonexact_free_text(monkeypatch) -> None:
+    monkeypatch.setattr(workspace_module, "ProjectTools", _IdentityTools)
+    source = _identity_source_command()
+    service = WorkspaceService()
+    try:
+        _, tampered, _ = service._route_identity_source_answer(
+            "app-1", {"feedback_option_id": "system_result"}, None, source, source,
+            source["result"]["identity_source_question"],
+        )
+        _, prose, _ = service._route_identity_source_answer(
+            "app-1", {"text": "use the logged-in student"}, None, source, source,
+            source["result"]["identity_source_question"],
+        )
+    finally:
+        service.shutdown()
+    assert tampered["_conversation_outcome"]["kind"] == "clarification"
+    assert prose["_conversation_outcome"]["kind"] == "clarification"
 
 
 def test_feedback_question_offers_stable_option_and_free_text() -> None:
@@ -361,8 +494,10 @@ def test_class_binding_answer_retries_the_same_design_session(monkeypatch) -> No
         monkeypatch.setattr(
             workspace_module,
             "retry_design_session",
-            lambda app_id, *, repair_guidance: captured.update(
-                app_id=app_id, repair_guidance=repair_guidance
+            lambda app_id, *, repair_guidance, binding_source_decision=None: captured.update(
+                app_id=app_id,
+                repair_guidance=repair_guidance,
+                binding_source_decision=binding_source_decision,
             ) or {"status": "completed"},
         )
         monkeypatch.setattr(
@@ -384,10 +519,23 @@ def test_class_binding_answer_retries_the_same_design_session(monkeypatch) -> No
         service.shutdown()
 
     assert (action, stage) == ("message", "design")
-    assert payload["_conversation_outcome"] == {"kind": "class_binding_retry"}
+    assert payload["_conversation_outcome"] == {
+        "kind": "class_binding_retry",
+        "binding_source_decision": {
+            "useCaseId": "UC1",
+            "actorEntryIndex": 0,
+            "callIndex": 1,
+            "parameterIndex": 0,
+            "receiverOperationId": "CourseControl.register",
+            "parameterName": "courseId",
+            "sourceKind": "use_case_input",
+        },
+    }
+    source_decision = payload["_conversation_outcome"]["binding_source_decision"]
     assert captured == {
         "app_id": "app-1",
         "repair_guidance": offered_payload["text"],
+        "binding_source_decision": source_decision,
     }
     assert result == {"status": "completed"}
 

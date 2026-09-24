@@ -476,7 +476,12 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
         # turn a technical finding into a generic user-edit request (or allow
         # approval to skip it); a real user decision is represented above by a
         # typed feedback_question with grounded authority and options.
-        return AwaitingOutcome(wait_reason=WaitReason.REPAIR, actions=[])
+        return AwaitingOutcome(
+            wait_reason=WaitReason.REPAIR,
+            actions=[
+                _offer(WorkspaceAction.MESSAGE, "Send revision feedback", common),
+            ],
+        )
 
     if result.get("kind") == "question" or result.get("questions"):
         actions = _answer_offers(command_id, result)

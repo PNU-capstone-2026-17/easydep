@@ -27,6 +27,10 @@ _REQUIREMENTS_STAGE_BY_KIND = {
     # the explicit service stage rather than deriving it from ref text.
     "use_case": "use_cases",
     "use_case_spec": "specs",
+    # An actor target carries its catalog-issued ACTn as element_id.  The
+    # orchestrator passes that exact value to actor modeling; display labels
+    # are intentionally not part of this execution boundary.
+    "actor": "actors",
 }
 
 

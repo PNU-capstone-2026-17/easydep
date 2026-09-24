@@ -243,6 +243,7 @@ class ConversationAgent:
             tools,
             context=context,
             evidence=list(search_context.get("evidence") or []),
+            exact_refs=[str(item.get("ref") or "") for item in exact_candidates],
         )
 
     def interpret_revision(
@@ -273,6 +274,7 @@ class ConversationAgent:
                 tools,
                 context=context,
                 evidence=[],
+                exact_refs=[],
             )
         named_candidates = self._exact_catalog_candidates(text, tools)
         search_context = self._revision_search_context(
@@ -286,8 +288,8 @@ class ConversationAgent:
         # operation inside a selected sequence can become the exact authority.
         candidates = _merge_candidates(
             named_candidates,
-            exact_candidates,
             list(search_context.get("candidates") or []),
+            exact_candidates,
             self._selected_scope_candidates(
                 context, self._selected_artifact_candidates(context, tools)
             ),
@@ -298,6 +300,7 @@ class ConversationAgent:
             tools,
             context=context,
             evidence=list(search_context.get("evidence") or []),
+            exact_refs=[str(item.get("ref") or "") for item in named_candidates],
         )
 
     def _select_revision(
@@ -308,6 +311,7 @@ class ConversationAgent:
         *,
         context: ConversationContext | None = None,
         evidence: list[dict] | None = None,
+        exact_refs: list[str] | None = None,
     ) -> CommandIntent | Clarification:
         """Use one structured call for target selection and revision semantics."""
 
@@ -316,13 +320,18 @@ class ConversationAgent:
                 question="I could not find the artifact element to revise. Please specify the target.",
                 candidates=[],
             )
+        ambiguous = _ambiguous_exact_display_candidates(text, candidates)
+        if ambiguous:
+            return _duplicate_label_clarification(ambiguous)
         selection = self._propose(
             RevisionInterpretation,
             [
                 SystemMessage(
                     content=(
-                        "Select only refs from the supplied finite candidate list that are directly "
-                        "targeted by the revision. A single request may contain multiple dependent "
+                        "Select only refs from the supplied finite candidate list that the user "
+                        "directly requests to change; trace-linked or generated downstream projections "
+                        "are impact, not separate requested authority, unless the user explicitly asks "
+                        "to edit that projection. A single request may contain multiple dependent "
                         "changes: select every candidate that owns one of those changes and return one "
                         "target_instructions entry per selected target. For example, adding a class "
                         "operation and invoking it in named use cases selects the owning class plus "
@@ -405,12 +414,23 @@ class ConversationAgent:
         complete_decomposition = (
             len(decomposed_refs) > 1 and decomposed_refs == set(selected)
         )
+        # The catalog resolver supplies authoritative identity matches. When a
+        # test double or bounded search result omits that method, compare the
+        # canonical refs and display identities in this finite candidate set.
+        exact_refs = set(exact_refs or []) | set(_exact_candidate_refs(text, candidates))
+        exact_refs.intersection_update(available)
+        # A uniquely named qualified identity is direct user authority even
+        # when the model decomposes it into its container and a projection.
+        qualified_exact = _qualified_exact_candidate_refs(text, candidates)
+        if len(qualified_exact) == 1:
+            selected = qualified_exact
+            complete_decomposition = False
         if not complete_decomposition:
-            exact_refs = _exact_candidate_refs(text, candidates)
+            explicit_refs = _explicit_ref_candidate_refs(text, candidates)
+            if len(explicit_refs) == 1:
+                selected = explicit_refs
             selected_exact = [ref for ref in selected if ref in exact_refs]
             if len(selected_exact) == 1:
-                # Exact identity narrows an already model-selected target; merely
-                # mentioning another artifact is not authority to edit it.
                 selected = selected_exact
         validation = tools.validate_revision_selections(selected)
         valid = list(validation.get("valid_refs") or [])
@@ -648,24 +668,21 @@ def _merge_candidates(*groups: list[dict]) -> list[dict]:
 
 
 def _exact_candidate_refs(text: str, candidates: list[dict]) -> list[str]:
-    """Resolve finite public candidate identifiers without ref-kind semantics."""
+    """Resolve exact candidate identities without guessing from partial words.
 
-    normalized_text = " ".join(text.split()).casefold()
+    Labels and names are useful for retrieval, but are not execution identity:
+    a free-text display-name match must still be resolved by the bounded target
+    selector and validated by the catalog below.
+    """
+
     text_tokens = re.findall(r"[A-Za-z0-9_]+", text.casefold())
-    refs: list[str] = []
+    matches: list[tuple[int, str]] = []
     for item in candidates:
         ref = str(item.get("ref") or "").strip()
         if not ref:
             continue
-        forms = [
-            str(item.get(key) or "").strip()
-            for key in ("ref", "name", "label", "canonical_ref", "requested_ref")
-        ]
-        summary = str(item.get("summary") or "").strip()
-        if summary and normalized_text == " ".join(summary.split()).casefold():
-            refs.append(ref)
-            continue
-        for form in forms:
+        canonical = str(item.get("canonical_ref") or ref).strip()
+        for form in (canonical, canonical.split(":", 1)[-1]):
             if not form:
                 continue
             literal = re.search(
@@ -673,19 +690,164 @@ def _exact_candidate_refs(text: str, candidates: list[dict]) -> list[str]:
                 text,
                 re.IGNORECASE,
             )
-            # Separator-insensitive comparison supports catalog identifiers in
-            # ordinary prose (for example, ``Owner.method``). Compare whole
-            # token sequences so a shorter catalog name cannot match a word
-            # fragment such as ``Incident`` inside ``Incidental``.
+            # Separator-insensitive comparison supports canonical catalog
+            # identifiers in ordinary prose (for example, ``Owner.method``).
+            # Compare whole token sequences so a shorter identifier cannot
+            # match a word fragment such as ``Incident`` inside ``Incidental``.
             form_tokens = re.findall(r"[A-Za-z0-9_]+", form.casefold())
             token_match = bool(form_tokens) and any(
                 text_tokens[index : index + len(form_tokens)] == form_tokens
                 for index in range(len(text_tokens) - len(form_tokens) + 1)
             )
             if literal or token_match:
-                refs.append(ref)
+                matches.append((len(form_tokens), ref))
                 break
+        else:
+            # Names and labels are useful only when they identify one candidate;
+            # duplicate display labels are rejected before selection.
+            for field in ("name", "label"):
+                display = str(item.get(field) or "").strip()
+                display_tokens = re.findall(r"[A-Za-z0-9_]+", display.casefold())
+                if display_tokens and any(
+                    text_tokens[index : index + len(display_tokens)] == display_tokens
+                    for index in range(len(text_tokens) - len(display_tokens) + 1)
+                ):
+                    matches.append((len(display_tokens), ref))
+                    break
+    if not matches:
+        return []
+    longest = max(score for score, _ref in matches)
+    most_specific = [ref for score, ref in matches if score == longest]
+    return list(dict.fromkeys(most_specific))
+
+
+def _explicit_ref_candidate_refs(text: str, candidates: list[dict]) -> list[str]:
+    """Return candidates whose full catalog ref the user wrote literally."""
+
+    refs = []
+    for item in candidates:
+        candidate_ref = str(item.get("canonical_ref") or item.get("ref") or "").strip()
+        if candidate_ref and re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(candidate_ref)}(?![A-Za-z0-9_])",
+            text,
+            re.IGNORECASE,
+        ):
+            ref = str(item.get("ref") or "").strip()
+            if ref:
+                refs.append(ref)
     return list(dict.fromkeys(refs))
+
+
+def _qualified_exact_candidate_refs(
+    text: str, candidates: list[dict]
+) -> list[str]:
+    """Return uniquely matched candidates named by a qualified identity."""
+
+    matched_refs = []
+    for item in candidates:
+        ref = str(item.get("ref") or "").strip()
+        if not ref:
+            continue
+        canonical = str(item.get("canonical_ref") or ref).split(":", 1)[-1]
+        parts = [part for part in canonical.split("::") if part]
+        if len(parts) < 2:
+            continue
+        # User prose commonly writes a catalog-qualified operation as
+        # Owner.method even when its canonical ref uses Owner::method(...).
+        pattern = r"\s*[.:/]+\s*".join(
+            re.escape(part.split("(", 1)[0]) for part in parts
+        )
+        if re.search(rf"(?<![A-Za-z0-9_]){pattern}(?![A-Za-z0-9_])", text, re.IGNORECASE):
+            matched_refs.append(ref)
+    if len(matched_refs) == 1:
+        return matched_refs
+    return []
+
+
+def _ambiguous_exact_display_candidates(
+    text: str, candidates: list[dict]
+) -> list[dict]:
+    """Find literal duplicate display names lacking user-supplied context."""
+
+    exact_refs = set(_exact_candidate_refs(text, candidates))
+
+    groups: dict[str, list[dict]] = {}
+    for item in candidates:
+        ref = str(item.get("canonical_ref") or item.get("ref") or "").strip()
+        if not ref:
+            continue
+        for key in ("name", "label"):
+            display = str(item.get(key) or "").strip()
+            if display:
+                groups.setdefault(display.casefold(), []).append(item)
+
+    normalized = " ".join(text.casefold().split())
+    for key, group in groups.items():
+        unique = {
+            str(item.get("canonical_ref") or item.get("ref") or "").strip(): item
+            for item in group
+        }
+        if len(unique) < 2:
+            continue
+        # A longer matched identity outside this duplicate-label group (such
+        # as Owner.method) names a leaf rather than either shorter container.
+        if exact_refs - set(unique):
+            continue
+        display = str(group[0].get("label") or group[0].get("name") or key).strip()
+        if not re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(display)}(?![A-Za-z0-9_])",
+            text,
+            re.IGNORECASE,
+        ):
+            continue
+        # An exact canonical identifier is unambiguous even when its display
+        # name is shared.
+        if any(
+            re.search(
+                rf"(?<![A-Za-z0-9_]){re.escape(str(item.get(field) or '').strip())}(?![A-Za-z0-9_])",
+                text,
+                re.IGNORECASE,
+            )
+            for item in unique.values()
+            for field in ("ref", "canonical_ref")
+            if str(item.get(field) or "").strip()
+        ):
+            continue
+        # Respect explicit type/owner qualifiers in ordinary prose, such as
+        # "the use case Incident" or "requirements Incident".
+        qualified = set()
+        for ref, item in unique.items():
+            discriminator_values = [
+                ref.split(":", 1)[0].replace("_", " "),
+                *(str(item.get(field) or "").replace("_", " ") for field in (
+                    "owner", "artifact_type", "type", "kind", "stage"
+                )),
+            ]
+            if any(
+                value.strip()
+                and re.search(
+                    rf"(?<![A-Za-z0-9_]){re.escape(value.strip())}(?![A-Za-z0-9_])",
+                    normalized,
+                    re.IGNORECASE,
+                )
+                for value in discriminator_values
+            ):
+                qualified.add(ref)
+        if len(qualified) == 1:
+            continue
+        return list(unique.values())
+    return []
+
+
+def _duplicate_label_clarification(candidates: list[dict]) -> Clarification:
+    choices = [
+        f"{item.get('label') or item.get('name') or item.get('ref')} ({item.get('ref')})"
+        for item in candidates
+    ]
+    return Clarification(
+        question="Which of these matching elements do you mean?",
+        candidates=choices,
+    )
 
 
 conversation_agent = ConversationAgent()

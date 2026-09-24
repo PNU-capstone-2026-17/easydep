@@ -9,6 +9,9 @@ from app.workspace.conversation.contracts import (
     Clarification,
     CommandIntent,
     ConversationIntent,
+    Reply,
+    RevisionPlan,
+    RevisionTarget,
     RevisionInterpretation,
 )
 from app.workspace.service import WorkspaceService
@@ -69,6 +72,170 @@ def test_followup_executes_resolved_request_instead_of_only_target_name() -> Non
     assert isinstance(result, CommandIntent)
     assert result.instruction == instruction
     assert result.revision.requested_effect == instruction
+
+
+def test_repair_linked_message_uses_repair_stage_as_conversation_context(monkeypatch) -> None:
+    repair = {
+        "command_id": "repair-command",
+        "app_id": "app-1",
+        "stage": "design",
+        "status": "AWAITING_INPUT",
+        "result": {"repair_state": {"status": "WAITING_INPUT"}},
+    }
+    current = {
+        "command_id": "requirements-command",
+        "app_id": "app-1",
+        "stage": "requirements",
+        "status": "COMPLETED",
+        "payload": {},
+        "result": {},
+    }
+    monkeypatch.setattr(
+        workspace_module.repository,
+        "latest_command",
+        lambda *_a, **_k: current,
+    )
+    monkeypatch.setattr(
+        workspace_module.repository,
+        "get_command",
+        lambda command_id: repair if command_id == "repair-command" else None,
+    )
+    context = _context()
+    context.workspace["stage"] = "requirements"
+    monkeypatch.setattr(
+        workspace_module, "build_conversation_context", lambda _app: context,
+    )
+    observed: dict[str, Any] = {}
+
+    def respond(_app, _text, conversation_context, **_kwargs):
+        observed["stage"] = conversation_context.workspace["stage"]
+        return Reply(text="Acknowledged.")
+
+    monkeypatch.setattr(workspace_module.conversation_agent, "respond", respond)
+    service = WorkspaceService()
+    try:
+        service._prepare_conversational_message(
+            "app-1",
+            action="message",
+            payload={"text": "Please fix the review feedback.", "action_id": "repair-command"},
+            stage=None,
+        )
+    finally:
+        service.shutdown()
+
+    assert observed["stage"] == "design"
+
+
+def test_repair_linked_revision_requires_explicit_cross_stage_target(monkeypatch) -> None:
+    repair = {
+        "command_id": "repair-command",
+        "app_id": "app-1",
+        "stage": "design",
+        "status": "AWAITING_INPUT",
+        "payload": {},
+        "result": {
+            "repair_state": {"status": "WAITING_INPUT"},
+            "actions": [
+                {
+                    "action": "message",
+                    "label": "Send feedback",
+                    "payload": {"action_id": "repair-command"},
+                }
+            ],
+        },
+    }
+    requirement_target = RevisionTarget(
+        ref="use_case_spec:UC5",
+        kind="use_case_spec",
+        element_id="UC5",
+        owner="requirements",
+        artifact_type="USECASE_SPEC",
+        display_label="UC5",
+    )
+
+    class _Tools:
+        def __init__(self, _app_id: str) -> None:
+            pass
+
+        def trace_impact(self, _refs, *, view):
+            return {"view": view}
+
+    monkeypatch.setattr(workspace_module, "ProjectTools", _Tools)
+    monkeypatch.setattr(
+        workspace_module,
+        "plan_revision",
+        lambda *_a: RevisionPlan(
+            plan_digest="a" * 64,
+            status="needs_confirmation",
+            explanation="Review and confirm this bounded revision.",
+            upstream_candidates=[],
+            authority_targets=[requirement_target],
+            requested_targets=[requirement_target],
+            execution_mode="targeted_revision",
+            reason_codes=["free_text_revision_requires_confirmation"],
+            artifact_versions={},
+            trace_digest="b" * 64,
+        ),
+    )
+    intent = CommandIntent(
+        intent=ConversationIntent.REVISE,
+        instruction="Change this behavior.",
+        targets=[requirement_target.ref],
+        revision=RevisionInterpretation(
+            targets=[requirement_target.ref],
+            semantic_scope="behavior",
+            requested_effect="Change this behavior.",
+        ),
+    )
+    service = WorkspaceService()
+    try:
+        blocked = service._route_conversation_intent(
+            "app-1",
+            {
+                "text": "Please fix the review feedback.",
+                "action_id": "repair-command",
+            },
+            intent,
+            repair,
+        )
+        ambiguous = service._route_conversation_intent(
+            "app-1",
+            {"text": "Please change UC5.", "action_id": "repair-command"},
+            intent,
+            repair,
+        )
+        negated_stage = service._route_conversation_intent(
+            "app-1",
+            {
+                "text": "Keep the requirements unchanged.",
+                "action_id": "repair-command",
+            },
+            intent,
+            repair,
+        )
+        explicit = service._route_conversation_intent(
+            "app-1",
+            {
+                "text": "Please change use_case_spec:UC5.",
+                "action_id": "repair-command",
+            },
+            intent,
+            repair,
+        )
+    finally:
+        service.shutdown()
+
+    assert blocked[0] == "message"
+    assert blocked[2] == "design"
+    assert blocked[1]["_conversation_outcome"]["kind"] == "clarification"
+    assert ambiguous[2] == "design"
+    assert ambiguous[1]["_conversation_outcome"]["kind"] == "clarification"
+    assert negated_stage[2] == "design"
+    assert negated_stage[1]["_conversation_outcome"]["kind"] == "clarification"
+    assert explicit[0] == "message"
+    assert explicit[2] == "requirements"
+    assert explicit[1]["_conversation_outcome"]["kind"] == "revision_plan"
+    assert explicit[1]["revision_plan"]["status"] == "needs_confirmation"
 
 
 def test_revision_uses_one_structured_selection_call_for_full_interpretation() -> None:
@@ -314,6 +481,7 @@ def test_single_selected_feedback_pins_the_ref_and_interprets_only_effect(
     def interpret(text, refs, **_kwargs):
         observed["text"] = text
         observed["refs"] = refs
+        observed["sealed_targets"] = _kwargs.get("sealed_targets")
         revision = RevisionInterpretation(
             targets=[
                 "class_diagram:MemberBoundary::cancelReservation()",
@@ -359,6 +527,7 @@ def test_single_selected_feedback_pins_the_ref_and_interprets_only_effect(
 
     assert observed["text"] == "Rename MemberBoundary.cancelReservation."
     assert observed["refs"] == [selected_ref]
+    assert observed["sealed_targets"] is True
     assert observed["payload"]["revision_instructions"] == {
         selected_ref: "Rename MemberBoundary.cancelReservation."
     }

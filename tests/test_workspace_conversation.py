@@ -5,6 +5,7 @@ from typing import Any
 from app.llm_schema import strict_json_schema
 from app.workspace import service as workspace_module
 from app.workspace.conversation.agent import ConversationAgent
+from app.workspace.conversation.agent import _exact_candidate_refs
 from app.workspace.conversation.context import ConversationContext
 from app.workspace.conversation.contracts import (
     Clarification,
@@ -62,6 +63,22 @@ class FakeTools:
     def read_element(self, ref: str):
         self.calls.append(("read_element", ref))
         return {"ref": ref, "content": {"operations": ["placeOrder"]}}
+
+
+def test_free_text_display_label_is_not_an_execution_target_ref() -> None:
+    candidates = [
+        {
+            "ref": "class_diagram:OrderService",
+            "canonical_ref": "class_diagram:OrderService",
+            "label": "Order Service",
+            "name": "Order Service",
+        }
+    ]
+
+    assert _exact_candidate_refs("Rename Order Service.", candidates) == []
+    assert _exact_candidate_refs(
+        "Rename class_diagram:OrderService.", candidates
+    ) == ["class_diagram:OrderService"]
 
 
 def test_general_reply_does_not_read_project_state() -> None:
@@ -714,7 +731,7 @@ def test_exact_identifier_resolution_is_not_limited_to_class_operations() -> Non
     assert result.targets == [schema_ref]
 
 
-def test_ambiguous_exact_labels_remain_for_structured_disambiguation() -> None:
+def test_ambiguous_exact_labels_ask_for_clarification() -> None:
     first_ref = "api_spec:Incident"
     second_ref = "use_case:Incident"
 
@@ -736,8 +753,184 @@ def test_ambiguous_exact_labels_remain_for_structured_disambiguation() -> None:
         "Change Incident.", [first_ref], tools=tools
     )
 
+    assert isinstance(result, Clarification)
+    assert result.candidates == [
+        "Incident (api_spec:Incident)",
+        "Incident (use_case:Incident)",
+    ]
+
+
+def test_longer_qualified_operation_identity_outranks_duplicate_container_label() -> None:
+    operation_ref = "class_diagram:ProfessorPortal::reviewAssignedCourseOfferings()"
+
+    def propose(schema, _messages):
+        assert schema.__name__ == "RevisionInterpretation"
+        return schema(
+            targets=[operation_ref],
+            semantic_scope="contract",
+            requested_effect="Add an optional boolean notifyOnChange parameter.",
+            change_type="modify",
+        )
+
+    tools = FakeTools()
+    tools.matches = [
+        {
+            "ref": "class_diagram:ProfessorPortal",
+            "label": "ProfessorPortal",
+            "owner": "design",
+            "editable": True,
+        },
+        {
+            "ref": "entity:ProfessorPortal",
+            "label": "ProfessorPortal",
+            "owner": "requirements",
+            "editable": True,
+        },
+        {
+            "ref": operation_ref,
+            "label": "ProfessorPortal::reviewAssignedCourseOfferings()",
+            "owner": "design",
+            "editable": True,
+        },
+    ]
+
+    result = ConversationAgent(propose).interpret_revision(
+        "Add an optional boolean notifyOnChange parameter to "
+        "ProfessorPortal.reviewAssignedCourseOfferings.",
+        ["class_diagram:ProfessorPortal"],
+        tools=tools,
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert result.targets == [operation_ref]
+
+
+def test_qualified_operation_identity_overrides_model_container_guess() -> None:
+    operation_ref = "class_diagram:ProfessorPortal::reviewAssignedCourseOfferings()"
+    candidates = [
+        {"ref": "class_diagram:ProfessorPortal", "label": "ProfessorPortal", "editable": True},
+        {"ref": operation_ref, "label": "reviewAssignedCourseOfferings", "editable": True},
+    ]
+
+    def propose(schema, _messages):
+        return schema(
+            targets=["class_diagram:ProfessorPortal"],
+            semantic_scope="contract",
+            requested_effect="Add an optional notifyOnChange parameter.",
+        )
+
+    result = ConversationAgent(propose)._select_revision(
+        "Add an optional boolean notifyOnChange parameter to "
+        "ProfessorPortal.reviewAssignedCourseOfferings.",
+        candidates,
+        FakeTools(),
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert result.targets == [operation_ref]
+
+
+def test_qualified_operation_identity_overrides_model_operation_plus_api_projection() -> None:
+    operation_ref = "class_diagram:ProfessorPortal::reviewAssignedCourseOfferings()"
+    api_ref = "api_spec:ProfessorPortalReviewAssignedCourseOfferings"
+    candidates = [
+        {"ref": "class_diagram:ProfessorPortal", "label": "ProfessorPortal", "editable": True},
+        {"ref": operation_ref, "label": "reviewAssignedCourseOfferings", "editable": True},
+        {"ref": api_ref, "label": "ProfessorPortalReviewAssignedCourseOfferings", "editable": True},
+    ]
+
+    def propose(schema, _messages):
+        return schema(
+            targets=[operation_ref, api_ref],
+            semantic_scope="contract",
+            requested_effect="Add an optional notifyOnChange parameter.",
+            target_instructions=[
+                {"target": operation_ref, "instruction": "Add the parameter."},
+                {"target": api_ref, "instruction": "Update the API."},
+            ],
+        )
+
+    result = ConversationAgent(propose)._select_revision(
+        "Add an optional boolean notifyOnChange parameter to "
+        "ProfessorPortal.reviewAssignedCourseOfferings.",
+        candidates,
+        FakeTools(),
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert result.targets == [operation_ref]
+
+
+def test_qualified_parameterized_operation_matches_prose_without_signature() -> None:
+    operation_ref = "class_diagram:ProfessorPortal::reviewAssignedCourseOfferings(id:UUID)"
+    candidates = [
+        {"ref": "class_diagram:ProfessorPortal", "label": "ProfessorPortal", "editable": True},
+        {"ref": operation_ref, "label": "reviewAssignedCourseOfferings", "editable": True},
+    ]
+
+    def propose(schema, _messages):
+        return schema(
+            targets=["class_diagram:ProfessorPortal"],
+            semantic_scope="contract",
+            requested_effect="Add a parameter.",
+        )
+
+    result = ConversationAgent(propose)._select_revision(
+        "Add a boolean parameter to ProfessorPortal.reviewAssignedCourseOfferings.",
+        candidates,
+        FakeTools(),
+    )
+
+    assert isinstance(result, CommandIntent)
+    assert result.targets == [operation_ref]
+
+
+def test_explicit_canonical_ref_resolves_duplicate_display_label() -> None:
+    first_ref = "api_spec:Incident"
+    second_ref = "use_case:Incident"
+
+    def propose(schema, _messages):
+        assert schema.__name__ == "RevisionInterpretation"
+        # The exact ref in the user's request takes precedence over a bad pick.
+        return schema(
+            targets=[first_ref],
+            semantic_scope="behavior",
+            requested_effect="Change the incident use case.",
+        )
+
+    tools = FakeTools()
+    tools.matches = [
+        {"ref": first_ref, "label": "Incident", "owner": "design", "editable": True},
+        {"ref": second_ref, "label": "Incident", "owner": "requirements", "editable": True},
+    ]
+    result = ConversationAgent(propose).interpret_revision(
+        "Change use_case:Incident.", [first_ref], tools=tools
+    )
+
     assert isinstance(result, CommandIntent)
     assert result.targets == [second_ref]
+
+
+def test_invalid_explicit_ref_does_not_bypass_candidate_validation() -> None:
+    invalid_ref = "use_case:MissingIncident"
+
+    def propose(schema, _messages):
+        assert schema.__name__ == "RevisionInterpretation"
+        return schema(
+            targets=[invalid_ref],
+            semantic_scope="behavior",
+            requested_effect="Change MissingIncident.",
+        )
+
+    tools = FakeTools()
+    tools.matches = [
+        {"ref": "use_case:Incident", "label": "Incident", "editable": True},
+    ]
+    result = ConversationAgent(propose).interpret_revision(
+        "Change use_case:MissingIncident.", [], tools=tools
+    )
+
+    assert isinstance(result, Clarification)
 
 
 def test_exact_identifier_does_not_match_inside_a_longer_word() -> None:
@@ -865,7 +1058,9 @@ def test_natural_checkpoint_request_returns_only_action_and_stage() -> None:
     assert result.stage == "design"
 
 
-def _completed_command(stage: str = "requirements") -> dict[str, Any]:
+def _completed_command(
+    stage: str = "requirements", *, design_complete: bool = False
+) -> dict[str, Any]:
     return {
         "command_id": f"{stage}-command",
         "app_id": "app-1",
@@ -873,7 +1068,7 @@ def _completed_command(stage: str = "requirements") -> dict[str, Any]:
         "stage": stage,
         "status": "COMPLETED",
         "payload": {},
-        "result": {},
+        "result": {"design_complete": True} if design_complete else {},
     }
 
 
@@ -905,10 +1100,15 @@ def test_natural_advance_uses_the_same_published_transition(monkeypatch) -> None
 
 
 def test_general_reply_preserves_the_underlying_workflow_actions(monkeypatch) -> None:
-    latest = _completed_command("design")
+    latest = _completed_command("design", design_complete=True)
     monkeypatch.setattr(workspace_module.repository, "latest_command", lambda *_a, **_k: latest)
     monkeypatch.setattr(workspace_module.repository, "get_command", lambda *_a, **_k: latest)
     monkeypatch.setattr(workspace_module, "build_conversation_context", lambda _app: context())
+    monkeypatch.setattr(
+        WorkspaceService,
+        "_design_progress_hints",
+        lambda *_args: {"design_can_advance": False, "design_complete": True},
+    )
     monkeypatch.setattr(
         workspace_module.conversation_agent,
         "respond",
@@ -1045,10 +1245,13 @@ def test_conversation_failure_becomes_a_retryable_persisted_clarification(
 
 
 def test_natural_followup_uses_stage_action_preserved_by_a_reply(monkeypatch) -> None:
+    stage_command = _completed_command("design", design_complete=True)
+    stage_command["command_id"] = "stage-command"
     latest = {
         **_completed_command("design"),
         "command_id": "reply-command",
         "payload": {
+            "action_id": "stage-command",
             "_conversation_actions": [
                 {
                     "action": "start_implementation",
@@ -1057,10 +1260,20 @@ def test_natural_followup_uses_stage_action_preserved_by_a_reply(monkeypatch) ->
                 }
             ]
         },
+        "result": {"conversation": {"reply": {"text": "I can help."}}},
     }
     monkeypatch.setattr(workspace_module.repository, "latest_command", lambda *_a, **_k: latest)
-    monkeypatch.setattr(workspace_module.repository, "get_command", lambda *_a, **_k: latest)
+    monkeypatch.setattr(
+        workspace_module.repository,
+        "get_command",
+        lambda command_id: stage_command if command_id == "stage-command" else latest,
+    )
     monkeypatch.setattr(workspace_module, "build_conversation_context", lambda _app: context())
+    monkeypatch.setattr(
+        WorkspaceService,
+        "_design_progress_hints",
+        lambda *_args: {"design_can_advance": False, "design_complete": True},
+    )
     monkeypatch.setattr(
         workspace_module.conversation_agent,
         "respond",
@@ -1085,10 +1298,13 @@ def test_natural_followup_uses_stage_action_preserved_by_a_reply(monkeypatch) ->
 
 
 def test_repeated_conversation_clarifications_route_to_original_offer(monkeypatch) -> None:
+    stage_command = _completed_command("design", design_complete=True)
+    stage_command["command_id"] = "stage-command"
     original = {
         **_completed_command("design"),
         "command_id": "original-command",
         "payload": {
+            "action_id": "stage-command",
             "_conversation_actions": [
                 {
                     "action": "start_implementation",
@@ -1097,6 +1313,7 @@ def test_repeated_conversation_clarifications_route_to_original_offer(monkeypatc
                 }
             ]
         },
+        "result": {"conversation": {"reply": {"text": "I can help."}}},
     }
     first = {
         **_completed_command("design"),
@@ -1110,7 +1327,9 @@ def test_repeated_conversation_clarifications_route_to_original_offer(monkeypatc
         "payload": {"action_id": "clarification-one", "text": "Still unclear"},
         "result": {"conversation": {"clarification": {"question": "Please clarify."}}},
     }
-    commands = {item["command_id"]: item for item in (original, first, latest)}
+    commands = {
+        item["command_id"]: item for item in (stage_command, original, first, latest)
+    }
 
     def get_command(command_id):
         return commands.get(command_id)
@@ -1122,6 +1341,11 @@ def test_repeated_conversation_clarifications_route_to_original_offer(monkeypatc
         get_command,
     )
     monkeypatch.setattr(workspace_module, "build_conversation_context", lambda _app: context())
+    monkeypatch.setattr(
+        WorkspaceService,
+        "_design_progress_hints",
+        lambda *_args: {"design_can_advance": False, "design_complete": True},
+    )
     monkeypatch.setattr(
         workspace_module.conversation_agent,
         "respond",

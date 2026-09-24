@@ -247,12 +247,16 @@ def _add_requirements(catalog: _Catalog) -> None:
             )
 
     usecase = _mapping(catalog.state.get("usecase_spec"))
+    actor_labels: dict[str, str] = {}
     for item in _records(usecase.get("actors")):
         name = _identifier(item, "name")
-        if name:
+        actor_ref = _identifier(item, "actor_ref")
+        if actor_ref:
+            # Actor identity is an accepted ACTn, never its mutable display name.
+            actor_labels[actor_ref] = name or actor_ref
             catalog.add(
-                ref=f"actor:{name}",
-                name=name,
+                ref=f"actor:{actor_ref}",
+                name=name or actor_ref,
                 owner="requirements",
                 editable=True,
                 artifact_type=TYPE_USECASE_SPEC,
@@ -286,7 +290,7 @@ def _add_requirements(catalog: _Catalog) -> None:
             identity = _relationship_identity(str(relation_kind), item, index)
             catalog.add(
                 ref=f"relationship:{identity}",
-                name=identity,
+                name=_relationship_display_name(str(relation_kind), item, identity, actor_labels),
                 owner="requirements",
                 editable=True,
                 artifact_type=TYPE_USECASE_SPEC,
@@ -1536,14 +1540,38 @@ def _display_name(item: Mapping[str, Any], fallback: str) -> str:
 
 def _relationship_identity(kind: str, item: Mapping[str, Any], index: int) -> str:
     fields = {
-        "associations": ("actor", "use_case_id", "use_case"),
+        # Relationship endpoints are canonical IDs.  Display-name fields are
+        # presentation only and must never regain identity authority here.
+        "associations": ("actor_ref", "use_case_id"),
         "includes": ("base_use_case_id", "included_use_case_id"),
         "extends": ("extension_use_case_id", "base_use_case_id"),
-        "generalizations": ("child", "parent", "specific", "general"),
+        "generalizations": ("child_actor_ref", "parent_actor_ref"),
     }.get(kind, ())
     values = [str(item.get(field) or "").strip() for field in fields]
     values = [value for value in values if value]
     return f"{kind}:{'->'.join(values) if values else index}"
+
+
+def _relationship_display_name(
+    kind: str,
+    item: Mapping[str, Any],
+    identity: str,
+    actor_labels: Mapping[str, str],
+) -> str:
+    """Keep stable relationship refs separate from readable actor labels."""
+    if kind == "associations":
+        actor_ref = str(item.get("actor_ref") or "").strip()
+        if actor_ref:
+            use_case = str(item.get("use_case_id") or item.get("use_case") or "").strip()
+            return f"{actor_labels.get(actor_ref, actor_ref)} -> {use_case or actor_ref}"
+    if kind == "generalizations":
+        child_ref = str(item.get("child_actor_ref") or "").strip()
+        parent_ref = str(item.get("parent_actor_ref") or "").strip()
+        if child_ref or parent_ref:
+            child = actor_labels.get(child_ref, child_ref)
+            parent = actor_labels.get(parent_ref, parent_ref)
+            return f"{child} -> {parent}".strip(" ->")
+    return identity
 
 
 def _summary(value: Any, limit: int = 360) -> str:

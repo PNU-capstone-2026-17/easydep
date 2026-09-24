@@ -50,6 +50,7 @@ from app.requirements.contracts.request import (
     FeedbackEdit,
     FeedbackStage,
     InitialCloudConstraints,
+    IdentitySourceAnswer,
     ResourceAnswer,
 )
 from app.requirements.orchestration.service import (
@@ -64,6 +65,7 @@ from app.validation import stable_digest
 
 from . import repository
 from .actions import (
+    ActionOffer,
     StagePolicy,
     action_is_offered,
     action_spec,
@@ -106,6 +108,7 @@ from .conversation.feedback_envelope import (
     QuestionOption,
     answer_option,
     free_text_decision,
+    question_is_stale,
 )
 from .conversation.project_tools import ProjectTools
 from .conversation.revision_planner import plan_revision, validate_plan
@@ -636,7 +639,17 @@ class WorkspaceService:
         # This marker is created only below, after matching a stored server offer.
         # Never accept a client-provided copy as evidence that an action was offered.
         payload = dict(payload)
-        payload.pop("_resource_answer_context", None)
+        for field in (
+            "_resource_answer_context",
+            "_conversation_actions",
+            "_conversation_outcome",
+            "conversation_intent",
+            "revision_interpretation",
+            "revision_plan",
+            "validated_impact",
+            "validated_targets",
+        ):
+            payload.pop(field, None)
         text = str(payload.get("text") or "").strip()
         latest = repository.latest_command(app_id)
         if latest is None:
@@ -651,6 +664,11 @@ class WorkspaceService:
         pending = repository.get_command(str(payload.get("action_id") or ""))
         if pending is not None and pending.get("status") == "AWAITING_INPUT":
             pending_result = pending.get("result") or {}
+            raw_identity_question = pending_result.get("identity_source_question")
+            if isinstance(raw_identity_question, dict):
+                return self._route_identity_source_answer(
+                    app_id, payload, stage, latest, pending, raw_identity_question
+                )
             pending_question = pending_result.get("feedback_question")
             if pending_question is None and isinstance(pending_result.get("validation"), dict):
                 pending_question = pending_result["validation"].get("feedback_question")
@@ -678,9 +696,37 @@ class WorkspaceService:
                         **payload,
                         "_resource_answer_context": {
                             "connection_endpoint_question": dict(resource_question),
+                            "server_pinned_answer": True,
                         },
                     },
                     "design",
+                )
+            resource_choice_values = {
+                str(choice.get("value") or "").strip()
+                for choice in (
+                    resource_question.get("choices") or []
+                    if isinstance(resource_question, dict)
+                    else []
+                )
+                if isinstance(choice, dict) and str(choice.get("value") or "").strip()
+            }
+            if (
+                pending.get("app_id") == app_id
+                and isinstance(resource_question, dict)
+                and (
+                    text in resource_choice_values
+                    or resource_question.get("allowFreeText") is True
+                )
+            ):
+                # Resource questions are server-pinned input contracts.  Keep
+                # them separate from ordinary feedback, which must be planned.
+                return (
+                    "message",
+                    {
+                        **payload,
+                        "_resource_answer_context": {"server_pinned_answer": True},
+                    },
+                    str(pending.get("stage") or stage or "requirements"),
                 )
         fixed_class_context = self._fixed_class_resource_choice(app_id, payload, latest)
         if fixed_class_context is not None:
@@ -693,7 +739,10 @@ class WorkspaceService:
                 "message",
                 {
                     **payload,
-                    "_resource_answer_context": offered_context,
+                    "_resource_answer_context": {
+                        **offered_context,
+                        "server_pinned_answer": True,
+                    },
                     "context": {**selected, **fixed_class_context},
                 },
                 "design",
@@ -722,6 +771,7 @@ class WorkspaceService:
                     list(explicit_instructions),
                     tools=ProjectTools(app_id),
                     context=conversation_context,
+                    sealed_targets=True,
                 )
             except Exception:
                 _log.exception("Failed to interpret selected revision feedback")
@@ -759,33 +809,25 @@ class WorkspaceService:
 
         action_id = str(payload.get("action_id") or "")
         prior = repository.get_command(action_id) if action_id else latest
-        # A fixed choice emitted by a stage is already typed UI input. Free
-        # text still goes through ConversationAgent so a revision request made
-        # while a question is pending cannot bypass RevisionPlanner.
-        if prior is not None and any(
-            str(offer.action) == "message"
-            and "text" in offer.payload
-            and offer.payload.get("text") == text
-            for offer in offered_actions(prior)
-        ):
-            return action, payload, str(prior.get("stage") or stage or "requirements")
-
-        actionable = latest
-        visited: set[str] = set()
-        while actionable["command_id"] not in visited:
-            visited.add(actionable["command_id"])
-            conversation = (actionable.get("result") or {}).get("conversation")
-            if not isinstance(conversation, dict) or not conversation.get("clarification"):
-                break
-            referenced = repository.get_command(
-                str((actionable.get("payload") or {}).get("action_id") or "")
-            )
-            if referenced is None or referenced.get("app_id") != app_id:
-                break
-            actionable = referenced
+        repair_anchor = (
+            prior
+            if prior is not None
+            and prior.get("command_id") == action_id
+            and prior.get("app_id") == app_id
+            and prior.get("status") == "AWAITING_INPUT"
+            and prior.get("stage")
+            and isinstance((prior.get("result") or {}).get("repair_state"), dict)
+            else None
+        )
+        actionable = self._conversation_action_anchor(app_id, repair_anchor or latest)
         try:
             conversation_context = build_conversation_context(app_id)
             conversation_context.workspace["selection"] = dict(selected)
+            # A message tied to the still-open repair command inherits that
+            # command's stage as conversational context. This is deliberately
+            # keyed by the server record, never by client supplied stage text.
+            if repair_anchor is not None:
+                conversation_context.workspace["stage"] = str(repair_anchor["stage"])
             outcome = conversation_agent.respond(
                 app_id,
                 text,
@@ -812,7 +854,7 @@ class WorkspaceService:
                     **payload,
                     "_conversation_actions": [
                         item.model_dump(mode="json", exclude_none=True)
-                        for item in offered_actions(actionable)
+                        for item in self._resolved_offered_actions(app_id, actionable)
                     ],
                     "_conversation_outcome": {
                         "kind": "reply",
@@ -825,17 +867,64 @@ class WorkspaceService:
             return self._clarification_message(payload, outcome, stage, actionable)
         return self._route_conversation_intent(app_id, payload, outcome, actionable)
 
-    @staticmethod
+    def _conversation_action_anchor(
+        self, app_id: str, command: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Follow completed conversation records back to their workflow gate."""
+
+        current = command
+        visited: set[str] = set()
+        while len(visited) < 12:
+            command_id = str(current.get("command_id") or "")
+            if not command_id or command_id in visited:
+                break
+            visited.add(command_id)
+            conversation = (current.get("result") or {}).get("conversation")
+            if not (
+                isinstance(conversation, dict)
+                and (conversation.get("clarification") or conversation.get("reply"))
+            ):
+                break
+            referenced_id = str((current.get("payload") or {}).get("action_id") or "")
+            referenced = repository.get_command(referenced_id) if referenced_id else None
+            if (
+                referenced is None
+                or referenced_id == command_id
+                or referenced.get("app_id") != app_id
+            ):
+                break
+            current = referenced
+        return current
+
+    def _action_snapshot(self, app_id: str, command: dict[str, Any]) -> dict[str, Any]:
+        """Return the one readiness-refreshed workflow snapshot for an action."""
+
+        anchor = self._conversation_action_anchor(app_id, command)
+        result = anchor.get("result")
+        shaped_result = dict(result) if isinstance(result, dict) else {}
+        if str(anchor.get("stage") or "") == "design":
+            shaped_result = self._with_design_progress_hints(app_id, shaped_result)
+        return {**anchor, "result": shaped_result}
+
+    def _resolved_offered_actions(
+        self, app_id: str, command: dict[str, Any]
+    ) -> list[ActionOffer]:
+        return offered_actions(self._action_snapshot(app_id, command))
+
     def _clarification_message(
+        self,
         payload: dict[str, Any],
         outcome: Clarification,
         stage: str | None,
         latest: dict[str, Any],
     ) -> tuple[str, dict[str, Any], str | None]:
+        resolved_actions = self._resolved_offered_actions(
+            str(latest.get("app_id") or ""), latest
+        )
         offered_message_id = next(
             (
                 str(offer.payload.get("action_id") or "")
-                for offer in offered_actions(latest)
+                for offer in resolved_actions
                 if str(offer.action) == "message"
                 and str(offer.payload.get("action_id") or "")
             ),
@@ -843,7 +932,7 @@ class WorkspaceService:
         )
         preserved_actions = [
             item.model_dump(mode="json", exclude_none=True)
-            for item in offered_actions(latest)
+            for item in resolved_actions
         ]
         return (
             "message",
@@ -926,7 +1015,7 @@ class WorkspaceService:
     ) -> tuple[str, dict[str, Any], str | None]:
         """자연어 의도를 공개 offer와 검증된 프로젝트 ref로 연결한다."""
 
-        offered = offered_actions(latest)
+        offered = self._resolved_offered_actions(app_id, latest)
         intent_name = str(intent.intent)
         if intent_name in {
             ConversationIntent.BRANCH.value,
@@ -999,6 +1088,16 @@ class WorkspaceService:
                     None,
                     latest,
                 )
+            if plan.status != "needs_confirmation":
+                return self._clarification_message(
+                    payload,
+                    Clarification(
+                        question="The revision plan is not awaiting explicit confirmation.",
+                        candidates=[],
+                    ),
+                    None,
+                    latest,
+                )
             execution_targets = plan.authority_targets or plan.requested_targets
             owners = {target.owner for target in execution_targets}
             if len(owners) != 1:
@@ -1012,23 +1111,62 @@ class WorkspaceService:
                     latest,
                 )
             owner = owners.pop()
+            repair_linked = (
+                latest.get("app_id") == app_id
+                and latest.get("status") == "AWAITING_INPUT"
+                and latest.get("command_id") == str(payload.get("action_id") or "")
+                and isinstance((latest.get("result") or {}).get("repair_state"), dict)
+            )
+            if repair_linked and owner != str(latest.get("stage") or ""):
+                source_text = str(payload.get("text") or "").casefold()
+                explicit_cross_stage = any(
+                    re.search(
+                        rf"(?<![\w:]){re.escape(target.ref.casefold())}(?!\w)",
+                        source_text,
+                    )
+                    is not None
+                    for target in execution_targets
+                )
+                if not explicit_cross_stage:
+                    return self._clarification_message(
+                        payload,
+                        Clarification(
+                            question=(
+                                "This feedback appears to target another stage. "
+                                "Name that stage or target explicitly, or restate the "
+                                "change for the open repair."
+                            ),
+                            candidates=[target.display_label for target in execution_targets],
+                        ),
+                        None,
+                        latest,
+                    )
             owner_command = repository.latest_command(app_id, stage=owner)
             if owner_command is not None:
                 owner_command = self._revision_action_anchor(
                     app_id, owner, owner_command
                 )
+                if not any(
+                    str(offer.action) == "message"
+                    and str(offer.payload.get("action_id") or "")
+                    for offer in offered_actions(owner_command)
+                ):
+                    owner_command = None
             valid_refs = [target.ref for target in execution_targets]
             targets = [target.model_dump(mode="json") for target in execution_targets]
             routed_payload = {
                 **payload,
                 "text": intent.instruction,
-                "action_id": str((owner_command or latest).get("command_id") or ""),
                 "conversation_intent": intent.model_dump(mode="json"),
                 "revision_interpretation": interpretation.model_dump(mode="json"),
                 "revision_plan": plan.model_dump(mode="json"),
                 "validated_targets": targets,
                 "validated_impact": tools.trace_impact(valid_refs, view="editing"),
             }
+            if owner_command is not None:
+                routed_payload["action_id"] = str(owner_command.get("command_id") or "")
+            else:
+                routed_payload.pop("action_id", None)
             decomposed_instructions = {
                 item.target: item.instruction
                 for item in interpretation.target_instructions
@@ -1044,50 +1182,22 @@ class WorkspaceService:
                 )
                 evidence = tools.read_element(finding.ref).get("content") or {}
                 repair_payload_from_testing_evidence(evidence, execution_targets)
-            if plan.status == "needs_confirmation":
-                routed_payload["_conversation_outcome"] = {"kind": "revision_plan"}
-                return "message", routed_payload, owner
-            if owner == "design":
-                revision_instructions = routed_payload.get("revision_instructions")
-                revision_instructions = (
-                    revision_instructions
-                    if isinstance(revision_instructions, dict)
-                    else {}
-                )
-                pinned_context = payload.get("context")
-                pinned_context = (
-                    dict(pinned_context)
-                    if isinstance(pinned_context, dict)
-                    and isinstance(pinned_context.get("validated_target"), dict)
-                    else {}
-                )
-                offered_context = {
-                    key: value
-                    for key, value in pinned_context.items()
-                    if key not in _DESIGN_DELIVERY_CONTEXT_FIELDS
-                }
-                if offered_context:
-                    routed_payload["_resource_answer_context"] = offered_context
-                delivery = design_revision_payload(
-                    plan,
-                    intent.instruction,
-                    instructions_by_ref=revision_instructions,
-                    patch_intents=interpretation.patch_intents,
-                )
-                routed_payload["context"] = {
-                    **offered_context,
-                    "validated_target_feedbacks": [
-                        revision.model_dump(mode="json")
-                        for revision in delivery.revisions
-                    ],
-                    "approved_authority_targets": list(
-                        delivery.approved_authority_targets
-                    ),
-                    "approved_downstream_targets": list(
-                        delivery.approved_downstream_targets
-                    ),
-                }
+            routed_payload["_conversation_outcome"] = {"kind": "revision_plan"}
             return "message", routed_payload, owner
+
+        if intent_name == ConversationIntent.ANSWER.value:
+            return self._clarification_message(
+                payload,
+                Clarification(
+                    question=(
+                        "This free-text response is not a server-pinned question answer. "
+                        "Describe the requested change so it can be reviewed before applying."
+                    ),
+                    candidates=[],
+                ),
+                None,
+                latest,
+            )
 
         action_candidates = {
             ConversationIntent.ADVANCE.value: {
@@ -1096,7 +1206,6 @@ class WorkspaceService:
                 "start_implementation",
                 "start_testing",
             },
-            ConversationIntent.ANSWER.value: {"message"},
             ConversationIntent.CONFIRM_REVISION.value: {"confirm_change"},
             ConversationIntent.DISMISS_REVISION.value: {"dismiss_change"},
         }.get(intent_name, set())
@@ -1219,58 +1328,12 @@ class WorkspaceService:
         shaped_result = dict(result) if isinstance(result, dict) else {}
         if str(command.get("stage") or "") == "design":
             shaped_result = self._with_design_progress_hints(app_id, shaped_result)
-        conversation = shaped_result.get("conversation")
-        completed_reply = (
-            command.get("status") == "COMPLETED"
-            and isinstance(conversation, dict)
-            and conversation.get("reply") is not None
-            and bool(payload.get("action_id"))
-        )
-        if (
-            isinstance(conversation, dict)
-            and (conversation.get("clarification") or completed_reply)
-        ):
-            # Rebuild from the referenced workflow command even when an older
-            # clarification saved a partial action list. A prior server version
-            # stored only the message action and otherwise made Testing retry
-            # impossible after a refresh.
-            anchor = command
-            visited: set[str] = set()
-            while len(visited) < 12:
-                anchor_id = str(anchor.get("command_id") or "")
-                if not anchor_id or anchor_id in visited:
-                    break
-                visited.add(anchor_id)
-                referenced_id = str((anchor.get("payload") or {}).get("action_id") or "")
-                referenced = repository.get_command(referenced_id) if referenced_id else None
-                if referenced is None or referenced.get("app_id") != app_id:
-                    break
-                anchor = referenced
-                anchor_conversation = (anchor.get("result") or {}).get("conversation")
-                if not (
-                    isinstance(anchor_conversation, dict)
-                    and anchor_conversation.get("clarification")
-                ):
-                    break
-            anchor_result = anchor.get("result")
-            anchor_for_actions = {
-                **anchor,
-                "result": self._with_design_progress_hints(
-                    app_id,
-                    dict(anchor_result) if isinstance(anchor_result, dict) else {},
-                ),
-            }
-            restored_actions = [
-                item.model_dump(mode="json", exclude_none=True)
-                for item in offered_actions(anchor_for_actions)
-            ]
-            if restored_actions:
-                presented["payload"] = {
-                    **payload,
-                    "_conversation_actions": restored_actions,
-                }
         shaped_result = _with_capability_handoff_questions(app_id, shaped_result)
         presented["result"] = result_with_contract(presented, shaped_result)
+        presented["result"]["actions"] = [
+            item.model_dump(mode="json", exclude_none=True)
+            for item in self._resolved_offered_actions(app_id, command)
+        ]
         return presented
 
     @staticmethod
@@ -1286,8 +1349,17 @@ class WorkspaceService:
             raise ValueError("The command to answer could not be found.")
         offered_context = payload.get("_resource_answer_context")
         if action == "message" and isinstance(offered_context, dict):
-            offered_payload = {**payload, "context": offered_context}
-            if action_is_offered(action, offered_payload, prior):
+            offered_payload = {
+                **payload,
+                "context": {
+                    key: value
+                    for key, value in offered_context.items()
+                    if key != "server_pinned_answer"
+                },
+            }
+            if action_is_offered(
+                action, offered_payload, self._action_snapshot(app_id, prior)
+            ):
                 return
         # 저장된 배포 선택은 내부 재개 trigger다. 같은 질문에 답하지만 choice text 대신
         # 구조화된 값을 전달한다.
@@ -1303,7 +1375,7 @@ class WorkspaceService:
             ):
                 raise ValueError("Deployment preferences do not answer this command.")
             return
-        if not action_is_offered(action, payload, prior):
+        if not action_is_offered(action, payload, self._action_snapshot(app_id, prior)):
             raise ValueError("This action is not currently offered for the referenced command.")
 
     def infer_stage(self, app_id: str, action: str, payload: dict[str, Any]) -> str:
@@ -1408,6 +1480,8 @@ class WorkspaceService:
             if feedback_command is not None:
                 if not result.get("stale_revision_plan"):
                     self._complete_feedback_question_source(feedback_command)
+            elif self._identity_source_answer_command(command):
+                self._complete_identity_source_question_source(command)
             else:
                 self._complete_referenced_action(command)
             awaiting_input = result.pop("awaiting_input", False) is True
@@ -1689,6 +1763,113 @@ class WorkspaceService:
         if prior is not None and prior["status"] == "AWAITING_INPUT":
             repository.update_command(action_id, status="COMPLETED", completed_at=repository.now())
 
+    @staticmethod
+    def _identity_source_answer_command(command: dict[str, Any]) -> bool:
+        outcome = (command.get("payload") or {}).get("_conversation_outcome")
+        return isinstance(outcome, dict) and outcome.get("kind") == "identity_source_retry"
+
+    @staticmethod
+    def _complete_identity_source_question_source(command: dict[str, Any]) -> None:
+        """Close the exact saved identity question only after its typed resume succeeds."""
+        payload = command.get("payload") or {}
+        answer = IdentitySourceAnswer.model_validate(payload.get("identity_source_answer") or {})
+        source_id = str(payload.get("action_id") or "")
+        source = repository.get_command(source_id) if source_id else None
+        raw = (source.get("result") or {}).get("identity_source_question") if source else None
+        if (
+            source is None
+            or source.get("status") != "AWAITING_INPUT"
+            or source.get("app_id") != command.get("app_id")
+            or source.get("stage") != "requirements"
+            or not isinstance(raw, dict)
+            or str(raw.get("useCaseId") or "") != answer.use_case_id
+            or str(raw.get("obligationRef") or "") != answer.obligation_ref
+        ):
+            raise ValueError("The identity-source answer does not match the open question.")
+        if not any(
+            isinstance(option, dict)
+            and str(option.get("identitySourceKind") or "") == answer.identity_source_kind
+            and (option.get("sourceAuthenticateObligationRef") or None)
+            == answer.source_authenticate_obligation_ref
+            for option in raw.get("options") or []
+        ):
+            raise ValueError("The identity-source answer is not a saved option.")
+        repository.update_command(source_id, status="COMPLETED", completed_at=repository.now())
+
+    def _route_identity_source_answer(
+        self,
+        app_id: str,
+        payload: dict[str, Any],
+        stage: str | None,
+        latest: dict[str, Any],
+        prior: dict[str, Any],
+        raw_question: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], str | None]:
+        """Resume a saved identity-source gate without planning a revision."""
+        try:
+            if prior.get("app_id") != app_id or prior.get("stage") != "requirements":
+                raise ValueError("The identity-source question belongs to another workspace.")
+            question = self._identity_source_question(app_id, raw_question)
+            displayed = Question.model_validate((prior.get("result") or {}).get("feedback_question"))
+            if question is None or displayed.question_id != question.question_id:
+                raise ValueError("The identity-source question is stale.")
+            authority = ProjectTools(app_id).current_revision_target(
+                question.authority_candidates[0].ref
+            )
+            if authority is None or question_is_stale(
+                question,
+                [BaseRevision(artifact_type=authority.artifact_type, version_id=authority.artifact_version_id)],
+            ) or question_is_stale(
+                displayed,
+                [BaseRevision(artifact_type=authority.artifact_type, version_id=authority.artifact_version_id)],
+            ):
+                raise ValueError("The identity-source question is stale.")
+
+            offered = raw_question.get("options")
+            if not isinstance(offered, list):
+                raise ValueError("The identity-source question has no saved options.")
+            option_id = str(payload.get("feedback_option_id") or "").strip()
+            raw_text = str(payload.get("text") or "").strip()
+            if option_id:
+                matches = [item for item in offered if isinstance(item, dict) and str(item.get("id") or "").strip() == option_id]
+            else:
+                # Free text is deliberately narrow: accept only an exact,
+                # unambiguous rendering of a server-offered option.
+                matches = [
+                    item for item in offered
+                    if isinstance(item, dict) and raw_text in {
+                        str(item.get("id") or "").strip(),
+                        str(item.get("label") or "").strip(),
+                    }
+                ]
+            if len(matches) != 1:
+                raise ValueError("Choose one of the offered identity-source options.")
+            chosen = matches[0]
+            answer = IdentitySourceAnswer(
+                use_case_id=str(raw_question.get("useCaseId") or ""),
+                obligation_ref=str(raw_question.get("obligationRef") or ""),
+                identity_source_kind=str(chosen.get("identitySourceKind") or ""),
+                source_authenticate_obligation_ref=chosen.get("sourceAuthenticateObligationRef"),
+            )
+            # Ensure an option cannot be swapped between the display envelope
+            # and the gate snapshot, even if a persisted record is corrupted.
+            if answer.identity_source_kind not in {"caller_input", "authenticated_context", "system_result"}:
+                raise ValueError("The selected identity source is invalid.")
+        except (TypeError, ValueError) as error:
+            return self._feedback_question_clarification(
+                payload, Clarification(question=str(error), candidates=[]), stage, latest, prior
+            )
+        return (
+            "message",
+            {
+                **payload,
+                "action_id": str(prior["command_id"]),
+                "identity_source_answer": answer.model_dump(mode="json"),
+                "_conversation_outcome": {"kind": "identity_source_retry"},
+            },
+            "requirements",
+        )
+
     def _route_feedback_question_answer(
         self,
         app_id: str,
@@ -1830,12 +2011,21 @@ class WorkspaceService:
             )
             if not selected.get("valid"):
                 raise ValueError("The feedback question is stale.")
+            binding_source_decision = None
             if class_binding_stall:
+                # The structural directive is derived from the saved Question
+                # and selected option; never trust a client-supplied copy.
+                payload.pop("binding_source_decision", None)
                 guidance = decision.normalized_meaning.requested_effect
                 if decision.preserved_constraints:
                     guidance += "\nPreserve constraint: " + "; ".join(
                         decision.preserved_constraints
                     )
+                if option_id and question.trigger.binding_slot is not None:
+                    binding_source_decision = {
+                        **question.trigger.binding_slot.model_dump(by_alias=True),
+                        "sourceKind": option_id,
+                    }
                 return (
                     "message",
                     {
@@ -1843,7 +2033,14 @@ class WorkspaceService:
                         "action_id": str(prior["command_id"]),
                         "text": guidance,
                         "feedback_decision": decision.model_dump(mode="json"),
-                        "_conversation_outcome": {"kind": "class_binding_retry"},
+                        "_conversation_outcome": {
+                            "kind": "class_binding_retry",
+                            **(
+                                {"binding_source_decision": binding_source_decision}
+                                if binding_source_decision is not None
+                                else {}
+                            ),
+                        },
                     },
                     "design",
                 )
@@ -1920,20 +2117,22 @@ class WorkspaceService:
             routed_owner,
         )
 
-    @staticmethod
     def _feedback_question_clarification(
+        self,
         payload: dict[str, Any],
         outcome: Clarification,
         stage: str | None,
         latest: dict[str, Any],
         source: dict[str, Any],
     ) -> tuple[str, dict[str, Any], str | None]:
-        action, routed_payload, routed_stage = WorkspaceService._clarification_message(
+        action, routed_payload, routed_stage = self._clarification_message(
             payload, outcome, stage, latest
         )
         routed_payload["_conversation_actions"] = [
             offer.model_dump(mode="json", exclude_none=True)
-            for offer in offered_actions(source)
+            for offer in self._resolved_offered_actions(
+                str(latest.get("app_id") or ""), source
+            )
         ]
         return action, routed_payload, routed_stage
 
@@ -2062,6 +2261,23 @@ class WorkspaceService:
                 if not command["payload"].get("_conversation_actions"):
                     result["awaiting_input"] = True
                 return result
+            if kind == "identity_source_retry":
+                app_id = str(command["app_id"])
+                answer = IdentitySourceAnswer.model_validate(
+                    command["payload"].get("identity_source_answer") or {}
+                )
+                progress = self._requirements_progress_reporter(
+                    app_id, str(command["command_id"])
+                )
+                with requirements_telemetry.progress_scope(progress):
+                    result = analyze_requirements(
+                        AnalyzeRequest(
+                            identity_source_answer=answer,
+                            thread_id=app_id,
+                            app_id=app_id,
+                        )
+                    )
+                return self._requirements_result(result)
             if kind == "revision_plan":
                 plan = RevisionPlan.model_validate(
                     command["payload"].get("revision_plan") or {}
@@ -2079,7 +2295,11 @@ class WorkspaceService:
                     stage="class_diagram",
                     label=self._design_stage_label("class_diagram", "Retrying"),
                     operation=lambda: retry_design_session(
-                        app_id, repair_guidance=guidance
+                        app_id,
+                        repair_guidance=guidance,
+                        binding_source_decision=conversation_outcome.get(
+                            "binding_source_decision"
+                        ),
                     ),
                 )
                 return self._design_result(response)
@@ -2095,26 +2315,30 @@ class WorkspaceService:
         if handler == "stage_message":
             raw_plan = command["payload"].get("revision_plan")
             plan = RevisionPlan.model_validate(raw_plan) if isinstance(raw_plan, dict) else None
-            raw_interpretation = command["payload"].get("revision_interpretation")
-            interpretation = (
-                RevisionInterpretation.model_validate(raw_interpretation)
-                if isinstance(raw_interpretation, dict)
-                else None
+            if plan is not None:
+                # Planned revisions are displayed by the ``revision_plan``
+                # conversation outcome and executed only by ``confirm_change``.
+                # In particular, a caller cannot inject a plan into a message
+                # command and turn it into authority to mutate artifacts.
+                raise ValueError("Revision plans require explicit confirmation.")
+            resource_answer_context = command["payload"].get("_resource_answer_context")
+            server_pinned_answer = (
+                isinstance(resource_answer_context, dict)
+                and resource_answer_context.get("server_pinned_answer") is True
             )
-            if plan is not None and not validate_plan(
-                ProjectTools(str(command["app_id"])), plan, interpretation
+            if (
+                action == "message"
+                and str(command["payload"].get("action_id") or "")
+                and str(command["payload"].get("text") or "").strip()
+                and not server_pinned_answer
             ):
-                return self._stale_revision_result(plan)
-            result = self._stage_message(
+                # ``action_is_offered`` intentionally permits message text for
+                # UI input.  It is not confirmation authority for a revision.
+                raise ValueError(
+                    "Free-text feedback requires a revision plan and explicit confirmation."
+                )
+            return self._stage_message(
                 command, advance=action in {"advance", "start_design"}
-            )
-            if plan is None:
-                return result
-            response = self._attach_revision_execution(
-                str(command["app_id"]), plan, result
-            )
-            return self._attach_downstream_revision_handoff(
-                command, plan, interpretation, response
             )
         if handler == "plan_downstream_revision":
             return self._plan_downstream_revision(command)
@@ -3399,6 +3623,95 @@ class WorkspaceService:
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _identity_source_question(app_id: str, candidate: object) -> Question | None:
+        """Bind a requirements-owned identity-source choice to one live UC spec.
+
+        The requirements gate owns the structural question and its choices.  The
+        Workspace only turns that saved snapshot into the common Question card;
+        it never reconstructs a choice from user prose.
+        """
+        if not isinstance(candidate, dict):
+            return None
+        try:
+            use_case_id = str(candidate.get("useCaseId") or "").strip()
+            obligation_ref = str(candidate.get("obligationRef") or "").strip()
+            prompt = str(candidate.get("prompt") or "").strip()
+            requirement_ids = tuple(
+                str(item).strip()
+                for item in candidate.get("requirementIds") or []
+                if str(item).strip()
+            )
+            raw_options = candidate.get("options")
+            if not use_case_id or not obligation_ref or not prompt or not requirement_ids:
+                return None
+            if not isinstance(raw_options, list) or not 1 <= len(raw_options) <= 12:
+                return None
+            authority = ProjectTools(app_id).current_revision_target(
+                f"use_case_spec:{use_case_id}"
+            )
+            if (
+                authority is None
+                or authority.owner != "requirements"
+                or authority.kind != "use_case_spec"
+                or authority.artifact_type != TYPE_USECASE_SPEC
+                or authority.artifact_version_id is None
+            ):
+                return None
+            options: list[QuestionOption] = []
+            for raw in raw_options:
+                if not isinstance(raw, dict):
+                    return None
+                option_id = str(raw.get("id") or "").strip()
+                label = str(raw.get("label") or "").strip()
+                description = str(raw.get("description") or "").strip()
+                kind = str(raw.get("identitySourceKind") or "").strip()
+                auth_ref = str(raw.get("sourceAuthenticateObligationRef") or "").strip()
+                if kind not in {"caller_input", "authenticated_context", "system_result"}:
+                    return None
+                if not option_id or not label or not description:
+                    return None
+                if kind == "authenticated_context":
+                    if not auth_ref:
+                        return None
+                elif auth_ref:
+                    return None
+                # This payload is display-envelope metadata only.  Resume uses
+                # the original saved gate option below, never this prose.
+                options.append(QuestionOption(
+                    option_id=option_id,
+                    label=label,
+                    description=description,
+                    decision_payload=DecisionPayload(
+                        normalized_meaning=DecisionMeaning(
+                            semantic_scope="contract",
+                            requested_effect="Choose the saved identity source for this obligation.",
+                            change_type="modify",
+                        ),
+                        authoritative_target_refs=(authority.ref,),
+                    ),
+                ))
+            digest = stable_digest(candidate)[:16]
+            return Question(
+                question_id=f"requirements-identity-source:{use_case_id}:{obligation_ref}:{digest}",
+                question_version=1,
+                app_id=app_id,
+                draft_id=f"requirements-identity-source:{use_case_id}:{obligation_ref}:{digest}",
+                detected_at={"stage": "requirements", "artifact_ref": authority.ref, "element_ref": authority.ref},
+                base_revisions=[BaseRevision(artifact_type=TYPE_USECASE_SPEC, version_id=authority.artifact_version_id)],
+                trigger={"category": "identity_source", "evidence_refs": requirement_ids},
+                authority_candidates=[authority],
+                prompt=prompt,
+                options=options,
+                allow_free_text=True,
+                decision_policy=DecisionPolicy(
+                    allowed_semantic_scopes=("contract",),
+                    allowed_change_types=("modify",),
+                ),
+            )
+        except (TypeError, ValueError):
+            return None
+
     def _class_binding_stall_result(
         self,
         command: dict[str, Any],
@@ -3486,6 +3799,14 @@ class WorkspaceService:
                 "category": "class_binding_source",
                 "finding_refs": [str(context.get("code") or "BINDING_SOURCE_UNAVAILABLE")],
                 "evidence_refs": [authority.ref, str(context.get("location") or "")],
+                "binding_slot": {
+                    "useCaseId": use_case_id,
+                    "actorEntryIndex": context.get("actorEntryIndex"),
+                    "callIndex": context.get("callIndex"),
+                    "parameterIndex": context.get("parameterIndex"),
+                    "receiverOperationId": context.get("receiverOperationId"),
+                    "parameterName": parameter_name,
+                },
             },
             authority_candidates=[authority],
             prompt=(
@@ -3546,6 +3867,21 @@ class WorkspaceService:
         if status == "need_feedback":
             phase = str(result.get("phase") or "requirements")
             app_id = str(result.get("app_id") or "")
+            identity_question = self._identity_source_question(
+                app_id, result.get("identity_source_question")
+            ) if app_id else None
+            if identity_question is not None:
+                # Keep the gate-owned question alongside the presentation
+                # envelope.  The resume path re-reads this exact saved option.
+                return {
+                    "awaiting_input": True,
+                    "kind": "question",
+                    "message": identity_question.prompt,
+                    "phase": phase,
+                    "feedback_question": identity_question.model_dump(mode="json"),
+                    "identity_source_question": dict(result["identity_source_question"]),
+                    "review_artifacts": ["Use-case specifications"],
+                }
             question = self._semantic_ambiguity_question(
                 app_id, result.get("semantic_ambiguity_question")
             ) if app_id and phase == "specs" else None

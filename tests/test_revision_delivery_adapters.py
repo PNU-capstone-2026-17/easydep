@@ -63,6 +63,24 @@ def test_requirements_adapter_uses_catalog_kind_and_element_id_not_ref_parsing()
     assert edit.target_ids == ["UC:with:colon"]
 
 
+def test_requirements_actor_adapter_preserves_catalog_actor_ref() -> None:
+    target = RevisionTarget(
+        ref="actor:ACT7",
+        kind="actor",
+        element_id="ACT7",
+        owner="requirements",
+        artifact_type="USECASE_SPEC",
+        artifact_version_id=1,
+        display_label="Customer",
+    )
+
+    edit = requirements_feedback_edit([target], "Rename this actor.")
+
+    assert edit.stage == "actors"
+    assert edit.scope == "local"
+    assert edit.target_ids == ["ACT7"]
+
+
 def test_requirements_adapter_rejects_mixed_modeling_stages() -> None:
     with pytest.raises(RevisionDeliveryError, match="one modeling stage"):
         requirements_feedback_edit(

@@ -117,10 +117,20 @@ class DetectedLocation(_EnvelopeModel):
         return self
 
 
+class BindingSlot(_EnvelopeModel):
+    use_case_id: str = Field(alias="useCaseId", min_length=1)
+    actor_entry_index: int = Field(alias="actorEntryIndex", ge=0)
+    call_index: int = Field(alias="callIndex", ge=0)
+    parameter_index: int = Field(alias="parameterIndex", ge=0)
+    receiver_operation_id: str | None = Field(default=None, alias="receiverOperationId")
+    parameter_name: str | None = Field(default=None, alias="parameterName")
+
+
 class QuestionTrigger(_EnvelopeModel):
     category: str = Field(min_length=1)
     finding_refs: tuple[str, ...] = Field(default=(), max_length=20)
     evidence_refs: tuple[str, ...] = Field(default=(), max_length=20)
+    binding_slot: BindingSlot | None = None
 
     @model_validator(mode="after")
     def normalize(self) -> QuestionTrigger:

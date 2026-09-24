@@ -45,7 +45,7 @@ def _state() -> dict[str, Any]:
             ]
         },
         "usecase_spec": {
-            "actors": [{"name": "Member", "description": "Places orders."}],
+            "actors": [{"actor_ref": "ACT1", "name": "Member", "description": "Places orders."}],
             "use_cases": [
                 {
                     "id": "UC-ORDER",
@@ -65,7 +65,7 @@ def _state() -> dict[str, Any]:
             ],
             "relationships": {
                 "associations": [
-                    {"actor": "Member", "use_case_id": "UC-ORDER"}
+                    {"actor_ref": "ACT1", "use_case_id": "UC-ORDER"}
                 ]
             },
         },
@@ -692,6 +692,45 @@ def test_catalog_preserves_stable_ids_already_stored_in_accepted_artifact(
     assert call_target.element_id == "persisted-call"
 
 
+def test_current_revision_target_follows_stable_identity_across_operation_rename(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _state()
+    operation = state["extracted_bce_classes"]["Classes"][0]["operations"][0]
+    operation["stableId"] = "persisted-operation"
+    monkeypatch.setattr(
+        project_tools_module.artifact_repository,
+        "load_state",
+        lambda _app_id: state,
+    )
+    monkeypatch.setattr(
+        project_tools_module.artifact_repository,
+        "load_file_snapshot",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        project_tools_module.workspace_repository,
+        "latest_command",
+        lambda *_args, **_kwargs: None,
+    )
+
+    tools = ProjectTools(APP_ID)
+    pre_rename = tools.normalize_revision_targets(
+        ["class_diagram:OrderControl::placeOrder()"]
+    )[0]
+    renamed_class = state["extracted_bce_classes"]["Classes"][0]
+    renamed_class["className"] = "OrderManager"
+    renamed_operation = renamed_class["operations"][0]
+    renamed_operation["operationId"] = "OrderManager::submitOrder()"
+    renamed_operation["name"] = "submitOrder"
+
+    current = ProjectTools(APP_ID).current_revision_target(pre_rename)
+
+    assert current is not None
+    assert current.ref == "class_diagram:OrderManager::submitOrder()"
+    assert current.element_id == "persisted-operation"
+
+
 def test_requirements_handoff_resolves_only_the_current_rtm_linked_boundary_root(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -819,9 +858,9 @@ def test_usecase_diagram_candidates_are_catalog_owned_and_cover_its_sections(
     refs = {item["ref"] for item in tools.artifact_candidates("usecase_diagram")}
 
     assert {
-        "actor:Member",
+        "actor:ACT1",
         "use_case:UC-ORDER",
-        "relationship:associations:Member->UC-ORDER",
+        "relationship:associations:ACT1->UC-ORDER",
         "requirements_stage:actors",
         "requirements_stage:relationships",
     } <= refs

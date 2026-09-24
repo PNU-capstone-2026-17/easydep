@@ -1,7 +1,7 @@
 """Read-only, deterministic revision planning.
 
 This module decides *whether* an already-selected target can be revised locally
-or needs a bounded reverse-authority confirmation.  It never calls a revision
+or needs user confirmation for a bounded revision plan. It never calls a revision
 service, creates a workspace command, or writes an artifact.
 """
 
@@ -411,29 +411,22 @@ class RevisionPlanner:
         if rule.local:
             stage_transition_reason = self._delivery_stage_confirmation_reason(requested)
             identity_change = intent.change_type in {"rename", "remove"}
-            needs_confirmation = (
-                rule.confirmation or identity_change or stage_transition_reason is not None
-            )
-            reasons = []
+            reasons = ["free_text_revision_requires_confirmation"]
             if identity_change:
                 reasons.append("identity_change_requires_confirmation")
             if stage_transition_reason is not None:
                 reasons.append(stage_transition_reason)
-            if not reasons:
-                reasons.append("local_authority")
             return self._result(
                 intent,
                 snapshot,
-                status="needs_confirmation" if needs_confirmation else "ready_local",
+                status="needs_confirmation",
                 requested=requested,
                 authority=requested,
                 downstream=downstream,
                 reasons=reasons,
                 explanation=(
-                    "This revision changes another delivery stage or target identity. "
-                    "Confirm the displayed downstream scope before continuing."
-                    if needs_confirmation
-                    else "The selected editable target can be revised in its owning delivery stage."
+                    "Review and confirm the requested change and its displayed downstream scope "
+                    "before the owning delivery stage revises this editable target."
                 ),
             )
 

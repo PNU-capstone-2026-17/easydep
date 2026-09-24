@@ -95,30 +95,40 @@ def _intent(ref: str) -> CommandIntent:
     )
 
 
-def test_ready_local_plan_is_attached_to_the_bounded_design_message(monkeypatch) -> None:
+def test_revision_plan_is_attached_for_explicit_confirmation(monkeypatch) -> None:
     target = _target("class_diagram:OrderControl")
     downstream = _target("api_spec:createOrder", kind="api", artifact_type="API_SPEC")
-    plan = _plan("ready_local", requested=[target], downstream=[downstream])
+    plan = _plan("needs_confirmation", requested=[target], downstream=[downstream])
+    interrupted_owner = {
+        **_latest(),
+        "command_id": "interrupted-owner",
+        "status": "RUNNING",
+    }
     monkeypatch.setattr(workspace_module, "ProjectTools", _Tools)
     monkeypatch.setattr(workspace_module, "plan_revision", lambda *_args: plan)
     monkeypatch.setattr(
         workspace_module.repository,
         "latest_command",
-        lambda *_args, **_kwargs: _latest(),
+        lambda *_args, **kwargs: (
+            interrupted_owner if kwargs.get("stage") else _latest()
+        ),
     )
 
     service = WorkspaceService()
     try:
         action, payload, stage = service._route_conversation_intent(
-            "app-1", {"text": "Change it."}, _intent(target.ref), _latest()
+            "app-1",
+            {"text": "Change it.", "action_id": "interrupted-owner"},
+            _intent(target.ref),
+            _latest(),
         )
     finally:
         service.shutdown()
 
     assert (action, stage) == ("message", "design")
-    assert payload["revision_plan"]["status"] == "ready_local"
-    assert payload["context"]["approved_authority_targets"] == [target.ref]
-    assert payload["context"]["approved_downstream_targets"] == [downstream.ref]
+    assert "action_id" not in payload
+    assert payload["revision_plan"]["status"] == "needs_confirmation"
+    assert payload["_conversation_outcome"] == {"kind": "revision_plan"}
 
 
 def test_composite_design_feedback_keeps_llm_subinstructions_and_dependency_order(
@@ -129,7 +139,7 @@ def test_composite_design_feedback_keeps_llm_subinstructions_and_dependency_orde
         "class_diagram:UC5:main:1", kind="collaboration"
     )
     plan = _plan(
-        "ready_local",
+        "needs_confirmation",
         requested=[collaboration_target, class_target],
     )
     interpretation = RevisionInterpretation(
@@ -186,29 +196,41 @@ def test_composite_design_feedback_keeps_llm_subinstructions_and_dependency_orde
         service.shutdown()
 
     assert (action, stage) == ("message", "design")
-    revisions = payload["context"]["validated_target_feedbacks"]
-    assert [item["target"] for item in revisions] == [
+    assert payload["_conversation_outcome"] == {"kind": "revision_plan"}
+    returned_interpretation = RevisionInterpretation.model_validate(
+        payload["revision_interpretation"]
+    )
+    assert [patch.operation for patch in returned_interpretation.patch_intents] == [
+        "add_operation",
+        "insert_call_after",
+    ]
+    add_operation, insert_call = returned_interpretation.patch_intents
+    assert (
+        add_operation.operation,
+        add_operation.target,
+        add_operation.name,
+        add_operation.return_type,
+        add_operation.step_refs,
+    ) == (
+        "add_operation",
         class_target.ref,
+        "decrementEnrolledCount",
+        "void",
+        ["UC5:main:3"],
+    )
+    assert (
+        insert_call.operation,
+        insert_call.target,
+        insert_call.anchor,
+        insert_call.receiver_operation_id,
+        insert_call.step_refs,
+    ) == (
+        "insert_call_after",
         collaboration_target.ref,
-    ]
-    assert [item["feedback"] for item in revisions] == [
-        "Add a parameterless decrement operation.",
-        "Invoke the decrement operation when the registration is removed.",
-    ]
-    assert revisions[0]["patch_intents"] == [{
-        "operation": "add_operation",
-        "target": class_target.ref,
-        "name": "decrementEnrolledCount",
-        "returnType": "void",
-        "stepRefs": ["UC5:main:3"],
-    }]
-    assert revisions[1]["patch_intents"] == [{
-        "operation": "insert_call_after",
-        "target": collaboration_target.ref,
-        "anchor": "Registration::deleteById(id:UUID)",
-        "receiverOperationId": "CourseOffering::decrementEnrolledCount()",
-        "stepRefs": ["UC5:main:3"],
-    }]
+        "Registration::deleteById(id:UUID)",
+        "CourseOffering::decrementEnrolledCount()",
+        ["UC5:main:3"],
+    )
     assert payload["revision_instructions"] == {
         collaboration_target.ref: (
             "Invoke the decrement operation when the registration is removed."
@@ -272,11 +294,20 @@ def test_design_execution_passes_the_frozen_downstream_scope(monkeypatch) -> Non
 
 def test_revision_after_a_reply_and_clarification_uses_the_stage_action_anchor(monkeypatch) -> None:
     target = _target("class_diagram:OrderControl")
-    plan = _plan("ready_local", requested=[target])
+    plan = _plan("needs_confirmation", requested=[target])
     stage_gate = {
         **_latest(),
         "command_id": "stage-gate",
-        "status": "AWAITING_INPUT",
+        "status": "COMPLETED",
+        "payload": {
+            "_conversation_actions": [
+                {
+                    "action": "message",
+                    "label": "Send revision feedback",
+                    "payload": {"action_id": "stage-gate"},
+                }
+            ]
+        },
         "result": {"message": "Review the class diagram."},
     }
     reply = {
@@ -455,7 +486,7 @@ def test_exact_spec_revision_review_is_marked_for_fresh_downstream_planning() ->
         owner="requirements",
         artifact_type="USECASE_SPEC",
     )
-    plan = _plan("ready_local", requested=[target])
+    plan = _plan("needs_confirmation", requested=[target])
     interpretation = RevisionInterpretation(
         targets=[target.ref],
         semantic_scope="behavior",
@@ -672,3 +703,57 @@ def test_approved_design_stage_plan_uses_the_single_revision_entrypoint(
         "feedback": "Regenerate the class design with the requested boundary.",
     }
     assert result["design"]["status"] == "need_feedback"
+
+
+def test_free_text_answer_is_not_routed_through_an_offered_message() -> None:
+    intent = CommandIntent(intent="answer", instruction="Change the contract.")
+    service = WorkspaceService()
+    try:
+        action, payload, _stage = service._route_conversation_intent(
+            "app-1", {"text": "Change the contract."}, intent, _latest()
+        )
+    finally:
+        service.shutdown()
+
+    assert action == "message"
+    assert payload["_conversation_outcome"]["kind"] == "clarification"
+
+
+@pytest.mark.parametrize("stage", ["requirements", "design", "implementation", "testing"])
+def test_dispatch_rejects_unpinned_free_text_before_stage_resume(stage: str) -> None:
+    service = WorkspaceService()
+    try:
+        with pytest.raises(ValueError, match="requires a revision plan"):
+            service._dispatch(
+                {
+                    **_latest(),
+                    "action": "message",
+                    "stage": stage,
+                    "payload": {"action_id": "design-command", "text": "Change it."},
+                }
+            )
+    finally:
+        service.shutdown()
+
+
+@pytest.mark.parametrize("stage", ["requirements", "design", "implementation", "testing"])
+def test_dispatch_preserves_server_pinned_message_answers(stage: str) -> None:
+    service = WorkspaceService()
+    service._stage_message = lambda _command, **_kwargs: {"message": "Applied answer."}  # type: ignore[method-assign]
+    try:
+        result = service._dispatch(
+            {
+                **_latest(),
+                "action": "message",
+                "stage": stage,
+                "payload": {
+                    "action_id": "design-command",
+                    "text": "private",
+                    "_resource_answer_context": {"server_pinned_answer": True},
+                },
+            }
+        )
+    finally:
+        service.shutdown()
+
+    assert result == {"message": "Applied answer."}
