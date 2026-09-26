@@ -570,21 +570,25 @@ def _repair_batch(
     skipped_findings: set[tuple[str, str, str]],
 ) -> list[Finding]:
     """시퀀스는 구조와 호출 계약을 나눠 최소 수정 후보를 만든다."""
-    if spec.stage != "sequence_diagram":
+    if spec.stage != "sequence_diagram" and not spec.repair_target_mapper:
         return findings
+    eligible = [
+        finding for finding in findings
+        if _finding_key(finding) not in skipped_findings
+    ]
+    if spec.stage != "sequence_diagram":
+        return eligible
     for rule_ids in _SEQUENCE_REPAIR_RULE_GROUPS:
         batch = [
             finding
-            for finding in findings
+            for finding in eligible
             if finding.rule_id in rule_ids
-            and _finding_key(finding) not in skipped_findings
         ]
         if batch:
             return batch
     return [
         finding
-        for finding in findings
-        if _finding_key(finding) not in skipped_findings
+        for finding in eligible
     ]
 
 
@@ -791,6 +795,13 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                 if spec.stage == "sequence_diagram":
                     skipped_findings.update(_finding_key(finding) for finding in batch)
                     continue
+                if spec.repair_target_mapper:
+                    # A bounded target can exhaust both strategies without
+                    # exhausting the other independent targets in this batch.
+                    # Skip only this narrowed batch and let the next loop
+                    # select another target before declaring the stage stalled.
+                    skipped_findings.update(_finding_key(finding) for finding in batch)
+                    continue
                 stopped = STALLED
                 ledger.status = "STALLED"
                 ledger.stall_reason = "All repair strategies were tried for this artifact state."
@@ -846,7 +857,9 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                     elapsed_ms=round((time.perf_counter() - repair_started) * 1000, 1),
                     error_type=type(exc).__name__,
                 )
-                break
+                if waiting:
+                    break
+                continue
             candidate_findings = _dedupe_findings(spec.check(candidate or {}, state))
             candidate_digest = stable_digest(candidate)
             candidate_keys = _repair_finding_keys(candidate_findings)
@@ -915,6 +928,7 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
                 )
                 continue
             model, findings = candidate, candidate_findings
+            error = None
             skipped_findings.clear()
             log_design_timing(
                 "design.auto_repair.completed",

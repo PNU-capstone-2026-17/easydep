@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
 from app.design.services.class_diagram.public_contract_review import (
     review_public_contract_closure,
@@ -105,6 +107,70 @@ def test_review_slice_preserves_owner_stereotypes() -> None:
     }
 
     assert reviewed_classes == {"SubmitBoundary": "Boundary", "SubmitControl": "Control"}
+
+
+def test_prior_semantic_evidence_version_is_stale_after_slice_change() -> None:
+    from app.design.services.class_diagram import public_contract_review as subject
+    from app.validation import stable_digest
+
+    model = _model()
+    index = build_scenario_index(_scenario())
+    stale = {
+        "version": "class-public-contract-review/v6",
+        "modelDigest": stable_digest(model),
+        "contractDigest": stable_digest([subject._obligations(item) for item in index.use_cases]),
+    }
+
+    assert not subject._evidence_matches(stale, model, index)
+
+
+def test_review_slice_includes_directly_referenced_entity_fields_and_links() -> None:
+    from app.design.services.class_diagram import public_contract_review as subject
+
+    model = _model()
+    model["Classes"][0]["operations"][0]["parameters"][0]["type"] = "CourseOffering"
+    model["Classes"][1]["operations"][0]["parameters"].append({
+        "name": "student", "type": "Student", "stableRef": "param-student",
+    })
+    model["Classes"][1]["operations"][0]["returnType"] = "List<CourseOffering>"
+    model["Classes"].extend([
+        {
+            "className": "CourseOffering", "stereotype": "Entity",
+            "fields": ["courseId : String", "capacity : Integer"],
+            "fieldRefs": ["field-course-id", "field-capacity"], "operations": [],
+        },
+        {
+            "className": "UnrelatedEntity", "stereotype": "Entity",
+            "fields": ["id : UUID"], "fieldRefs": ["field-unrelated"], "operations": [],
+        },
+        {
+            "className": "Student", "stereotype": "Entity",
+            "fields": ["studentId : UUID"], "fieldRefs": ["field-student-id"], "operations": [],
+        },
+    ])
+
+    entity = next(
+        item for item in subject._slice(model, build_scenario_index(_scenario()).use_cases[0])["Classes"]
+        if item["className"] == "CourseOffering"
+    )
+
+    assert entity["fields"] == ["courseId : String", "capacity : Integer"]
+    assert entity["fieldRefs"] == ["field-course-id", "field-capacity"]
+    assert entity["outputEvidence"] == (
+        "The cited Control operations return List<CourseOffering>; these fields are "
+        "the returned CourseOffering details."
+    )
+    assert "UnrelatedEntity" not in {
+        item["className"] for item in subject._slice(model, build_scenario_index(_scenario()).use_cases[0])["Classes"]
+    }
+    assert "Student" in {
+        item["className"] for item in subject._slice(model, build_scenario_index(_scenario()).use_cases[0])["Classes"]
+    }
+    student = next(
+        item for item in subject._slice(model, build_scenario_index(_scenario()).use_cases[0])["Classes"]
+        if item["className"] == "Student"
+    )
+    assert "outputEvidence" not in student
 
 
 def test_system_result_value_needs_control_return_not_prior_call_result(monkeypatch) -> None:
@@ -518,6 +584,84 @@ def _model_with_root_step() -> dict:
     model = _model()
     model["Collaborations"][0]["calls"][0]["stepRefs"] = ["UC1:main:1"]
     return model
+
+
+def test_actor_input_sources_allow_only_declared_root_dto_fields() -> None:
+    from app.design.services.class_diagram import public_contract_review as subject
+
+    model = _model_with_root_step()
+    model["DataTypes"] = [{
+        "name": "RequestData", "kind": "valueObject",
+        "fields": ["memberId : UUID"], "fieldRefs": ["field-member-id"],
+    }]
+    use_case = build_scenario_index(_scenario()).use_case("UC1")
+
+    sources = subject._actor_input_sources(model, use_case)
+
+    assert "UC1:main:1#param-details.field-member-id" in sources
+    assert "call-boundary#param-details.field-member-id" in sources
+    assert "call-control#param-details-control.field-member-id" not in sources
+    assert "UC1:main:1#param-details.invented-field" not in sources
+
+
+def _waitlist_source_field_model(source_ref: str) -> dict:
+    model = _model_with_root_step()
+    boundary = model["Classes"][0]["operations"][0]
+    boundary.update({
+        "operationId": "WaitlistBoundary::cancel(request:CancelWaitlistRequest)",
+        "name": "cancel",
+        "parameters": [{
+            "name": "request", "type": "CancelWaitlistRequest",
+            "stableRef": "param-cancel-request",
+        }],
+    })
+    control = model["Classes"][1]["operations"][0]
+    control.update({
+        "operationId": "WaitlistControl::cancel(waitlistEntryId:UUID)",
+        "name": "cancel",
+        "parameters": [{
+            "name": "waitlistEntryId", "type": "UUID",
+            "stableRef": "param-waitlist-entry", "requiredValueRef": "val-1",
+        }],
+    })
+    calls = model["Collaborations"][0]["calls"]
+    calls[0]["receiverOperationId"] = boundary["operationId"]
+    calls[1]["receiverOperationId"] = control["operationId"]
+    calls[1]["argumentBindings"] = [{
+        "parameter": "waitlistEntryId", "sourceRef": source_ref,
+    }]
+    model["DataTypes"] = [{
+        "name": "CancelWaitlistRequest", "kind": "valueObject",
+        "fields": ["waitlistEntryId : UUID"], "fieldRefs": ["field-waitlist-entry"],
+    }]
+    return model
+
+
+@pytest.mark.parametrize(
+    ("source_ref", "field_ref", "valid"),
+    [
+        ("call-boundary#param-cancel-request.field-waitlist-entry", "field-waitlist-entry", True),
+        ("call-control#param-cancel-request.field-waitlist-entry", "field-waitlist-entry", False),
+        ("call-boundary#param-cancel-request.unrelated-field", "unrelated-field", False),
+    ],
+)
+def test_verifier_accepts_only_exact_root_dto_source_field(
+    source_ref: str, field_ref: str, valid: bool,
+) -> None:
+    from app.design.services.class_diagram import public_contract_review as subject
+
+    model = _waitlist_source_field_model(source_ref)
+    response = _pass_response()
+    response["mappings"][0].update({
+        "operationId": "WaitlistControl::cancel(waitlistEntryId:UUID)",
+        "parameterRef": "param-waitlist-entry", "fieldRef": field_ref,
+    })
+    problem = subject._verify_response(
+        model, build_scenario_index(_scenario()).use_case("UC1"),
+        subject._ReviewResponse.model_validate(response),
+    )
+
+    assert (not problem) is valid
 
 
 def _identity_model(source_kind: str, source_ref: str) -> dict:

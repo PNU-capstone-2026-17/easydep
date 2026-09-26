@@ -988,6 +988,18 @@ def api_accepted_interactions_covered(model: dict, state: dict) -> list[Finding]
 def api_control_outcomes(model: dict, state: dict) -> list[Finding]:
     """Require a named Control result for every documented HTTP result."""
     controls = _control_method_contracts(state)
+    public_returns: dict[str, str] = {}
+    raw_bce = state.get("extracted_bce_classes")
+    if isinstance(raw_bce, dict) and raw_bce.get("Collaborations"):
+        try:
+            public_returns = {
+                item.interaction_id: item.boundary_return_type
+                for item in interaction_contracts(BCEModel.model_validate(raw_bce))
+            }
+        except ValidationError:
+            # Class validation owns malformed BCE input.  Keep the legacy
+            # Control-only checks available for partially saved models.
+            pass
     found: list[Finding] = []
     for endpoint in model.get("Endpoints", []) or []:
         if not isinstance(endpoint, dict):
@@ -1001,6 +1013,27 @@ def api_control_outcomes(model: dict, state: dict) -> list[Finding]:
         if contract is None:
             continue
         location = _api_location(endpoint)
+        public_return_type = _normalise_contract_type(
+            public_returns.get(str(endpoint.get("interaction_id") or ""), "")
+        )
+        successful_responses = [
+            response
+            for response in endpoint.get("responses", []) or []
+            if isinstance(response, dict)
+            and 200 <= int(response.get("status", 0) or 0) < 300
+        ]
+        if public_return_type and public_return_type != "void" and successful_responses and all(
+            int(response.get("status", 0) or 0) == 204
+            and not str(response.get("schema_name") or "").strip()
+            for response in successful_responses
+        ):
+            found.append(Finding(
+                "api.control-outcomes-cover-responses",
+                "Boundary 공개 반환 타입 "
+                f"'{public_returns.get(str(endpoint.get('interaction_id') or ''), '')}'은 "
+                "응답 본문이 필요한데 모든 성공 응답이 204 No Content임",
+                location,
+            ))
         documented = {
             int(item.get("status"))
             for item in endpoint.get("responses", []) or []

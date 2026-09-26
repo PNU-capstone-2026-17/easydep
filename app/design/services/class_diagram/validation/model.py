@@ -128,6 +128,7 @@ def _collaboration_rule(
     def check(model: dict[str, Any], index: ScenarioIndex) -> list[Finding]:
         from app.design.services.class_diagram.validation.collaboration import (
             CollaborationContext,
+            _collaboration_ancestor_result_bindings,
             _collaboration_bindings,
             _collaboration_contract,
         )
@@ -135,6 +136,7 @@ def _collaboration_rule(
         rules = {
             "class.collaboration.contract": _collaboration_contract,
             "class.collaboration.bindings": _collaboration_bindings,
+            "class.collaboration.ancestor-result-binding": _collaboration_ancestor_result_bindings,
         }
         owned_check = rules[rule_id]
         collaborations = _collaborations(model)
@@ -149,12 +151,56 @@ def _collaboration_rule(
     return CheckSpec(rule_id=rule_id, run=check)
 
 
+def _boundary_public_object_parameters(
+    model: dict[str, Any], index: ScenarioIndex,
+) -> list[Finding]:
+    """Reject an opaque public ``Object`` only when one UC owns the operation.
+
+    A Boundary signature is the public hand-off to downstream API and code
+    generation.  ``Object`` there loses the shape which those stages need.  We
+    deliberately require an exact, single owner from persisted ``stepRefs``;
+    without it a fragment repair would not have a safe UC-local scope.
+    """
+
+    known_use_cases = {use_case.id for use_case in index.use_cases}
+    findings: list[Finding] = []
+    for class_item in model.get("Classes") or []:
+        if not isinstance(class_item, dict):
+            continue
+        if text(class_item.get("stereotype")).casefold() != "boundary":
+            continue
+        for operation in class_item.get("operations") or []:
+            if not isinstance(operation, dict):
+                continue
+            use_case_ids = {
+                step_ref.split(":", 1)[0]
+                for value in operation.get("stepRefs") or []
+                if (step_ref := text(value))
+                and ":" in step_ref
+                and step_ref.split(":", 1)[0] in known_use_cases
+            }
+            if len(use_case_ids) != 1:
+                continue
+            for parameter in operation.get("parameters") or []:
+                if not isinstance(parameter, dict) or text(parameter.get("type")) != "Object":
+                    continue
+                findings.append(Finding(
+                    "class.boundary-public-object-parameter",
+                    "Boundary public parameter uses opaque Object; replace it with a named "
+                    "scenario-grounded valueObject while preserving its requiredValueRef.",
+                    next(iter(use_case_ids)),
+                ))
+    return findings
+
+
 # schema와 유스케이스 coverage를 확인한 뒤 실제 호출 참조와 binding만 다시 검사한다.
 CLASS_MODEL_CHECKS: tuple[CheckSpec[dict[str, Any], ScenarioIndex], ...] = (
     CheckSpec("class.model.schema", _model_schema),
     CheckSpec("class.model.collaboration-coverage", _collaboration_coverage),
     _collaboration_rule("class.collaboration.contract"),
     _collaboration_rule("class.collaboration.bindings"),
+    _collaboration_rule("class.collaboration.ancestor-result-binding"),
+    CheckSpec("class.boundary-public-object-parameter", _boundary_public_object_parameters),
 )
 
 

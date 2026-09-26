@@ -124,9 +124,37 @@ def test_react_scaffold_contains_no_hardcoded_operation_implementation() -> None
         "src/vite-env.d.ts",
     } <= set(files)
     assert "getOrder" not in "\n".join(files.values())
-    assert "EASYDEP-IMPLEMENT" in files["src/App.tsx"]
+    assert "EASYDEP-IMPLEMENT" not in files["src/App.tsx"]
     assert "OpenAPI Generator" in files["README.md"]
     assert "HashRouter" in files["src/main.tsx"]
+
+
+def test_react_scaffold_emits_one_composed_feature_per_operation() -> None:
+    files = react_scaffold_files("Order Console", "/service", OPENAPI)
+    feature_paths = sorted(path for path in files if path.startswith("src/features/"))
+
+    assert len(feature_paths) == 2
+    assert all(path.endswith(".tsx") for path in feature_paths)
+    assert len(set(feature_paths)) == 2
+    assert all(files[path].count("EASYDEP-IMPLEMENT:") == 1 for path in feature_paths)
+    assert all("export default function Feature" in files[path] for path in feature_paths)
+    app = files["src/App.tsx"]
+    assert all(path.removeprefix("src").removesuffix(".tsx") in app for path in feature_paths)
+    assert "aria-label=\"Features\"" in app
+    assert app.count("&& <Feature") == 2
+
+    twelve_operations = {
+        "paths": {
+            f"/items/{index}": {
+                "get": {"operationId": f"getItem{index}", "summary": f"Get item {index}"}
+            }
+            for index in range(12)
+        }
+    }
+    twelve_files = react_scaffold_files("Twelve", "", twelve_operations)
+    twelve_features = [path for path in twelve_files if path.startswith("src/features/")]
+    assert len(twelve_features) == 12
+    assert twelve_files["src/App.tsx"].count("&& <Feature") == 12
 
 
 def test_resolves_api_base_url_from_openapi_server_without_inventing_prefix() -> None:
@@ -506,7 +534,8 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
         agent_max_output_tokens=1000,
     )
 
-    task = generate_frontend_tasks(spec, run)[0]
+    tasks = generate_frontend_tasks(spec, run)
+    task = next(task for task in tasks if task.required_completion_markers[0].endswith("(getOrder)"))
     context = json.loads((run / task.context_file).read_text(encoding="utf-8"))
     prompt = (run / task.prompt_file).read_text(encoding="utf-8")
 
@@ -580,12 +609,19 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     assert "todo" in prompt.casefold() and "placeholder" in prompt.casefold()
     assert "Contracted pages" not in prompt
     assert "application/frontend/src/pages/OrdersPage.tsx" not in task.required_output_paths
-    assert task.allowed_write_paths == [
+    assert len(tasks) == 2
+    assert task.allowed_write_paths == task.required_output_paths
+    assert len(task.allowed_write_paths) == 1
+    assert task.allowed_write_paths[0].startswith("application/frontend/src/features/")
+    assert task.allowed_write_roots == []
+    assert task.required_completion_markers == [context["completionMarker"]]
+    assert task.owner_tool_mode == "editor"
+    assert task.verification_profile["requiredAbsentMarkers"] == [
+        {"path": task.allowed_write_paths[0], "markers": [context["completionMarker"]]}
+    ]
+    assert task.immutable_paths == [
         "application/frontend/src/App.tsx",
         "application/frontend/src/styles.css",
-    ]
-    assert task.allowed_write_roots == ["application/frontend/src"]
-    assert task.immutable_paths == [
         "application/frontend/src/api.ts",
         "application/frontend/src/generated",
     ]
@@ -598,9 +634,7 @@ def test_frontend_agent_task_uses_only_system_design_and_generated_contracts(
     }.intersection(task.allowed_write_paths)
     assert "the next action is the first source edit" in prompt
     assert "without a concrete task-check diagnosis" in prompt
-    assert set(context["operationContextPaths"]) == {
-        item["contextPath"] for item in index["operations"]
-    }
+    assert context["operationContextPaths"] == [operation["contextPath"]]
     assert set(context["operationContextPaths"]).issubset(context["readSourcePaths"])
     sandbox = prepare_agent_workspace(run, task.to_dict())
     try:

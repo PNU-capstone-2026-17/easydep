@@ -8,7 +8,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.design.contracts.application_runtime import application_security_source_refs
+from app.design.contracts.application_runtime import (
+    SYNTHETIC_UUID_BASIC_USERNAME,
+    application_security_source_refs,
+    authenticated_uuid_context_required,
+)
 from app.design.services.deployment_diagram.models import WorkloadGraph
 from app.design.services.deployment_diagram.normalization import normalize_workload_graph
 from app.design.services.deployment_diagram.planning_facts import extract_planning_facts
@@ -167,26 +171,42 @@ def _apply_application_security(
         structured_inputs.get("apiSpec"),
         structured_inputs.get("refinedRequirements"),
     )
+    uuid_actor_required = authenticated_uuid_context_required(
+        structured_inputs.get("apiSpec") or {},
+        structured_inputs.get("classModel") or {},
+    )
     generated = [
         item
         for item in graph.get("workloads") or []
         if isinstance(item, dict)
         and (item.get("artifact") or {}).get("kind") == "generatedApplication"
     ]
-    if not source_refs or len(generated) != 1:
+    if (not source_refs and not uuid_actor_required) or len(generated) != 1:
         return
+    source_refs = source_refs or ["apiSpec:control-binding"]
     configurations = generated[0].setdefault("configuration", [])
     existing_names = {
         str(item.get("name") or "")
         for item in configurations
         if isinstance(item, dict)
     }
+    if uuid_actor_required:
+        for item in configurations:
+            if (
+                isinstance(item, dict)
+                and item.get("name") == "SPRING_SECURITY_USER_NAME"
+            ):
+                item["value"] = SYNTHETIC_UUID_BASIC_USERNAME
     for configuration in (
         {
             "id": "security-username",
             "name": "SPRING_SECURITY_USER_NAME",
             "kind": "value",
-            "value": "easydep",
+            "value": (
+                SYNTHETIC_UUID_BASIC_USERNAME
+                if uuid_actor_required
+                else "easydep"
+            ),
             "sourceRefs": source_refs,
         },
         {

@@ -673,6 +673,33 @@ def test_nfr_labeled_actor_fact_is_not_mislabeled_as_a_constraint(monkeypatch):
     assert out["constraint_applicability"] == {}
 
 
+def test_mixed_declarative_fact_and_precondition_is_a_global_constraint(monkeypatch):
+    def fake(schema, messages):
+        if schema is UseCaseResult:
+            return _uc_result(["R1"])
+        system = str(messages[0].content)
+        assert "only when the whole\nrequirement is a declarative actor or domain fact" in system
+        assert "mixed with any such operational\nconstraint" in system
+        return s2.RequirementTraceSlice(requirement_id="N1", constrains_use_case_refs=[])
+
+    monkeypatch.setattr(s2, "invoke_structured", fake)
+    out = s2.identify_use_cases(
+        {
+            "classified": [
+                {"id": "R1", "text": "A member submits an application.", "type": "FR"},
+                {
+                    "id": "N1",
+                    "text": "A registered member may submit an application only after accepting the terms.",
+                    "type": "NFR",
+                },
+            ],
+            "actors": [{"actor_ref": "ACT1", "name": "Member", "description": "user", "source_refs": ["R1", "N1"]}],
+        }
+    )
+
+    assert out["constraint_applicability"] == {"N1": []}
+
+
 def test_constraint_slice_attaches_only_an_explicitly_scoped_nfr(monkeypatch):
     def fake(schema, _messages):
         if schema is UseCaseResult:

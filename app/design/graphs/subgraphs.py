@@ -338,18 +338,23 @@ def _repair_class_batch(
     targets: set[str],
     batch: list[ArtifactFinding],
 ) -> dict[str, Any]:
-    """Keep public-contract repair on its owning use-case operation fragment."""
+    """Route UC-owned findings to the fragment that can actually repair them."""
 
     index = _class_index(state)
     known_use_case_ids = {use_case.id for use_case in index.use_cases}
-    semantic_use_case_ids = {
+    operation_rule_ids = {
+        "class.public-contract-semantic",
+        "class.boundary-public-object-parameter",
+    }
+    collaboration_rule_ids = {"class.collaboration.ancestor-result-binding"}
+    operation_use_case_ids = {
         str(finding.location).strip()
         for finding in batch
-        if finding.rule_id == "class.public-contract-semantic"
+        if finding.rule_id in operation_rule_ids
         and str(finding.location).strip() in known_use_case_ids
     }
     if batch and all(
-        finding.rule_id == "class.public-contract-semantic"
+        finding.rule_id in operation_rule_ids
         and str(finding.location).strip() in known_use_case_ids
         for finding in batch
     ):
@@ -359,7 +364,26 @@ def _repair_class_batch(
             feedback,
             targets,
             cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
-            operation_use_case_ids=semantic_use_case_ids,
+            operation_use_case_ids=operation_use_case_ids,
+        ).model_dump(by_alias=True)
+    collaboration_use_case_ids = {
+        str(finding.location).strip()
+        for finding in batch
+        if finding.rule_id in collaboration_rule_ids
+        and str(finding.location).strip() in known_use_case_ids
+    }
+    if batch and all(
+        finding.rule_id in collaboration_rule_ids
+        and str(finding.location).strip() in known_use_case_ids
+        for finding in batch
+    ):
+        return revise_class_model(
+            _stored_class_model(current),
+            index,
+            feedback,
+            targets,
+            cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
+            collaboration_use_case_ids=collaboration_use_case_ids,
         ).model_dump(by_alias=True)
     return _revise_class_state(current, feedback, state, targets)
 
@@ -399,6 +423,100 @@ def _class_model_findings(
             for finding in semantic
         )
     return findings
+
+
+def _propagate_bound_required_value_refs(state: ArchitectureState) -> dict[str, Any]:
+    """Carry an already-bound Boundary value declaration into its Control input.
+
+    This is deliberately a narrow, structural normalization for accepted and
+    resumed class models.  A collaboration binding is sufficient evidence only
+    when its source names an *earlier Boundary call* and that call's exact
+    parameter stable ref.  No operation, field, or use-case name similarity is
+    used to infer a value declaration.
+    """
+
+    raw = state.get("extracted_bce_classes")
+    if not isinstance(raw, dict) or not raw.get("Classes"):
+        return {}
+    model = copy.deepcopy(raw)
+    operation_candidates: dict[str, list[tuple[dict[str, Any], dict[str, Any]]]] = {}
+    for owner in model.get("Classes") or []:
+        if not isinstance(owner, dict):
+            continue
+        for operation in owner.get("operations") or []:
+            if isinstance(operation, dict):
+                operation_id = str(operation.get("operationId") or "").strip()
+                if operation_id:
+                    operation_candidates.setdefault(operation_id, []).append((owner, operation))
+    # An ambiguous operation ID cannot justify a mutation to either owner.
+    operations = {
+        operation_id: candidates[0]
+        for operation_id, candidates in operation_candidates.items()
+        if len(candidates) == 1
+    }
+
+    candidates_by_target: dict[tuple[str, str], set[str]] = {}
+    for collaboration in model.get("Collaborations") or []:
+        if not isinstance(collaboration, dict):
+            continue
+        calls = [call for call in collaboration.get("calls") or [] if isinstance(call, dict)]
+        for position, control_call in enumerate(calls):
+            target = operations.get(str(control_call.get("receiverOperationId") or "").strip())
+            if target is None or str(target[0].get("stereotype") or "").casefold() != "control":
+                continue
+            _control_owner, control_operation = target
+            for binding in control_call.get("argumentBindings") or []:
+                if not isinstance(binding, dict):
+                    continue
+                parameter_name = str(binding.get("parameter") or "").strip()
+                source_call_ref, separator, source_parameter_ref = str(
+                    binding.get("sourceRef") or ""
+                ).partition("#")
+                if not parameter_name or not separator or not source_call_ref or not source_parameter_ref:
+                    continue
+                source_calls = [
+                    call for call in calls[:position]
+                    if str(call.get("stableId") or "").strip() == source_call_ref
+                ]
+                if len(source_calls) != 1:
+                    continue
+                source = operations.get(str(source_calls[0].get("receiverOperationId") or "").strip())
+                if source is None or str(source[0].get("stereotype") or "").casefold() != "boundary":
+                    continue
+                source_parameters = [
+                    parameter for parameter in source[1].get("parameters") or []
+                    if isinstance(parameter, dict)
+                    and str(parameter.get("stableRef") or "").strip() == source_parameter_ref
+                ]
+                target_parameters = [
+                    parameter for parameter in control_operation.get("parameters") or []
+                    if isinstance(parameter, dict)
+                    and str(parameter.get("name") or "").strip() == parameter_name
+                ]
+                if len(source_parameters) != 1 or len(target_parameters) != 1:
+                    continue
+                required_value_ref = str(source_parameters[0].get("requiredValueRef") or "").strip()
+                if required_value_ref:
+                    candidates_by_target.setdefault(
+                        (str(control_call.get("receiverOperationId") or "").strip(), parameter_name),
+                        set(),
+                    ).add(required_value_ref)
+    changed = False
+    for (operation_id, parameter_name), required_value_refs in candidates_by_target.items():
+        if len(required_value_refs) != 1:
+            continue
+        _owner, operation = operations[operation_id]
+        parameters = [
+            parameter for parameter in operation.get("parameters") or []
+            if isinstance(parameter, dict)
+            and str(parameter.get("name") or "").strip() == parameter_name
+        ]
+        if len(parameters) == 1 and not str(parameters[0].get("requiredValueRef") or "").strip():
+            parameters[0]["requiredValueRef"] = next(iter(required_value_refs))
+            changed = True
+    if not changed:
+        return {}
+    return {"extracted_bce_classes": _stored_class_model(model).model_dump(by_alias=True)}
 
 
 def _class_repair_targets(
@@ -588,6 +706,10 @@ CLASS_DIAGRAM_SPEC = DesignArtifactSpec(
         "DataTypes": lambda item: item.get("name", ""),
         "Collaborations": lambda item: item.get("collaborationId", ""),
     },
+    # A saved class snapshot can already contain an exact Boundary → Control
+    # argument binding while missing only the Control parameter's declaration
+    # provenance. Normalize that structural omission before every class gate.
+    reconcile=_propagate_bound_required_value_refs,
     # typed ValidationReport를 artifact finding으로 바꾼 뒤 기존 check node가 소비한다.
     # repair 여부와 예산은 validator가 아니라 graph/service orchestration이 결정한다.
     check=_class_model_findings,

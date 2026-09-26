@@ -306,10 +306,6 @@ def _replace_selected_collaborations(
     replacements, signals = _replace_use_cases(
         index, model, selected, feedback=feedback, cache=cache,
     )
-    if signals:
-        raise ValueError(
-            "The selected collaboration needs an operation-contract revision first."
-        )
     selected_ids = {use_case.id for use_case in selected}
     originals_by_use_case: dict[str, list[Collaboration]] = {
         use_case.id: [
@@ -322,6 +318,20 @@ def _replace_selected_collaborations(
         raise ValueError(
             "The selected legacy use case has multiple collaboration roots and cannot be "
             "replaced as one bounded target."
+        )
+
+    selected_by_id = {use_case.id: use_case for use_case in selected}
+    revised_skeleton = model
+    signaled_ids: set[str] = set()
+    for signal in signals:
+        use_case = selected_by_id.get(signal.use_case_id)
+        if use_case is None or signal.use_case_id in signaled_ids:
+            raise ValueError(
+                "The selected collaboration replacement returned an invalid use-case signal."
+            )
+        signaled_ids.add(signal.use_case_id)
+        revised_skeleton, replacements[use_case.id] = generation.replace_use_case_unit(
+            index, revised_skeleton, use_case, signal,
         )
 
     replacement_by_original_id: dict[str, Collaboration] = {}
@@ -357,7 +367,7 @@ def _replace_selected_collaborations(
         or item.collaboration_id in replacement_by_original_id
     ]
     return BCEModel.model_validate({
-        **_payload(model),
+        **_payload(revised_skeleton),
         "Collaborations": [*preserved, *append_replacements],
     })
 
@@ -414,19 +424,10 @@ def resume_class_model(
     """없는 유스케이스 collaboration만 완성하고 기존 수락 결과는 보존한다."""
 
     existing = {item.collaboration_id: item for item in current.Collaborations}
-    current_payload = _payload(current)
     selected: list[UseCase] = []
     for use_case in _standalone(index):
         value = existing.get(use_case.id)
         if value is None:
-            selected.append(use_case)
-            continue
-        report = run_checks(
-            COLLABORATION_CHECKS,
-            value.model_dump(by_alias=True),
-            CollaborationContext(index, current_payload, use_case),
-        )
-        if report.errors or report.findings:
             selected.append(use_case)
     if not selected:
         return _accepted_model(current, current)
@@ -444,19 +445,28 @@ def revise_class_model(
     *,
     cache: AcceptedUnitCache | None = None,
     operation_use_case_ids: AbstractSet[str] | None = None,
+    collaboration_use_case_ids: AbstractSet[str] | None = None,
 ) -> BCEModel:
     """피드백이 지정한 inventory·operation·유스케이스 협업만 교체한다."""
 
     if not feedback.strip():
         return current
-    if operation_use_case_ids is None:
+    if operation_use_case_ids is not None and collaboration_use_case_ids is not None:
+        raise ValueError("A repair cannot select both operation and collaboration scopes.")
+    if operation_use_case_ids is None and collaboration_use_case_ids is None:
         scope = feedback_stage.feedback_scope(index, current, feedback, targets)
-    else:
+    elif operation_use_case_ids is not None:
         selected = set(operation_use_case_ids)
         known = {use_case.id for use_case in index.use_cases}
         if not selected or not selected <= known:
             raise ValueError("Operation repair scope selected an unknown use case.")
         scope = FeedbackScope(kind="operation", ids=sorted(selected, key=id_key))
+    else:
+        selected = set(collaboration_use_case_ids or ())
+        known = {use_case.id for use_case in index.use_cases}
+        if not selected or not selected <= known:
+            raise ValueError("Collaboration repair scope selected an unknown use case.")
+        scope = FeedbackScope(kind="collaboration", ids=sorted(selected, key=id_key))
     accepted_inventory = feedback_stage.inventory_from_model(current)
     if scope.kind == "inventory":
         revised_inventory = feedback_stage.propose_inventory_revision(
@@ -630,11 +640,13 @@ def revise_class_model(
         feedback=directive,
         cache=cache,
     )
-    return _validated(
-        _accepted_model(current, revised, targeted_refs=targets),
-        index,
-        "revised",
-    )
+    accepted = _accepted_model(current, revised, targeted_refs=targets)
+    # Internal operation repairs are checked against the pre-repair baseline by
+    # the caller. Requiring a globally clean model here would make unrelated
+    # existing findings block a bounded repair.
+    if operation_use_case_ids is not None:
+        return accepted
+    return _validated(accepted, index, "revised")
 
 
 __all__ = ["generate_class_model", "resume_class_model", "revise_class_model"]

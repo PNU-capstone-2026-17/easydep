@@ -12,6 +12,8 @@ from urllib.parse import quote, urlencode, urljoin
 import httpx
 import jsonschema
 
+from app.design.contracts.application_runtime import SYNTHETIC_UUID_BASIC_USERNAME
+
 _METHODS = frozenset({"get", "post", "put", "patch", "delete", "head", "options"})
 _SUMMARY_STRING_LIMIT = 512
 _SUMMARY_SIZE_LIMIT = 4000
@@ -202,7 +204,7 @@ def _response_schema(
 
 def _basic_auth() -> tuple[str, str]:
     """로컬 Testing 앱의 공통 Basic 테스트 계정을 모든 호출에 보낸다."""
-    return os.environ.get("EASYDEP_TEST_USERNAME", "easydep-test"), os.environ.get(
+    return os.environ.get("EASYDEP_TEST_USERNAME", SYNTHETIC_UUID_BASIC_USERNAME), os.environ.get(
         "EASYDEP_TEST_PASSWORD", "easydep-test"
     )
 

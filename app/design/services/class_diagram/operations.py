@@ -95,6 +95,13 @@ state behavior. An Entity listed for this use case is a candidate, not proof tha
 the scenario needs an Entity operation. Close
 an ordinary request-response flow through return values: the root Boundary
 operation may cover both the actor input and the resulting actor-visible output.
+For one request-response actor entry, use exactly one direct orchestration Control
+operation to cover its complete actor-visible behavior. When the response needs
+multiple values, return one concrete DTO or valueObject containing them. Do not
+split sequential retrieval into nested Control calls when a child needs a value
+that its parent Control returns: that parent result is not available to its child.
+Keep Control delegation when the child inputs are independently available from
+entry inputs, preconditions, or earlier completed calls.
 Add an Entity operation only when the supplied scenario explicitly requires a
 durable read or state change and that behavior targets or sources state declared
 by a supplied Entity. A Boundary-to-Control flow is valid when it completely
@@ -114,13 +121,16 @@ List<Item> or Optional<List<Item>>, respectively.
 Before returning, audit every named parameter and return type: reuse an exact
 fixed or reserved type when it has the required shape, and otherwise declare a
 concrete local DataType in this fragment; never leave a referenced name undeclared.
+For a Boundary actor-facing parameter, never use the opaque exact type Object.
+Declare a named local valueObject with fields grounded in the supplied scenario
+instead, and preserve any requiredValueRef on that parameter exactly.
 
 Keep signatures as a closed value flow. A delegated parameter must be available
 from an entry input, an earlier operation result, an explicit precondition, or a
 supported runtime value. Declare a result type when later work needs several
 values produced earlier. Do not invent caller input merely to satisfy a signature.
 Honor `useCase.specification.public_contract.required_values` according to each entry's `usage`.
-For `control` or `both`, put its exact accepted `valueRef` in `requiredValueRef` on the compatible
+For `control` or `both`, cite its exact short `valueRef` from `requiredValueSources` in `requiredValueRef` on the compatible
 Control parameter that receives the value, and bind that parameter in the call. A `result`-only
 value is evidenced by a concrete non-void Control return; do not attach its ref to an input parameter
 just because its name or type looks related. A `system_result` may also be cited on a downstream
@@ -193,6 +203,36 @@ def _reserved_operations(model: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _required_value_handles(use_case: UseCase) -> tuple[dict[str, str], dict[str, str]]:
+    """Build stable short-handle maps for this use case's accepted value catalog."""
+    catalog = required_value_evidence(use_case)
+    canonical = {text(item.get("valueRef")) for item in catalog}
+    prefix = "RV"
+    while any(f"{prefix}{index}" in canonical for index in range(1, len(catalog) + 1)):
+        prefix += "_"
+    handle_to_ref = {f"{prefix}{index}": text(item["valueRef"])
+                     for index, item in enumerate(catalog, 1)}
+    return handle_to_ref, {value_ref: handle for handle, value_ref in handle_to_ref.items()}
+
+
+def _expand_required_value_handles(candidate: dict[str, Any], use_case: UseCase) -> dict[str, Any]:
+    """Expand exact known handles; leave unknown values untouched for rejection."""
+    handles, _ = _required_value_handles(use_case)
+    normalized = deepcopy(candidate)
+    for class_set in normalized.get("Classes") or []:
+        if not isinstance(class_set, dict):
+            continue
+        for operation in class_set.get("operations") or []:
+            if not isinstance(operation, dict):
+                continue
+            for parameter in operation.get("parameters") or []:
+                if isinstance(parameter, dict):
+                    handle = text(parameter.get("requiredValueRef"))
+                    if handle in handles:
+                        parameter["requiredValueRef"] = handles[handle]
+    return normalized
+
+
 def _operation_payload(
     index: ScenarioIndex,
     inventory: dict[str, Any],
@@ -222,6 +262,7 @@ def _operation_payload(
     # pre/postcondition, business rule 같은 use-case 문맥은 operation 설계에 필요하므로
     # specification 전체를 버리지 않고 main/extension flow만 제거한다.
     specification = use_case.specification
+    _, ref_to_handle = _required_value_handles(use_case)
     if not settings.design_class_compact_operation_payload:
         summary = deepcopy(source_summary)
         if isinstance(specification, dict):
@@ -241,6 +282,14 @@ def _operation_payload(
         # raw use-case의 goal·actor 문맥은 top-level에 유지한다. specification 안에만 있던
         # pre/postcondition과 business rule은 아래 compact specification에 한 번만 남긴다.
         summary["specification"] = compact_specification
+    summary_spec = summary.get("specification")
+    if isinstance(summary_spec, dict):
+        contract = summary_spec.get("public_contract")
+        values = contract.get("required_values") if isinstance(contract, dict) else None
+        if isinstance(values, list):
+            for item in values:
+                if isinstance(item, dict) and text(item.get("value_ref")) in ref_to_handle:
+                    item["value_ref"] = ref_to_handle[text(item["value_ref"])]
     scoped_classes = []
     for item in inventory.get("Classes") or []:
         if use_case.id not in set(item.get("useCaseIds") or []):
@@ -300,7 +349,11 @@ def _operation_payload(
         "fixedDataTypes": scoped_types,
         "reservedOperations": scoped_reserved,
         "reservedDataTypes": [structured_data_type(item) for item in (reserved_types or [])],
-        "requiredValueSources": required_value_evidence(use_case),
+        "requiredValueSources": [
+            {**item, "valueRef": ref_to_handle[item["valueRef"]],
+             "sourceRef": f"value#{ref_to_handle[item['valueRef']]}"}
+            for item in required_value_evidence(use_case)
+        ],
         "valueSourcePolicy": {
             "requestInputs": "actor-facing Boundary parameters declared by the scenario",
             "requiredValues": "requiredValueRef cites a declaration only; actual binding must use an eligible finite actor input, prior result, server_context catalog entry, runtime, or derived value",
@@ -540,6 +593,7 @@ def normalize_operation_fragment(
         structured_data_type(item) for item in proposal_payload.get("DataTypes") or []
     ]
     candidate = OperationFragment.model_validate(proposal_payload).model_dump(by_alias=True)
+    candidate = _expand_required_value_handles(candidate, use_case)
     fixed_names = (
         {
             class_name(item)
@@ -647,6 +701,7 @@ def _propose_fragment(
     )
     # 2. 설명문이나 임의 필드를 거부하고 일시적 proposal schema만 수락한다.
     candidate = OperationFragment.model_validate(parsed).model_dump(by_alias=True)
+    candidate = _expand_required_value_handles(candidate, use_case)
     fixed_names = (
         {class_name(item) for item in inventory.get("Classes") or [] if isinstance(item, dict)}
         | {

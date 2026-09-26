@@ -71,6 +71,15 @@ a separate interaction with an external actor or system through that Boundary,
 such as an asynchronous notification, and parent it to Control. The Boundary
 class used by a root must not appear again inside that root. Entities may
 collaborate with other Entities, but do not call a Control or Boundary directly.
+For one request-response actor entry, the root Boundary must call exactly one
+direct orchestration Control operation that covers the complete actor-visible
+behavior. Return multiple response values together in a concrete DTO or
+valueObject. Do not nest sequential retrieval under a parent Control when a child
+needs a value that the parent itself returns; a call's return goes back to its
+caller and is not available to descendants. Keep Control delegation when child
+inputs are independently available from entry inputs, preconditions, or earlier
+completed calls. parentCallIndex identifies the caller only; it does not express
+a data dependency.
 The same operation may be called in several roots. Cover each actor entry's step
 range through Boundary to Control and, when needed, Entity. If actorEntries is
 empty, return no calls; its operations can be used by an including use case.
@@ -557,8 +566,10 @@ def _binding_repair_context(
 def _same_binding_event(
     first: dict[str, Any] | None,
     repeated: dict[str, Any] | None,
+    previous_candidate: dict[str, Any],
+    current_candidate: dict[str, Any],
 ) -> bool:
-    """Compare the stable structural slot of a missing source, not its wording."""
+    """Match a missing-source stall only when its complete candidate also repeats."""
 
     if not first or not repeated:
         return False
@@ -567,7 +578,10 @@ def _same_binding_event(
     if repeated.get("code") != "BINDING_SOURCE_UNAVAILABLE":
         return False
     fields = ("useCaseId", "actorEntryIndex", "callIndex", "parameterIndex")
-    return all(first.get(field) == repeated.get(field) for field in fields)
+    return (
+        all(first.get(field) == repeated.get(field) for field in fields)
+        and stable_digest(previous_candidate) == stable_digest(current_candidate)
+    )
 
 
 def _collaboration_valid(
@@ -735,7 +749,10 @@ def _build_uncached(
                         )
                     except collaboration.CombinedReplacementRequired as repeated:
                         if _same_binding_event(
-                            repair_context, repeated.repair_context,
+                            repair_context,
+                            repeated.repair_context,
+                            previous,
+                            raw,
                         ):
                             raise ClassBindingStalled(
                                 use_case.id, repeated.issue, repeated.repair_context,
@@ -871,7 +888,12 @@ def replace_use_case_unit(
         try:
             accepted = _materialize_use_case(index, skeleton, use_case, raw, budget)
         except collaboration.CombinedReplacementRequired as repeated:
-            if _same_binding_event(repair_context, repeated.repair_context):
+            if _same_binding_event(
+                repair_context,
+                repeated.repair_context,
+                previous,
+                raw,
+            ):
                 raise ClassBindingStalled(
                     use_case.id, repeated.issue, repeated.repair_context,
                 ) from repeated

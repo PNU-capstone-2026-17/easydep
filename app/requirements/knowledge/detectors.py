@@ -79,7 +79,16 @@ def extension_refs(spec: dict, _context: object | None = None) -> list[Finding]:
     for ext in spec.get("extensions", []):
         label = ext.get("label") or "?"
         branch = ext.get("branch_step")
-        if branch is not None and branch not in step_nums:
+        if branch is None:
+            found.append(
+                Finding(
+                    rule_id,
+                    "branch_step is required; global extensions must be represented "
+                    "by an anchored extension at a supported main-scenario step",
+                    label,
+                )
+            )
+        elif branch not in step_nums:
             found.append(Finding(rule_id, f"branch_step {branch} is not in the main scenario", label))
         outcome = ext.get("outcome")
         resume = ext.get("resume_at_step")

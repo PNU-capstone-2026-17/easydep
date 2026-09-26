@@ -14,6 +14,7 @@ from app.implementation.agents.canary import (
     open_endpoint_circuit,
 )
 from app.implementation.agents.evaluation import (
+    _journal_metrics,
     compare_harness_runs,
     evaluate_harness_run,
 )
@@ -1332,9 +1333,43 @@ def test_harness_evaluation_reports_quality_errors_time_and_usage(tmp_path: Path
     metrics = report["metrics"]
     assert metrics["tokens"] == 120
     assert metrics["durationMs"] == 5000
+    assert metrics["toolCalls"] == 1
     assert metrics["firstValidEditMs"] == 0
     assert metrics["errorRecoveryMs"] == 0
     assert metrics["workspaceViolations"] == 1
     assert metrics["falseSuccessStates"] == 1
     assert metrics["finalTaskSuccessRate"] == 1.0
     assert compare_harness_runs(baseline, candidate)["comparable"] is True
+
+
+def test_journal_metrics_counts_only_valid_direct_source_replacements(tmp_path: Path) -> None:
+    journal = tmp_path / "direct-editor.events.jsonl"
+    records = [
+        {"timestamp": 10.0, "type": "MessageEvent", "event": {}},
+        {
+            "timestamp": 12.5,
+            "type": "DirectEditorAction",
+            "event": {
+                "path": "application/App.java",
+                "sourceSha256": "a" * 64,
+            },
+        },
+        {
+            "timestamp": 14.0,
+            "type": "DirectEditorAction",
+            "event": {"path": "application/Bad.java", "sourceSha256": "not-a-hash"},
+        },
+        {
+            "timestamp": 15.0,
+            "type": "CustomAction",
+            "event": {"path": "application/Other.java", "sourceSha256": "b" * 64},
+        },
+    ]
+    journal.write_text(
+        "".join(json.dumps(record) + "\n" for record in records), encoding="utf-8"
+    )
+
+    metrics = _journal_metrics(journal)
+
+    assert metrics["toolCalls"] == 1
+    assert metrics["firstValidEditMs"] == 2500

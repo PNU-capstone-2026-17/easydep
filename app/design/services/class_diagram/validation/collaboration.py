@@ -15,7 +15,7 @@ from app.design.services.class_diagram.trusted_context import (
     required_value_catalog,
 )
 from app.design.services.class_diagram.type_system import (
-    projected_field_type,
+    required_value_type_compatible,
     structured_field_types,
     types_compatible,
 )
@@ -386,7 +386,9 @@ def _collaboration_bindings(
                 valid = bool(
                     source_ref in eligible
                     and source_ref in {item["sourceRef"] for item in directly_available_sources(context.use_case)}
-                    and types_compatible(required_value["designType"], expected)
+                    and required_value_type_compatible(
+                        required_value, expected, context.model.get("DataTypes") or [],
+                    )
                 )
             elif source_ref == runtime_value_source(expected):
                 valid = source_ref in eligible
@@ -413,9 +415,57 @@ def _collaboration_bindings(
     return findings
 
 
+def _collaboration_ancestor_result_bindings(
+    collaboration: dict[str, Any], context: CollaborationContext,
+) -> list[Finding]:
+    """Reject a child argument sourced from a parent call's not-yet-produced result."""
+
+    calls = [item for item in collaboration.get("calls") or [] if isinstance(item, dict)]
+    calls_by_id = {text(call.get("callId")): call for call in calls if text(call.get("callId"))}
+    stable_id_counts: dict[str, int] = {}
+    for call in calls:
+        stable_id = text(call.get("stableId"))
+        if stable_id:
+            stable_id_counts[stable_id] = stable_id_counts.get(stable_id, 0) + 1
+    findings: list[Finding] = []
+    for call in calls:
+        ancestor_ids: set[str] = set()
+        parent_id = text(call.get("parentCallId"))
+        while parent_id and parent_id not in ancestor_ids:
+            ancestor_ids.add(parent_id)
+            parent = calls_by_id.get(parent_id)
+            parent_id = text(parent.get("parentCallId")) if parent else ""
+        if not ancestor_ids:
+            continue
+        for binding in call.get("argumentBindings") or []:
+            if not isinstance(binding, dict):
+                continue
+            source_id, separator, path = text(binding.get("sourceRef")).partition("#")
+            if not separator or not (path == "result" or path.startswith("result.")):
+                continue
+            if stable_id_counts.get(source_id) != 1:
+                continue
+            source = next(call for call in calls if text(call.get("stableId")) == source_id)
+            if text(source.get("callId")) not in ancestor_ids:
+                continue
+            findings.append(Finding(
+                "class.collaboration.ancestor-result-binding",
+                f"Nested call {text(call.get('callId'))} parameter {text(binding.get('parameter'))} "
+                "uses an ancestor call result. The ancestor receives that result only after the "
+                "nested call returns; bind a value available before the call or from an earlier "
+                "completed call.",
+                context.use_case.id,
+            ))
+    return findings
+
+
 COLLABORATION_CHECKS = (
     CheckSpec("class.collaboration.contract", _collaboration_contract),
     CheckSpec("class.collaboration.bindings", _collaboration_bindings),
+    CheckSpec(
+        "class.collaboration.ancestor-result-binding",
+        _collaboration_ancestor_result_bindings,
+    ),
 )
 
 

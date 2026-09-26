@@ -232,7 +232,7 @@ def test_backend_plan_persists_one_cohesive_owner_without_focused_test_contract(
     assert "report_upstream_gap` with one supplied source reference" in prompt
     assert "first legal `file_editor` edit" in prompt
     assert "replace_source" not in prompt
-    assert task.owner_tool_mode == "restricted"
+    assert task.owner_tool_mode == "editor"
     assert context["requiredOutputPaths"] == task.required_output_paths
     assert context["verification"] == {
         "tool": "run_task_check",
@@ -381,6 +381,61 @@ def test_backend_owner_includes_only_imported_frozen_java_dependencies(
         "application/src/main/java/com/example/orders/api/UnrelatedApi.java",
         "application/src/main/java/com/example/orders/api/model/UnrelatedModel.java",
     }.isdisjoint(readable)
+
+
+def test_backend_owner_expands_immutable_local_wildcard_packages_with_same_named_types(
+    tmp_path: Path,
+) -> None:
+    target_source = """\
+package com.example.orders.application.impl;
+import com.example.orders.api.model.Course;
+import com.example.orders.bce.*;
+final class OrderControlService {
+  private Course apiCourse;
+  // EASYDEP-IMPLEMENT: complete place-order
+}
+"""
+    spec, run = _spec_and_run(tmp_path)
+    java_root = run / "application/src/main/java/com/example/orders"
+    target = java_root / "application/impl/OrderControlService.java"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(target_source, encoding="utf-8")
+    api_course = java_root / "api/model/Course.java"
+    api_course.parent.mkdir(parents=True, exist_ok=True)
+    api_course.write_text(
+        "package com.example.orders.api.model;\npublic record Course(String id) {}\n",
+        encoding="utf-8",
+    )
+    bce_course = java_root / "bce/Course.java"
+    bce_course.write_text(
+        "package com.example.orders.bce;\npublic record Course(String title) {}\n",
+        encoding="utf-8",
+    )
+    bce_term = java_root / "bce/Term.java"
+    bce_term.write_text(
+        "package com.example.orders.bce;\npublic record Term(String name) {}\n",
+        encoding="utf-8",
+    )
+    bce_order = java_root / "bce/Order.java"
+    bce_order.write_text(
+        "package com.example.orders.bce;\npublic class Order {}\n",
+        encoding="utf-8",
+    )
+
+    with patch(
+        "app.implementation.planning.design_context.llm_config",
+        return_value={"model": "test-model"},
+    ):
+        tasks = generate_backend_owner_tasks(spec, run)
+    task = tasks[0]
+    context = json.loads((run / task.context_file).read_text(encoding="utf-8"))
+    readable = set(context["readSourcePaths"])
+    assert {
+        "application/src/main/java/com/example/orders/api/model/Course.java",
+        "application/src/main/java/com/example/orders/bce/Course.java",
+        "application/src/main/java/com/example/orders/bce/Term.java",
+        "application/src/main/java/com/example/orders/bce/Order.java",
+    } <= readable
 
 
 def test_backend_owner_omits_marker_free_controller_without_empty_task(
@@ -711,7 +766,7 @@ def test_backend_owner_splits_non_controller_sources_into_single_source_tasks(
     ]
 
 
-def test_backend_owner_splits_one_source_by_marked_operation_contract(
+def test_backend_owner_groups_all_markers_for_one_source(
     tmp_path: Path,
 ) -> None:
     spec, run = _spec_and_run(tmp_path)
@@ -769,12 +824,13 @@ def test_backend_owner_splits_one_source_by_marked_operation_contract(
                     "use_case_id": "UC1",
                     "use_case_name": "Place order",
                     "Participants": [
-                        {"name": "Actor", "alias": "Actor", "kind": "actor"},
+                            {"name": "Actor", "alias": "Actor", "kind": "actor", "participant_ref": "actor_uc1"},
                         {
                             "name": "OrderControl",
                             "alias": "OrderControl",
                             "kind": "control",
                             "source_class": "OrderControl",
+                            "participant_ref": "class_order_control",
                         },
                     ],
                     "Messages": [
@@ -785,7 +841,9 @@ def test_backend_owner_splits_one_source_by_marked_operation_contract(
                             "type": "sync",
                             "use_case_ids": ["UC1"],
                             "step_ids": ["UC1:main:1"],
-                            "call_id": "place::call:1",
+                                "call_id": "place::call:1",
+                                "call_ref": "call_place",
+                                "operation_ref": "op_place",
                             "arguments": [
                                 {
                                     "parameter": "id",
@@ -802,7 +860,9 @@ def test_backend_owner_splits_one_source_by_marked_operation_contract(
                             "type": "return",
                             "use_case_ids": ["UC1"],
                             "step_ids": ["UC1:main:1"],
-                            "reply_to": "place::call:1",
+                                "reply_to": "place::call:1",
+                                "call_ref": "call_place",
+                                "operation_ref": "op_place",
                         },
                     ],
                 },
@@ -810,12 +870,13 @@ def test_backend_owner_splits_one_source_by_marked_operation_contract(
                     "use_case_id": "UC2",
                     "use_case_name": "Create order",
                     "Participants": [
-                        {"name": "Actor", "alias": "Actor", "kind": "actor"},
+                            {"name": "Actor", "alias": "Actor", "kind": "actor", "participant_ref": "actor_uc2"},
                         {
                             "name": "OrderControl",
                             "alias": "OrderControl",
                             "kind": "control",
                             "source_class": "OrderControl",
+                            "participant_ref": "class_order_control",
                         },
                     ],
                     "Messages": [
@@ -826,7 +887,9 @@ def test_backend_owner_splits_one_source_by_marked_operation_contract(
                             "type": "sync",
                             "use_case_ids": ["UC2"],
                             "step_ids": ["UC2:main:1"],
-                            "call_id": "create::call:1",
+                                "call_id": "create::call:1",
+                                "call_ref": "call_create",
+                                "operation_ref": "op_create",
                             "arguments": [],
                         },
                         {
@@ -836,7 +899,9 @@ def test_backend_owner_splits_one_source_by_marked_operation_contract(
                             "type": "return",
                             "use_case_ids": ["UC2"],
                             "step_ids": ["UC2:main:1"],
-                            "reply_to": "create::call:1",
+                                "reply_to": "create::call:1",
+                                "call_ref": "call_create",
+                                "operation_ref": "op_create",
                         },
                     ],
                 },
@@ -884,61 +949,194 @@ def test_backend_owner_splits_one_source_by_marked_operation_contract(
     ):
         tasks = generate_backend_owner_tasks(spec, run)
 
-    assert [task.task_id for task in tasks] == [
-        "implement-backend-com-example-orders-application-impl-ordercontrolservice-"
-        "operation-op-create",
-        "implement-backend-com-example-orders-application-impl-ordercontrolservice-"
-        "operation-op-place",
+    assert len(tasks) == 1
+    task = tasks[0]
+    assert task.task_id == (
+        "implement-backend-com-example-orders-application-impl-ordercontrolservice"
+    )
+    assert task.required_output_paths == [source]
+    assert task.depends_on == []
+    assert task.owner_tool_mode == "editor"
+    expected_markers = [
+        "EASYDEP-IMPLEMENT: complete op_create",
+        "EASYDEP-IMPLEMENT: complete op_place",
     ]
-    assert [task.required_output_paths for task in tasks] == [[source], [source]]
-    assert [task.depends_on for task in tasks] == [[], [tasks[0].task_id]]
+    assert task.verification_profile["requiredAbsentMarkers"] == [
+        {"path": source, "markers": expected_markers}
+    ]
+    sidecar = json.loads(
+        (run / f"reports/implementation-tasks/{task.task_id}.operation-contracts.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert [contract["operationId"] for contract in sidecar["contracts"]] == [
+        "place-order",
+        "create-order",
+    ]
+    context = json.loads((run / task.context_file).read_text(encoding="utf-8"))
+    assert context["dependsOn"] == []
+    assert context["useCaseIds"] == ["UC1", "UC2"]
+    assert context["requirementIds"] == ["REQ1", "REQ2"]
+    assert {"requirement:REQ1", "requirement:REQ2"}.issubset(task.source_refs)
+    source_index = json.loads(
+        (run / context["sourceIndexPath"]).read_text(encoding="utf-8")
+    )
+    assert {item["stableId"] for item in source_index["methodContexts"]} == {
+        "op_create",
+        "op_place",
+    }
+    prompt = (run / task.prompt_file).read_text(encoding="utf-8")
+    assert "Resolve every `EASYDEP-IMPLEMENT`" in prompt
+    assert "Assigned operation behavior" not in prompt
+    assert "### Owned operation behavior" in prompt
+    assert "place-order" in prompt and "create-order" in prompt
+    assert "UC1" in prompt and "UC2" in prompt
+    assert "REQ1" in prompt and "REQ2" in prompt
+    assert "Place scenario only" in prompt
+    assert "Create scenario only" in prompt
+    assert "designInputs" not in prompt
+    assert "sourcePaths" not in prompt
 
-    for task, operation_id, stable_id, use_case_id, requirement_id, own_scenario, sibling_scenario, marker in zip(
-        tasks,
-        ["create-order", "place-order"],
-        ["op_create", "op_place"],
-        ["UC2", "UC1"],
-        ["REQ2", "REQ1"],
-        ["Create scenario only", "Place scenario only"],
-        ["Place scenario only", "Create scenario only"],
+
+def test_backend_owner_file_task_includes_only_its_method_behavior_capsule(
+    tmp_path: Path,
+) -> None:
+    spec, run = _spec_and_run(tmp_path, extra_control=True)
+    bce_model = json.loads(spec.inputs["bceModel"].read_text(encoding="utf-8"))
+    bce_model["Classes"][0]["operations"][0]["stepRefs"] = [
+        "UC1:main:1",
+        "UC1:extension:1:1:1",
+    ]
+    bce_model["Classes"][0]["operations"][0]["stableId"] = "op_place"
+    bce_model["Classes"][1]["operations"] = [
+        {
+            "operationId": "audit-order",
+            "stableId": "op_audit",
+            "name": "audit",
+            "parameters": [],
+            "returnType": "void",
+            "stepRefs": ["UC2:main:1"],
+        }
+    ]
+    bce_model["Classes"][1]["use_case_ids"] = ["UC2"]
+    _write_json(spec.inputs["bceModel"], bce_model)
+    _write_json(
+        spec.inputs["requirements"],
         [
-            "EASYDEP-IMPLEMENT: complete create-order",
-            "EASYDEP-IMPLEMENT: complete place-order",
+            {"id": "REQ1", "text": "Place an order"},
+            {"id": "REQ2", "text": "Audit an order"},
         ],
-        strict=True,
+    )
+    _write_json(
+        spec.inputs["useCaseSpec"],
+        {
+            "useCaseSpecs": [
+                {
+                    "use_case_id": "UC1",
+                    "requirement_ids": ["REQ1"],
+                    "main_scenario": [
+                        {"step_number": 1, "sentence": "Create the order"}
+                    ],
+                    "extensions": [
+                        {
+                            "branch_step": 1,
+                            "condition": "Inventory is unavailable",
+                            "outcome": "Reject the order",
+                            "handling_steps": [
+                                {"sub_step": 1, "sentence": "Report the shortage"}
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "use_case_id": "UC2",
+                    "requirement_ids": ["REQ2"],
+                    "main_scenario": [
+                        {"step_number": 1, "sentence": "Record the audit"}
+                    ],
+                },
+            ]
+        },
+    )
+    _write_json(
+        spec.inputs["sequenceModel"],
+        {
+            "Diagrams": [
+                {
+                    "use_case_id": "UC1",
+                    "Participants": [
+                        {"name": "Actor", "alias": "Actor", "kind": "actor", "participant_ref": "actor_uc1"},
+                        {"name": "OrderControl", "alias": "OrderControl", "kind": "control", "source_class": "OrderControl", "participant_ref": "class_order_control"},
+                    ],
+                    "Messages": [
+                        {"source": "Actor", "target": "OrderControl", "label": "place(id:String)", "type": "sync", "use_case_ids": ["UC1"], "step_ids": ["UC1:main:1", "UC1:extension:1:1:1"], "call_id": "place::call:1", "call_ref": "call_place", "operation_ref": "op_place", "arguments": [{"parameter": "id", "type": "String", "source_kind": "input", "source_ref": "UC1:main:1#id"}]},
+                        {"source": "OrderControl", "target": "Actor", "label": "void", "type": "return", "use_case_ids": ["UC1"], "step_ids": ["UC1:main:1", "UC1:extension:1:1:1"], "reply_to": "place::call:1", "call_ref": "call_place", "operation_ref": "op_place"},
+                    ],
+                },
+                {
+                    "use_case_id": "UC2",
+                    "Participants": [
+                        {"name": "Actor", "alias": "Actor", "kind": "actor", "participant_ref": "actor_uc2"},
+                        {"name": "AuditControl", "alias": "AuditControl", "kind": "control", "source_class": "AuditControl", "participant_ref": "class_audit_control"},
+                    ],
+                    "Messages": [
+                        {"source": "Actor", "target": "AuditControl", "label": "audit()", "type": "sync", "use_case_ids": ["UC2"], "step_ids": ["UC2:main:1"], "call_id": "audit::call:1", "call_ref": "call_audit", "operation_ref": "op_audit", "arguments": []},
+                        {"source": "AuditControl", "target": "Actor", "label": "void", "type": "return", "use_case_ids": ["UC2"], "step_ids": ["UC2:main:1"], "reply_to": "audit::call:1", "call_ref": "call_audit", "operation_ref": "op_audit"},
+                    ],
+                },
+            ],
+            "MethodProposals": [],
+        },
+    )
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    _write_json(
+        reports / "generated-operation-contracts.json",
+        {
+            "schemaVersion": "generated-operation-contracts/v1",
+            "contracts": [
+                {
+                    "operationId": "place-order",
+                    "stableId": "op_place",
+                    "writableSource": (
+                        "application/src/main/java/com/example/orders/application/impl/"
+                        "OrderControlService.java"
+                    ),
+                    "completionMarker": "EASYDEP-IMPLEMENT: complete op_place",
+                }
+            ],
+        },
+    )
+
+    with patch(
+        "app.implementation.planning.design_context.llm_config",
+        return_value={"model": "test-model"},
     ):
-        sidecar = json.loads(
-            (run / f"reports/implementation-tasks/{task.task_id}.operation-contracts.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        assert [contract["operationId"] for contract in sidecar["contracts"]] == [operation_id]
-        assert task.verification_profile["requiredAbsentMarkers"] == [
-            {"path": source, "markers": [marker]}
+        tasks = generate_backend_owner_tasks(spec, run)
+
+    task = next(
+        item
+        for item in tasks
+        if item.required_output_paths
+        == [
+            "application/src/main/java/com/example/orders/application/impl/"
+            "OrderControlService.java"
         ]
-        context = json.loads((run / task.context_file).read_text(encoding="utf-8"))
-        assert context["dependsOn"] == task.depends_on
-        assert context["useCaseIds"] == [use_case_id]
-        assert context["requirementIds"] == [requirement_id]
-        assert all(
-            use_case_id in ref or "UC" not in ref
-            for ref in task.source_refs
-        )
-        source_index = json.loads(
-            (run / context["sourceIndexPath"]).read_text(encoding="utf-8")
-        )
-        assert [item["stableId"] for item in source_index["methodContexts"]] == [stable_id]
-        prompt = (run / task.prompt_file).read_text(encoding="utf-8")
-        assert "Resolve only the assigned completion marker" in prompt
-        assert "stale snapshot" in prompt
-        assert operation_id in prompt
-        assert "### Assigned operation behavior" in prompt
-        assert use_case_id in prompt
-        assert requirement_id in prompt
-        assert own_scenario in prompt
-        assert sibling_scenario not in prompt
-        assert "designInputs" not in prompt
-        assert "sourcePaths" not in prompt
+    )
+    context = json.loads((run / task.context_file).read_text(encoding="utf-8"))
+    source_index = json.loads(
+        (run / context["sourceIndexPath"]).read_text(encoding="utf-8")
+    )
+    assert len(source_index["methodContexts"]) == 1
+    prompt = (run / task.prompt_file).read_text(encoding="utf-8")
+    assert "### Owned operation behavior" in prompt
+    assert "Create the order" in prompt
+    assert "Inventory is unavailable" in prompt
+    assert "Reject the order" in prompt
+    assert "Report the shortage" in prompt
+    assert "Record the audit" not in prompt
+    assert "REQ2" not in prompt
+    assert len(prompt) < 12_000
 
 
 def test_backend_owner_keeps_controller_only_marker_without_operation_contract(
@@ -978,4 +1176,127 @@ def test_backend_owner_keeps_controller_only_marker_without_operation_contract(
             "OrderApiController.java",
             "markers": [marker],
         }
+    ]
+
+
+def test_controller_task_scope_comes_from_its_owned_endpoint_contracts(tmp_path: Path) -> None:
+    spec, run = _spec_and_run(tmp_path)
+    spec.inputs["apiModel"].write_text(
+        json.dumps(
+            {
+                "Endpoints": [
+                    {
+                        "operation_id": "admin-list",
+                        "method": "get",
+                        "path": "/admin/items",
+                        "source_classes": ["OrderControl"],
+                        "use_case_ids": ["UC2"],
+                        "control_binding": {
+                            "control": "OrderControl",
+                            "method": "list",
+                            "arguments": [],
+                            "outcomes": [{"status": 200, "outcome": "listed"}],
+                        },
+                    },
+                    {
+                        "operation_id": "admin-create",
+                        "method": "post",
+                        "path": "/admin/items",
+                        "source_classes": ["OrderControl"],
+                        "use_case_ids": ["UC3"],
+                        "control_binding": {
+                            "control": "OrderControl",
+                            "method": "create",
+                            "arguments": [],
+                            "outcomes": [{"status": 201, "outcome": "created"}],
+                        },
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    spec.inputs["requirements"].write_text(
+        json.dumps([{"id": f"RR{index}"} for index in range(1, 17)]),
+        encoding="utf-8",
+    )
+    spec.inputs["useCaseSpec"].write_text(
+        json.dumps(
+            {
+                "useCaseSpecs": [
+                    {
+                        "use_case_id": f"UC{index}",
+                        "requirement_ids": [f"RR{index}"],
+                    }
+                    for index in range(1, 12)
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    api_path = run / "application/src/main/java/com/example/orders/api/OrderApi.java"
+    api_path.parent.mkdir(parents=True, exist_ok=True)
+    api_path.write_text(
+        "interface OrderApi {\n"
+        "  // GET /admin/items\n"
+        "  // POST /admin/items\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    controller = (
+        run
+        / "application/src/main/java/com/example/orders/adapter/in/web/OrderApiController.java"
+    )
+    controller.parent.mkdir(parents=True, exist_ok=True)
+    controller.write_text(
+        "// EASYDEP_CONTROLLER_BODY_REQUIRED:GET:/admin/items\n"
+        "// EASYDEP_CONTROLLER_BODY_REQUIRED:POST:/admin/items\n",
+        encoding="utf-8",
+    )
+    contracts_path = run / "reports/generated-operation-contracts.json"
+    contracts_path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(
+        contracts_path,
+        {
+            "schemaVersion": "generated-operation-contracts/v1",
+            "contracts": [
+                {
+                    "operationId": operation_id,
+                    "writableSource": "application/src/main/java/com/example/orders/"
+                    "application/impl/OrderControlService.java",
+                    "endpoints": [{"method": method, "path": "/admin/items"}],
+                    "completionMarker": f"EASYDEP-IMPLEMENT: complete {operation_id}",
+                }
+                for operation_id, method in (
+                    ("admin-list", "GET"),
+                    ("admin-create", "POST"),
+                )
+            ],
+        },
+    )
+
+    with patch(
+        "app.implementation.planning.design_context.llm_config",
+        return_value={"model": "test-model"},
+    ):
+        task = next(
+            item
+            for item in generate_backend_owner_tasks(spec, run)
+            if item.required_output_paths
+            == [
+                "application/src/main/java/com/example/orders/adapter/in/web/"
+                "OrderApiController.java"
+            ]
+        )
+
+    assert task.use_case_ids == ["UC2", "UC3"]
+    assert task.owner_tool_mode == "restricted"
+    assert task.requirement_ids == ["RR2", "RR3"]
+    assert task.source_refs == [
+        "api:admin-create",
+        "api:admin-list",
+        "use_case:UC2",
+        "use_case:UC3",
+        "use_case_spec:UC2",
+        "use_case_spec:UC3",
     ]

@@ -113,6 +113,57 @@ def test_operation_payload_exposes_structured_data_type_fields_to_llm():
     ]
 
 
+def _catalog_index():
+    value = single_use_case()
+    value["use_case_specs"][0]["public_contract"] = {
+        "required_values": [{
+            "value_ref": "val-long-opaque-identifier-001",
+            "name": "member id", "source": "caller_input",
+            "value_type": "identifier", "usage": "control",
+        }],
+    }
+    return build_scenario_index(value)
+
+
+def test_operation_payload_uses_short_required_value_handles():
+    index = _catalog_index()
+    payload = operations._operation_payload(
+        index, {"Classes": [], "DataTypes": []}, index.use_case("UC1"),
+    )
+
+    assert payload["requiredValueSources"][0]["valueRef"] == "RV1"
+    assert payload["requiredValueSources"][0]["sourceRef"] == "value#RV1"
+    assert "val-long-opaque-identifier-001" not in str(payload)
+
+
+def test_operation_normalization_expands_only_exact_short_handle():
+    index = _catalog_index()
+    proposal = operation_fragment()
+    proposal["Classes"][1]["operations"][0]["parameters"][0]["requiredValueRef"] = "RV1"
+    proposal["Classes"][0]["operations"][0]["parameters"][0]["requiredValueRef"] = "RV99"
+    accepted = operations.normalize_operation_fragment(
+        proposal, index, _normalization_inventory(), index.use_case("UC1"),
+        reserved=[{
+            "className": "RequestControl",
+            "operations": [{
+                "name": "process",
+                "parameters": [{"name": "request", "type": "RequestData",
+                                "requiredValueRef": "reserved-canonical-ref"}],
+                "returnType": "RequestResult",
+            }],
+        }],
+    ).as_payload()
+    operations_by_class = {item["className"]: item["operations"] for item in accepted["Classes"]}
+
+    assert operations_by_class["RequestControl"][0]["parameters"][0]["requiredValueRef"] == "reserved-canonical-ref"
+    assert operations_by_class["RequestBoundary"][0]["parameters"][0]["requiredValueRef"] == "RV99"
+    report = validate_operations(
+        accepted,
+        OperationContext(index, _normalization_inventory().as_payload(), index.use_case("UC1")),
+    )
+    assert report.findings
+
+
 def test_legacy_data_type_is_adapted_at_validation_but_returned_structured():
     index = build_scenario_index(single_use_case())
     inventory = _normalization_inventory()

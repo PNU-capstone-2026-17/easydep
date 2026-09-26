@@ -14,7 +14,12 @@ from app.design.services.class_diagram.identity import materialize_pre_collabora
 from app.design.services.class_diagram.proposals import OperationFragment
 from app.design.services.class_diagram.scenario import build_scenario_index
 from app.design.services.class_diagram.trusted_context import required_value_catalog
+from app.design.services.class_diagram.type_system import required_value_type_compatible
 from app.design.services.class_diagram.validation import validate_class_model
+from app.design.services.class_diagram.validation.collaboration import (
+    CollaborationContext,
+    _collaboration_bindings,
+)
 from app.design.services.class_diagram.validation.operations import (
     OperationContext,
     validate_operations,
@@ -162,7 +167,6 @@ def _select_offered_finite_source(_use_case, ambiguous, _parameter_types, **_kwa
     """Choose the direct matching formal, or the sole evidenced context value."""
     selected = {}
     for location, candidates in ambiguous.items():
-        parameter = location.partition("#")[2]
         direct = next(
             (source for source in candidates if source.startswith("call_") and "#param_" in source),
             None,
@@ -267,6 +271,213 @@ def test_operation_validator_checks_exact_required_value_ref_and_type():
     }]}]}
     report = validate_operations(fragment, OperationContext(index, inventory, index.use_case("UC87")))
     assert len([f for f in report.findings if f.rule_id == "class.operation.required-value"]) == 1
+
+
+def test_object_required_value_accepts_a_locally_declared_structured_refinement():
+    index = build_scenario_index(_scenario("UC88", "Reviewer", [], required_values=[{
+        "value_ref": "val-details", "name": "term details", "source": "caller_input",
+        "value_type": "object", "usage": "control", "requirement_ids": ["REQ-88"],
+    }]))
+    inventory = {"Classes": [{"className": "ReviewControl", "stereotype": "Control"}], "DataTypes": []}
+    fragment = {
+        "DataTypes": [{"name": "TermDetailsDto", "kind": "valueObject", "fields": [
+            "termId : UUID", "title : String",
+        ]}],
+        "Classes": [{"className": "ReviewControl", "operations": [{
+            "name": "process", "parameters": [{
+                "name": "details", "type": "TermDetailsDto", "requiredValueRef": "val-details",
+            }], "returnType": "void", "stepRefs": ["UC88:main:2"],
+        }]}],
+    }
+
+    report = validate_operations(fragment, OperationContext(index, inventory, index.use_case("UC88")))
+    assert not [f for f in report.findings if f.rule_id == "class.operation.required-value"]
+
+
+def test_unknown_required_value_refines_only_to_a_nonempty_local_dto():
+    required_value = {"designType": "unknown", "valueRef": "val-search"}
+    structured_dto = {
+        "name": "SearchCriteria", "kind": "valueObject", "fields": ["query : String"],
+    }
+
+    assert required_value_type_compatible(
+        required_value, "SearchCriteria", [structured_dto],
+    )
+    assert required_value_type_compatible(
+        {**required_value, "designType": "Object"}, "SearchCriteria", [structured_dto],
+    )
+    assert not required_value_type_compatible(required_value, "String", [structured_dto])
+    assert not required_value_type_compatible(required_value, "Object", [structured_dto])
+    assert not required_value_type_compatible(required_value, "UndeclaredDto", [structured_dto])
+    assert not required_value_type_compatible(
+        required_value, "EmptyDto", [{"name": "EmptyDto", "kind": "dataType", "fields": []}],
+    )
+    assert not required_value_type_compatible(
+        {"designType": "unknown"}, "SearchCriteria", [structured_dto],
+    )
+
+
+@pytest.mark.parametrize(
+    ("parameter_type", "inventory_data_types", "expected_findings"),
+    [
+        (
+            "SearchCriteria",
+            [{"name": "SearchCriteria", "kind": "valueObject", "fields": ["query : String"]}],
+            0,
+        ),
+        (
+            "EmptyCriteria",
+            [{"name": "EmptyCriteria", "kind": "valueObject", "fields": []}],
+            1,
+        ),
+        ("UndeclaredCriteria", [], 1),
+    ],
+)
+def test_unknown_required_value_refinement_uses_effective_inventory_dtos(
+    parameter_type: str, inventory_data_types: list[dict], expected_findings: int,
+):
+    index = build_scenario_index(_scenario("UC89", "Searcher", [], required_values=[{
+        "value_ref": "val-search", "name": "search criteria", "source": "caller_input",
+        "value_type": "unknown", "usage": "control", "requirement_ids": ["REQ-89"],
+    }]))
+    inventory = {
+        "Classes": [{"className": "SearchControl", "stereotype": "Control"}],
+        "DataTypes": inventory_data_types,
+    }
+    fragment = {
+        # Workspace repair omits fixed DataTypes from a replacement fragment.
+        "DataTypes": [],
+        "Classes": [{"className": "SearchControl", "operations": [{
+            "name": "search", "parameters": [{
+                "name": "criteria", "type": parameter_type, "requiredValueRef": "val-search",
+            }], "returnType": "void", "stepRefs": ["UC89:main:2"],
+        }]}],
+    }
+
+    report = validate_operations(fragment, OperationContext(index, inventory, index.use_case("UC89")))
+    assert len([f for f in report.findings if f.rule_id == "class.operation.required-value"]) == expected_findings
+
+
+@pytest.mark.parametrize(
+    ("parameter_type", "declared_types"),
+    [
+        ("UUID", []),
+        ("UndeclaredDto", []),
+        ("EmptyDto", [{"name": "EmptyDto", "kind": "valueObject", "fields": []}]),
+        ("EnumDto", [{"name": "EnumDto", "kind": "enumeration", "fields": ["x : String"]}]),
+    ],
+)
+def test_object_required_value_rejects_non_structured_or_undeclared_refinements(
+    parameter_type: str, declared_types: list[dict],
+):
+    index = build_scenario_index(_scenario("UC88", "Reviewer", [], required_values=[{
+        "value_ref": "val-details", "name": "term details", "source": "caller_input",
+        "value_type": "object", "usage": "control", "requirement_ids": ["REQ-88"],
+    }]))
+    inventory = {"Classes": [{"className": "ReviewControl", "stereotype": "Control"}], "DataTypes": []}
+    fragment = {
+        "DataTypes": declared_types,
+        "Classes": [{"className": "ReviewControl", "operations": [{
+            "name": "process", "parameters": [{
+                "name": "details", "type": parameter_type, "requiredValueRef": "val-details",
+            }], "returnType": "void", "stepRefs": ["UC88:main:2"],
+        }]}],
+    }
+
+    report = validate_operations(fragment, OperationContext(index, inventory, index.use_case("UC88")))
+    assert len([f for f in report.findings if f.rule_id == "class.operation.required-value"]) == 1
+
+
+def _object_refinement_collaboration(declared_types: list[dict]) -> tuple[dict, object, dict]:
+    index = build_scenario_index(_scenario("UC90", "Reviewer", [
+        "Authenticated review details are available in trusted request context.",
+    ], required_values=[{
+        "value_ref": "val-details", "name": "review details",
+        "source": "authenticated_actor_context", "value_type": "object",
+        "usage": "control", "requirement_ids": ["REQ-90"],
+    }]))
+    use_case = index.use_case("UC90")
+    model = {
+        "Classes": [
+            {"className": "ReviewBoundary", "stereotype": "Boundary", "operations": [{
+                "operationId": "ReviewBoundary::submit()", "name": "submit",
+                "parameters": [], "returnType": "void", "stepRefs": ["UC90:main:1"],
+            }]},
+            {"className": "ReviewControl", "stereotype": "Control", "operations": [{
+                "operationId": "ReviewControl::process(details:ReviewDetailsDto)",
+                "name": "process", "parameters": [{
+                    "name": "details", "type": "ReviewDetailsDto",
+                    "stableRef": "param-details", "requiredValueRef": "val-details",
+                }], "returnType": "void", "stepRefs": ["UC90:main:2"],
+            }]},
+        ],
+        "DataTypes": declared_types,
+    }
+    calls = [
+        {"callId": "UC90::call:1", "stableId": "call-entry", "parentCallId": None,
+         "receiverOperationId": "ReviewBoundary::submit()", "argumentBindings": []},
+        {"callId": "UC90::call:2", "stableId": "call-process", "parentCallId": "UC90::call:1",
+         "receiverOperationId": "ReviewControl::process(details:ReviewDetailsDto)",
+         "argumentBindings": [{"parameter": "details", "sourceRef": "value#val-details"}]},
+    ]
+    return index, use_case, {"model": model, "calls": calls}
+
+
+def test_object_required_value_refinement_is_eligible_and_validated_in_collaboration():
+    data_type = {"name": "ReviewDetailsDto", "kind": "valueObject", "fields": [
+        "reviewId : UUID", "decision : String",
+    ]}
+    index, use_case, fixture = _object_refinement_collaboration([data_type])
+    model, calls = fixture["model"], fixture["calls"]
+    operations = {
+        "ReviewBoundary::submit()": {"stereotype": "boundary", "parameters": []},
+        "ReviewControl::process(details:ReviewDetailsDto)": {
+            "stereotype": "control", "parameters": model["Classes"][1]["operations"][0]["parameters"],
+        },
+    }
+
+    candidates = collaboration._binding_candidates(
+        model, use_case, None, False, calls, 1,
+        model["Classes"][1]["operations"][0]["parameters"][0], operations,
+    )
+    findings = _collaboration_bindings(
+        {"collaborationId": "UC90", "calls": calls},
+        CollaborationContext(index, model, use_case),
+    )
+    assert "value#val-details" in candidates
+    assert not [item for item in findings if item.rule_id == "class.collaboration.bindings"]
+
+
+@pytest.mark.parametrize(
+    "declared_types",
+    [
+        [],
+        [{"name": "ReviewDetailsDto", "kind": "valueObject", "fields": []}],
+        [{"name": "ReviewDetailsDto", "kind": "enumeration", "fields": ["x : String"]}],
+    ],
+)
+def test_object_required_value_refinement_is_rejected_for_undeclared_empty_or_non_value_objects(
+    declared_types: list[dict],
+):
+    index, use_case, fixture = _object_refinement_collaboration(declared_types)
+    model, calls = fixture["model"], fixture["calls"]
+    operations = {
+        "ReviewBoundary::submit()": {"stereotype": "boundary", "parameters": []},
+        "ReviewControl::process(details:ReviewDetailsDto)": {
+            "stereotype": "control", "parameters": model["Classes"][1]["operations"][0]["parameters"],
+        },
+    }
+
+    candidates = collaboration._binding_candidates(
+        model, use_case, None, False, calls, 1,
+        model["Classes"][1]["operations"][0]["parameters"][0], operations,
+    )
+    findings = _collaboration_bindings(
+        {"collaborationId": "UC90", "calls": calls},
+        CollaborationContext(index, model, use_case),
+    )
+    assert "value#val-details" not in candidates
+    assert any(item.rule_id == "class.collaboration.bindings" for item in findings)
 
 
 def test_result_only_required_value_mismatch_gives_directional_repair_context():
@@ -619,7 +830,9 @@ def test_operation_payload_exposes_exact_required_value_catalog():
         trusted, {"Classes": [], "DataTypes": []}, trusted.use_case("UC71"),
     )
 
-    assert payload["requiredValueSources"][0]["sourceRef"] == "value#val-student-71"
+    assert payload["requiredValueSources"][0]["sourceRef"] == "value#RV1"
+    assert payload["requiredValueSources"][0]["valueRef"] == "RV1"
+    assert "val-student-71" not in str(payload)
     assert payload["requiredValueSources"][0]["identityObligationRef"] == "identify-buyer"
     assert payload["requiredValueSources"][0]["availability"] == "server_context"
     assert set(payload["valueSourcePolicy"]) == {
@@ -644,6 +857,22 @@ def test_operation_prompt_distinguishes_public_contract_value_origins():
     assert "Never change a parameter type merely to make a ref compatible" in prompt
     assert "server_context values as actor-facing Boundary inputs" in prompt
     assert "requiredValueRef" in prompt
+
+
+def test_class_prompts_keep_request_response_dataflow_within_reachable_calls():
+    from app.design.services.class_diagram import collaboration
+    from app.design.services.class_diagram.generation import _COMBINED_PROMPT
+
+    operation_prompt = " ".join(operations.operation_prompt().split())
+    call_plan_prompt = " ".join(collaboration.CALL_PLAN_PROMPT.split())
+    combined_prompt = " ".join(_COMBINED_PROMPT.split())
+
+    for prompt in (operation_prompt, call_plan_prompt, combined_prompt):
+        assert "exactly one" in prompt
+        assert "parent Control" in prompt
+        assert "not available to descendants" in prompt or "not available to its child" in prompt
+        assert "independently available" in prompt
+    assert "parentCallIndex identifies the caller, not a data dependency" in call_plan_prompt
 
 
 def _hand_authored_context_model(

@@ -27,8 +27,11 @@ class InteractionContract:
     interaction_id: str
     boundary_class: str
     boundary_method: str
+    boundary_return_type: str
     boundary_parameters: tuple[tuple[str, str], ...]
+    boundary_parameter_stable_refs: tuple[tuple[str, str], ...]
     boundary_call_id: str
+    boundary_call_stable_id: str | None
     control_class: str
     control_method: str
     control_parameters: tuple[tuple[str, str], ...]
@@ -106,11 +109,18 @@ def interaction_contracts(bce_model: BCEModel) -> tuple[InteractionContract, ...
                 interaction_id=interaction_id,
                 boundary_class=boundary_class.class_name,
                 boundary_method=boundary_operation.name,
+                boundary_return_type=boundary_operation.return_type,
                 boundary_parameters=tuple(
                     (parameter.name, parameter.type)
                     for parameter in boundary_operation.parameters
                 ),
+                boundary_parameter_stable_refs=tuple(
+                    (parameter.stable_ref, parameter.name)
+                    for parameter in boundary_operation.parameters
+                    if parameter.stable_ref
+                ),
                 boundary_call_id=root.call_id,
+                boundary_call_stable_id=root.stable_id,
                 control_class=control_class.class_name,
                 control_method=control_operation.name,
                 control_parameters=tuple(
@@ -146,15 +156,16 @@ def interaction_contracts(bce_model: BCEModel) -> tuple[InteractionContract, ...
 def interaction_context(bce_model: BCEModel) -> list[dict[str, Any]]:
     """LLM에 상호작용 ID와 그 후보에서 유효한 HTTP path 입력을 제공한다.
 
-    ``interaction_id`` 자체에 Boundary·Control 연산과 서명이 들어 있다. 같은 정보를
-    별도 객체로 다시 풀어 보내지 않고, path placeholder로 쓸 수 있는 최상위 Boundary
-    이름만 기계적으로 명시한다.
+    ``interaction_id`` 자체에 Boundary·Control 연산과 서명이 들어 있다. path
+    placeholder와 공개 반환 계약만 기계적으로 덧붙인다. LLM은 HTTP 표현만 고르고,
+    입력·타입·실행 연결은 승인된 interaction에서 계속 유도한다.
     """
 
     return [
         {
             "interactionId": item.interaction_id,
             "useCaseIds": list(item.use_case_ids),
+            "publicReturnType": item.boundary_return_type,
             "allowedPathParameters": list(
                 allowed_path_parameter_names(item, bce_model)
             ),
@@ -232,7 +243,7 @@ def normalize_api_spec_model(
             payload.get("responses") or [],
             contract.return_type,
         )
-        endpoints.append(_materialize_endpoint(payload, contracts, schemas))
+        endpoints.append(_materialize_endpoint(payload, contracts, schemas, bce_model))
     request_schemas = {endpoint.request_schema for endpoint in endpoints if endpoint.request_schema}
     response_schemas = {
         response.schema_name
@@ -283,6 +294,7 @@ def _materialize_endpoint(
     endpoint: dict[str, Any],
     contracts: dict[str, InteractionContract],
     schemas: dict[str, dict[str, Any]],
+    bce_model: BCEModel,
 ) -> ApiEndpoint:
     """endpoint 하나에 코드가 소유한 실행 정보만 추가한다."""
 
@@ -334,7 +346,9 @@ def _materialize_endpoint(
             "control_binding": {
                 "control": contract.control_class,
                 "method": contract.control_method,
-                "arguments": _control_arguments(endpoint, request_schema, contract),
+                "arguments": _control_arguments(
+                    endpoint, request_schema, contract, bce_model
+                ),
                 "outcomes": [
                     {
                         "status": int(response["status"]),
@@ -537,6 +551,7 @@ def _control_arguments(
     endpoint: dict[str, Any],
     request_schema: dict[str, Any] | None,
     contract: InteractionContract,
+    bce_model: BCEModel,
 ) -> list[dict[str, str]]:
     """Project accepted Boundary→Control provenance into HTTP sources.
 
@@ -549,6 +564,9 @@ def _control_arguments(
     boundary_sources = _boundary_http_sources(endpoint, request_schema, contract)
     arguments: list[dict[str, str]] = []
     expected_parameters = {name for name, _type in contract.control_parameters}
+    accepted_boundary_call_ids = {contract.boundary_call_id}
+    if contract.boundary_call_stable_id:
+        accepted_boundary_call_ids.add(contract.boundary_call_stable_id)
     for parameter, source_ref in contract.control_argument_sources:
         if parameter not in expected_parameters:
             continue
@@ -558,21 +576,90 @@ def _control_arguments(
             arguments.append({"name": parameter, "source": f"$context.{parameter}"})
             continue
         source_call, separator, source_path = source_ref.partition("#")
-        if not separator or source_call != contract.boundary_call_id:
+        if not separator or source_call not in accepted_boundary_call_ids:
             continue
-        boundary_parameter, dot, nested_path = source_path.partition(".")
+        boundary_parameter_ref, dot, nested_path = source_path.partition(".")
+        boundary_parameter = dict(contract.boundary_parameter_stable_refs).get(
+            boundary_parameter_ref,
+            boundary_parameter_ref,
+        )
         source = boundary_sources.get(boundary_parameter)
         if source is None:
             continue
         if dot:
+            field_path = _resolve_stable_field_path(
+                dict(contract.boundary_parameters).get(boundary_parameter, ""),
+                nested_path,
+                bce_model,
+            )
+            if field_path is None:
+                continue
             if source == "$body":
-                source = f"$body.{nested_path}"
+                source = f"$body.{field_path}"
             elif source.startswith("$body."):
-                source = f"{source}.{nested_path}"
+                source = f"{source}.{field_path}"
             else:
                 continue
         arguments.append({"name": parameter, "source": source})
     return arguments
+
+
+def _resolve_stable_field_path(
+    root_type: str,
+    stable_path: str,
+    bce_model: BCEModel,
+) -> str | None:
+    """Resolve opaque field identities through each declared structured type.
+
+    Stable references are meaningful only within the declared parameter type.
+    Every segment must match an aligned ``fieldRefs`` entry; an unresolved or
+    scalar intermediate value is left unmapped for the API validator to report.
+    """
+
+    declarations = {
+        item.class_name: (item.fields, item.field_refs)
+        for item in bce_model.Classes
+    }
+    declarations.update(
+        {item.name: (item.fields, item.field_refs) for item in bce_model.DataTypes}
+    )
+    try:
+        expression = parse_type_expression(root_type)
+    except DesignTypeError:
+        return None
+    if expression.kind == "container" and expression.name == "optional":
+        expression = expression.arguments[0]
+    if expression.kind != "named":
+        return None
+
+    names: list[str] = []
+    owner = expression.name
+    stable_refs = stable_path.split(".")
+    if not stable_path or any(not ref for ref in stable_refs):
+        return None
+    for position, stable_ref in enumerate(stable_refs):
+        declaration = declarations.get(owner)
+        if declaration is None:
+            return None
+        fields, field_refs = declaration
+        if len(fields) != len(field_refs) or stable_ref not in field_refs:
+            return None
+        index = field_refs.index(stable_ref)
+        field_name, separator, field_type = str(fields[index]).partition(":")
+        if not separator or not field_name.strip() or not field_type.strip():
+            return None
+        names.append(field_name.strip())
+        try:
+            expression = parse_type_expression(field_type.strip())
+        except DesignTypeError:
+            return None
+        if expression.kind == "container" and expression.name == "optional":
+            expression = expression.arguments[0]
+        if position < len(stable_refs) - 1:
+            if expression.kind != "named":
+                return None
+            owner = expression.name
+    return ".".join(names)
 
 
 def _boundary_http_sources(

@@ -74,6 +74,83 @@ def test_batch_aware_repair_receives_the_exact_repair_batch() -> None:
     assert [[item.rule_id for item in batch] for batch in received] == [["api.contract"]]
 
 
+def test_nontransient_repair_error_tries_next_strategy_and_clears_error_after_success() -> None:
+    calls: list[str] = []
+
+    def repair(model, directive, _state, _targets):
+        strategy_line = directive.split("[REPAIR STRATEGY]\n", 1)[1].splitlines()[0]
+        strategy = strategy_line.split(":", 1)[0]
+        calls.append(strategy)
+        if strategy == "targeted":
+            raise RuntimeError("targeted fragment could not be generated")
+        return {**model, "broken": False}
+
+    spec = DesignArtifactSpec(
+        stage="class_diagram",
+        model_key="class_diagram_model",
+        content_key="class_diagram",
+        valid_key="class_diagram_syntax_valid",
+        errors_key="class_diagram_syntax_errors",
+        feedback_key="class_diagram_feedback",
+        empty={},
+        extract=lambda _state: {},
+        revise=lambda model, _feedback, _state, _targets: model,
+        render=str,
+        validate=lambda _content: {"syntax_valid": True, "syntax_errors": []},
+        check=lambda model, _state: (
+            [Finding("class.contract", "contract mismatch", "UC3")]
+            if model.get("broken")
+            else []
+        ),
+        repair=repair,
+        repair_target_mapper=lambda _model, _state, _findings: {"UC3"},
+        check_key="class_diagram_check",
+    )
+
+    result = check_node(spec)({"class_diagram_model": {"broken": True}})
+
+    assert calls == ["targeted", "alternative"]
+    assert result["class_diagram_model"] == {"broken": False}
+    assert "error" not in result["class_diagram_check"]
+    assert result["class_diagram_check"]["stopped"] == "clean"
+
+
+def test_nontransient_repair_errors_consume_both_strategies_then_stop() -> None:
+    calls: list[str] = []
+
+    def repair(_model, directive, _state, _targets):
+        strategy_line = directive.split("[REPAIR STRATEGY]\n", 1)[1].splitlines()[0]
+        strategy = strategy_line.split(":", 1)[0]
+        calls.append(strategy)
+        raise RuntimeError(f"{strategy} failed")
+
+    spec = DesignArtifactSpec(
+        stage="class_diagram",
+        model_key="class_diagram_model",
+        content_key="class_diagram",
+        valid_key="class_diagram_syntax_valid",
+        errors_key="class_diagram_syntax_errors",
+        feedback_key="class_diagram_feedback",
+        empty={},
+        extract=lambda _state: {},
+        revise=lambda model, _feedback, _state, _targets: model,
+        render=str,
+        validate=lambda _content: {"syntax_valid": True, "syntax_errors": []},
+        check=lambda _model, _state: [
+            Finding("class.contract", "contract mismatch", "UC3")
+        ],
+        repair=repair,
+        repair_target_mapper=lambda _model, _state, _findings: {"UC3"},
+        check_key="class_diagram_check",
+    )
+
+    result = check_node(spec)({"class_diagram_model": {"broken": True}})
+
+    assert calls == ["targeted", "alternative"]
+    assert result["class_diagram_check"]["stopped"] == "stalled"
+    assert result["class_diagram_check"]["repair_history"]["status"] == "STALLED"
+
+
 def test_batch_repair_splits_class_findings_by_mapped_use_case_without_diagrams() -> None:
     received: list[tuple[set[str], list[str]]] = []
 
@@ -118,6 +195,64 @@ def test_batch_repair_splits_class_findings_by_mapped_use_case_without_diagrams(
     check_node(spec)({"class_diagram_model": {"broken": {"UC5": True, "UC9": True}}})
 
     assert received == [({"UC5"}, ["UC5"]), ({"UC9"}, ["UC9"])]
+
+
+def test_mapped_repair_rotates_after_first_target_exhausts_its_strategies() -> None:
+    received: list[tuple[set[str], str]] = []
+
+    def check(model, _state):
+        return [
+            Finding("class.public-contract-semantic", "missing contract", use_case_id)
+            for use_case_id, broken in model["broken"].items()
+            if broken
+        ]
+
+    def repair(model, directive, _state, targets, _batch):
+        strategy_line = directive.split("[REPAIR STRATEGY]\n", 1)[1].splitlines()[0]
+        strategy = strategy_line.split(":", 1)[0]
+        received.append((set(targets), strategy))
+        # UC5 is deliberately unchanged; UC9 makes progress when reached.
+        return {
+            **model,
+            "broken": {
+                use_case_id: False if use_case_id in targets and use_case_id == "UC9" else broken
+                for use_case_id, broken in model["broken"].items()
+            },
+        }
+
+    spec = DesignArtifactSpec(
+        stage="class_diagram",
+        model_key="class_diagram_model",
+        content_key="class_diagram",
+        valid_key="class_diagram_syntax_valid",
+        errors_key="class_diagram_syntax_errors",
+        feedback_key="class_diagram_feedback",
+        empty={},
+        extract=lambda _state: {},
+        revise=lambda model, _feedback, _state, _targets: model,
+        render=str,
+        validate=lambda _content: {"syntax_valid": True, "syntax_errors": []},
+        check=check,
+        repair=lambda model, _feedback, _state, _targets: model,
+        repair_batch=repair,
+        repair_target_mapper=lambda _model, _state, findings: {
+            item.location for item in findings
+        },
+        check_key="class_diagram_check",
+    )
+
+    result = check_node(spec)({
+        "class_diagram_model": {"broken": {"UC5": True, "UC9": True}}
+    })
+
+    assert received[:3] == [
+        ({"UC5"}, "targeted"),
+        ({"UC5"}, "alternative"),
+        ({"UC9"}, "targeted"),
+    ]
+    assert result["class_diagram_model"]["broken"] == {"UC5": True, "UC9": False}
+    assert len(result["class_diagram_check"]["findings"]) == 1
+    assert result["class_diagram_check"]["repair_history"]["status"] == "STALLED"
 
 
 def test_batch_repair_keeps_its_operation_change_while_legacy_repair_still_merges() -> None:

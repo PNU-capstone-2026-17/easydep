@@ -145,6 +145,33 @@ def test_explicit_global_constraint_is_accounted_without_being_forced_onto_a_use
     assert trace["requirements"]["NFR1"]["constrains_use_cases"] == []
 
 
+def test_global_constraint_context_requires_explicit_modeling_and_no_uc_edges():
+    source = {
+        "requirements": {
+            "GLOBAL": {
+                "type": "NFR", "text": "Protect sensitive data.",
+                "modeled_as_constraint": True, "constrains_use_cases": [],
+            },
+            "RAW": {
+                "type": "NFR", "text": "Unattached raw statement.",
+                "modeled_as_constraint": False, "constrains_use_cases": [],
+            },
+            "MISSING_EDGE_FIELD": {
+                "type": "NFR", "text": "Incomplete trace projection.",
+                "modeled_as_constraint": True,
+            },
+            "LOCAL": {
+                "type": "FR", "text": "Local constraint.",
+                "modeled_as_constraint": True, "constrains_use_cases": ["UC1"],
+            },
+        }
+    }
+
+    assert traceability.modeled_global_constraints(source) == [
+        {"id": "GLOBAL", "type": "NFR", "text": "Protect sensitive data."}
+    ]
+
+
 def test_use_case_trace_view_includes_functional_constraint_edges():
     state = _state(constraint_applicability={"FR1": ["UC1"]})
 

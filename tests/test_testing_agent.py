@@ -18,10 +18,12 @@ from app.db.models import (
     TYPE_IAC_CODE,
     TYPE_SOURCE_CODE,
 )
+from app.design.contracts.application_runtime import SYNTHETIC_UUID_BASIC_USERNAME
 from app.testing import service as testing_service
 from app.testing.graphs.testing_graph import create_testing_graph
 from app.testing.progress import testing_progress_scope as _testing_progress_scope
 from app.testing.schemas.testing_input import TestingInput as FrozenTestingInput
+from app.testing.utils.functional_executor import _basic_auth
 
 
 def _snapshot(files: dict[str, str], version_no: int = 3) -> dict:
@@ -336,14 +338,21 @@ def test_running_application_uses_test_database_and_keeps_container_for_logs(tmp
 
     (tmp_path / "Dockerfile").write_text("FROM scratch\nEXPOSE 8000\n", encoding="utf-8")
     commands: list[list[str]] = []
+    events: list[str] = []
 
     def docker(arguments, **_kwargs):
         commands.append(arguments)
+        events.append("docker")
         return type("Completed", (), {"returncode": 0, "stdout": "id\n", "stderr": ""})()
+
+    def prepare_cache(image):
+        assert image == "toolchain:test"
+        events.append("prepare-gradle-cache")
 
     monkeypatch.setattr(app_container, "_docker", docker)
     monkeypatch.setattr(app_container, "_wait_until_ready", lambda *_args: None)
     monkeypatch.setattr(app_container, "configured_runner_image", lambda: "toolchain:test")
+    monkeypatch.setattr(app_container, "prepare_gradle_cache", prepare_cache)
 
     with app_container.running_application("app-1", tmp_path, launch_id="run-1") as (_, info):
         assert info["healthPath"] == "/healthz"
@@ -356,8 +365,9 @@ def test_running_application_uses_test_database_and_keeps_container_for_logs(tmp
     assert f"{app_container.GRADLE_CACHE_VOLUME}:/tmp/easydep-gradle-cache" in start
     assert "SPRING_PROFILES_ACTIVE=test" in start
     assert any(value.startswith("SPRING_DATASOURCE_URL=jdbc:h2:mem:") for value in start)
-    assert "SPRING_SECURITY_USER_NAME=easydep-test" in start
+    assert f"SPRING_SECURITY_USER_NAME={SYNTHETIC_UUID_BASIC_USERNAME}" in start
     assert "SPRING_SECURITY_USER_PASSWORD=easydep-test" in start
+    assert events[0] == "prepare-gradle-cache"
     assert any(command[:2] == ["rm", "-f"] for command in commands)
     network = app_container.runtime_network_name(info["container"])
     assert commands[:3] == [
@@ -365,6 +375,16 @@ def test_running_application_uses_test_database_and_keeps_container_for_logs(tmp
         ["network", "rm", network],
         ["network", "create", network],
     ]
+
+
+def test_functional_testing_uses_synthetic_uuid_username_by_default(monkeypatch) -> None:
+    monkeypatch.delenv("EASYDEP_TEST_USERNAME", raising=False)
+    monkeypatch.delenv("EASYDEP_TEST_PASSWORD", raising=False)
+
+    assert _basic_auth() == (SYNTHETIC_UUID_BASIC_USERNAME, "easydep-test")
+
+    monkeypatch.setenv("EASYDEP_TEST_USERNAME", "local-override")
+    assert _basic_auth()[0] == "local-override"
 
 
 def test_application_log_excerpt_is_bounded(tmp_path, monkeypatch):
@@ -389,6 +409,7 @@ def test_application_log_excerpt_is_bounded(tmp_path, monkeypatch):
     monkeypatch.setattr(app_container, "_docker", docker)
     monkeypatch.setattr(app_container, "_wait_until_ready", lambda *_args: None)
     monkeypatch.setattr(app_container, "configured_runner_image", lambda: "toolchain:test")
+    monkeypatch.setattr(app_container, "prepare_gradle_cache", lambda _image: None)
 
     with app_container.running_application("app-1", tmp_path, launch_id="log-bound") as (_, runtime):
         excerpt = app_container.application_log_excerpt(runtime)
@@ -725,9 +746,26 @@ def test_running_application_does_not_rebuild_frontend_for_api_checks(
     monkeypatch.setattr(app_container, "_docker", docker)
     monkeypatch.setattr(app_container, "_wait_until_ready", lambda *_args: None)
     monkeypatch.setattr(app_container, "configured_runner_image", lambda: "toolchain:test")
+    monkeypatch.setattr(app_container, "prepare_gradle_cache", lambda _image: None)
 
     with app_container.running_application("app-1", tmp_path):
         pass
+
+
+def test_gradle_cache_permission_failure_is_an_environment_defect():
+    from app.testing.runtime.app_container import _build_failure_defect_class
+
+    assert (
+        _build_failure_defect_class(
+            "java.nio.file.AccessDeniedException: "
+            "/tmp/easydep-gradle-cache/caches/modules-2"
+        )
+        == "ENVIRONMENT_DEFECT"
+    )
+    assert (
+        _build_failure_defect_class("Permission denied: /easydep-application/src")
+        == "SUT_DEFECT"
+    )
 
 
 def test_application_start_timeout_does_not_trigger_source_repair(monkeypatch):

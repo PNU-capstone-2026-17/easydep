@@ -41,7 +41,7 @@ def _model() -> dict:
 def _passing_evidence(model: dict, scenario: dict) -> dict:
     index = build_scenario_index(scenario)
     return {
-        "version": "class-public-contract-review/v3",
+        "version": "class-public-contract-review/v6",
         "modelDigest": stable_digest(model),
         "contractDigest": stable_digest([_obligations(item) for item in index.use_cases]),
         "status": "pass",
@@ -87,3 +87,203 @@ def test_resume_class_gate_uses_checkpoint_evidence_but_keeps_digest_validation(
         resume.assert_not_called()
     else:
         resume.assert_called_once_with(APP_ID, "")
+
+
+def _stalled_class_readiness(*, requires_user_input: bool = False) -> dict:
+    return {
+        "status": "NEEDS_INPUT" if requires_user_input else "BLOCKED",
+        "findings": [{"stage": "class_diagram", "finding": "class check finding"}],
+        "findingRecords": [{
+            "stage": "class_diagram",
+            "ruleId": "class.required-value-source",
+            "finding": "class check finding",
+            "message": "A required value source is missing.",
+            "location": "UC1:SubmitControl::submit()",
+            "requiresUserInput": requires_user_input,
+        }],
+    }
+
+
+def test_stalled_class_gate_reenters_only_when_reconcile_changes_saved_model(
+    monkeypatch,
+) -> None:
+    original_model = {"Classes": [{"className": "SubmitControl"}]}
+    normalized_model = {
+        "Classes": [{"className": "SubmitControl", "operations": []}]
+    }
+    state = {
+        "extracted_bce_classes": original_model,
+        "class_diagram_check": {"stopped": "stalled"},
+    }
+    spec = SimpleNamespace(
+        model_key="extracted_bce_classes",
+        reconcile=lambda _state: {"extracted_bce_classes": normalized_model},
+    )
+    started: list[str] = []
+    monkeypatch.setitem(design_service.DESIGN_SPECS, "class_diagram", spec)
+    monkeypatch.setattr(
+        design_service, "session_status",
+        lambda _app_id: {"active": True, "stage": "class_diagram"},
+    )
+    monkeypatch.setattr(
+        design_service, "start_design_session",
+        lambda app_id: started.append(app_id)
+        or {"status": "need_feedback", "stage": "class_diagram"},
+    )
+
+    result = design_service._retry_stalled_class_gate_after_reconcile(
+        APP_ID, state, _stalled_class_readiness()
+    )
+
+    assert result == {"status": "need_feedback", "stage": "class_diagram"}
+    assert started == [APP_ID]
+
+
+@pytest.mark.parametrize(
+    ("stopped", "requires_user_input", "reconcile_result"),
+    [
+        ("stalled", False, {}),
+        ("stalled", True, {"extracted_bce_classes": {"Classes": [{"id": "new"}]}}),
+        ("clean", False, {"extracted_bce_classes": {"Classes": [{"id": "new"}]}}),
+    ],
+)
+def test_stalled_class_gate_keeps_current_checkpoint_without_eligible_reconcile(
+    monkeypatch, stopped: str, requires_user_input: bool, reconcile_result: dict
+) -> None:
+    state = {
+        "extracted_bce_classes": {"Classes": [{"className": "SubmitControl"}]},
+        "class_diagram_check": {"stopped": stopped},
+    }
+    spec = SimpleNamespace(
+        model_key="extracted_bce_classes",
+        reconcile=lambda _state: reconcile_result,
+    )
+    monkeypatch.setitem(design_service.DESIGN_SPECS, "class_diagram", spec)
+    monkeypatch.setattr(
+        design_service, "session_status",
+        lambda _app_id: {"active": True, "stage": "class_diagram"},
+    )
+    started: list[str] = []
+    monkeypatch.setattr(design_service, "start_design_session", started.append)
+
+    result = design_service._retry_stalled_class_gate_after_reconcile(
+        APP_ID,
+        state,
+        _stalled_class_readiness(requires_user_input=requires_user_input),
+    )
+
+    assert result is None
+    assert started == []
+
+
+def test_stalled_technical_class_gate_reenters_once_before_any_repair_attempt(
+    monkeypatch,
+) -> None:
+    state = {
+        "extracted_bce_classes": {"Classes": [{"className": "SubmitControl"}]},
+        "class_diagram_check": {
+            "stopped": "stalled",
+            "repair_iters": 0,
+            "repair_history": {"status": "STALLED", "attempts": []},
+        },
+    }
+    spec = SimpleNamespace(
+        model_key="extracted_bce_classes",
+        reconcile=lambda _state: {},
+    )
+    monkeypatch.setitem(design_service.DESIGN_SPECS, "class_diagram", spec)
+    monkeypatch.setattr(
+        design_service, "session_status",
+        lambda _app_id: {"active": True, "stage": "class_diagram"},
+    )
+    started: list[str] = []
+    monkeypatch.setattr(
+        design_service,
+        "start_design_session",
+        lambda app_id: started.append(app_id) or {"status": "need_feedback"},
+    )
+
+    result = design_service._retry_stalled_class_gate_after_reconcile(
+        APP_ID, state, _stalled_class_readiness()
+    )
+
+    assert result == {"status": "need_feedback"}
+    assert started == [APP_ID]
+
+
+def test_retry_design_session_reenters_stalled_class_gate_without_reconcile_patch(
+    monkeypatch,
+) -> None:
+    state = {
+        "extracted_bce_classes": {"Classes": [{"className": "SubmitControl"}]},
+        "class_diagram_check": {
+            "stopped": "stalled",
+            "repair_iters": 0,
+            "repair_history": {"status": "STALLED", "attempts": []},
+        },
+    }
+    monkeypatch.setattr(design_service, "_validate_app_id", lambda _app_id: None)
+    monkeypatch.setattr(design_service, "_require_app_exists", lambda _app_id: None)
+    monkeypatch.setattr(
+        design_service,
+        "session_status",
+        lambda _app_id: {"active": True, "stage": "class_diagram", "retryable": False},
+    )
+    monkeypatch.setattr(design_service, "_load_app", lambda _app_id: state)
+    monkeypatch.setattr(
+        design_service,
+        "_readiness_state_at_active_class_gate",
+        lambda _app_id, loaded, _stage: loaded,
+    )
+    monkeypatch.setattr(
+        design_service,
+        "design_readiness_report",
+        lambda _state, stages: _stalled_class_readiness(),
+    )
+    spec = SimpleNamespace(
+        model_key="extracted_bce_classes",
+        reconcile=lambda _state: {},
+    )
+    monkeypatch.setitem(design_service.DESIGN_SPECS, "class_diagram", spec)
+    started: list[str] = []
+    monkeypatch.setattr(
+        design_service,
+        "start_design_session",
+        lambda app_id: started.append(app_id) or {"status": "need_feedback"},
+    )
+
+    result = design_service.retry_design_session(APP_ID)
+
+    assert result == {"status": "need_feedback"}
+    assert started == [APP_ID]
+
+
+def test_stalled_class_gate_does_not_reenter_after_recorded_repair_attempt(
+    monkeypatch,
+) -> None:
+    state = {
+        "extracted_bce_classes": {"Classes": [{"className": "SubmitControl"}]},
+        "class_diagram_check": {
+            "stopped": "stalled",
+            "repair_iters": 1,
+            "repair_history": {"status": "STALLED", "attempts": [{"target": "UC1"}]},
+        },
+    }
+    spec = SimpleNamespace(
+        model_key="extracted_bce_classes",
+        reconcile=lambda _state: {},
+    )
+    monkeypatch.setitem(design_service.DESIGN_SPECS, "class_diagram", spec)
+    monkeypatch.setattr(
+        design_service, "session_status",
+        lambda _app_id: {"active": True, "stage": "class_diagram"},
+    )
+    started: list[str] = []
+    monkeypatch.setattr(design_service, "start_design_session", started.append)
+
+    result = design_service._retry_stalled_class_gate_after_reconcile(
+        APP_ID, state, _stalled_class_readiness()
+    )
+
+    assert result is None
+    assert started == []

@@ -22,6 +22,9 @@ and useful response status descriptions.
   candidate's exact list. Never use a nested field or invent another placeholder; when
   the list is empty, use no path placeholder.
 - Include the successful status and failures stated by the use-case extensions.
+- Each candidate's publicReturnType is the Boundary method's approved public
+  result. A non-void public result needs a body-bearing successful status (not
+  204); use 204 only when publicReturnType is void.
 - Do not return operation IDs, parameters, schemas, Control bindings, argument sources,
   result names, class traces, or use-case traces. The application derives all of them
   from the selected interaction.
@@ -38,6 +41,8 @@ The application derives operation IDs, parameters, schemas, Control bindings, ar
 mappings, outcomes, and trace fields from the accepted class collaboration.
 Each candidate supplies allowedPathParameters. Use path placeholders only from that
 candidate's exact list; an empty list means that no path placeholder is allowed.
+Each candidate's publicReturnType is authoritative: a non-void result must use a
+body-bearing successful status, while 204 is reserved for void results.
 """.strip()
 
 

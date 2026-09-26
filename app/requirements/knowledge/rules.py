@@ -579,8 +579,10 @@ RULES: tuple[Rule, ...] = (
         stage=WRITE_SPECIFICATIONS,
         severity=DEFECT,
         statement=(
-            "Every branch_step and resume_at_step must name a step that exists in the "
-            "main scenario, and resume_at_step is set only when the outcome is 'resume'."
+            "Every extension must have a concrete branch_step naming a step that exists in "
+            "the main scenario; global/unanchored extensions are unsupported and must be "
+            "represented at a supported concrete branch point. resume_at_step must name an "
+            "existing main-scenario step and is set only when the outcome is 'resume'."
         ),
         citation="easydep convention (schema integrity)",
         evidence="project-convention",
@@ -614,24 +616,49 @@ RULES: tuple[Rule, ...] = (
         stage=WRITE_SPECIFICATIONS,
         severity=DEFECT,
         statement=(
-            "Review the specification against its use-case goal and linked requirements for "
+            "Review the specification against its use-case goal, linked requirements, and "
+            "explicitly applicable constraints for "
             "complete, non-contradictory public behavior: the responsible actor, any relevant "
             "authenticated subject or delegation, required information, and observable outcome. "
             "For every declared required value, verify that its source (caller_input, "
             "authenticated_actor_context, or system_result) matches the explicit origin stated "
-            "in the linked requirements. If that origin is misclassified, direct correction of "
-            "the `RequiredValue.source` field to the evidenced origin. For an identifier that "
+            "in the linked requirements or explicitly applicable constraints. If that origin is "
+            "misclassified, direct correction of "
+            "the `RequiredValue.source` field to the evidenced origin. Also verify that "
+            "`RequiredValue.usage` matches the natural-language scenario and observable outcome: "
+            "control means the system consumes the value to perform behavior; result means the "
+            "system produces the value as an observable outcome; both requires evidence of both. "
+            "Source is provenance, not direction: authenticated_actor_context alone does not make "
+            "a value a result, and a context value consumed by an operation is control usage. If "
+            "usage is misclassified, direct correction of `RequiredValue.usage` and cite the "
+            "specific flow or outcome that establishes the correction. Do not infer usage from "
+            "the value name or source alone. For an identifier that "
             "represents an identified subject, direct correction of the proposal's "
             "`RequiredValue.identity_obligation_index`; for an authenticated-context identity "
             "relation, direct correction of `IdentityObligation.source_authenticate_obligation_index`. "
             "These are proposal fields. Do not direct repair of the derived accepted "
             "`identity_source_kind` or `source_authenticate_obligation_ref`. Report an omitted "
-            "identity relation only when grounded in the supplied requirements. "
+            "identity relation only when grounded in the supplied linked requirements or explicitly "
+            "applicable constraints. When reporting "
+            "an OMITTED identify relation, direct the complete proposal repair: add the identify "
+            "obligation together with a linked identifier `RequiredValue` whose "
+            "`identity_obligation_index` points to it and whose `source` is the evidenced origin; "
+            "when authenticated_actor_context is evidenced, include the evidenced authenticate "
+            "obligation in the same proposal if it is absent, then set the identify obligation's "
+            "`source_authenticate_obligation_index` to it. "
+            "Do not direct adding an orphan identify obligation alone. "
             "Report an omission or contradiction only when that behavior is grounded in the "
             "supplied goal or requirements. Do not invent authentication, authorization, required "
-            "preconditions, or other behavior when the sources establish none. An actor role or "
-            "label alone does not establish an identify obligation; a linked functional "
-            "requirement must require selecting or distinguishing an identified subject."
+            "preconditions, or other behavior when the sources establish none. Authentication "
+            "validates a principal or session; identification distinguishes which subject or record "
+            "the behavior targets. An actor role or label alone, or public or published-data browsing "
+            "alone, does not establish an identify obligation. For behavior that acts on the requester's "
+            "own subject or record, report an omitted identify relation when a linked functional "
+            "requirement establishes that behavior and an explicitly applicable constraint establishes "
+            "authenticated identity; require the linked identifier RequiredValue to use "
+            "authenticated_actor_context and link identify to authenticate. Applicable global "
+            "constraints may establish source or applicability in review context but do not "
+            "belong in an entry's requirement_ids unless themselves linked."
         ),
         citation="easydep convention (source-grounded public behavior review)",
         evidence="project-convention",

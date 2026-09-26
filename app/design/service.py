@@ -218,6 +218,55 @@ def _readiness_state_at_active_class_gate(
     return cast(ArchitectureState, {**state, "class_diagram_check": checkpoint_check})
 
 
+def _retry_stalled_class_gate_after_reconcile(
+    app_id: str,
+    state: ArchitectureState,
+    readiness: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Re-enter a stalled class artifact after reconciliation or before any repair attempt.
+
+    This is limited to an active, stalled class gate with technical findings.  The
+    existing class-only start path resets only the graph checkpoint, then resumes
+    from the persisted class model and stops at the class gate again.
+    """
+
+    status = session_status(app_id)
+    if not status.get("active") or status.get("stage") != "class_diagram":
+        return None
+    check = state.get("class_diagram_check") or {}
+    if str(check.get("stopped") or "").casefold() != "stalled":
+        return None
+    records = [
+        record
+        for record in readiness.get("findingRecords") or []
+        if isinstance(record, dict)
+        and str(record.get("stage") or "class_diagram") == "class_diagram"
+    ]
+    if not records or any(record.get("requiresUserInput") is not False for record in records):
+        return None
+    repair_history = check.get("repair_history")
+    attempts = repair_history.get("attempts") if isinstance(repair_history, dict) else None
+    zero_attempts = (
+        isinstance(attempts, list)
+        and not attempts
+        and check.get("repair_iters", 0) == 0
+    )
+    reconcile = DESIGN_SPECS["class_diagram"].reconcile
+    patch = reconcile(state) if reconcile is not None else None
+    model_key = DESIGN_SPECS["class_diagram"].model_key
+    changed = (
+        isinstance(patch, dict)
+        and model_key in patch
+        and patch.get(model_key) != state.get(model_key)
+    )
+    if not changed and not zero_attempts:
+        return None
+    # start_design_session clears the checkpoint, not artifact history. Its
+    # existing extractor resumes this saved model; no requirements/design stages
+    # before or after the class gate are rerun.
+    return start_design_session(app_id)
+
+
 def _deployment_endpoint_question(
     app_id: str, state: ArchitectureState
 ) -> dict[str, Any] | None:
@@ -520,6 +569,11 @@ def resume_design_session(app_id: str, feedback: str = "") -> dict[str, Any]:
                 )
                 if repaired is not None:
                     return repaired
+                reconciled = _retry_stalled_class_gate_after_reconcile(
+                    app_id, readiness_state, readiness
+                )
+                if reconciled is not None:
+                    return reconciled
                 raise ValueError(
                     "Resolve the active design findings before advancing. "
                     f"Stage: {active_stage}. Findings: {findings}"
@@ -833,6 +887,17 @@ def retry_design_session(
         repaired = _repair_stale_sequence_projection(app_id, state, readiness)
         if repaired is not None:
             return repaired
+    if status.get("active") and status.get("stage") == "class_diagram":
+        state = _load_app(app_id)
+        readiness_state = _readiness_state_at_active_class_gate(
+            app_id, state, "class_diagram"
+        )
+        readiness = design_readiness_report(readiness_state, stages=["class_diagram"])
+        reconciled = _retry_stalled_class_gate_after_reconcile(
+            app_id, readiness_state, readiness
+        )
+        if reconciled is not None:
+            return reconciled
     if not status.get("retryable"):
         # 검토 지점은 실패 상태가 아니다. 이때에는 LLM을 다시 호출하지 않고 저장된
         # 결과를 반환하여 새로고침한 Workspace와 실행 상태만 다시 맞춘다.

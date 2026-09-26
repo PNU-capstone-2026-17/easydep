@@ -6,14 +6,14 @@ from typing import Any
 
 from app.design.services.class_diagram.proposals import legacy_data_type
 from app.design.services.class_diagram.scenario import ScenarioIndex, UseCase, text
+from app.design.services.class_diagram.trusted_context import required_value_catalog
 from app.design.services.class_diagram.type_system import (
     field_name,
     field_type,
+    required_value_type_compatible,
     type_is_resolved,
 )
 from app.design.services.class_diagram.validation.model import class_name
-from app.design.services.class_diagram.trusted_context import required_value_catalog
-from app.design.services.class_diagram.type_system import types_compatible
 from app.validation import CheckSpec, Finding, ValidationReport, run_checks
 
 
@@ -52,6 +52,17 @@ def _fragment_operations(
 def _fragment_data_types(fragment: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         item for item in fragment.get("DataTypes") or [] if isinstance(item, dict)
+    ]
+
+
+def _effective_data_types(
+    fragment: dict[str, Any], inventory: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return locally proposed types together with accepted reusable declarations."""
+
+    return [
+        *(item for item in inventory.get("DataTypes") or [] if isinstance(item, dict)),
+        *_fragment_data_types(fragment),
     ]
 
 
@@ -157,7 +168,9 @@ def _required_value_parameter_refs(
                     f"(type {parameter_type}).",
                     parameter_location,
                 ))
-            elif not types_compatible(value["designType"], parameter_type):
+            elif not required_value_type_compatible(
+                value, parameter_type, _effective_data_types(fragment, context.inventory),
+            ):
                 findings.append(Finding(
                     "class.operation.required-value",
                     f"requiredValueRef '{required_ref}' names '{value['name']}' "

@@ -97,6 +97,34 @@ def test_host_toolchain_repairs_legacy_tofu_cache_ownership(monkeypatch, tmp_pat
     ]
 
 
+def test_testing_prepares_shared_gradle_cache_ownership(monkeypatch):
+    observed: list[list[str]] = []
+
+    def fake_run(command, **_kwargs):
+        observed.append(list(command))
+        return _completed(command)
+
+    container_runner._prepared_gradle_cache_images.clear()
+    monkeypatch.setattr(container_runner, "run_process_tree", fake_run)
+
+    container_runner.prepare_gradle_cache("easydep-toolchain:cache-test")
+    container_runner.prepare_gradle_cache("easydep-toolchain:cache-test")
+
+    assert len(observed) == 1
+    repair = observed[0]
+    assert repair[repair.index("--user") + 1] == "root"
+    assert (
+        f"{container_runner.GRADLE_CACHE_VOLUME}:{container_runner.GRADLE_CACHE_PATH}"
+        in repair
+    )
+    assert repair[repair.index("--entrypoint") + 1] == "chown"
+    assert repair[-3:] == [
+        "-R",
+        container_runner._TOOLCHAIN_USER_ID,
+        container_runner.GRADLE_CACHE_PATH,
+    ]
+
+
 def test_toolchain_heartbeat_runs_until_the_command_finishes(monkeypatch, tmp_path):
     def fake_run(command, **_kwargs):
         time.sleep(0.1)

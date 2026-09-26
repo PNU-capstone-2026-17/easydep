@@ -74,6 +74,23 @@ def _journal_metrics(path: Path) -> dict[str, object]:
         response_id = event.get("llm_response_id")
         if isinstance(response_id, str) and response_id:
             model_response_ids.add(response_id)
+        direct_edit = (
+            record.get("type") == "DirectEditorAction"
+            and isinstance(event.get("path"), str)
+            and bool(event["path"].strip())
+            and isinstance(event.get("sourceSha256"), str)
+            and re.fullmatch(r"[0-9a-fA-F]{64}", event["sourceSha256"]) is not None
+        )
+        if direct_edit:
+            tool_calls += 1
+            if first_edit_timestamp is None and isinstance(timestamp, (int, float)):
+                first_edit_timestamp = float(timestamp)
+            if (
+                first_error_timestamp is not None
+                and recovery_timestamp is None
+                and isinstance(timestamp, (int, float))
+            ):
+                recovery_timestamp = float(timestamp)
         if record.get("type") == "ActionEvent":
             tool_calls += 1
             action = event.get("action")

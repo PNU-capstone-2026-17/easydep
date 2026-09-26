@@ -249,6 +249,169 @@ def test_stalled_semantic_finding_does_not_replay_a_stage(monkeypatch) -> None:
         service.shutdown()
 
 
+def test_stalled_class_technical_finding_uses_one_guarded_reconcile_retry(
+    monkeypatch,
+) -> None:
+    command = {
+        "command_id": "class-command",
+        "app_id": "app-1",
+        "action": "advance",
+        "stage": "design",
+        "payload": {},
+    }
+    result = {
+        "awaiting_input": True,
+        "requires_revision": True,
+        "current_stage": "class_diagram",
+        "repair_state": {"status": "STALLED", "attempt_count": 1},
+        "finding_details": [{
+            "rule_id": "class.public-contract-semantic",
+            "requires_user_input": False,
+        }],
+        "blocking_findings": [{"message": "Missing value reference.", "repairable": True}],
+    }
+    observed: dict[str, object] = {}
+    service = WorkspaceService()
+    monkeypatch.setattr(service, "_stop_requested", lambda _command_id: False)
+    monkeypatch.setattr(
+        workspace_module,
+        "session_status",
+        lambda _app_id: {"active": True, "stage": "class_diagram"},
+    )
+    original_model = {"Classes": [{"className": "SubmitControl"}]}
+    normalized_model = {"Classes": [{"className": "SubmitControl", "operations": []}]}
+    monkeypatch.setitem(
+        workspace_module.DESIGN_SPECS,
+        "class_diagram",
+        SimpleNamespace(
+            model_key="extracted_bce_classes",
+            reconcile=lambda _state: {"extracted_bce_classes": normalized_model},
+        ),
+    )
+    monkeypatch.setattr(
+        workspace_module.artifact_repository,
+        "load_state",
+        lambda _app_id: {"extracted_bce_classes": original_model},
+    )
+    rechecks: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        service,
+        "_active_semantic_repair_input",
+        lambda current: rechecks.append(current) or None,
+    )
+
+    def run_operation(_command, *, stage, label, operation):
+        observed.update(stage=stage, label=label)
+        return operation()
+
+    def retry(app_id):
+        observed["retry_app_id"] = app_id
+        return {"status": "need_feedback", "stage": "class_diagram"}
+
+    monkeypatch.setattr(service, "_run_design_operation", run_operation)
+    monkeypatch.setattr(workspace_module, "retry_design_session", retry)
+    monkeypatch.setattr(service, "_design_result", lambda _response: {"message": "Rechecked."})
+    try:
+        repaired = service._auto_repair_semantic_result(command, result)
+    finally:
+        service.shutdown()
+
+    assert repaired == {"message": "Rechecked."}
+    assert observed == {
+        "stage": "class_diagram",
+        "label": "Repairing the class diagram",
+        "retry_app_id": "app-1",
+    }
+    assert len(rechecks) == 2
+
+
+@pytest.mark.parametrize(
+    "result_patch",
+    [
+        {"finding_details": [{"requires_user_input": True}]},
+        {"current_stage": "sequence_diagram"},
+        {"feedback_question": {"question_id": "q1"}},
+        {"resource_questions": [{"question_id": "resource-q1"}]},
+    ],
+)
+def test_class_reconcile_retry_does_not_run_for_user_input_or_other_state(
+    monkeypatch, result_patch: dict[str, Any]
+) -> None:
+    command = {
+        "command_id": "class-command",
+        "app_id": "app-1",
+        "action": "advance",
+        "stage": "design",
+        "payload": {},
+    }
+    result = {
+        "awaiting_input": True,
+        "requires_revision": True,
+        "current_stage": "class_diagram",
+        "repair_state": {"status": "STALLED"},
+        "finding_details": [{"requires_user_input": False}],
+        "blocking_findings": [{"message": "Technical finding."}],
+        **result_patch,
+    }
+    service = WorkspaceService()
+    monkeypatch.setattr(service, "_stop_requested", lambda _command_id: False)
+    monkeypatch.setattr(
+        workspace_module, "session_status",
+        lambda _app_id: pytest.fail("Ineligible class result must not retry."),
+    )
+    try:
+        assert service._auto_repair_semantic_result(command, result) == result
+    finally:
+        service.shutdown()
+
+
+def test_stalled_class_result_without_reconcile_delta_is_not_replayed(monkeypatch) -> None:
+    command = {
+        "command_id": "class-command",
+        "app_id": "app-1",
+        "action": "advance",
+        "stage": "design",
+        "payload": {},
+    }
+    result = {
+        "awaiting_input": True,
+        "requires_revision": True,
+        "current_stage": "class_diagram",
+        "repair_state": {"status": "STALLED"},
+        "finding_details": [{"requires_user_input": False}],
+        "blocking_findings": [{"message": "Technical finding."}],
+    }
+    original_model = {"Classes": [{"className": "SubmitControl"}]}
+    service = WorkspaceService()
+    monkeypatch.setattr(service, "_stop_requested", lambda _command_id: False)
+    monkeypatch.setattr(
+        workspace_module, "session_status",
+        lambda _app_id: {"active": True, "stage": "class_diagram"},
+    )
+    monkeypatch.setitem(
+        workspace_module.DESIGN_SPECS,
+        "class_diagram",
+        SimpleNamespace(
+            model_key="extracted_bce_classes",
+            reconcile=lambda _state: {},
+        ),
+    )
+    monkeypatch.setattr(
+        workspace_module.artifact_repository,
+        "load_state",
+        lambda _app_id: {"extracted_bce_classes": original_model},
+    )
+    monkeypatch.setattr(
+        service,
+        "_run_design_operation",
+        lambda *_args, **_kwargs: pytest.fail("No reconcile delta means no retry."),
+    )
+    try:
+        assert service._auto_repair_semantic_result(command, result) == result
+    finally:
+        service.shutdown()
+
+
 def test_no_progress_semantic_repair_stalls_without_manual_delegate(monkeypatch) -> None:
     command = {
         "command_id": "requirements-command",
@@ -446,7 +609,7 @@ def test_testing_owner_repair_discards_the_old_checkpoint_before_recapture(monke
     assert result["job"]["job_id"] == "testing-command"
 
 
-def test_active_design_finding_resumes_its_saved_gate(monkeypatch) -> None:
+def test_active_design_finding_keeps_its_saved_gate(monkeypatch) -> None:
     command = {
         "command_id": "design-command",
         "app_id": "app-1",
@@ -461,33 +624,23 @@ def test_active_design_finding_resumes_its_saved_gate(monkeypatch) -> None:
         "repair_state": {"status": "ACTIVE", "attempt_count": 0},
         "blocking_findings": [{"message": "Class mismatch.", "repairable": True}],
     }
-    observed: dict[str, object] = {}
     service = WorkspaceService()
     monkeypatch.setattr(
         workspace_module,
         "session_status",
-        lambda _app_id: {"active": True, "stage": "class_diagram"},
+        lambda _app_id: pytest.fail("Active design findings must not inspect session state."),
     )
     monkeypatch.setattr(
         workspace_module,
         "resume_design_session",
-        lambda app_id, instruction: observed.update(app_id=app_id, instruction=instruction)
-        or {"status": "completed", "app_id": app_id},
+        lambda *_args: pytest.fail("Active design findings must not resume a session."),
     )
-
-    def run_operation(_command, *, stage, label, operation):
-        observed.update(stage=stage, label=label)
-        return operation()
-
-    monkeypatch.setattr(service, "_run_design_operation", run_operation)
     try:
         repaired = service._auto_repair_semantic_result(command, result)
     finally:
         service.shutdown()
 
-    assert repaired["message"] == "Design artifact generation completed."
-    assert observed["stage"] == "class_diagram"
-    assert "automatic:design:episode-1" in str(observed["instruction"])
+    assert repaired is result
 
 
 def test_testing_upstream_ambiguity_waits_for_user_without_rewinding_design() -> None:
@@ -2676,6 +2829,139 @@ def test_design_progress_hints_require_every_persisted_design_model(
         service.shutdown()
 
     assert hints == {"design_can_advance": False, "design_complete": False}
+
+
+def test_completed_design_checkpoint_evidence_and_nonpersistent_erd_offer_implementation(
+    monkeypatch,
+) -> None:
+    state = _complete_design_source_state()
+    state["extracted_bce_classes"] = {"Classes": []}
+    semantic_evidence = {
+        "version": "test/v1",
+        "modelDigest": "bound-to-current-model",
+        "contractDigest": "bound-to-current-contract",
+        "status": "pass",
+        "verdicts": [{"status": "pass"}],
+    }
+    graph_values = {
+        "app_id": "app-1",
+        "class_diagram_check": {
+            "findings": [{"issue": "stale hydrated class check"}],
+            "semanticEvidence": semantic_evidence,
+        },
+    }
+    readiness_states: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        workspace_module,
+        "session_status",
+        lambda _app_id: {
+            "exists": True,
+            "active": False,
+            "retryable": False,
+            "stage": None,
+        },
+    )
+    monkeypatch.setattr(artifact_repository, "load_state", lambda _app_id: dict(state))
+    monkeypatch.setattr(
+        workspace_module.design_graph,
+        "get_state",
+        lambda _config: SimpleNamespace(
+            config={"configurable": {"thread_id": "app-1", "checkpoint_id": "cp-1"}},
+            values=graph_values,
+        ),
+    )
+
+    def ready_with_evidence(check_state, stages=None):
+        readiness_states.append(dict(check_state))
+        assert stages is None
+        assert check_state["class_diagram_check"]["semanticEvidence"] == semantic_evidence
+        return {"status": "READY", "findings": []}
+
+    monkeypatch.setattr(workspace_module, "design_readiness_report", ready_with_evidence)
+    service = WorkspaceService()
+    try:
+        hints = service._design_progress_hints(
+            "app-1", {"app_id": "app-1", "status": "completed"}
+        )
+    finally:
+        service.shutdown()
+
+    assert hints == {"design_can_advance": False, "design_complete": True}
+    assert readiness_states
+    assert "erd" not in WorkspaceService._missing_design_artifacts(state)
+    offers = workspace_module.offered_actions(
+        {
+            "command_id": "design-command",
+            "stage": "design",
+            "status": "COMPLETED",
+            "result": hints,
+        }
+    )
+    assert any(offer.action == "start_implementation" for offer in offers)
+
+
+@pytest.mark.parametrize(
+    "checkpoint_values",
+    [
+        {"app_id": "other-app", "class_diagram_check": {"semanticEvidence": {"modelDigest": "current"}}},
+        {"app_id": "app-1"},
+        {"app_id": "app-1", "class_diagram_check": {"semanticEvidence": {"modelDigest": "stale"}}},
+    ],
+    ids=["wrong-app", "missing-check", "stale-evidence"],
+)
+def test_completed_checkpoint_with_missing_or_stale_evidence_stays_blocked(
+    monkeypatch, checkpoint_values: dict[str, Any]
+) -> None:
+    state = _complete_design_source_state()
+    state["extracted_bce_classes"] = {"Classes": []}
+    monkeypatch.setattr(
+        workspace_module,
+        "session_status",
+        lambda _app_id: {
+            "exists": True,
+            "active": False,
+            "retryable": False,
+            "stage": None,
+        },
+    )
+    monkeypatch.setattr(artifact_repository, "load_state", lambda _app_id: dict(state))
+    monkeypatch.setattr(
+        workspace_module.design_graph,
+        "get_state",
+        lambda _config: SimpleNamespace(
+            config={"configurable": {"thread_id": "app-1", "checkpoint_id": "cp-1"}},
+            values=checkpoint_values,
+        ),
+    )
+    monkeypatch.setattr(
+        workspace_module,
+        "design_readiness_report",
+        lambda check_state, stages=None: (
+            {"status": "READY", "findings": []}
+            if check_state.get("class_diagram_check", {}).get("semanticEvidence", {}).get("modelDigest") == "current"
+            else {"status": "BLOCKED", "findings": [{"issue": "missing evidence"}]}
+        ),
+    )
+
+    service = WorkspaceService()
+    try:
+        hints = service._design_progress_hints(
+            "app-1", {"app_id": "app-1", "status": "completed"}
+        )
+    finally:
+        service.shutdown()
+
+    assert hints == {"design_can_advance": False, "design_complete": False}
+
+
+def test_missing_erd_remains_required_for_entity_model() -> None:
+    state = _complete_design_source_state()
+    state.pop(artifact_repository.STAGE_ARTIFACTS["erd"]["source_key"])
+    state["extracted_bce_classes"] = {
+        "Classes": [{"className": "CalculatorRecord", "stereotype": "Entity"}]
+    }
+
+    assert "erd" in WorkspaceService._missing_design_artifacts(state)
 
 
 def test_design_progress_hint_wrapper_preserves_result_content(monkeypatch) -> None:

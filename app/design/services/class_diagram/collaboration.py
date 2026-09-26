@@ -14,6 +14,7 @@ from app.design.services.class_diagram.cache import (
     configured_provider_identity,
     record_cache_outcome,
 )
+from app.design.services.class_diagram.identity import materialize_pre_binding_call_refs
 from app.design.services.class_diagram.proposals import CallPlanProposal, ProposedCall
 from app.design.services.class_diagram.scenario import (
     ExecutionGroup,
@@ -21,7 +22,6 @@ from app.design.services.class_diagram.scenario import (
     UseCase,
     text,
 )
-from app.design.services.class_diagram.identity import materialize_pre_binding_call_refs
 from app.design.services.class_diagram.trusted_context import (
     directly_available_sources,
     required_value_catalog,
@@ -29,6 +29,7 @@ from app.design.services.class_diagram.trusted_context import (
 )
 from app.design.services.class_diagram.type_system import (
     projected_field_type,
+    required_value_type_compatible,
     structured_field_types,
     types_compatible,
 )
@@ -66,8 +67,14 @@ with other Entities, but do not call a Control or Boundary directly. The Boundar
 class used by a root must not appear again inside that root. Cover all
 required steps inside the matching actor entry. The same operation may be used
 in more than one root. Each Boundary root hands off directly to exactly one
-Control; any further Control collaboration must be under that Control. Do not
-return ids, step refs, values, or bindings.
+orchestration Control that covers the actor-visible request-response behavior;
+return multiple response values together in a concrete DTO or valueObject. Do
+not nest sequential retrieval under a parent Control when a child needs a value
+that the parent itself returns: the result returns to its caller and is not
+available to descendants. Keep further Control collaboration under the root
+Control when child inputs are independently available from entry inputs,
+preconditions, or earlier completed calls. parentCallIndex identifies the caller,
+not a data dependency. Do not return ids, step refs, values, or bindings.
 For a root and all of its descendants, choose only that actorEntry's
 eligibleReceiverOperationIds. Do not move an operation from another actor entry
 into this root, even when it is semantically related to the same use case.
@@ -506,7 +513,6 @@ def _binding_candidates(
     operations: dict[str, dict[str, Any]],
     actor_contracts: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> list[str]:
-    name = text(parameter.get("name"))
     target_type = text(parameter.get("type"))
     fields_by_type = structured_field_types(model)
     field_refs_by_type: dict[str, dict[str, str]] = {}
@@ -591,7 +597,6 @@ def _binding_candidates(
         for source in operation.get("parameters") or []:
             if not isinstance(source, dict):
                 continue
-            source_name = text(source.get("name"))
             source_type = text(source.get("type"))
             source_ref = (
                 f"{text(earlier.get('stableId'))}#{text(source.get('stableRef'))}"
@@ -612,7 +617,12 @@ def _binding_candidates(
                     candidates.append(field_ref)
                 elif types_compatible(optional_inner_type(projected), target_type):
                     candidates.append(field_ref + ".unwrap")
+    ancestor_ids = {text(item.get("callId")) for item in ancestors}
     for earlier in reversed(calls[:call_index]):
+        # Ancestor calls are still in flight while their descendants execute;
+        # their parameters are available above, but their results are not.
+        if text(earlier.get("callId")) in ancestor_ids:
+            continue
         operation = operations.get(text(earlier.get("receiverOperationId")))
         if operation is None:
             continue
@@ -650,16 +660,25 @@ def _binding_candidates(
         candidates.extend(
             source["sourceRef"] for source in directly_available_sources(use_case)
             if source["valueRef"] == required_ref
-            and types_compatible(source["designType"], target_type)
+            and required_value_type_compatible(
+                source, target_type, (model or {}).get("DataTypes") or [],
+            )
         )
     required_ref = text(parameter.get("requiredValueRef"))
     declaration = next((item for item in required_value_catalog(use_case)
                         if item["valueRef"] == required_ref), None)
     if declaration is not None:
-        candidates = [source_ref for source_ref in candidates if value_source_allows_binding(
-            declaration, _candidate_source_kind(source_ref, calls, use_case),
-            boundary_handoff=boundary_handoff,
-        )]
+        candidates = [
+            source_ref for source_ref in candidates
+            if _bound_required_value_forward(
+                source_ref, required_ref, calls, operations, use_case,
+            ) is not None
+            or value_source_allows_binding(
+                declaration,
+                _candidate_source_kind(source_ref, calls, use_case, operations),
+                boundary_handoff=boundary_handoff,
+            )
+        ]
     return list(dict.fromkeys(candidates))
 
 
@@ -686,11 +705,18 @@ def _binding_search_scopes(
 
 
 def _candidate_source_kind(
-    source_ref: str, calls: list[dict[str, Any]], use_case: UseCase | None = None,
+    source_ref: str,
+    calls: list[dict[str, Any]],
+    use_case: UseCase | None = None,
+    operations: dict[str, dict[str, Any]] | None = None,
 ) -> str:
     """Return the only user-selectable provenance kinds for a finite source."""
 
     if use_case and any(item["sourceRef"] == source_ref for item in required_value_catalog(use_case)):
+        return "required_value"
+    if use_case and operations and _bound_required_value_forward(
+        source_ref, None, calls, operations, use_case,
+    ) is not None:
         return "required_value"
     if source_ref.startswith("derived#"):
         return "derive_from_existing_inputs"
@@ -703,6 +729,45 @@ def _candidate_source_kind(
     # introduced by the use-case input path.  It may cross several BCE calls,
     # but remains a caller-provided value rather than a new computed source.
     return "use_case_input"
+
+
+def _bound_required_value_forward(
+    source_ref: str,
+    target_value_ref: str | None,
+    calls: list[dict[str, Any]],
+    operations: dict[str, dict[str, Any]],
+    use_case: UseCase,
+) -> dict[str, Any] | None:
+    """Return provenance only when a call parameter forwards its accepted binding."""
+
+    stable_id, separator, parameter_ref = source_ref.partition("#")
+    if not separator or not stable_id or not parameter_ref or "." in parameter_ref:
+        return None
+    call = next((item for item in calls if text(item.get("stableId")) == stable_id), None)
+    if call is None:
+        return None
+    operation = operations.get(text(call.get("receiverOperationId")), {})
+    parameter = next((
+        item for item in operation.get("parameters") or []
+        if isinstance(item, dict) and text(item.get("stableRef")) == parameter_ref
+    ), None)
+    if parameter is None:
+        return None
+    value_ref = text(parameter.get("requiredValueRef"))
+    if not value_ref or (target_value_ref and value_ref != target_value_ref):
+        return None
+    value = next((item for item in required_value_catalog(use_case)
+                  if item["valueRef"] == value_ref), None)
+    if value is None:
+        return None
+    binding = next((
+        item for item in call.get("argumentBindings") or []
+        if isinstance(item, dict)
+        and text(item.get("parameter")) == text(parameter.get("name"))
+    ), None)
+    if not binding or text(binding.get("sourceRef")) != value["sourceRef"]:
+        return None
+    return value
 
 
 def _candidate_detail(
@@ -718,7 +783,7 @@ def _candidate_detail(
     detail: dict[str, Any] = {
         "sourceRef": source_ref,
         "targetType": target_type,
-        "sourceKind": _candidate_source_kind(source_ref, calls, use_case),
+        "sourceKind": _candidate_source_kind(source_ref, calls, use_case, operations),
     }
     value = next((row for row in required_value_catalog(use_case)
                   if row["sourceRef"] == source_ref), {}) if use_case else {}
@@ -1054,7 +1119,9 @@ def materialize(
             if requested_source_kind:
                 candidates = [
                     source_ref for source_ref in candidates
-                    if _candidate_source_kind(source_ref, calls, use_case) == requested_source_kind
+                    if _candidate_source_kind(
+                        source_ref, calls, use_case, operations,
+                    ) == requested_source_kind
                 ]
             if not candidates:
                 raise BindingSourceViolation({
@@ -1081,6 +1148,21 @@ def materialize(
                 }, repair_slot=binding_slots[location])
             is_root_binding = call_index + 1 in root_set
             if is_root_binding and len(candidates) == 1:
+                call["argumentBindings"].append({
+                    "parameter": text(parameter.get("name")), "sourceRef": candidates[0],
+                })
+            elif (
+                not is_root_binding
+                and len(candidates) == 1
+                and any(
+                    source["sourceRef"] == candidates[0]
+                    for source in directly_available_sources(use_case)
+                )
+                and _is_boundary_control_handoff(calls, call_index, operations)
+            ):
+                # A sole accepted required value on the Boundary→Control edge
+                # is already fully identified; bind it now so descendants can
+                # inherit only the actually delivered value.
                 call["argumentBindings"].append({
                     "parameter": text(parameter.get("name")), "sourceRef": candidates[0],
                 })

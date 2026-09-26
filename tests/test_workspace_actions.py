@@ -232,6 +232,23 @@ def test_completed_design_gate_uses_readiness_hints_for_next_action() -> None:
     assert [item["action"] for item in incomplete["actions"]] == ["message"]
 
 
+def test_completed_design_checkpoint_branch_offers_implementation() -> None:
+    branch_entry = command(
+        status="COMPLETED",
+        stage="design",
+        action="branch_checkpoint",
+        result={"checkpoint_stage": "design"},
+    )
+
+    actions = offered_actions(branch_entry)
+
+    assert [item.action for item in actions] == [
+        WorkspaceAction.MESSAGE,
+        WorkspaceAction.START_IMPLEMENTATION,
+    ]
+    assert actions[1].label == "Start implementation"
+
+
 def test_completed_design_clarification_replaces_stale_transition_offer() -> None:
     source = command(
         status="COMPLETED",
@@ -358,6 +375,86 @@ def test_stalled_repair_offers_only_user_feedback() -> None:
     assert shaped["wait_reason"] == "repair"
     assert [item["action"] for item in shaped["actions"]] == ["message"]
     assert [item["auto_selectable"] for item in shaped["actions"]] == [False]
+
+
+def test_technical_design_stall_offers_automatic_retry() -> None:
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT", stage="design"),
+        {
+            "requires_revision": True,
+            "repair_state": {"status": "STALLED", "attempt_count": 0},
+            "blocking_findings": [
+                {"repairable": True}
+            ],
+            "finding_details": [{"requiresUserInput": False}],
+        },
+    )
+
+    assert shaped["wait_reason"] == "repair"
+    assert shaped["actions"] == [
+        {
+            "action": "retry_design",
+            "label": "Retry automatic design repair",
+            "payload": {"action_id": "command-1"},
+            "auto_selectable": True,
+        },
+        {
+            "action": "message",
+            "label": "Send revision feedback",
+            "payload": {"action_id": "command-1"},
+            "auto_selectable": False,
+        },
+    ]
+
+
+def test_retry_design_result_does_not_offer_another_automatic_retry() -> None:
+    shaped = result_with_contract(
+        command(
+            status="AWAITING_INPUT",
+            stage="design",
+            action="retry_design",
+        ),
+        {
+            "requires_revision": True,
+            "repair_state": {"status": "STALLED", "attempt_count": 0},
+            "blocking_findings": [{"repairable": True}],
+            "finding_details": [{"requiresUserInput": False}],
+        },
+    )
+
+    assert [item["action"] for item in shaped["actions"]] == ["message"]
+
+
+@pytest.mark.parametrize(
+    "findings",
+    [
+        (
+            [{"repairable": True}],
+            [{"requiresUserInput": True}],
+        ),
+        (
+            [{"repairable": True}, {"repairable": True}],
+            [{"requiresUserInput": False}, {"requiresUserInput": True}],
+        ),
+        ([{"repairable": False}], [{"requiresUserInput": False}]),
+    ],
+)
+def test_design_stall_with_user_input_or_no_repairable_finding_has_no_auto_retry(
+    findings: tuple[list[dict], list[dict]],
+) -> None:
+    blocking_findings, finding_details = findings
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT", stage="design"),
+        {
+            "requires_revision": True,
+            "repair_state": {"status": "STALLED", "attempt_count": 0},
+            "blocking_findings": blocking_findings,
+            "finding_details": finding_details,
+        },
+    )
+
+    assert [item["action"] for item in shaped["actions"]] == ["message"]
+    assert shaped["actions"][0]["auto_selectable"] is False
 
 
 @pytest.mark.parametrize(
@@ -597,6 +694,35 @@ def test_failed_change_confirmation_retries_the_confirmation_not_design_graph() 
         "payload": {"action_id": "pending-plan"},
         "auto_selectable": True,
     }
+
+
+@pytest.mark.parametrize(
+    ("checkpoint_retryable", "expected_action"),
+    [(True, "retry_implementation"), (False, "rerun_implementation")],
+)
+def test_failed_implementation_offers_only_a_safe_retry_path(
+    checkpoint_retryable: bool, expected_action: str
+) -> None:
+    prior = command(
+        status="FAILED",
+        stage="implementation",
+        action="start_implementation",
+        payload={"job_id": "implementation-1"},
+        result={
+            "job_id": "implementation-1",
+            "checkpoint_retryable": checkpoint_retryable,
+        },
+    )
+
+    shaped = result_with_contract(prior, prior["result"])
+
+    assert [item["action"] for item in shaped["actions"]] == [
+        "message",
+        expected_action,
+    ]
+    retry_offer = shaped["actions"][1]
+    assert retry_offer["payload"]["action_id"] == "command-1"
+    assert action_is_offered(expected_action, retry_offer["payload"], prior)
 
 
 def test_reference_validation_accepts_only_a_published_payload() -> None:

@@ -41,6 +41,26 @@ def constraints_for_use_case(requirement_trace: dict, use_case_id: str) -> list[
     return result
 
 
+def modeled_global_constraints(requirement_trace: dict) -> list[dict]:
+    """Return explicitly modeled constraints that have no use-case edge.
+
+    These are context for downstream reasoning, not RTM links: callers must not
+    treat them as requirements this particular use case necessarily satisfies.
+    """
+    result: list[dict] = []
+    for requirement_id, item in (requirement_trace.get("requirements") or {}).items():
+        if not item.get("modeled_as_constraint"):
+            continue
+        if item.get("constrains_use_cases") != []:
+            continue
+        result.append({
+            "id": requirement_id,
+            "type": item.get("type"),
+            "text": item.get("text", ""),
+        })
+    return result
+
+
 @dataclass(frozen=True)
 class Traceability:
     """한 실행 상태의 추적 링크를 되읽기 좋게 뒤집어 둔 것."""

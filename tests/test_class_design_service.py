@@ -7,7 +7,7 @@ from copy import deepcopy
 import pytest
 from pydantic import ValidationError
 
-from app.design.schemas.class_model import BCEModel
+from app.design.schemas.class_model import BCEModel, Collaboration
 from app.design.services.class_diagram import feedback as feedback_stage
 from app.design.services.class_diagram import generation, service
 from app.design.services.class_diagram.cache import ProcessLocalAcceptedUnitCache
@@ -80,6 +80,173 @@ def test_ordinary_class_feedback_still_uses_the_scope_classifier(monkeypatch) ->
             lambda *_args: (_ for _ in ()).throw(RuntimeError("scope classifier called")),
         )
         service.revise_class_model(BCEModel(), index, "Revise the model.", set())
+
+
+def test_scoped_operation_repair_returns_candidate_with_unrelated_finding(monkeypatch) -> None:
+    index = build_scenario_index(single_use_case())
+    current = BCEModel.model_validate({
+        "Classes": [{
+            "className": "RequestBoundary", "stereotype": "Boundary",
+            "use_case_ids": ["UC1"], "operations": [{"operationId": "RequestBoundary::submit()", "name": "submit", "stepRefs": ["UC1:main:1"]}],
+        }],
+        "DataTypes": [], "Relationships": [],
+        "Collaborations": [{"collaborationId": "UC1", "useCaseIds": ["UC1"], "calls": [{
+            "callId": "UC1:call:1", "receiverOperationId": "RequestBoundary::old()", "stepRefs": ["UC1:main:1"],
+        }]}],
+    })
+    fragments = {"UC1": AcceptedFragment("UC1", {"DataTypes": [], "Classes": []})}
+    monkeypatch.setattr(feedback_stage, "feedback_scope", lambda *_args: FeedbackScope(kind="operation", ids=["UC1"]))
+    monkeypatch.setattr(feedback_stage, "fragments_from_model", lambda *_args: fragments)
+    monkeypatch.setattr(service.operations, "checked_fragment", lambda *_args, **_kwargs: AcceptedFragment(
+        "UC1", {"DataTypes": [], "Classes": [{
+            "className": "RequestBoundary", "operations": [{"operationId": "RequestBoundary::repaired()", "name": "repaired", "stepRefs": ["UC1:main:1"]}],
+        }]},
+    ))
+    monkeypatch.setattr(service.operations, "compose_fragments", lambda *_args: BCEModel.model_validate({
+        "Classes": [{
+            "className": "RequestBoundary", "stereotype": "Boundary",
+            "use_case_ids": ["UC1"], "operations": [{"operationId": "RequestBoundary::repaired()", "name": "repaired", "stepRefs": ["UC1:main:1"]}],
+        }], "DataTypes": [], "Relationships": [], "Collaborations": [],
+    }))
+    monkeypatch.setattr(service, "materialize_pre_collaboration_refs", lambda _previous, model, **_kwargs: model)
+    monkeypatch.setattr(service, "_rematerialize_preserved_collaborations", lambda _i, _p, _s, existing, selected: (existing, selected))
+    monkeypatch.setattr(service, "_complete_collaborations", lambda _i, skeleton, _existing, _selected, **_kwargs: BCEModel.model_validate({
+        **service._payload(skeleton), "Collaborations": [item.model_dump(by_alias=True) for item in current.Collaborations],
+    }))
+    monkeypatch.setattr(service, "_validated", lambda *_args: (_ for _ in ()).throw(ValueError("unrelated UC finding")))
+
+    candidate = service.revise_class_model(
+        current, index, "Repair this operation.", set(), operation_use_case_ids={"UC1"},
+    )
+    assert candidate.Classes[0].operations[0].name == "repaired"
+    # User initiated revisions still pass through the strict full-model validator.
+    with pytest.raises(ValueError, match="unrelated UC finding"):
+        service.revise_class_model(current, index, "Repair this operation.", set())
+
+
+def test_scoped_collaboration_repair_replaces_only_targeted_call_plan(monkeypatch) -> None:
+    index = build_scenario_index({
+        "use_cases": [
+            {"id": "UC1", "name": "Search", "primary_actor": "Member"},
+            {"id": "UC2", "name": "Browse", "primary_actor": "Member"},
+        ],
+        "use_case_specs": [
+            {"use_case_id": "UC1", "main_scenario": [{"step_number": 1, "subject_ref": "member", "sentence": "Member searches."}], "extensions": []},
+            {"use_case_id": "UC2", "main_scenario": [{"step_number": 1, "subject_ref": "member", "sentence": "Member browses."}], "extensions": []},
+        ],
+        "relationships": {"includes": [], "extends": []},
+    })
+    current = BCEModel.model_validate({
+        "Classes": [{
+            "className": "SearchBoundary", "stereotype": "Boundary", "use_case_ids": ["UC1", "UC2"],
+            "operations": [
+                {"operationId": "SearchBoundary::search()", "name": "search", "stepRefs": ["UC1:main:1"]},
+                {"operationId": "SearchBoundary::browse()", "name": "browse", "stepRefs": ["UC2:main:1"]},
+            ],
+        }],
+        "DataTypes": [], "Relationships": [],
+        "Collaborations": [
+            {"collaborationId": "UC1", "useCaseIds": ["UC1"], "calls": [{"callId": "UC1::call:1", "receiverOperationId": "SearchBoundary::search()", "stepRefs": ["UC1:main:1"]}]},
+            {"collaborationId": "UC2", "useCaseIds": ["UC2"], "calls": [{"callId": "UC2::call:1", "receiverOperationId": "SearchBoundary::browse()", "stepRefs": ["UC2:main:1"]}]},
+        ],
+    })
+    replacement = Collaboration.model_validate({
+        "collaborationId": "UC1", "useCaseIds": ["UC1"], "calls": [
+            {"callId": "UC1::call:1", "receiverOperationId": "SearchBoundary::browse()", "stepRefs": ["UC1:main:1"]},
+            {"callId": "UC1::call:2", "receiverOperationId": "SearchBoundary::search()", "parentCallId": "UC1::call:1", "stepRefs": ["UC1:main:1"]},
+        ],
+    })
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(service, "materialize_pre_collaboration_refs", lambda _previous, model, **_kwargs: model)
+    monkeypatch.setattr(
+        service, "_replace_use_cases",
+        lambda _index, _model, selected, **_kwargs: (
+            observed.setdefault("selected", [item.id for item in selected]) and {"UC1": replacement}, []
+        ),
+    )
+    monkeypatch.setattr(service, "_accepted_model", lambda _previous, revised, **_kwargs: revised)
+    monkeypatch.setattr(service, "_validated", lambda *_args: (_ for _ in ()).throw(AssertionError("global validation")))
+
+    candidate = service.revise_class_model(
+        current, index, "Repair the call topology.", set(), collaboration_use_case_ids={"UC1"},
+    )
+
+    assert observed["selected"] == ["UC1"]
+    assert [call.receiver_operation_id for call in candidate.Collaborations[0].calls] == [
+        "SearchBoundary::browse()", "SearchBoundary::search()",
+    ]
+    assert candidate.Collaborations[0].calls[1].parent_call_id == "UC1::call:1"
+    assert candidate.Collaborations[1] == current.Collaborations[1]
+
+
+def test_selected_collaboration_signal_replaces_one_combined_unit(monkeypatch) -> None:
+    index = build_scenario_index({
+        "use_cases": [
+            {"id": "UC1", "name": "Search", "primary_actor": "Member"},
+            {"id": "UC2", "name": "Browse", "primary_actor": "Member"},
+        ],
+        "use_case_specs": [
+            {"use_case_id": "UC1", "main_scenario": [{"step_number": 1, "subject_ref": "member", "sentence": "Member searches."}], "extensions": []},
+            {"use_case_id": "UC2", "main_scenario": [{"step_number": 1, "subject_ref": "member", "sentence": "Member browses."}], "extensions": []},
+        ],
+        "relationships": {"includes": [], "extends": []},
+    })
+    current = BCEModel.model_validate({
+        "Classes": [{
+            "className": "SearchBoundary", "stereotype": "Boundary", "use_case_ids": ["UC1", "UC2"],
+            "operations": [
+                {"operationId": "SearchBoundary::search()", "name": "search", "stepRefs": ["UC1:main:1"]},
+                {"operationId": "SearchBoundary::browse()", "name": "browse", "stepRefs": ["UC2:main:1"]},
+            ],
+        }],
+        "DataTypes": [], "Relationships": [],
+        "Collaborations": [
+            {"collaborationId": "UC1:main:1", "useCaseIds": ["UC1"], "calls": [{"callId": "UC1:main:1::call:1", "stableId": "stable-uc1", "receiverOperationId": "SearchBoundary::search()", "stepRefs": ["UC1:main:1"]}]},
+            {"collaborationId": "UC2:main:1", "useCaseIds": ["UC2"], "calls": [{"callId": "UC2:main:1::call:1", "stableId": "stable-uc2", "receiverOperationId": "SearchBoundary::browse()", "stepRefs": ["UC2:main:1"]}]},
+        ],
+    })
+    skeleton = BCEModel.model_validate({**current.model_dump(by_alias=True), "Collaborations": []})
+    signal = service.collaboration.CombinedReplacementRequired(
+        "UC1", "ancestor result is unavailable", CallPlanProposal.model_validate({"calls": []}),
+    )
+    replacement = Collaboration.model_validate({
+        "collaborationId": "UC1", "useCaseIds": ["UC1"], "calls": [{
+            "callId": "UC1::call:1", "receiverOperationId": "SearchBoundary::searchRepaired()",
+            "stepRefs": ["UC1:main:1"],
+        }],
+    })
+    combined_skeleton = BCEModel.model_validate({
+        **skeleton.model_dump(by_alias=True),
+        "Classes": [{
+            "className": "SearchBoundary", "stereotype": "Boundary", "use_case_ids": ["UC1", "UC2"],
+            "operations": [
+                {"operationId": "SearchBoundary::searchRepaired()", "name": "searchRepaired", "stepRefs": ["UC1:main:1"]},
+                {"operationId": "SearchBoundary::browse()", "name": "browse", "stepRefs": ["UC2:main:1"]},
+            ],
+        }],
+    })
+    calls: list[str] = []
+    monkeypatch.setattr(service, "_replace_use_cases", lambda *_args, **_kwargs: ({}, [signal]))
+
+    def replace_once(_index, _model, use_case, _signal):
+        calls.append(use_case.id)
+        return combined_skeleton, replacement
+
+    monkeypatch.setattr(
+        service.generation,
+        "replace_use_case_unit",
+        replace_once,
+    )
+
+    revised = service._replace_selected_collaborations(
+        index, skeleton, current, [index.use_case("UC1")], feedback="Repair the binding.",
+    )
+
+    assert calls == ["UC1"]
+    assert revised.Classes[0].operations[0].operation_id == "SearchBoundary::searchRepaired()"
+    assert revised.Collaborations[0].collaboration_id == "UC1:main:1"
+    assert revised.Collaborations[1] == current.Collaborations[1]
+    assert revised.Collaborations[1].calls[0].stable_id == "stable-uc2"
 
 
 def test_operation_feedback_retains_later_fragment_types_as_context(monkeypatch) -> None:
@@ -687,3 +854,47 @@ def test_resume_and_revision_keep_errors_and_use_case_ownership(monkeypatch):
     assert [
         call.parent_call_id for call in result.Collaborations[0].calls
     ] == parents_before
+
+
+def test_resume_preserves_present_invalid_collaboration(monkeypatch):
+    index = build_scenario_index(single_use_case())
+    invalid = Collaboration.model_validate({
+        "collaborationId": "UC1",
+        "useCaseIds": ["UC1"],
+        "calls": [{
+            "callId": "UC1:call:1",
+            "receiverOperationId": "missing-operation",
+            "stepRefs": ["UC1:main:1"],
+        }],
+    })
+    current = BCEModel.model_validate({"Classes": [], "Collaborations": [invalid]})
+    calls = []
+    monkeypatch.setattr(service, "_accepted_model", lambda _previous, revised: revised)
+    monkeypatch.setattr(service, "_validated", lambda model, *_args: model)
+    monkeypatch.setattr(
+        service, "_complete_collaborations",
+        lambda *_args, **_kwargs: calls.append(True),
+    )
+
+    resumed = service.resume_class_model(index, current)
+
+    assert calls == []
+    assert resumed.Collaborations == [invalid]
+
+
+def test_resume_completes_missing_collaboration(monkeypatch):
+    index = build_scenario_index(single_use_case())
+    current = BCEModel.model_validate({"Classes": [], "Collaborations": []})
+    observed = {}
+    monkeypatch.setattr(service, "_accepted_model", lambda _previous, revised: revised)
+    monkeypatch.setattr(service, "_validated", lambda model, *_args: model)
+
+    def complete(_index, model, existing, selected, **_kwargs):
+        observed["existing"] = existing
+        observed["selected"] = [item.id for item in selected]
+        return BCEModel.model_validate({**service._payload(model), "Collaborations": []})
+
+    monkeypatch.setattr(service, "_complete_collaborations", complete)
+    service.resume_class_model(index, current)
+
+    assert observed == {"existing": {}, "selected": ["UC1"]}

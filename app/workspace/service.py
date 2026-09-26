@@ -36,6 +36,7 @@ from app.design.service import (
 from app.design.services.class_diagram.models import ClassBindingStalled
 from app.design.services.common.plantuml import render_plantuml
 from app.design.services.common.structured import capture_llm_timings
+from app.design.services.persistence_scope import erd_disposition
 from app.design.validation import design_readiness_report
 from app.implementation.application.jobs import (
     worker as implementation_worker,
@@ -2548,11 +2549,54 @@ class WorkspaceService:
         current = result
         seen_fingerprints: set[str] = set()
         iterations = 0
+        class_reconcile_retry_attempted = False
         while True:
             if self._stop_requested(str(command["command_id"])):
                 raise WorkspaceStopRequested()
             repair_input = self._active_semantic_repair_input(current)
             if repair_input is None:
+                if (
+                    not class_reconcile_retry_attempted
+                    and self._stalled_class_reconcile_input(command, current)
+                ):
+                    status = session_status(str(command["app_id"]))
+                    if status.get("active") and status.get("stage") == "class_diagram":
+                        try:
+                            state = cast(
+                                dict[str, Any],
+                                artifact_repository.load_state(str(command["app_id"])),
+                            )
+                            spec = DESIGN_SPECS["class_diagram"]
+                            patch = spec.reconcile(state) if spec.reconcile else {}
+                            model_key = spec.model_key
+                        except Exception:
+                            patch = {}
+                            model_key = ""
+                            state = {}
+                        if (
+                            model_key
+                            and isinstance(patch, dict)
+                            and model_key in patch
+                            and patch[model_key] != state.get(model_key)
+                        ):
+                            class_reconcile_retry_attempted = True
+                            fingerprint = self._semantic_repair_fingerprint(current)
+                            response = self._run_design_operation(
+                                command,
+                                stage="class_diagram",
+                                label=self._design_stage_label("class_diagram", "Repairing"),
+                                operation=lambda: retry_design_session(str(command["app_id"])),
+                            )
+                            repaired = self._design_result(response)
+                            if self._semantic_repair_fingerprint(repaired) == fingerprint:
+                                return self._stalled_semantic_repair_result(repaired)
+                            current = repaired
+                            continue
+                return current
+            stage = str(command.get("stage") or "")
+            # Design findings remain at their saved gate.  The repair payload is
+            # diagnostic state, not user-provided feedback for a resumed session.
+            if stage == "design":
                 return current
             if iterations >= _MAX_AUTOMATIC_SEMANTIC_REPAIR_ITERATIONS:
                 return self._stalled_semantic_repair_result(current)
@@ -2563,7 +2607,6 @@ class WorkspaceService:
             seen_fingerprints.add(fingerprint)
             iterations += 1
 
-            stage = str(command.get("stage") or "")
             if stage == "testing":
                 blockers = [
                     blocker
@@ -2630,34 +2673,6 @@ class WorkspaceService:
                         )
                     ),
                 )
-            elif stage == "design":
-                app_id = str(command["app_id"])
-                status = session_status(app_id)
-                # An active design gate continues with its saved session and
-                # repair guidance. Retry is reserved for failed checkpoints.
-                if not status.get("active"):
-                    return current
-                current_stage = str(
-                    status.get("stage") or current.get("current_stage") or "design"
-                )
-                response = self._run_with_transient_retry(
-                    command,
-                    lambda: self._run_design_operation(
-                        command,
-                        stage=current_stage,
-                        label=self._design_stage_label(current_stage, "Repairing"),
-                        operation=lambda: resume_design_session(app_id, instruction),
-                    ),
-                    retry_operation=lambda: (
-                        lambda: self._run_design_operation(
-                            command,
-                            stage=current_stage,
-                            label=self._design_stage_label(current_stage, "Repairing"),
-                            operation=lambda: resume_design_session(app_id, instruction),
-                        )
-                    ),
-                )
-                repaired = self._design_result(response)
             else:
                 # Implementation owner work and Testing checkpoints have
                 # independent execution/retry semantics and are not replayed.
@@ -2666,6 +2681,33 @@ class WorkspaceService:
             if self._semantic_repair_fingerprint(repaired) == fingerprint:
                 return self._stalled_semantic_repair_result(repaired)
             current = repaired
+
+    @staticmethod
+    def _stalled_class_reconcile_input(
+        command: dict[str, Any], result: dict[str, Any]
+    ) -> bool:
+        """Select only a technical class stall for the guarded reconcile retry."""
+
+        details = result.get("finding_details")
+        repair_state = result.get("repair_state")
+        return bool(
+            command.get("stage") == "design"
+            and result.get("awaiting_input") is True
+            and result.get("current_stage") == "class_diagram"
+            and result.get("requires_revision") is True
+            and isinstance(repair_state, dict)
+            and str(repair_state.get("status") or "").upper() == "STALLED"
+            and isinstance(details, list)
+            and details
+            and all(
+                isinstance(item, dict)
+                and item.get("requires_user_input", item.get("requiresUserInput")) is False
+                for item in details
+            )
+            and result.get("feedback_question") is None
+            and result.get("resource_question") is None
+            and not result.get("resource_questions")
+        )
 
     @staticmethod
     def _active_semantic_repair_input(
@@ -4474,10 +4516,16 @@ class WorkspaceService:
     @staticmethod
     def _missing_design_artifacts(state: Mapping[str, Any]) -> list[str]:
         """Return canonical design stages without their persisted source model."""
-
+        class_model = state.get("extracted_bce_classes")
+        erd_not_applicable = (
+            isinstance(class_model, Mapping)
+            and bool(class_model)
+            and erd_disposition(class_model, state) == "not_applicable"
+        )
         return [
             stage
             for stage in DESIGN_STAGES
+            if not (stage == "erd" and erd_not_applicable)
             if not state.get(artifact_repository.STAGE_ARTIFACTS[stage]["source_key"])
         ]
 
@@ -4497,16 +4545,58 @@ class WorkspaceService:
         try:
             checkpoint = session_status(app_id)
             state = cast(dict[str, Any], artifact_repository.load_state(app_id))
-            if checkpoint.get("active") and checkpoint.get("stage") in DESIGN_STAGES:
+            result_app_id = str(result.get("app_id") or "")
+            if result_app_id and result_app_id != app_id:
+                return hints
+            if checkpoint.get("exists"):
                 snapshot = design_graph.get_state(
                     {"configurable": {"thread_id": app_id}}
                 )
-                checkpoint_state = snapshot.values or {}
-                check_key = DESIGN_SPECS[str(checkpoint["stage"])].check_key
-                if check_key and isinstance(checkpoint_state.get(check_key), dict):
-                    # Artifact hydration recomputes deterministic findings, but
-                    # the graph checkpoint owns digest-bound semantic evidence.
-                    state[check_key] = checkpoint_state[check_key]
+                snapshot_config = getattr(snapshot, "config", {}) or {}
+                configurable = snapshot_config.get("configurable", {})
+                checkpoint_state = getattr(snapshot, "values", {}) or {}
+                checkpoint_id = (
+                    configurable.get("checkpoint_id")
+                    if isinstance(configurable, Mapping)
+                    else None
+                )
+                result_checkpoint_id = result.get("checkpoint_id")
+                # The design graph is app-thread scoped. Require both sides of
+                # that identity before reusing checkpoint-owned evidence; its
+                # digest-bound semantic evidence is still revalidated below.
+                if (
+                    isinstance(configurable, Mapping)
+                    and configurable.get("thread_id") == app_id
+                    and bool(checkpoint_id)
+                    and (
+                        not result_checkpoint_id
+                        or result_checkpoint_id == checkpoint_id
+                    )
+                    and isinstance(checkpoint_state, Mapping)
+                    and checkpoint_state.get("app_id") == app_id
+                ):
+                    stages = (
+                        DESIGN_STAGES
+                        if not checkpoint.get("active")
+                        else (str(checkpoint.get("stage") or ""),)
+                    )
+                    for stage in stages:
+                        if stage not in DESIGN_SPECS:
+                            continue
+                        check_key = DESIGN_SPECS[stage].check_key
+                        checkpoint_check = checkpoint_state.get(check_key) if check_key else None
+                        if not check_key or not isinstance(checkpoint_check, Mapping):
+                            continue
+                        # Deterministic findings are recalculated from current
+                        # artifacts. Preserve only graph-owned semantic evidence;
+                        # the readiness validator rejects stale model/contract digests.
+                        evidence = checkpoint_check.get("semanticEvidence")
+                        if stage == "class_diagram" and isinstance(evidence, Mapping):
+                            hydrated_check = state.get(check_key)
+                            state[check_key] = {
+                                **(dict(hydrated_check) if isinstance(hydrated_check, Mapping) else {}),
+                                "semanticEvidence": dict(evidence),
+                            }
         except Exception:  # A presentation hint must not hide a command result.
             return hints
 

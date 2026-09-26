@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -127,7 +128,7 @@ def write_react_scaffold(
     api_base_url: str | None = None,
 ) -> dict[str, str]:
     files = react_scaffold_files(
-        application_name, resolve_api_base_url(api_spec, api_base_url)
+        application_name, resolve_api_base_url(api_spec, api_base_url), api_spec
     )
     for relative, content in files.items():
         target = frontend_root / relative
@@ -162,12 +163,13 @@ def resolve_api_base_url(
 
 
 def react_scaffold_files(
-    application_name: str, api_base_url: str
+    application_name: str, api_base_url: str, api_spec: dict[str, Any] | None = None
 ) -> dict[str, str]:
     package_name = re.sub(r"[^a-z0-9]+", "-", application_name.lower()).strip("-")
     package_name = package_name or "easydep-frontend"
     title = json.dumps(application_name.strip() or "EasyDep Application", ensure_ascii=False)
     base_url = json.dumps(api_base_url.rstrip("/"), ensure_ascii=False)
+    operations = frontend_feature_operations(api_spec or {})
     return {
         ".gitignore": "node_modules\ndist\n.env.local\n",
         ".env.example": f"VITE_API_BASE_URL={api_base_url.rstrip('/')}\n",
@@ -221,11 +223,7 @@ import './styles.css';
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><HashRouter><App /></HashRouter></React.StrictMode>);
 """,
         "src/config.ts": f"export const API_BASE_URL=(import.meta.env.VITE_API_BASE_URL??{base_url}).replace(/\\/$/,'');\n",
-        "src/App.tsx": (
-            "// EASYDEP-IMPLEMENT: replace this shell with the accessible application UI.\n"
-            f"export default function App(){{return <main><h1>{{{title}}}</h1>"
-            "<p>Waiting for the frontend implementation agent.</p></main>;}\n"
-        ),
+        "src/App.tsx": _render_app(title, operations),
         "src/styles.css": "body{margin:0;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:#f4f7fb;color:#172033}*{box-sizing:border-box}\n@media (max-width:40rem){table{display:block;max-width:100%;overflow-x:auto}}\n",
         "README.md": f"""# {application_name.strip() or 'EasyDep Application'} frontend
 
@@ -233,7 +231,68 @@ ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><
 components are owned by the EasyDep frontend implementation agent and verified with
 `npm run build`.
 """,
+    } | {
+        f"src/features/{slug}.tsx": _render_feature_component(operation)
+        for slug, operation in operations
     }
+
+
+def frontend_feature_operations(
+    api_spec: dict[str, Any],
+) -> list[tuple[str, dict[str, str]]]:
+    operations: list[dict[str, str]] = []
+    for path, path_item in api_spec.get("paths", {}).items():
+        if not isinstance(path_item, dict):
+            continue
+        for method, operation in path_item.items():
+            if method.lower() not in HTTP_METHODS or not isinstance(operation, dict):
+                continue
+            operation_id = str(operation.get("operationId") or "").strip()
+            identity = f"{method.lower()} {path} {operation_id}"
+            base = re.sub(r"[^a-z0-9]+", "-", operation_id.lower()).strip("-")
+            if not base:
+                base = re.sub(r"[^a-z0-9]+", "-", f"{method}-{path}".lower()).strip("-")
+            digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+            label = str(operation.get("summary") or operation_id or f"{method.upper()} {path}")
+            operations.append({"slug": f"{base}-{digest}", "method": method.upper(), "path": str(path), "id": operation_id or f"{method.upper()} {path}", "label": label})
+    return [(item["slug"], item) for item in sorted(operations, key=lambda item: (item["method"], item["path"], item["id"]))]
+
+
+def _feature_component_name(slug: str) -> str:
+    return "Feature" + "".join(part.capitalize() for part in slug.split("-"))
+
+
+def _render_app(title: str, operations: list[tuple[str, dict[str, str]]]) -> str:
+    imports = "\n".join(
+        f"import {_feature_component_name(slug)} from './features/{slug}';"
+        for slug, _operation in operations
+    )
+    navigation = "\n".join(
+        f"<button type=\"button\" key=\"{slug}\" aria-current={{active === {index} ? 'page' : undefined}} onClick={{() => setActive({index})}}>{{{json.dumps(operation['label'], ensure_ascii=False)}}}</button>"
+        for index, (slug, operation) in enumerate(operations)
+    )
+    views = "\n".join(
+        f"{{active === {index} && <{_feature_component_name(slug)} />}}"
+        for index, (slug, _operation) in enumerate(operations)
+    )
+    state_import = "import { useState } from 'react';\n" if operations else ""
+    selection_state = "  const [active, setActive] = useState(0);\n" if operations else ""
+    content = (
+        f"<nav aria-label=\"Features\">{navigation}</nav><section aria-live=\"polite\">{views}</section>"
+        if operations else "<p>No API operations are available.</p>"
+    )
+    return f"{state_import}{imports}\n\nexport default function App() {{\n{selection_state}  return <main><h1>{{{title}}}</h1>{content}</main>;\n}}\n"
+
+
+def _render_feature_component(operation: dict[str, str]) -> str:
+    marker = f"{operation['method']} {operation['path']} ({operation['id']})"
+    label = json.dumps(operation["label"], ensure_ascii=False)
+    return (
+        f"// EASYDEP-IMPLEMENT: {marker}\n"
+        f"export default function {_feature_component_name(operation['slug'])}() {{\n"
+        f"  return <article><h2>{label}</h2><p>Implementation pending.</p></article>;\n"
+        "}\n"
+    )
 
 
 def operation_ids(api_spec: dict[str, Any]) -> list[str]:

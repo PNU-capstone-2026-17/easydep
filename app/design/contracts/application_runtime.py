@@ -5,6 +5,13 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from pydantic import BaseModel, ValidationError
+
+from app.design.contracts.api_spec import ApiControlBinding, ApiSpecModel
+from app.design.schemas.class_model import BCEModel
+
+SYNTHETIC_UUID_BASIC_USERNAME = "00000000-0000-0000-0000-000000000001"
+
 _SECURITY_WORDS = re.compile(
     r"\b(?:authenticat(?:e|ed|ion)|authoriz(?:e|ed|ation))\b|인증|인가|접근\s*권한",
     re.IGNORECASE,
@@ -80,4 +87,118 @@ def application_security_required(
     return bool(application_security_source_refs(api_spec, refined_requirements))
 
 
-__all__ = ["application_security_required", "application_security_source_refs"]
+class _OpenApiControlBinding(BaseModel):
+    """Typed projection of the accepted ``x-easydep-control`` OpenAPI extension."""
+
+    control: str
+    method: str
+    arguments: dict[str, str]
+
+
+def _api_bindings(api_model: ApiSpecModel | dict[str, Any]) -> list[ApiControlBinding]:
+    """Hydrate accepted API bindings from either canonical model or its OpenAPI view."""
+
+    if isinstance(api_model, ApiSpecModel):
+        return [
+            endpoint.control_binding
+            for endpoint in api_model.Endpoints
+            if endpoint.control_binding is not None
+        ]
+    if not isinstance(api_model, dict):
+        return []
+    if "Endpoints" in api_model or "Schemas" in api_model:
+        try:
+            model = ApiSpecModel.model_validate(api_model)
+        except ValidationError:
+            return []
+        return _api_bindings(model)
+
+    # Deployment receives the rendered OpenAPI projection. Its extension is a
+    # compact mapping rather than the canonical argument list, so validate it
+    # structurally before converting it to the shared API contract type.
+    bindings: list[ApiControlBinding] = []
+    paths = api_model.get("paths")
+    if not isinstance(paths, dict):
+        return []
+    for path_item in paths.values():
+        if not isinstance(path_item, dict):
+            continue
+        for operation in path_item.values():
+            if not isinstance(operation, dict) or "x-easydep-control" not in operation:
+                continue
+            try:
+                projected = _OpenApiControlBinding.model_validate(
+                    operation["x-easydep-control"]
+                )
+                bindings.append(
+                    ApiControlBinding(
+                        control=projected.control,
+                        method=projected.method,
+                        arguments=[
+                            {"name": name, "source": source}
+                            for name, source in projected.arguments.items()
+                        ],
+                    )
+                )
+            except ValidationError:
+                continue
+    return bindings
+
+
+def authenticated_uuid_context_required(
+    api_model: ApiSpecModel | dict[str, Any],
+    bce_model: BCEModel | dict[str, Any],
+) -> bool:
+    """Whether an accepted API binding supplies a UUID Control input from context.
+
+    This is structural: the endpoint binding selects the exact Control and
+    method, and the argument selects the exact parameter. Names of users,
+    roles, classes, or use cases are never inspected for meaning.
+    """
+
+    if isinstance(bce_model, BCEModel):
+        classes = bce_model.Classes
+    elif isinstance(bce_model, dict):
+        try:
+            classes = BCEModel.model_validate(bce_model).Classes
+        except ValidationError:
+            return False
+    else:
+        return False
+
+    for binding in _api_bindings(api_model):
+        controls = [
+            class_item
+            for class_item in classes
+            if class_item.stereotype == "Control"
+            and class_item.class_name == binding.control
+        ]
+        if len(controls) != 1:
+            continue
+        methods = [
+            operation
+            for operation in controls[0].operations
+            if operation.name == binding.method
+        ]
+        if len(methods) != 1:
+            continue
+        operation = methods[0]
+        for argument in binding.arguments:
+            if not re.fullmatch(r"\$context\.[A-Za-z_][A-Za-z0-9_]*", argument.source):
+                continue
+            parameters = [
+                parameter
+                for parameter in operation.parameters
+                if parameter.name == argument.name
+            ]
+            if len(parameters) == 1 and parameters[0].type == "UUID":
+                return True
+    return False
+
+
+__all__ = [
+    "SYNTHETIC_UUID_BASIC_USERNAME",
+    "application_security_required",
+    "application_security_source_refs",
+    "authenticated_uuid_context_required",
+]

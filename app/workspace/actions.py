@@ -478,6 +478,41 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
         # turn a technical finding into a generic user-edit request (or allow
         # approval to skip it); a real user decision is represented above by a
         # typed feedback_question with grounded authority and options.
+        findings = [
+            item
+            for item in result.get("blocking_findings") or []
+            if isinstance(item, dict)
+        ]
+        finding_details = [
+            item
+            for item in result.get("finding_details") or []
+            if isinstance(item, dict)
+        ]
+        repair_state = result.get("repair_state")
+        technical_design_stall = (
+            stage == "design"
+            and command.get("action") != WorkspaceAction.RETRY_DESIGN.value
+            and isinstance(repair_state, dict)
+            and str(repair_state.get("status") or "").upper() == "STALLED"
+            and any(item.get("repairable") is True for item in findings)
+            and not any(
+                item.get("requires_user_input", item.get("requiresUserInput")) is True
+                for item in [*findings, *finding_details]
+            )
+        )
+        if technical_design_stall:
+            return AwaitingOutcome(
+                wait_reason=WaitReason.REPAIR,
+                actions=[
+                    _offer(
+                        WorkspaceAction.RETRY_DESIGN,
+                        "Retry automatic design repair",
+                        common,
+                        auto=True,
+                    ),
+                    _offer(WorkspaceAction.MESSAGE, "Send revision feedback", common),
+                ],
+            )
         return AwaitingOutcome(
             wait_reason=WaitReason.REPAIR,
             actions=[
@@ -581,7 +616,7 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
                 or result.get("job_id")
                 or ""
             )
-            if job_id:
+            if job_id and result.get("checkpoint_retryable") is True:
                 return [
                     discuss,
                     _offer(
@@ -592,7 +627,11 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
                 ]
             return [
                 discuss,
-                _offer(WorkspaceAction.RERUN_IMPLEMENTATION, "Rerun implementation", common),
+                _offer(
+                    WorkspaceAction.RERUN_IMPLEMENTATION,
+                    "Rerun implementation",
+                    common,
+                ),
             ]
         if stage == "testing":
             implementation_job_id = str(
@@ -642,6 +681,11 @@ def offered_actions(command: dict[str, Any]) -> list[ActionOffer]:
     if command.get("status") == "AWAITING_INPUT":
         return awaiting_outcome(command).actions
     preserved = (command.get("payload") or {}).get("_conversation_actions")
+    # A terminal implementation command must expose the retry or fresh rerun
+    # derived from its current checkpoint state. A copied conversation action
+    # from before the terminal result can otherwise hide that recovery path.
+    if command.get("status") in {"FAILED", "INTERRUPTED"} and command.get("stage") == "implementation":
+        return terminal_actions(command)
     if isinstance(preserved, list):
         actions = [ActionOffer.model_validate(action) for action in preserved]
         if command.get("status") == "COMPLETED" and command.get("stage") == "design":
@@ -672,6 +716,20 @@ def _design_transition_offer(command: dict[str, Any]) -> ActionOffer | None:
     if not isinstance(result, dict):
         return None
     common = {"action_id": str(command.get("command_id") or "")}
+    # A design checkpoint branch contains the complete, validated design artifact
+    # set, but intentionally has no copied LangGraph execution checkpoint. Treat
+    # that branch-entry record as the design completion boundary it represents.
+    if (
+        command.get("action") == WorkspaceAction.BRANCH_CHECKPOINT.value
+        and command.get("status") == "COMPLETED"
+        and result.get("checkpoint_stage") == "design"
+    ):
+        return _offer(
+            WorkspaceAction.START_IMPLEMENTATION,
+            "Start implementation",
+            common,
+            auto=True,
+        )
     if result.get("design_complete") is True:
         return _offer(
             WorkspaceAction.START_IMPLEMENTATION,

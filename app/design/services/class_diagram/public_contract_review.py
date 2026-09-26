@@ -21,16 +21,18 @@ from app.design.services.class_diagram.cache import (
     record_cache_outcome,
 )
 from app.design.services.class_diagram.scenario import ScenarioIndex, UseCase, text
+from app.design.services.class_diagram.trusted_context import (
+    required_value_catalog,
+    required_value_evidence,
+)
 from app.design.services.class_diagram.type_system import referenced_type_names
-from app.design.services.class_diagram.trusted_context import required_value_catalog, required_value_evidence
 from app.design.services.class_diagram.validation.model import operation_catalog
 from app.design.services.common.structured import parse_structured
 from app.llm_connection import build_llm_connection
 from app.llm_profiles import effective_temperature
 from app.validation import Finding, stable_digest
 
-
-_EVIDENCE_VERSION = "class-public-contract-review/v6"
+_EVIDENCE_VERSION = "class-public-contract-review/v7"
 _PROMPT = """You independently review whether an accepted class-model use-case
 slice closes every public-contract obligation owned by the class stage.  The
 requirements/API/implementation stages own the authentication policy expressed
@@ -143,6 +145,42 @@ def _slice(model: dict[str, Any], use_case: UseCase) -> dict[str, Any]:
     used_types = set().union(*(referenced_type_names(item) for item in type_expressions)) if type_expressions else set()
     data_types = [dict(item) for item in model.get("DataTypes") or []
                   if isinstance(item, Mapping) and text(item.get("name")) in used_types]
+    operation_classes = tuple(classes)
+    for owner in model.get("Classes") or []:
+        if (
+            not isinstance(owner, Mapping)
+            or text(owner.get("stereotype")).casefold() != "entity"
+            or text(owner.get("className")) not in used_types
+        ):
+            continue
+        entity_name = text(owner.get("className"))
+        return_operations = []
+        for class_item in operation_classes:
+            for operation in class_item["operations"]:
+                if (
+                    text(class_item.get("stereotype")).casefold() in {"boundary", "control"}
+                    and entity_name in referenced_type_names(text(operation.get("returnType")))
+                ):
+                    return_operations.append((
+                        text(class_item.get("stereotype")), text(operation.get("returnType")),
+                    ))
+        entity = {
+            "className": entity_name,
+            "stereotype": text(owner.get("stereotype")),
+            "fields": list(owner.get("fields") or []),
+            "fieldRefs": list(owner.get("fieldRefs") or []),
+        }
+        if return_operations:
+            roles = list(dict.fromkeys(role for role, _return_type in return_operations))
+            return_types = list(dict.fromkeys(
+                return_type for _role, return_type in return_operations
+            ))
+            entity["outputEvidence"] = (
+                f"The cited {' and '.join(roles)} operations return "
+                f"{' or '.join(return_types)}; these fields are the returned "
+                f"{entity_name} details."
+            )
+        classes.append(entity)
     collaboration = next(
         (dict(item) for item in model.get("Collaborations") or []
          if isinstance(item, Mapping) and text(item.get("collaborationId")) == use_case.id),
@@ -156,6 +194,15 @@ def _actor_input_sources(model: dict[str, Any], use_case: UseCase) -> set[str]:
     collaboration = next((item for item in model.get("Collaborations") or []
                           if isinstance(item, Mapping) and text(item.get("collaborationId")) == use_case.id), {})
     operations = operation_catalog(model)
+    dto_field_refs = {
+        text(item.get("name")): {
+            text(field_ref) for field_ref in item.get("fieldRefs") or [] if text(field_ref)
+        }
+        for item in model.get("DataTypes") or []
+        if isinstance(item, Mapping)
+        and text(item.get("name"))
+        and text(item.get("kind")).casefold() in {"valueobject", "datatype"}
+    }
     sources: set[str] = set()
     for call in collaboration.get("calls") or []:
         if not isinstance(call, Mapping) or text(call.get("parentCallId")):
@@ -169,11 +216,21 @@ def _actor_input_sources(model: dict[str, Any], use_case: UseCase) -> set[str]:
             ref = text(parameter.get("stableRef"))
             if not ref:
                 continue
+            field_refs = set().union(*(
+                dto_field_refs.get(type_name, set())
+                for type_name in referenced_type_names(text(parameter.get("type")))
+            ))
+            roots = set()
             for step_ref in call.get("stepRefs") or []:
                 if text(step_ref).startswith(f"{use_case.id}:"):
-                    sources.add(f"{text(step_ref)}#{ref}")
+                    roots.add(f"{text(step_ref)}#{ref}")
             if text(call.get("stableId")):
-                sources.add(f"{text(call.get('stableId'))}#{ref}")
+                roots.add(f"{text(call.get('stableId'))}#{ref}")
+            sources.update(roots)
+            sources.update(
+                f"{root}.{field_ref}"
+                for root in roots for field_ref in field_refs
+            )
     return sources
 
 
@@ -311,7 +368,24 @@ def _verify_response(model: dict[str, Any], use_case: UseCase, response: _Review
         if mapping.field_ref:
             type_expression = text(cited_parameter.get("type")) if cited_parameter else text(operation.get("returnType"))
             possible_types = referenced_type_names(type_expression)
-            if not any(mapping.field_ref in fields.get(owner, {}) for owner in possible_types):
+            target_field = any(
+                mapping.field_ref in fields.get(owner, {}) for owner in possible_types
+            )
+            bound_source = text(next(
+                (
+                    item.get("sourceRef") for item in call.get("argumentBindings") or []
+                    if isinstance(item, Mapping)
+                    and cited_parameter is not None
+                    and text(item.get("parameter")) == text(cited_parameter.get("name"))
+                ),
+                "",
+            ))
+            root_input_field = bool(
+                cited_parameter
+                and bound_source.endswith(f".{mapping.field_ref}")
+                and bound_source in _actor_input_sources(model, use_case)
+            )
+            if not target_field and not root_input_field:
                 return f"Reviewer fieldRef '{mapping.field_ref}' does not belong to the cited concrete type."
         usage = text(obligation.get("usage")).casefold() if obligation.get("kind") == "required_value" else ""
         if usage in {"control", "both"}:

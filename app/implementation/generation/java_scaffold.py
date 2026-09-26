@@ -14,6 +14,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.design.contracts.api_spec import ApiEndpoint, ApiSpecModel
+from app.design.contracts.application_runtime import authenticated_uuid_context_required
 from app.design.contracts.type_system import (
     java_type_for_design,
     scalar_wire_types_equivalent,
@@ -271,6 +272,7 @@ def render_openapi_controller_scaffold(
         for match in _PATH_CONSTANT.finditer(interface_source)
     }
     dependencies: dict[str, str] = {}
+    authenticated_actor_provider_needed = False
     mapper_needed = False
     methods: list[str] = []
     for match in _OPENAPI_METHOD.finditer(interface_source):
@@ -283,8 +285,11 @@ def render_openapi_controller_scaffold(
             if endpoint is not None:
                 rendered = _controller_body(endpoint, signature, api_model, bce_model, base_package)
                 if rendered is not None:
-                    control_name, body = rendered
+                    control_name, body, uses_authenticated_actor = rendered
                     dependencies[control_name] = _field_name(control_name)
+                    authenticated_actor_provider_needed = (
+                        authenticated_actor_provider_needed or uses_authenticated_actor
+                    )
                     mapper_needed = mapper_needed or body is not None
         marker = (
             controller_body_marker(endpoint.method, endpoint.path)
@@ -299,20 +304,34 @@ def render_openapi_controller_scaffold(
     imports.add(f"import {base_package}.api.{interface_name};")
     imports.add("import org.springframework.web.bind.annotation.RestController;")
     imports.update(f"import {base_package}.bce.{name};" for name in dependencies)
+    if authenticated_actor_provider_needed:
+        imports.add(
+            f"import {base_package}.config.AuthenticatedActorIdProvider;"
+        )
     if mapper_needed:
         imports.add("import com.fasterxml.jackson.databind.ObjectMapper;")
 
     fields = [f"    private final {name} {field};" for name, field in sorted(dependencies.items())]
+    if authenticated_actor_provider_needed:
+        fields.append("    private final AuthenticatedActorIdProvider authenticatedActorIdProvider;")
     if mapper_needed:
         fields.append("    private final ObjectMapper objectMapper;")
     constructor = ""
     if fields:
         parameters = [f"{name} {field}" for name, field in sorted(dependencies.items())]
+        if authenticated_actor_provider_needed:
+            parameters.append(
+                "AuthenticatedActorIdProvider authenticatedActorIdProvider"
+            )
         if mapper_needed:
             parameters.append("ObjectMapper objectMapper")
         assignments = [
             f"        this.{field} = {field};" for _name, field in sorted(dependencies.items())
         ]
+        if authenticated_actor_provider_needed:
+            assignments.append(
+                "        this.authenticatedActorIdProvider = authenticatedActorIdProvider;"
+            )
         if mapper_needed:
             assignments.append("        this.objectMapper = objectMapper;")
         constructor = (
@@ -395,7 +414,7 @@ def _controller_body(
     api_model: ApiSpecModel,
     bce_model: BCEModel,
     base_package: str,
-) -> tuple[str, list[str]] | None:
+) -> tuple[str, list[str] | None, bool] | None:
     """HTTP binding을 Control 호출 인자로 바꾸고 성공 응답을 반환한다."""
 
     binding = endpoint.control_binding
@@ -429,19 +448,33 @@ def _controller_body(
         api_model=api_model,
         bce_model=bce_model,
     ):
-        return control.class_name, None
+        return control.class_name, None, False
     arguments: list[str] = []
+    authenticated_actor_used = False
     declared_types = {
         *(item.class_name for item in bce_model.Classes),
         *(item.name for item in bce_model.DataTypes),
     }
     for parameter in operation.parameters:
         source = binding_sources.get(parameter.name)
-        expression = _http_source_expression(source, sources)
+        if (
+            source is not None
+            and source.startswith("$context.")
+            and java_type(parameter.type, declared_types=declared_types) == "UUID"
+            and authenticated_uuid_context_required(api_model, bce_model)
+        ):
+            expression = "authenticatedActorIdProvider.currentActorId()"
+            authenticated_actor_used = True
+        else:
+            expression = _http_source_expression(source, sources)
         if expression is None:
             return None
         target_type = _qualified_bce_type(parameter.type, base_package, declared_types)
-        arguments.append(_object_mapper_conversion(expression, target_type))
+        arguments.append(
+            expression
+            if authenticated_actor_used and source is not None and source.startswith("$context.")
+            else _object_mapper_conversion(expression, target_type)
+        )
 
     call = (
         f"{_field_name(control.class_name)}."
@@ -453,9 +486,9 @@ def _controller_body(
         return control.class_name, [
             f"{call};",
             f"return ResponseEntity.status({success.status}).build();",
-        ]
+        ], authenticated_actor_used
     if operation.return_type == "void":
-        return None
+        return control.class_name, None, authenticated_actor_used
     body = [f"var result = {call};"]
     if response_type.startswith("List<") and response_type.endswith(">"):
         item_type = response_type[5:-1].strip()
@@ -466,7 +499,7 @@ def _controller_body(
     else:
         body.append(f"var response = {_object_mapper_conversion('result', response_type)};")
     body.append(f"return ResponseEntity.status({success.status}).body(response);")
-    return control.class_name, body
+    return control.class_name, body, authenticated_actor_used
 
 
 def _http_parameter_sources(signature: str) -> dict[str, str]:
@@ -492,6 +525,15 @@ def _http_parameter_sources(signature: str) -> dict[str, str]:
         )
         if query:
             result[f"$query.{query.group(1)}"] = variable
+            continue
+        swagger_parameter = re.search(r"@Parameter\s*\(([^)]*)\)", parameter)
+        if swagger_parameter is None:
+            continue
+        attributes = swagger_parameter.group(1)
+        name = re.search(r'\bname\s*=\s*"([^"]+)"', attributes)
+        location = re.search(r"\bin\s*=\s*ParameterIn\.(QUERY|PATH)\b", attributes)
+        if name is not None and location is not None:
+            result[f"${location.group(1).lower()}.{name.group(1)}"] = variable
     return result
 
 
@@ -604,7 +646,25 @@ def _controller_projection_is_safe(
         return False
     sources = {item.name: item.source for item in binding.arguments}
     for parameter in operation.parameters:
-        source = _api_source_contract(endpoint, sources.get(parameter.name), api_model)
+        source_ref = sources.get(parameter.name)
+        authenticated_uuid_source = (
+            source_ref is not None
+            and source_ref.startswith("$context.")
+            and java_type(
+                parameter.type,
+                declared_types={
+                    *(item.class_name for item in bce_model.Classes),
+                    *(item.name for item in bce_model.DataTypes),
+                },
+            )
+            == "UUID"
+            and authenticated_uuid_context_required(api_model, bce_model)
+        )
+        source = (
+            ("uuid", True)
+            if authenticated_uuid_source
+            else _api_source_contract(endpoint, source_ref, api_model)
+        )
         if source is None:
             return False
         source_type, required = source
@@ -854,7 +914,7 @@ def _without_optional(value: str) -> tuple[str, bool]:
 
 def _container_type(value: str) -> tuple[str, str]:
     compact = re.sub(r"\s+", "", value)
-    if compact.casefold() in {"byte[]", "bytes", "bytes[]"}:
+    if compact.casefold() in {"binary", "byte[]", "bytes", "bytes[]"}:
         return "binary", "byte"
     if compact.endswith("[]"):
         return "list", compact[:-2]

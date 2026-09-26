@@ -179,6 +179,43 @@ def types_compatible(left: str, right: str) -> bool:
     return types_equivalent(left, right)
 
 
+def required_value_type_compatible(
+    required_value: dict[str, Any], target_type: str, data_types: list[dict[str, Any]],
+) -> bool:
+    """Check a required-value type, allowing constrained local DTO refinement.
+
+    Ordinary type compatibility remains strict. The exception requires a catalog valueRef,
+    an epistemically broad ``Object`` or ``unknown`` declaration, and an exact named
+    nonempty local valueObject/dataType declaration.
+    """
+
+    source_type = str(required_value.get("designType") or "").strip()
+    if types_compatible(source_type, target_type):
+        return True
+    if (
+        source_type.casefold() not in {"object", "unknown"}
+        or not str(required_value.get("valueRef") or "").strip()
+    ):
+        return False
+
+    return _is_nonempty_local_value_refinement(target_type, data_types)
+
+
+def _is_nonempty_local_value_refinement(
+    target_type: str, data_types: list[dict[str, Any]],
+) -> bool:
+    """Whether ``target_type`` is an exact, usable locally declared structured value."""
+
+    target_name = str(target_type or "").strip()
+    return any(
+        isinstance(item, dict)
+        and str(item.get("name") or "").strip() == target_name
+        and str(item.get("kind") or "").casefold() in {"valueobject", "datatype"}
+        and bool(item.get("fields"))
+        for item in data_types
+    )
+
+
 def projected_field_type(
     root_type: str, path: str, fields_by_type: dict[str, dict[str, str]],
 ) -> str:

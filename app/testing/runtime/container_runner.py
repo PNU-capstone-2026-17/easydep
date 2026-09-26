@@ -17,6 +17,7 @@ from app.testing.progress import emit_testing_progress, testing_progress_enabled
 RUNNER_IMAGE_ENV = "EASYDEP_TOOLCHAIN_IMAGE"
 DEFAULT_RUNNER_IMAGE = "easydep-toolchain:local"
 GRADLE_CACHE_VOLUME = "easydep-member-gradle-cache"
+GRADLE_CACHE_PATH = "/tmp/easydep-gradle-cache"
 TOFU_CACHE_VOLUME = "easydep-tofu-provider-cache"
 TOFU_CACHE_PATH = "/app/.cache/opentofu"
 CONTAINER_CHECK_ROOT = "/easydep-check"
@@ -24,6 +25,7 @@ _HEARTBEAT_INTERVAL_SECONDS = 30
 _TOOLCHAIN_USER_ID = "1000:1000"
 _cache_ownership_lock = Lock()
 _prepared_tofu_cache_images: set[str] = set()
+_prepared_gradle_cache_images: set[str] = set()
 
 
 @dataclass(frozen=True)
@@ -138,6 +140,49 @@ def _prepare_tofu_cache(image: str, timeout: int) -> None:
                 + (f": {detail}" if detail else ".")
             )
         _prepared_tofu_cache_images.add(image)
+
+
+def prepare_gradle_cache(image: str, timeout: int = 120) -> None:
+    """Make the implementation runner's shared Gradle cache writable by appuser."""
+
+    with _cache_ownership_lock:
+        if image in _prepared_gradle_cache_images:
+            return
+        command = [
+            "docker",
+            "run",
+            "--rm",
+            "--user",
+            "root",
+            "--network",
+            "none",
+            "--security-opt",
+            "no-new-privileges:true",
+            "-v",
+            f"{GRADLE_CACHE_VOLUME}:{GRADLE_CACHE_PATH}",
+            "--entrypoint",
+            "chown",
+            image,
+            "-R",
+            _TOOLCHAIN_USER_ID,
+            GRADLE_CACHE_PATH,
+        ]
+        completed = run_process_tree(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=min(timeout, 120),
+        )
+        if completed.returncode != 0:
+            detail = (completed.stderr or completed.stdout or "").strip()[-2000:]
+            raise RuntimeError(
+                "Could not prepare the shared Gradle cache"
+                + (f": {detail}" if detail else ".")
+            )
+        _prepared_gradle_cache_images.add(image)
 
 
 def run_toolchain_command(

@@ -216,6 +216,12 @@ def test_generate_specs_projects_only_the_constraints_for_each_use_case(monkeypa
 
     def review(_stage, artifact, **_kwargs):
         seen[artifact["use_case_name"]] = artifact.get("constraints_it_must_respect", [])
+        seen[artifact["use_case_name"] + " global"] = artifact.get(
+            "explicit_global_constraint_source_context", []
+        )
+        seen[artifact["use_case_name"] + " scope"] = artifact.get(
+            "global_constraint_context_scope", ""
+        )
         return s3.validator.Review(status=s3.validator.OK)
 
     state = {
@@ -234,7 +240,19 @@ def test_generate_specs_projects_only_the_constraints_for_each_use_case(monkeypa
                     "type": "FR",
                     "text": "The first operation preserves its balance.",
                     "constrains_use_cases": ["UC1"],
-                }
+                },
+                "GLOBAL": {
+                    "type": "NFR",
+                    "text": "Protect sensitive information.",
+                    "modeled_as_constraint": True,
+                    "constrains_use_cases": [],
+                },
+                "RAW": {
+                    "type": "NFR",
+                    "text": "Unattached raw NFR.",
+                    "modeled_as_constraint": False,
+                    "constrains_use_cases": [],
+                },
             }
         },
     }
@@ -249,6 +267,12 @@ def test_generate_specs_projects_only_the_constraints_for_each_use_case(monkeypa
         {"id": "R3", "type": "FR", "text": "The first operation preserves its balance."}
     ]
     assert seen["Second operation"] == []
+    assert seen["First operation global"] == [
+        {"id": "GLOBAL", "type": "NFR", "text": "Protect sensitive information."}
+    ]
+    assert seen["Second operation global"] == seen["First operation global"]
+    assert "linked behavior establishes applicability" in seen["Second operation scope"]
+    assert "constraints_it_must_respect" not in seen["Second operation global"]
 
 
 def test_generate_specs_respects_concurrency_cap(monkeypatch):
@@ -297,13 +321,23 @@ def test_validate_spec_flags_bad_references():
         {"label": "2a", "branch_step": 2, "outcome": "resume", "resume_at_step": None},      # resume인데 target 없음
         {"label": "2b", "branch_step": 2, "outcome": "resume", "resume_at_step": 7},         # resume target 없음
         {"label": "2c", "branch_step": 2, "outcome": "fail", "resume_at_step": 2},           # fail인데 target 설정
-        {"label": "*a", "branch_step": None, "outcome": "alternate_success", "resume_at_step": None},  # 전역, 정상
+        {"label": "*a", "branch_step": None, "outcome": "alternate_success", "resume_at_step": None},  # unanchored extension
     ]
     issues = validate_specification(_spec(main, exts))
-    assert len(issues) == 4  # 참조 위반 4건만(계약/lint 정상)
-    for lbl in ("1a", "2a", "2b", "2c"):
+    assert len(issues) == 5
+    for lbl in ("1a", "2a", "2b", "2c", "*a"):
         assert any(lbl in i for i in issues)
-    assert not any("*a" in i for i in issues)  # 전역+정상은 위반 아님
+
+
+def test_validate_spec_accepts_extension_with_concrete_branch_anchor():
+    main = [{"step_number": 1, "subject_ref": "ACT1", "sentence": "actor chooses an operation"}]
+    ext = {
+        "label": "1a", "branch_step": 1, "condition": "actor chooses the alternate operation",
+        "handling_steps": [{"sub_step": "1a1", "subject_ref": "system", "sentence": "System applies the alternate operation"}],
+        "outcome": "alternate_success", "resume_at_step": None,
+    }
+    issues = validate_specification(_spec(main, [ext]))
+    assert not any("spec.extension-reference-integrity" in issue for issue in issues)
 
 
 def test_validate_spec_flags_ui_branch_control():
@@ -419,6 +453,33 @@ def test_spec_review_payload_keeps_constraints_separate_from_scenario_coverage()
 
     assert payload["constraints_it_must_respect"] == constraints
     assert "requirements_it_must_cover" in payload
+
+
+def test_global_constraint_generation_context_is_labeled_as_source_context():
+    prompt = s3._spec_human(
+        {
+            **_uc("UC1"),
+            "_constraint_requirements": [
+                {"id": "LOCAL", "text": "Applies to this use case."}
+            ],
+            "_global_constraint_context": [
+                {"id": "GLOBAL", "text": "Protect sensitive data."}
+            ],
+        },
+        {"LOCAL": {"id": "LOCAL", "text": "Applies to this use case."}},
+        [],
+    )
+
+    assert "Applicable RTM constraints" in prompt
+    assert "LOCAL: Applies to this use case." in prompt
+    assert "Explicitly modeled global constraints (source context only; not attached" in prompt
+    assert "GLOBAL: Protect sensitive data." in prompt
+    assert "linked behavior establishes that the constraint applies" in prompt
+    assert "Public or published-data browsing alone" in prompt
+    assert "covered functional requirements or explicitly applicable constraints" in prompt
+    assert "validates the acting principal or session" in prompt
+    assert "requester's own subject or record" in prompt
+    assert "not entry requirement_ids, unless themselves linked" in prompt
 
 
 def test_scenario_refs_are_retained_and_must_belong_to_the_owning_use_case(monkeypatch):

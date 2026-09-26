@@ -49,7 +49,7 @@ from app.requirements.modeling.feedback import feedback_for
 from app.requirements.runtime import telemetry
 from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import SemanticAmbiguityReview, UseCaseSpec
-from app.requirements.traceability import constraints_for_use_case
+from app.requirements.traceability import constraints_for_use_case, modeled_global_constraints
 from app.validation import (
     RepairAttempt,
     RepairLedger,
@@ -86,6 +86,7 @@ class _SpecificationInput(UseCaseItem):
 
     _neighboring_goals: NotRequired[list[_NeighbourGoal]]
     _constraint_requirements: NotRequired[list[dict[str, object]]]
+    _global_constraint_context: NotRequired[list[dict[str, object]]]
     _existing_spec: NotRequired[UseCaseSpecItem]
 
 
@@ -368,6 +369,11 @@ def _spec_human(
         for item in applicable_constraints
         if item.get("id")
     ) or "- (none)"
+    global_constraint_listing = "\n".join(
+        f"- {item.get('id')}: {item.get('text', '')}"
+        for item in (uc.get("_global_constraint_context") or [])
+        if item.get("id")
+    ) or "- (none)"
     base = (
         f"Use case: {uc['name']}\n"
         f"{scope}\n"
@@ -379,12 +385,35 @@ def _spec_human(
         f"Non-functional constraints:\n{_resolve(uc.get('nfr_ids', []), by_id)}\n\n"
         "Applicable RTM constraints (refine this use case; they are not new goals or "
         f"scenario coverage):\n{constraint_listing}\n\n"
+        "Explicitly modeled global constraints (source context only; not attached to this "
+        "use case):\n"
+        f"{global_constraint_listing}\n"
+        "Use this context only when this use case's own linked behavior establishes that "
+        "the constraint applies. Public or published-data browsing alone, and actor labels "
+        "alone, do not establish applicability. Do not assert this use case is protected "
+        "merely because a global constraint is listed.\n\n"
         "Public behavior contract: list only identity obligations and values explicitly "
-        "established by the covered functional requirements. 'identify' distinguishes the "
-        "selected subject; 'authenticate' verifies that subject; 'act_on_behalf' means one "
+        "established by the covered functional requirements or explicitly applicable constraints. "
+        "'authenticate' validates the acting principal or session; 'identify' distinguishes "
+        "which subject or record the behavior targets; 'act_on_behalf' means one "
         "subject exercises delegated authority for a different subject, not authentication alone. "
+        "When this use case's linked behavior acts on the requester's own subject or record and "
+        "an explicitly applicable constraint establishes authenticated identity, include both "
+        "authenticate and identify obligations, plus their linked identifier RequiredValue with "
+        "source authenticated_actor_context; link that value to identify and identify to "
+        "authenticate using the proposal indexes. "
+        "Each entry's requirement_ids must cite the linked functional requirement for its "
+        "behavior; applicable global constraints justify source or applicability in context, "
+        "not entry requirement_ids, unless themselves linked. "
         "For each value, cite requirement IDs and report its source (caller_input, "
         "authenticated_actor_context, or system_result), type, and use (control, result, or both). "
+        "Use describes direction relative to this use case's behavior, not origin: control means "
+        "the system consumes the value to perform an operation; result means the system produces "
+        "the value as an observable outcome; both requires evidence of both directions. Source is "
+        "provenance only: a value from authenticated_actor_context may be consumed by a Control "
+        "operation and does not become a result merely because it is server-provided. Ground the "
+        "use in the scenario and observable outcome; do not classify an unmentioned value as a "
+        "result. "
         "The normalizer assigns each accepted required value its stable value_ref; do not invent "
         "or copy value references. "
         + prompts.IDENTITY_SOURCE_INSTRUCTIONS + " "
@@ -568,6 +597,7 @@ def spec_review_payload(
     requirements: list[dict[str, object]] | None = None,
     goal_context: dict[str, object] | None = None,
     constraints: list[dict[str, object]] | None = None,
+    global_constraint_context: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
     """검증자가 받는 모양. **공개 함수인 이유는 평가가 같은 모양을 써야 하기 때문**이다.
 
@@ -584,6 +614,13 @@ def spec_review_payload(
     payload["requirements_it_must_cover"] = requirements or []
     if constraints:
         payload["constraints_it_must_respect"] = constraints
+    if global_constraint_context:
+        payload["explicit_global_constraint_source_context"] = global_constraint_context
+        payload["global_constraint_context_scope"] = (
+            "Use only when this use case's linked behavior establishes applicability. "
+            "Public or published-data browsing alone and actor labels alone do not establish "
+            "applicability; listing a global constraint does not mean this use case is protected."
+        )
     return payload
 
 
@@ -593,6 +630,7 @@ def _semantic_findings(
     goal_context: dict[str, object] | None = None,
     constraints: list[dict[str, object]] | None = None,
     review_call: SemanticReviewCall | None = None,
+    global_constraint_context: list[dict[str, object]] | None = None,
 ) -> tuple[list[str], str]:
     """정적 체크가 못 잡는 의미 결함을 독립 검증자에게 묻는다.
 
@@ -611,7 +649,10 @@ def _semantic_findings(
     죽어도 빈 리스트를 돌려줬고, 그러면 NIM이 내려간 동안 생성된 모든 명세가 조용히
     '깨끗함'으로 통과했다.
     """
-    payload = spec_review_payload(cast(dict[str, object], item), requirements, goal_context, constraints)
+    payload = spec_review_payload(
+        cast(dict[str, object], item), requirements, goal_context, constraints,
+        global_constraint_context,
+    )
     reviewer = review_call or validator.review
     source_rule_id = "spec.public-behavior-completeness"
     broad_rule_ids = tuple(
@@ -670,6 +711,7 @@ def _check(
     constraints: list[dict[str, object]] | None = None,
     review_call: SemanticReviewCall | None = None,
     allowed_subject_refs: set[str] | None = None,
+    global_constraint_context: list[dict[str, object]] | None = None,
 ) -> tuple[list[str], str]:
     """정적(결정론) + 의미(LLM) 검증을 병합한 (issues, 의미검증 상태)."""
     static_findings = validate_specification(
@@ -678,7 +720,8 @@ def _check(
     if static_findings:
         return static_findings, validator.PENDING
     findings, status = _semantic_findings(
-        item, requirements, goal_context, constraints, review_call
+        item, requirements, goal_context, constraints, review_call,
+        global_constraint_context,
     )
     return findings, status
 
@@ -736,6 +779,9 @@ def generate_specification(
     # 검증자에게 줄 잣대. 생성 프롬프트와 달리 **요구사항만** 담는다(지시는 담지 않는다).
     requirements = requirement_view(uc, by_id)
     constraints = list(specification_input.get("_constraint_requirements") or [])
+    global_constraint_context = list(
+        specification_input.get("_global_constraint_context") or []
+    )
     goal_context: dict[str, object] = {
         "use_case_goal": uc.get("goal", ""),
         "neighbouring_goals_sharing_requirements": (
@@ -749,8 +795,13 @@ def generate_specification(
         spec: UseCaseSpec = propose(UseCaseSpec, messages)
         item = normalize_specification(spec, uc)
         item["issues"], item["semantic_status"] = _check(
-            item, requirements, goal_context, constraints, reviewer,
-            _accepted_step_subject_refs(uc),
+            item,
+            requirements,
+            goal_context,
+            constraints,
+            review_call=reviewer,
+            allowed_subject_refs=_accepted_step_subject_refs(uc),
+            global_constraint_context=global_constraint_context,
         )
         return item
 
@@ -1018,6 +1069,9 @@ def generate_specs(
             **use_case,
             "_neighboring_goals": neighbouring_goals,
             "_constraint_requirements": applicable_constraints,
+            "_global_constraint_context": modeled_global_constraints(
+                state.get("traceability") or {}
+            ),
         })
         if target_set is not None and existing.get(use_case["id"]):
             spec_input["_existing_spec"] = existing[use_case["id"]]

@@ -306,6 +306,44 @@ def test_unchanged_missing_source_stalls_after_one_owning_unit_repair(monkeypatc
     assert caught.value.repair_context["callIndex"] == 1
 
 
+def test_changed_combined_candidate_at_same_missing_source_slot_can_repair(monkeypatch):
+    """A repeated slot is not a stall when the owning candidate materially changed."""
+
+    combined_calls = 0
+
+    def fake_parse(_messages, schema, **_kwargs):
+        nonlocal combined_calls
+        if schema is InventoryProposal:
+            return inventory_proposal()
+        if schema is CombinedUnitProposal:
+            combined_calls += 1
+            if combined_calls == 1:
+                proposal = combined_unit_proposal()
+                proposal["fragment"] = operation_fragment(unsourceable=True)
+                return proposal
+            if combined_calls == 2:
+                # Keep the same unavailable argument slot while changing the
+                # complete operation/call candidate presented to repair.
+                proposal = combined_unit_proposal()
+                proposal["fragment"] = operation_fragment(unsourceable=True)
+                proposal["fragment"]["Classes"][1]["operations"][0]["parameters"][0][
+                    "type"
+                ] = "String"
+                return proposal
+            return combined_unit_proposal()
+        if issubclass(schema, CallPlanProposal):
+            raise TypeError("a missing source must not trigger a call-plan retry")
+        if schema.__name__ == "BindingChoices":
+            return _select_repaired_request_or_no_match(_messages, schema)
+        raise AssertionError(schema)
+
+    patch_class_design_parser(monkeypatch, fake_parse)
+    model = service.generate_class_model(build_scenario_index(single_use_case()))
+
+    assert combined_calls == 3
+    assert model.Collaborations[0].calls[1].argument_bindings[0].parameter == "request"
+
+
 def test_temporal_parameter_uses_explicit_runtime_clock_when_no_upstream_value(monkeypatch):
     inventory_candidate = inventory_proposal()
     inventory_candidate["items"].append({
@@ -1085,10 +1123,44 @@ def test_binding_candidates_include_finite_type_compatible_ancestor_values():
     )
 
     assert "call-source#param-offering" in candidates
-    assert "call-source#result.field-registration" in candidates
     assert "call-source#param-student" in candidates
-    assert "call-source#result.field-student" in candidates
+    assert not any(ref.startswith("call-source#result") for ref in candidates)
     assert "UC1:precondition:1#studentId" not in candidates
+
+
+def test_binding_candidates_exclude_pending_ancestor_results_but_keep_parameters_and_sibling_results():
+    specification = single_use_case()
+    index = build_scenario_index(specification)
+    target = {"name": "studentId", "type": "UUID"}
+    calls = [
+        {"callId": "UC1::call:1", "stableId": "root", "parentCallId": None,
+         "receiverOperationId": "Boundary::start()"},
+        {"callId": "UC1::call:2", "stableId": "ancestor", "parentCallId": "UC1::call:1",
+         "receiverOperationId": "Control::load()"},
+        {"callId": "UC1::call:3", "stableId": "sibling", "parentCallId": "UC1::call:1",
+         "receiverOperationId": "Control::lookup()"},
+        {"callId": "UC1::call:4", "stableId": "target", "parentCallId": "UC1::call:2",
+         "receiverOperationId": "Entity::save(studentId:UUID)"},
+    ]
+    operations = {
+        "Boundary::start()": {"parameters": [], "returnType": "void"},
+        "Control::load()": {
+            "parameters": [{"name": "studentId", "type": "UUID", "stableRef": "param-student"}],
+            "returnType": "UUID",
+        },
+        "Control::lookup()": {"parameters": [], "returnType": "UUID"},
+        "Entity::save(studentId:UUID)": {"parameters": [target], "returnType": "void"},
+    }
+
+    candidates = collaboration._binding_candidates(
+        {"Classes": [], "DataTypes": []}, index.use_case("UC1"), None, False,
+        calls, 3, target, operations,
+    )
+
+    assert "ancestor#param-student" in candidates
+    assert "ancestor#result" not in candidates
+    assert "sibling#result" in candidates
+
 
     no_value_model = {"Classes": [], "DataTypes": []}
     uuid_handoff = [
@@ -1145,6 +1217,147 @@ def test_binding_candidates_include_finite_type_compatible_ancestor_values():
         no_value_model, index.use_case("UC1"), None, False, nested_calls, 3,
         nested_target, nested_operations,
     ) == []
+
+
+@pytest.mark.parametrize(
+    ("ancestor_ref", "ancestor_binding", "expected"),
+    [
+        ("admin_id", "value#admin_id", True),
+        ("admin_id", None, False),
+        ("other_id", "value#other_id", False),
+    ],
+)
+def test_server_context_flows_from_bound_control_parameter_only(
+    ancestor_ref, ancestor_binding, expected,
+):
+    specification = single_use_case()
+    specification["use_case_specs"][0]["public_contract"] = {
+        "required_values": [{
+            "value_ref": "admin_id",
+            "name": "administrator ID",
+            "source": "authenticated_actor_context",
+            "value_type": "identifier",
+            "usage": "Attribute the administration action.",
+            "requirement_ids": ["RR1"],
+        }],
+    }
+    use_case = build_scenario_index(specification).use_case("UC1")
+    calls = [
+        {
+            "callId": "UC1::call:1", "stableId": "boundary",
+            "parentCallId": None, "receiverOperationId": "AdminBoundary::submit()",
+            "argumentBindings": [],
+        },
+        {
+            "callId": "UC1::call:2", "stableId": "control",
+            "parentCallId": "UC1::call:1", "receiverOperationId": "AdminControl::run()",
+            "argumentBindings": ([{
+                "parameter": "adminId", "sourceRef": ancestor_binding,
+            }] if ancestor_binding else []),
+        },
+        {
+            "callId": "UC1::call:3", "stableId": "entity",
+            "parentCallId": "UC1::call:2", "receiverOperationId": "AdminEntity::record()",
+            "argumentBindings": [],
+        },
+    ]
+    operations = {
+        "AdminBoundary::submit()": {"stereotype": "boundary", "parameters": []},
+        "AdminControl::run()": {
+            "stereotype": "control",
+            "parameters": [{
+                "name": "adminId", "type": "UUID", "stableRef": "control-admin",
+                "requiredValueRef": ancestor_ref,
+            }],
+        },
+        "AdminEntity::record()": {
+            "stereotype": "entity",
+            "parameters": [{
+                "name": "adminId", "type": "UUID", "stableRef": "entity-admin",
+                "requiredValueRef": "admin_id",
+            }],
+        },
+    }
+
+    candidates = collaboration._binding_candidates(
+        {"Classes": [], "DataTypes": []}, use_case, None, False,
+        calls, 2, operations["AdminEntity::record()"]["parameters"][0], operations,
+    )
+
+    assert ("control#control-admin" in candidates) is expected
+    assert "value#admin_id" not in candidates
+
+
+def test_single_boundary_context_binding_is_available_to_entity_descendant(monkeypatch):
+    specification = single_use_case()
+    specification["use_case_specs"][0]["public_contract"] = {
+        "required_values": [{
+            "value_ref": "admin_id", "name": "administrator ID",
+            "source": "authenticated_actor_context", "value_type": "identifier",
+            "usage": "Attribute the administration action.",
+            "requirement_ids": ["RR1"],
+        }],
+    }
+    index = build_scenario_index(specification)
+    model = BCEModel.model_validate({
+        "Classes": [
+            {
+                "className": "AdminBoundary", "stereotype": "Boundary",
+                "use_case_ids": ["UC1"],
+                "operations": [{
+                    "operationId": "ignored", "name": "submit", "parameters": [],
+                    "returnType": "void", "stepRefs": ["UC1:main:1"],
+                }],
+            },
+            {
+                "className": "AdminControl", "stereotype": "Control",
+                "use_case_ids": ["UC1"],
+                "operations": [{
+                    "operationId": "ignored", "name": "run",
+                    "parameters": [{
+                        "name": "adminId", "type": "UUID",
+                        "requiredValueRef": "admin_id",
+                    }],
+                    "returnType": "void", "stepRefs": ["UC1:main:2"],
+                }],
+            },
+            {
+                "className": "AdminEntity", "stereotype": "Entity",
+                "use_case_ids": ["UC1"],
+                "operations": [{
+                    "operationId": "ignored", "name": "record",
+                    "parameters": [{
+                        "name": "adminId", "type": "UUID",
+                        "requiredValueRef": "admin_id",
+                    }],
+                    "returnType": "void", "stepRefs": ["UC1:main:2"],
+                }],
+            },
+        ],
+        "DataTypes": [], "Relationships": [], "Collaborations": [],
+    })
+    model = materialize_pre_collaboration_refs(None, model)
+    plan = CallPlanProposal.model_validate({
+        "calls": [
+            {"receiverOperationId": "AdminBoundary::submit()", "parentCallIndex": None},
+            {"receiverOperationId": "AdminControl::run(adminId:UUID)", "parentCallIndex": 1},
+            {"receiverOperationId": "AdminEntity::record(adminId:UUID)", "parentCallIndex": 2},
+        ],
+    })
+    control_parameter = model.Classes[1].operations[0].parameters[0]
+
+    def select_entity_binding(_use_case, ambiguous, _parameter_types, **_kwargs):
+        source = f"{_kwargs['calls'][1]['stableId']}#{control_parameter.stable_ref}"
+        assert ambiguous == {"UC1::call:3#adminId": [source]}
+        return {"UC1::call:3#adminId": source}
+
+    monkeypatch.setattr(collaboration, "select_ambiguous_bindings", select_entity_binding)
+    result = collaboration.materialize(index, model, index.use_case("UC1"), plan)
+
+    assert result.calls[1].argument_bindings[0].source_ref == "value#admin_id"
+    assert result.calls[2].argument_bindings[0].source_ref == (
+        f"{result.calls[1].stable_id}#{control_parameter.stable_ref}"
+    )
 
 
 def test_control_to_entity_renamed_singleton_uses_finite_selection(monkeypatch):

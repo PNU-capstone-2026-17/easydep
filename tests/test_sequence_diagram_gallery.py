@@ -173,6 +173,15 @@ def test_web_response_preserves_typed_check_finding_details() -> None:
     ]["finding_details"]
 
 
+def test_web_response_preserves_stage_repair_history() -> None:
+    history = {"status": "STALLED", "attempts": [{"outcome": "no_improvement"}]}
+    state = {"class_diagram_check": {"repair_history": history}}
+
+    response = to_web_response(state)
+
+    assert response["validation"]["class_diagram"]["repair_history"] == history
+
+
 def test_design_refuses_to_advance_past_sequence_findings() -> None:
     state = {
         **_state(),

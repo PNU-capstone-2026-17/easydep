@@ -160,6 +160,9 @@ def to_web_response(result: Mapping[str, Any]) -> dict[str, Any]:
             "finding_details": list(check.get("finding_details") or []),
             "check_status": check.get("stopped"),
             "repair_iters": check.get("repair_iters", 0),
+            # Repair state is stage-agnostic evidence consumed by Workspace
+            # when it decides whether a repair is active or stalled.
+            "repair_history": check.get("repair_history"),
             # Sequence reconciliation may need a new class operation.  The
             # proposal is review data, not an automatic class-diagram change.
             "method_proposals": list(check.get("method_proposals") or []),

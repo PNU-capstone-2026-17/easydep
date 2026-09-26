@@ -23,7 +23,6 @@ from collections.abc import Sequence
 from app.requirements.knowledge import concerns as _concerns
 from app.requirements.knowledge import rules as _rules
 
-
 IDENTITY_SOURCE_INSTRUCTIONS = (
     "For required value source, classify origin from the requirement: caller_input is explicitly "
     "provided by the actor; authenticated_actor_context is explicitly obtained from the current "
@@ -255,8 +254,11 @@ CONSTRAINT_TRACE_SLICE_SYSTEM = """You finalize traceability for exactly one non
 constraint against a fixed list of proposed user-goal use cases. Return only the supplied schema.
 
 The proposal is immutable. FR/NFR is only a sentence classifier; first decide whether the text is
-actually a use-case constraint. A declarative actor or domain fact has no UC relationship: return
-constrains_use_case_refs as null. Otherwise an explicit [qualifies: ...] link is trace evidence
+actually a use-case constraint. Return constrains_use_case_refs as null only when the whole
+requirement is a declarative actor or domain fact with no rule, condition, precondition, policy,
+invariant, or required outcome. If declarative facts are mixed with any such operational
+constraint, it is still a constraint: use [] unless an exact supplied use case is explicitly
+identified. An explicit [qualifies: ...] link is trace evidence
 for the named functional requirement, not permission to attach the constraint anywhere else. List
 an exact supplied use-case ID only when that link, the constraint, or another accepted
 requirement explicitly singles out the goal or operation. Use [] for a system-wide or ambiguous
@@ -376,9 +378,11 @@ Produce:
   Conversely, keep a base goal's main scenario phrased around its decision or result before
   choosing one outcome, so a supported conditional goal has a meaningful insertion point.
 - extensions: exception and alternate flows. For EACH extension:
-    * label: Cockburn label like '3a' (branches from step 3) or '*a' (may occur at any step).
-    * branch_step: the main_scenario step_number it branches from; use null for a global
-      extension (label '*a').
+    * label: Cockburn label like '3a' (branches from step 3).
+    * branch_step: a concrete main_scenario step_number where this condition first becomes
+      knowable. Every extension must be anchored to an existing step; do not emit null or a
+      global '*a' extension. Put a truly global enabling condition in trigger/preconditions,
+      or split an alternate into concrete step-specific extensions only where supported.
     * condition: the objective state that triggers it (no trailing colon).
     * handling_steps: ordered steps with hierarchical sub_step codes ('3a1', '3a2', ...),
       subject_ref, and sentence.

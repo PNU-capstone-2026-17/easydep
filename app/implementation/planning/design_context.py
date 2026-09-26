@@ -23,7 +23,7 @@ from ..domain.implementation_ir import (
     build_implementation_ir,
 )
 from ..domain.models import JobSpec
-from ..generation.frontend_scaffold import operation_ids
+from ..generation.frontend_scaffold import frontend_feature_operations, operation_ids
 from ..generation.java_scaffold import controller_body_marker
 from ..generation.operation_contracts import build_generated_operation_contracts
 from ..generation.persistence_scaffold import persistence_repository_fqcns
@@ -71,6 +71,7 @@ class TaskSpec:
     # reuse its canonical check and invoke the agent only when a repair is needed.
     completion_mode: str = 'agent'
     owner_tool_mode: str | None = None
+    required_completion_markers: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.required_output_paths is None:
@@ -127,13 +128,12 @@ def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec
     source_groups: list[tuple[list[str], tuple[str, str] | None]] = [
         ([path], None) for path in controller_sources
     ]
-    contracts_by_source = _completion_marked_operation_contracts_by_source(run_root)
     for path in grouped_sources:
-        contracts = contracts_by_source.get(path, [])
-        if len({marker for _identity, _operation_id, marker in contracts}) > 1:
-            source_groups.extend(([path], contract) for contract in contracts)
-        else:
-            source_groups.append(([path], None))
+        # Task ownership follows the writable source file. Splitting one Java
+        # class by method marker lets a later owner overwrite an earlier edit
+        # from its stale whole-file snapshot, so all operations in that file
+        # are planned together.
+        source_groups.append(([path], None))
 
     tasks: list[TaskSpec] = []
     previous_task_by_source: dict[str, str] = {}
@@ -244,6 +244,38 @@ def _controller_body_markers_for_source(
     )
 
 
+def _controller_contract_use_case_ids(
+    contracts: list[dict[str, object]],
+    *,
+    endpoints: list[dict[str, object]],
+    owned_markers: set[str],
+) -> set[str]:
+    """Trace an owned Controller marker through its exact generated endpoint contract."""
+    owned_endpoint_keys = {
+        (str(endpoint.get("method") or "").upper(), str(endpoint.get("path") or ""))
+        for contract in contracts
+        for endpoint in contract.get("endpoints", [])
+        if isinstance(contract.get("endpoints", []), list)
+        and isinstance(endpoint, dict)
+        and endpoint.get("method")
+        and endpoint.get("path")
+        and controller_body_marker(
+            str(endpoint.get("method") or ""), str(endpoint.get("path") or "")
+        )
+        in owned_markers
+    }
+    return {
+        use_case_id
+        for endpoint in endpoints
+        if (
+            str(endpoint.get("method") or "").upper(),
+            str(endpoint.get("path") or ""),
+        )
+        in owned_endpoint_keys
+        for use_case_id in _use_case_ids(endpoint)
+    }
+
+
 def _backend_source_task_id(
     source_paths: list[str], operation_identity: str | None = None
 ) -> str:
@@ -288,13 +320,6 @@ def _build_backend_owner_task(
         operation_identity=assigned_operation[0] if assigned_operation else None,
     )
     task_dependencies = list(depends_on or [])
-    entity_components = [
-        item for item in bundle.components if item.stereotype.casefold() == "entity"
-    ]
-    entities = [item.name for item in entity_components]
-    entity_sources = [
-        f"application/src/main/java/{package_path}/bce/{name}.java" for name in entities
-    ]
     all_required = _backend_writable_sources(ir, package_path, bundle)
     if any(path not in all_required for path in required):
         invalid = next(path for path in required if path not in all_required)
@@ -303,7 +328,7 @@ def _build_backend_owner_task(
     # Entity와 Repository는 source index가 가리키는 정확한 파일에서 필요한 선언만 읽는다.
     immutable_paths = [
         *(path for path in all_required if path not in required),
-        *(path for path in bce_paths if path not in entity_sources),
+        *(path for path in bce_paths if path not in required),
         f"application/src/main/java/{package_path}/api",
         f"application/src/main/java/{package_path}/persistence",
         "application/src/main/resources/db/migration",
@@ -338,6 +363,52 @@ def _build_backend_owner_task(
         for path in required
         for marker in controller_markers_by_path.get(path, [])
     }
+    global_operation_contracts_path = run_root / "reports/generated-operation-contracts.json"
+    generated_operation_contracts: str | None = None
+    task_operation_contracts: list[dict[str, object]] = []
+    if global_operation_contracts_path.is_file():
+        global_operation_contracts = json.loads(
+            global_operation_contracts_path.read_text(encoding="utf-8")
+        )
+        task_operation_contracts_path = output / f"{task_id}.operation-contracts.json"
+        task_operation_contracts = [
+            contract
+            for contract in global_operation_contracts["contracts"]
+            if isinstance(contract, dict)
+            and (
+                (
+                    contract.get("operationId") == assigned_operation[1]
+                    and contract.get("completionMarker") == assigned_operation[2]
+                    and contract.get("writableSource") in required
+                )
+                if assigned_operation is not None
+                else (
+                    contract.get("writableSource") in required
+                    or any(
+                        isinstance(endpoint, dict)
+                        and controller_body_marker(
+                            str(endpoint.get("method") or ""),
+                            str(endpoint.get("path") or ""),
+                        )
+                        in owned_controller_markers
+                        for endpoint in contract.get("endpoints", [])
+                        if isinstance(contract.get("endpoints", []), list)
+                    )
+                )
+            )
+        ]
+        task_operation_contracts_path.write_text(
+            json.dumps(
+                {
+                    "schemaVersion": global_operation_contracts["schemaVersion"],
+                    "contracts": task_operation_contracts,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        generated_operation_contracts = _relative(run_root, task_operation_contracts_path)
     design_inputs = _materialize_design_inputs(
         spec,
         run_root,
@@ -392,6 +463,20 @@ def _build_backend_owner_task(
             for path, markers in sorted(completion_markers.items())
             if path in required
         ]
+    # A single Java file is a bounded replace-source contract even when it owns
+    # several operation markers: its declarations, operation packets, and
+    # bounded Java dependencies are supplied directly to the editor owner.
+    owner_tool_mode = (
+        "editor"
+        if (
+            len(required) == 1
+            and required[0].endswith(".java")
+            and len(required_absent_markers) == 1
+            and required_absent_markers[0].get("path") == required[0]
+            and bool(required_absent_markers[0].get("markers", []))
+        )
+        else "restricted"
+    )
     method_contexts = _materialize_method_contexts(
         run_root,
         output,
@@ -422,6 +507,29 @@ def _build_backend_owner_task(
             if item.get("operationId") == assigned_operation_id
             or item.get("stableId") == assigned_identity
         ]
+    elif task_operation_contracts:
+        # A method-context source path can also name a collaborator reached by
+        # another method.  For a file-level task, the generated contract is the
+        # exact owner identity; use its stable ID/operation ID rather than
+        # pulling that collaborator's scenario into this prompt.
+        owned_operation_ids = {
+            str(contract.get("operationId"))
+            for contract in task_operation_contracts
+            if isinstance(contract.get("operationId"), str)
+            and contract.get("operationId")
+        }
+        owned_stable_ids = {
+            str(contract.get("stableId"))
+            for contract in task_operation_contracts
+            if isinstance(contract.get("stableId"), str)
+            and contract.get("stableId")
+        }
+        owned_method_contexts = [
+            item
+            for item in owned_method_contexts
+            if item.get("operationId") in owned_operation_ids
+            or item.get("stableId") in owned_stable_ids
+        ]
     owned_method_refs = {
         str(ref)
         for item in owned_method_contexts
@@ -443,8 +551,33 @@ def _build_backend_owner_task(
             if ref.startswith("requirement:")
         }
     )
-    task_use_case_ids = scoped_use_case_ids or sorted(bundle.use_case_ids, key=_use_case_sort_key)
-    task_requirement_ids = scoped_requirement_ids or _artifact_ids(requirements)
+    controller_use_case_ids = _controller_contract_use_case_ids(
+        task_operation_contracts,
+        endpoints=list(bundle.endpoints),
+        owned_markers=owned_controller_markers,
+    )
+    if not owned_method_contexts and controller_use_case_ids:
+        task_use_case_ids = sorted(controller_use_case_ids, key=_use_case_sort_key)
+        selected_use_cases = [
+            item
+            for item in use_cases
+            if str(item.get("use_case_id") or item.get("useCaseId") or item.get("id") or "")
+            in controller_use_case_ids
+        ]
+        task_requirement_ids = sorted(
+            {
+                str(requirement_id)
+                for item in selected_use_cases
+                for field in ("requirement_ids", "requirementIds", "nfr_ids", "nfrIds")
+                for requirement_id in item.get(field, [])
+                if isinstance(requirement_id, str) and requirement_id
+            }
+        )
+    else:
+        task_use_case_ids = scoped_use_case_ids or sorted(
+            bundle.use_case_ids, key=_use_case_sort_key
+        )
+        task_requirement_ids = scoped_requirement_ids or _artifact_ids(requirements)
     task_source_refs = sorted(
         {
             *owned_method_refs,
@@ -455,52 +588,6 @@ def _build_backend_owner_task(
         }
     )
     source_index_path = output / f"{task_id}.source-index.json"
-    global_operation_contracts_path = run_root / "reports/generated-operation-contracts.json"
-    generated_operation_contracts: str | None = None
-    task_operation_contracts: list[dict[str, object]] = []
-    if global_operation_contracts_path.is_file():
-        global_operation_contracts = json.loads(
-            global_operation_contracts_path.read_text(encoding="utf-8")
-        )
-        task_operation_contracts_path = output / f"{task_id}.operation-contracts.json"
-        task_operation_contracts = [
-            contract
-            for contract in global_operation_contracts["contracts"]
-            if isinstance(contract, dict)
-            and (
-                (
-                    contract.get("operationId") == assigned_operation[1]
-                    and contract.get("completionMarker") == assigned_operation[2]
-                    and contract.get("writableSource") in required
-                )
-                if assigned_operation is not None
-                else (
-                    contract.get("writableSource") in required
-                    or any(
-                        isinstance(endpoint, dict)
-                        and controller_body_marker(
-                            str(endpoint.get("method") or ""),
-                            str(endpoint.get("path") or ""),
-                        )
-                        in owned_controller_markers
-                        for endpoint in contract.get("endpoints", [])
-                        if isinstance(contract.get("endpoints", []), list)
-                    )
-                )
-            )
-        ]
-        task_operation_contracts_path.write_text(
-            json.dumps(
-                {
-                    "schemaVersion": global_operation_contracts["schemaVersion"],
-                    "contracts": task_operation_contracts,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        generated_operation_contracts = _relative(run_root, task_operation_contracts_path)
     source_paths = sorted(
         dict.fromkeys(
             path
@@ -612,15 +699,25 @@ def _build_backend_owner_task(
         ensure_ascii=False,
         indent=2,
     )
-    packet_assigned_operation_behavior = (
-        "\n### Assigned operation behavior\n```json\n"
+    # Method contexts are already projected by stable operation identity and exact
+    # writable source path above.  A file owner needs the same compact behavioral
+    # facts as a split owner; withholding them merely because the source has one
+    # task makes the model reconstruct the design from broader files.
+    packet_operation_behavior = (
+        "\n### "
+        + (
+            "Assigned operation behavior"
+            if assigned_operation is not None
+            else "Owned operation behavior"
+        )
+        + "\n```json\n"
         + json.dumps(
-            _assigned_operation_behavior_packet(run_root, owned_method_contexts),
+            _operation_behavior_packet(run_root, owned_method_contexts),
             ensure_ascii=False,
             indent=2,
         )
         + "\n```\n"
-        if assigned_operation is not None
+        if owned_method_contexts
         else ""
     )
     marker_instruction = (
@@ -668,7 +765,7 @@ the first edit; broader evidence remains available only for a concrete diagnosti
 ```json
 {packet_contracts}
 ```
-{packet_assigned_operation_behavior}
+{packet_operation_behavior}
 
 ## Generated source
 {chr(10).join(f"- `{path}`" for path in required) or "- none"}
@@ -707,7 +804,7 @@ the first edit; broader evidence remains available only for a concrete diagnosti
         source_refs=task_source_refs,
         allowed_write_roots=[],
         verification_profile={"requiredAbsentMarkers": required_absent_markers},
-        owner_tool_mode="restricted",
+        owner_tool_mode=owner_tool_mode,
     )
     if persist:
         (output / f"{task.task_id}.task.json").write_text(
@@ -824,7 +921,7 @@ def generate_frontend_tasks(
     spec: JobSpec,
     run_root: Path,
 ) -> list[TaskSpec]:
-    """typed 화면 흐름과 생성된 API client를 한 frontend 구현 작업으로 만든다."""
+    """Materialize one frontend owner task for each scaffolded API feature."""
     frontend = run_root / "application" / "frontend"
     generated = frontend / "src" / "generated"
     if not generated.is_dir():
@@ -854,15 +951,8 @@ def generate_frontend_tasks(
         run_root,
         {"bceClass", "bceModel", "sequence", "sequenceModel", "openapi"},
     )
-    required = [
-        "application/frontend/src/App.tsx",
-        "application/frontend/src/styles.css",
-    ]
-    allowed = _without_immutable_paths(
-        list(required),
-        ["application/frontend/src/generated"],
-    )
-    task_id = "implement-frontend-application"
+    feature_operations = frontend_feature_operations(openapi)
+    required = [f"application/frontend/src/features/{slug}.tsx" for slug, _ in feature_operations]
     client_index, operation_context_paths = _frontend_contract_index(
         run_root,
         openapi,
@@ -879,48 +969,64 @@ def generate_frontend_tasks(
         json.dumps(client_index, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    context = {
-        "schemaVersion": "frontend-implementation-context/v1alpha3",
-        "taskId": task_id,
-        "taskType": "frontend-implementation",
-        "owner": "frontend",
-        # The workflow phase boundary already requires every backend slice to
-        # succeed. A dependency on one arbitrary backend task is misleading.
-        "dependsOn": [],
-        "operationIds": operations,
-        "generatedImportRoot": client_contracts.import_root,
-        "callSkeletonPath": _relative(run_root, call_skeleton_path),
-        "clientIndexPath": _relative(run_root, client_index_path),
-        "operationContextPaths": operation_context_paths,
-        "designInputs": design_inputs,
-        "requiredOutputs": required,
-        "readSourcePaths": sorted(
-            dict.fromkeys(
-                [
-                    *design_inputs.values(),
-                    _relative(run_root, client_index_path),
-                    *operation_context_paths,
-                ]
-            )
-        ),
-    }
     deployment_context = _deployment_context(spec, {"frontend", *bce_names})
-    if deployment_context:
-        context["deployment"] = deployment_context
-    context_path = output / "frontend-application.context.json"
-    context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
-    prompt = f"""# Frontend implementation task: {spec.name}
+    tasks: list[TaskSpec] = []
+    index_operations = {
+        str(item.get("operationId")): item
+        for item in client_index.get("operations", [])
+        if isinstance(item, dict)
+    }
+    for slug, feature in feature_operations:
+        operation_id = str(feature["id"])
+        client_entry = index_operations.get(operation_id)
+        operation_context_path = (
+            str(client_entry["contextPath"])
+            if isinstance(client_entry, dict) and client_entry.get("contextPath")
+            else None
+        )
+        feature_path = f"application/frontend/src/features/{slug}.tsx"
+        marker = f"EASYDEP-IMPLEMENT: {feature['method']} {feature['path']} ({operation_id})"
+        task_id = f"implement-frontend-feature-{slug}"
+        task_operation_ids = [operation_id]
+        read_paths = sorted(dict.fromkeys([
+            *([operation_context_path] if operation_context_path else []),
+            _relative(run_root, client_index_path),
+            "application/frontend/src/api.ts",
+        ]))
+        context = {
+            "schemaVersion": "frontend-implementation-context/v1alpha3",
+            "taskId": task_id,
+            "taskType": "frontend-implementation",
+            "owner": "frontend",
+            "dependsOn": [],
+            "operationIds": task_operation_ids,
+            "featureSlug": slug,
+            "completionMarker": marker,
+            "generatedImportRoot": client_contracts.import_root,
+            "callSkeletonPath": _relative(run_root, call_skeleton_path),
+            "clientIndexPath": _relative(run_root, client_index_path),
+            "operationContextPaths": [operation_context_path] if operation_context_path else [],
+            "designInputs": design_inputs,
+            "requiredOutputs": [feature_path],
+            "readSourcePaths": read_paths,
+        }
+        if deployment_context:
+            context["deployment"] = deployment_context
+        context_path = output / f"{task_id}.context.json"
+        context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
+        prompt = f"""# Frontend feature task: {spec.name} / {feature['label']}
 
 Complete the React application using the exact generated-client calls already wired in
 `application/frontend/src/api.ts`.
 
 - Treat `application/frontend/src/api.ts` as read-only connector evidence owned by the integration task.
 - Preserve `{client_contracts.import_root}` and use `apiCalls`; never hand-write HTTP calls or paths.
-- Start with the compact client index. Read an operation context only when implementing that
-  operation; do not recursively inventory the workspace unless an unresolved contract requires it.
+- Implement only operation `{operation_id}` using its operation context and the compact client index.
+- Edit only `{feature_path}`. Resolve its marker `{marker}` completely.
+- Keep imports local to this feature and existing shared contracts so independent feature owners do not overlap.
 - Once the compact index and relevant operation contexts define the implementation, the next action is the first source edit.
 - Do not inspect generated-client runtime bodies, README files, or package/build metadata without a concrete task-check diagnosis.
-- Resolve every `EASYDEP-IMPLEMENT` marker. Read only the smallest relevant frozen design input if
+- Resolve only the assigned marker `{marker}`. Remove that exact `EASYDEP-IMPLEMENT` marker from the replacement source; completion fails while it remains. Read only the smallest relevant frozen design input if
   an operation context exposes a contract gap.
 - Source-index and RTM references are navigation hints, never read or edit limits.
 - Keep the existing `HashRouter`, choose page boundaries based on the user experience rather than
@@ -930,48 +1036,133 @@ Complete the React application using the exact generated-client calls already wi
   the existing build requires it.
 - Use English for source comments, validation messages, documentation, and user-visible text.
 
-## On-demand client context
+## Client context
 - Exact call skeleton: `{_relative(run_root, call_skeleton_path)}`
 - Compact index: `{_relative(run_root, client_index_path)}`
 """
-    prompt += "\n## Frontend owner root\n- `application/frontend/src`"
-    prompt += render_allowed_output_rules(required)
-    prompt_path = output / "frontend-application.prompt.md"
-    prompt_path.write_text(prompt, encoding="utf-8")
-    task = TaskSpec(
-        task_id=task_id,
-        control=f"{spec.name} frontend application",
-        prompt_file=_relative(run_root, prompt_path),
-        context_file=_relative(run_root, context_path),
-        allowed_write_paths=allowed,
-        required_output_paths=required,
-        immutable_paths=[
-            "application/frontend/src/api.ts",
-            "application/frontend/src/generated",
-        ],
-        source_artifacts={
-            **{
+        prompt += render_allowed_output_rules([feature_path])
+        prompt_path = output / f"{task_id}.prompt.md"
+        prompt_path.write_text(prompt, encoding="utf-8")
+        operation_context = (
+            _read_json(run_root / operation_context_path)
+            if operation_context_path
+            else {}
+        )
+        trace_hints = operation_context.get("traceHints", {})
+        use_case_ids = _string_ids(trace_hints.get("useCaseIds")) if isinstance(trace_hints, dict) else []
+        scenario_refs = _string_ids(trace_hints.get("scenarioStepRefs")) if isinstance(trace_hints, dict) else []
+        task = TaskSpec(
+            task_id=task_id,
+            control=f"{spec.name} frontend feature {feature['label']}",
+            prompt_file=_relative(run_root, prompt_path),
+            context_file=_relative(run_root, context_path),
+            allowed_write_paths=[feature_path],
+            required_output_paths=[feature_path],
+            immutable_paths=[
+                "application/frontend/src/App.tsx",
+                "application/frontend/src/styles.css",
+                "application/frontend/src/api.ts",
+                "application/frontend/src/generated",
+            ],
+            source_artifacts={
                 name: str(path)
                 for name, path in spec.inputs.items()
                 if name in {"bceModel", "sequenceModel", "openapi", "deploymentBundle"}
                 and path.is_file()
             },
-        },
-        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
-        llm=llm_config(spec),
-        owner="frontend",
-        task_type="frontend-implementation",
-        depends_on=[],
-        source_refs=[
-            *(f"api:{operation_id}" for operation_id in operations),
-            *_workload_source_refs(deployment_context),
-        ],
-        allowed_write_roots=["application/frontend/src"],
+            prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            llm=llm_config(spec),
+            owner="frontend",
+            task_type="frontend-implementation",
+            depends_on=[],
+            use_case_ids=use_case_ids,
+            source_refs=[f"api:{operation_id}", *(f"use_case:{value}" for value in use_case_ids), *(f"step:{value}" for value in scenario_refs), *_workload_source_refs(deployment_context)],
+            allowed_write_roots=[],
+            required_completion_markers=[marker],
+            owner_tool_mode="editor",
+            verification_profile={
+                "requiredAbsentMarkers": [
+                    {"path": feature_path, "markers": [marker]}
+                ]
+            },
+        )
+        (output / f"{task_id}.task.json").write_text(
+            json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        tasks.append(task)
+    return tasks
+
+
+def _materialize_integration_semantic_evidence(
+    spec: JobSpec,
+    run_root: Path,
+    use_case_ids: list[str],
+) -> str:
+    """Project the exact public-contract and API binding facts for integration.
+
+    Owner implementation packets intentionally keep this information on demand.  The
+    integration admission is a separate semantic decision, though, so it needs the
+    public provenance of context-derived values alongside the generated connector
+    sources it already reads.
+    """
+
+    _, use_cases, _ = _all_requirement_artifacts(spec)
+    selected_ids = set(use_case_ids)
+    public_contracts = []
+    for item in use_cases:
+        use_case_id = str(
+            item.get("use_case_id") or item.get("useCaseId") or item.get("id") or ""
+        )
+        contract = item.get("public_contract") or item.get("publicContract")
+        if use_case_id not in selected_ids or not isinstance(contract, dict):
+            continue
+        public_contracts.append(
+            {
+                "useCaseId": use_case_id,
+                "identityObligations": list(
+                    contract.get("identity_obligations")
+                    or contract.get("identityObligations")
+                    or []
+                ),
+                "requiredValues": list(
+                    contract.get("required_values") or contract.get("requiredValues") or []
+                ),
+            }
+        )
+    endpoint_bindings = []
+    for endpoint in _api_model_endpoints(spec):
+        endpoint_use_cases = _use_case_ids(endpoint)
+        binding = endpoint.get("control_binding") or endpoint.get("controlBinding")
+        if not endpoint_use_cases.intersection(selected_ids) or not isinstance(binding, dict):
+            continue
+        endpoint_bindings.append(
+            {
+                "operationId": endpoint.get("operation_id") or endpoint.get("operationId"),
+                "method": endpoint.get("method"),
+                "path": endpoint.get("path"),
+                "useCaseIds": sorted(endpoint_use_cases.intersection(selected_ids)),
+                "controlBinding": binding,
+            }
+        )
+    output = run_root / "reports" / "implementation-tasks"
+    path = output / "vertical-integration-semantic-evidence.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schemaVersion": "vertical-integration-semantic-evidence/v1alpha1",
+                "publicContracts": sorted(
+                    public_contracts, key=lambda item: str(item["useCaseId"])
+                ),
+                "apiControlBindings": sorted(
+                    endpoint_bindings, key=lambda item: str(item.get("operationId") or "")
+                ),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
     )
-    (output / "frontend-application.task.json").write_text(
-        json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return [task]
+    return _relative(run_root, path)
 
 
 def generate_vertical_integration_task(
@@ -989,15 +1180,14 @@ def generate_vertical_integration_task(
     frontend_tasks = [
         task for task in prior_tasks if task.get("task_type") == "frontend-implementation"
     ]
-    if not backend_tasks or len(frontend_tasks) != 1:
-        raise ValueError("Vertical integration requires backend tasks and one frontend task")
+    if not backend_tasks or not frontend_tasks:
+        raise ValueError("Vertical integration requires backend tasks and frontend feature tasks")
 
     def task_use_cases(task: dict[str, object]) -> list[str]:
         values = task.get("use_case_ids", task.get("useCaseIds", []))
         return [str(value) for value in values if str(value)] if isinstance(values, list) else []
 
-    frontend_task = frontend_tasks[0]
-    owner_tasks = [*backend_tasks, frontend_task]
+    owner_tasks = [*backend_tasks, *frontend_tasks]
     owner_context_paths = [str(task["context_file"]) for task in owner_tasks]
     owner_contexts = [_read_json(run_root / path) for path in owner_context_paths]
     batch_use_cases = sorted(
@@ -1007,6 +1197,9 @@ def generate_vertical_integration_task(
             for use_case_id in task_use_cases(task)
         },
         key=_use_case_sort_key,
+    )
+    semantic_evidence_path = _materialize_integration_semantic_evidence(
+        spec, run_root, batch_use_cases
     )
     source_refs = sorted(
         {
@@ -1050,15 +1243,20 @@ def generate_vertical_integration_task(
         | {"application/frontend/src/generated"}
     )
     writable = _without_immutable_paths(writable_config, immutable)
-    frontend_context = owner_contexts[-1]
-    frontend_contract_paths = [
-        str(frontend_context[key])
-        for key in ("clientIndexPath", "callSkeletonPath")
-        if isinstance(frontend_context.get(key), str)
+    frontend_contexts = [
+        context for task, context in zip(owner_tasks, owner_contexts)
+        if task.get("task_type") == "frontend-implementation"
     ]
+    frontend_contract_paths = sorted({
+        str(context[key])
+        for context in frontend_contexts
+        for key in ("clientIndexPath", "callSkeletonPath")
+        if isinstance(context.get(key), str)
+    })
     operation_context_paths = [
         str(path)
-        for path in frontend_context.get("operationContextPaths", [])
+        for context in frontend_contexts
+        for path in context.get("operationContextPaths", [])
         if isinstance(path, str)
     ]
     generated_method_paths: list[str] = []
@@ -1080,6 +1278,7 @@ def generate_vertical_integration_task(
     }
     read_paths = sorted(
         {
+            semantic_evidence_path,
             *frontend_contract_paths,
             *operation_context_paths,
             *generated_method_paths,
@@ -1088,6 +1287,14 @@ def generate_vertical_integration_task(
             *writable_config,
         }
     )
+    frontend_completion_markers = [
+        {"path": str(path), "markers": [str(marker)]}
+        for task in frontend_tasks
+        for path in task.get("required_output_paths", [])
+        if isinstance(path, str)
+        for marker in task.get("required_completion_markers", [])
+        if isinstance(marker, str) and marker
+    ]
     task_id = "implement-vertical-integration"
     context = {
         "schemaVersion": "vertical-integration-context/v1alpha1",
@@ -1099,6 +1306,7 @@ def generate_vertical_integration_task(
         "traceEvidence": {
             "sourceRefs": source_refs,
             "ownerTaskIds": dependencies,
+            "semanticEvidencePath": semantic_evidence_path,
         },
         "runtimeConfigPaths": sorted({*runtime_evidence, *writable_config}),
         "readSourcePaths": read_paths,
@@ -1174,6 +1382,9 @@ mechanics for one representative happy path after the backend and frontend owner
         source_refs=source_refs,
         allowed_write_roots=[],
         completion_mode='verify-or-repair',
+        verification_profile={
+            "requiredAbsentMarkers": frontend_completion_markers
+        },
     )
     (output / f"{task_id}.task.json").write_text(
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
@@ -1228,10 +1439,10 @@ def _prompt_operation_contract(contract: dict[str, object]) -> dict[str, object]
     }
 
 
-def _assigned_operation_behavior_packet(
+def _operation_behavior_packet(
     run_root: Path, method_contexts: list[dict[str, object]]
 ) -> dict[str, object]:
-    """Expose the assigned method's observed behavior without broader design evidence."""
+    """Expose only the owner's exact method behavior without broader design evidence."""
 
     fields = (
         "method",
@@ -1255,34 +1466,6 @@ def _assigned_operation_behavior_packet(
         if method_packet:
             methods.append(method_packet)
     return {"methods": methods}
-
-
-def _completion_marked_operation_contracts_by_source(
-    run_root: Path,
-) -> dict[str, list[tuple[str, str, str]]]:
-    """Return stable operation identities for sources eligible for a split."""
-
-    contract_path = run_root / "reports" / "generated-operation-contracts.json"
-    if not contract_path.is_file():
-        return {}
-    payload = _read_json(contract_path)
-    contracts_by_source: dict[str, set[tuple[str, str, str]]] = {}
-    for contract in payload.get("contracts", []):
-        if not isinstance(contract, dict):
-            continue
-        source = contract.get("writableSource")
-        operation_id = contract.get("operationId")
-        stable_id = contract.get("stableId")
-        marker = contract.get("completionMarker")
-        if not all(isinstance(value, str) and value for value in (source, operation_id, marker)):
-            continue
-        identity = stable_id if isinstance(stable_id, str) and stable_id else operation_id
-        contracts_by_source.setdefault(source, set()).add(
-            (identity, operation_id, marker)
-        )
-    return {source: sorted(contracts) for source, contracts in contracts_by_source.items()}
-
-
 
 
 def render_allowed_output_rules(allowed: list[str]) -> str:
@@ -1910,12 +2093,13 @@ def _local_immutable_java_import_closure(
     ]
     sources: dict[str, str] = {}
     fqcn_paths: dict[str, str] = {}
+    package_paths: dict[str, list[str]] = {}
     package_pattern = re.compile(
         r"(?m)^\s*package\s+([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*;"
     )
     import_pattern = re.compile(
         r"(?m)^\s*import\s+(?!static\s)"
-        r"([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+)\s*;"
+        r"([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+(?:\.\*)?)\s*;"
     )
     for source_path in sorted(java_root.rglob("*.java")):
         relative = source_path.relative_to(run_root).as_posix()
@@ -1923,7 +2107,9 @@ def _local_immutable_java_import_closure(
         sources[relative] = source
         package = package_pattern.search(source)
         if package is not None:
-            fqcn_paths[f"{package.group(1)}.{source_path.stem}"] = relative
+            package_name = package.group(1)
+            fqcn_paths[f"{package_name}.{source_path.stem}"] = relative
+            package_paths.setdefault(package_name, []).append(relative)
 
     pending = [
         path.replace(chr(92), "/")
@@ -1937,7 +2123,21 @@ def _local_immutable_java_import_closure(
         if relative in visited:
             continue
         visited.add(relative)
-        for imported_type in import_pattern.findall(sources[relative]):
+        imports = import_pattern.findall(sources[relative])
+        for imported_type in imports:
+            if imported_type.endswith(".*"):
+                imported_package = imported_type[:-2]
+                for dependency in package_paths.get(imported_package, []):
+                    if dependency in visited or dependency in closure:
+                        continue
+                    if not any(
+                        dependency == root or dependency.startswith(root + "/")
+                        for root in immutable_roots
+                    ):
+                        continue
+                    closure.add(dependency)
+                    pending.append(dependency)
+                continue
             dependency = fqcn_paths.get(imported_type)
             if dependency is None or dependency in visited:
                 continue

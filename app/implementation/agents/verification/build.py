@@ -172,6 +172,11 @@ def verify_agent_workspace(
     같은 sandbox에서 수리할 때도 Gradle의 증분 결과와 build cache를 재사용한다. 바뀐
     source는 Gradle이 다시 compile하므로 ``--rerun-tasks``로 모든 task를 강제할 필요가 없다.
     """
+    if demo_skip_validation_enabled():
+        return _skipped_validation_evidence()
+    marker_evidence = _verify_absent_markers(sandbox, verification_profile)
+    if marker_evidence is not None:
+        raise WorkspaceVerificationError(marker_evidence)
     if task_type.startswith("testing-"):
         # Every Testing repair reruns the exact failed gate with its preserved inputs.
         # Dynamic repairs therefore use the same Arazzo workflow executor here and again
@@ -186,8 +191,6 @@ def verify_agent_workspace(
         if evidence.get("gateStatus") != "PASS":
             raise WorkspaceVerificationError(evidence)
         return evidence
-    if demo_skip_validation_enabled():
-        return _skipped_validation_evidence()
     if task_type == "integration-implementation":
         backend = verify_agent_workspace(sandbox)
         frontend = verify_frontend_workspace(sandbox)
@@ -199,9 +202,6 @@ def verify_agent_workspace(
         }
     if task_type in {"frontend", "frontend-implementation"}:
         return verify_frontend_workspace(sandbox)
-    marker_evidence = _verify_absent_markers(sandbox, verification_profile)
-    if marker_evidence is not None:
-        raise WorkspaceVerificationError(marker_evidence)
     command = task_verification_command(
         gradle_command(),
         task_type,

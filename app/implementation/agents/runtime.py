@@ -57,7 +57,11 @@ from .provider import (
     openhands_compatibility,
     openhands_connection,
 )
-from .source_replace_tool import register_source_replace_tool
+from .source_replace_tool import (
+    SourceReplaceAction,
+    SourceReplaceExecutor,
+    register_source_replace_tool,
+)
 from .task_check import (
     consume_successful_task_check,
     has_successful_task_check,
@@ -226,6 +230,107 @@ EDITOR_STUCK_RECOVERY_MESSAGE = (
 )
 
 
+EDITOR_READ_EVIDENCE_MAX_BYTES = 64 * 1024
+EDITOR_WRITABLE_SOURCE_MAX_BYTES = 64 * 1024
+DIRECT_EDITOR_SOURCE_EXTENSIONS = {".java", ".tsx", ".ts", ".js", ".jsx"}
+DIRECT_EDITOR_CODE_FENCES = {
+    ".java": "java",
+    ".tsx": "tsx",
+    ".ts": "typescript",
+    ".js": "javascript",
+    ".jsx": "jsx",
+}
+
+
+def _direct_editor_source_is_eligible(
+    task: dict[str, object], task_type: str, writable_paths: list[str], sandbox: Path
+) -> bool:
+    """Allow the one-call editor only for one bounded code source."""
+    if len(writable_paths) != 1:
+        return False
+    path = Path(writable_paths[0])
+    if path.suffix.casefold() not in DIRECT_EDITOR_SOURCE_EXTENSIONS:
+        return False
+    if task_type == "frontend-implementation":
+        markers = task.get("required_completion_markers")
+        if not isinstance(markers, list) or not markers or not all(
+            isinstance(marker, str) and marker.strip() for marker in markers
+        ):
+            return False
+    source = sandbox / path
+    try:
+        return source.is_file() and source.stat().st_size <= EDITOR_WRITABLE_SOURCE_MAX_BYTES
+    except OSError:
+        return False
+
+
+def _editor_read_source_evidence(
+    sandbox: Path,
+    context: dict[str, object],
+    writable_files: list[str],
+) -> str:
+    """Embed the current source and bounded preselected code dependencies."""
+
+    sandbox_root = sandbox.resolve()
+    writable = {Path(path).resolve() for path in writable_files}
+    candidates: list[tuple[str, Path]] = []
+    for path in writable_files:
+        candidate = Path(path).resolve()
+        if candidate.is_file():
+            candidates.append((path.replace("\\", "/"), candidate))
+    values = context.get("readSourcePaths", [])
+    if isinstance(values, list):
+        for value in values:
+            if not isinstance(value, str) or not value:
+                continue
+            candidate = (sandbox / value).resolve()
+            if (
+                not candidate.is_relative_to(sandbox_root)
+                or candidate in writable
+                or not candidate.is_file()
+                or candidate.suffix.casefold()
+                not in DIRECT_EDITOR_SOURCE_EXTENSIONS | {".json", ".txt"}
+            ):
+                continue
+            candidates.append((value.replace("\\", "/"), candidate))
+
+    included: list[str] = []
+    omitted = 0
+    used = 0
+    # Preserve the writable target first, then spend the finite evidence budget
+    # on smaller dependencies so large context files cannot crowd out several
+    # concise declarations.
+    ordered_candidates = sorted(
+        dict(candidates).items(),
+        key=lambda item: (
+            item[1] not in writable,
+            item[1].stat().st_size,
+            item[0],
+        ),
+    )
+    for path, candidate in ordered_candidates:
+        body = candidate.read_text(encoding="utf-8")
+        body_size = len(body.encode("utf-8"))
+        if used + body_size > EDITOR_READ_EVIDENCE_MAX_BYTES:
+            omitted += 1
+            continue
+        fence = DIRECT_EDITOR_CODE_FENCES.get(
+            candidate.suffix.casefold(), candidate.suffix.lstrip(".") or "text"
+        )
+        label = "current writable source" if candidate in writable else "read-only evidence"
+        included.append(f"### `{path}` ({label})\n```{fence}\n{body}\n```")
+        used += body_size
+
+    if not included and not omitted:
+        return ""
+    return (
+        "\n\n## Supplied writable source and read-only evidence\n\n"
+        + "\n\n".join(included)
+        + f"\n\nEvidence bodies: {len(included)} included, {omitted} omitted "
+        + f"(UTF-8 body cap {EDITOR_READ_EVIDENCE_MAX_BYTES} bytes)."
+    )
+
+
 def _owner_evidence_boundary_message(required_test_paths: object) -> str:
     """Render owner-only prompt text; it does not change execution policy."""
 
@@ -257,6 +362,10 @@ _SANDBOX_TOOLS_REGISTRATION_LOCK = threading.Lock()
 
 class OwnerConversationIncomplete(WorkspaceVerificationError):
     """An owner stopped at an SDK execution boundary, not a source-code gate."""
+
+
+class DirectEditorResponseError(RuntimeError):
+    """The one-shot editor response did not contain a usable source replacement."""
 
 
 def _is_infrastructure_verification_failure(error: WorkspaceVerificationError) -> bool:
@@ -411,6 +520,27 @@ class EventJournal:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
         self.event_count += 1
 
+    def record_direct_source_replacement(self, action: SourceReplaceAction) -> None:
+        """Persist action evidence without retaining generated source in the journal."""
+
+        payload = {
+            "sequence": self.event_count,
+            "timestamp": time.time(),
+            "type": "DirectEditorAction",
+            "source": "agent",
+            "tool": "replace_source",
+            "event": {
+                "path": action.path,
+                "sourceSha256": hashlib.sha256(
+                    action.source.encode("utf-8")
+                ).hexdigest(),
+            },
+        }
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self.event_count += 1
+        self.tool_counts["replace_source"] = self.tool_counts.get("replace_source", 0) + 1
+        self.latest_agent_message = "Direct editor applied replace_source."
 
 class NoActionResponseGuard:
     """Turn a reasoning-only completion into one explicit action-recovery turn.
@@ -1038,6 +1168,130 @@ def _complete_verified_task_without_agent(
     return result
 
 
+def _direct_editor_tool_schema() -> dict[str, object]:
+    return {
+        "type": "function",
+        "function": {
+            "name": "replace_source",
+            "description": "Replace the complete UTF-8 body of exactly one supplied writable source file.",
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["path", "source"],
+                "properties": {
+                    "path": {"type": "string", "minLength": 1},
+                    "source": {"type": "string", "minLength": 1},
+                },
+            },
+        },
+    }
+
+
+def _direct_editor_reasoning_effort(llm_config: dict[str, object]) -> str:
+    value = llm_config.get("reasoningEffort")
+    return value if isinstance(value, str) and value in {"low", "high", "max"} else "low"
+
+
+def _request_direct_editor_action(
+    connection: LlmConnection,
+    prompt: str,
+    llm_config: dict[str, object],
+ ) -> SourceReplaceAction:
+    """Request exact complete source bodies without starting an OpenHands loop."""
+
+    if not connection.api_key:
+        raise DirectEditorResponseError("Direct editor API key is not configured.")
+    from openai import OpenAI
+
+    raw_max_tokens = llm_config.get("maxOutputTokens", 8192)
+    if not isinstance(raw_max_tokens, int) or raw_max_tokens < 1:
+        raise TypeError("implementation LLM maxOutputTokens must be a positive integer")
+    request: dict[str, object] = {
+        "model": connection.model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a source editor. Return exactly one replace_source tool call. "
+                    "Do not explain, inspect, or call any other tool."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+        "tools": [_direct_editor_tool_schema()],
+        "tool_choice": {
+            "type": "function",
+            "function": {"name": "replace_source"},
+        },
+        "temperature": 0,
+        "max_tokens": raw_max_tokens,
+    }
+    if connection.provider == "cloudflare":
+        request["reasoning_effort"] = _direct_editor_reasoning_effort(llm_config)
+    client = OpenAI(
+        api_key=connection.api_key,
+        base_url=connection.base_url,
+        default_headers=connection.default_headers(),
+        timeout=max(1, int(settings.llm_timeout_seconds)),
+        max_retries=0,
+    )
+    response = client.chat.completions.create(**request)
+    choices = getattr(response, "choices", None) or []
+    if not choices:
+        raise DirectEditorResponseError("Direct editor returned no completion choice.")
+    tool_calls = getattr(getattr(choices[0], "message", None), "tool_calls", None) or []
+    if len(tool_calls) != 1:
+        raise DirectEditorResponseError(
+            "Direct editor must return exactly one replace_source tool call."
+        )
+    function = getattr(tool_calls[0], "function", None)
+    if getattr(function, "name", None) != "replace_source":
+        raise DirectEditorResponseError("Direct editor returned an unexpected tool name.")
+    arguments = getattr(function, "arguments", None)
+    if not isinstance(arguments, str):
+        raise DirectEditorResponseError("Direct editor returned non-text tool arguments.")
+    try:
+        value = json.loads(arguments)
+    except json.JSONDecodeError as error:
+        raise DirectEditorResponseError("Direct editor returned invalid tool JSON.") from error
+    try:
+        return SourceReplaceAction.model_validate(value)
+    except Exception as error:
+        raise DirectEditorResponseError(
+            "Direct editor tool arguments do not match replace_source."
+        ) from error
+
+
+def _apply_direct_editor_action(
+    sandbox: Path,
+    writable_files: list[str],
+    action: SourceReplaceAction,
+    journal: EventJournal,
+) -> None:
+    if len(action.source.encode("utf-8")) > EDITOR_WRITABLE_SOURCE_MAX_BYTES:
+        raise WorkspaceVerificationError(
+            {
+                "command": ["replace_source"],
+                "exitCode": 1,
+                "stdout": "",
+                "stderr": "Replacement source exceeds the 64 KiB direct-editor limit.",
+                "testResults": "",
+            }
+        )
+    observation = SourceReplaceExecutor(sandbox, writable_files)(action)
+    if observation.is_error:
+        raise WorkspaceVerificationError(
+            {
+                "command": ["replace_source"],
+                "exitCode": 1,
+                "stdout": "",
+                "stderr": str(observation),
+                "testResults": "",
+            }
+        )
+    journal.record_direct_source_replacement(action)
+
+
 def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     """Run one OpenHands conversation and keep EasyDep at the safety boundary."""
 
@@ -1078,7 +1332,9 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         if owner_task
         else "restricted"
     )
-    if owner_tool_mode == "editor" and task_type != "backend-implementation":
+    if owner_tool_mode == "editor" and not _direct_editor_source_is_eligible(
+        task, task_type, editable_paths, run_root
+    ):
         owner_tool_mode = "restricted"
     context = json.loads((run_root / task["context_file"]).read_text(encoding="utf-8"))
     initial_verification: dict[str, object] | None = None
@@ -1088,6 +1344,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         "backend-implementation",
         "integration-implementation",
     }
+    if bounded_evidence and task_type != "backend-implementation":
+        owner_tool_mode = "restricted"
     if owner_task and task_type == "integration-implementation":
         source_refs = [
             value
@@ -1166,18 +1424,17 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             })
         initial_verification = {'status': 'FAILED', 'diagnosis': diagnosis}
         completion_path = 'repair-agent'
-    if bounded_evidence and task_type != "backend-implementation":
-        owner_tool_mode = "restricted"
     editor_mode = owner_task and owner_tool_mode == "editor"
     connection = openhands_connection()
-    compatibility = openhands_compatibility(connection)
-    missing = [
-        key
-        for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled", "apiKeyConfigured")
-        if not compatibility[key]
-    ]
-    if missing:
-        raise RuntimeError("OpenHands live mode prerequisites are missing: " + ", ".join(missing))
+    if not editor_mode:
+        compatibility = openhands_compatibility(connection)
+        missing = [
+            key
+            for key in ("pythonCompatible", "sdkInstalled", "toolsInstalled", "apiKeyConfigured")
+            if not compatibility[key]
+        ]
+        if missing:
+            raise RuntimeError("OpenHands live mode prerequisites are missing: " + ", ".join(missing))
 
     requires_owner_terminal = owner_task and owner_tool_mode == "terminal"
     sandbox = precheck_sandbox or prepare_agent_workspace(
@@ -1254,6 +1511,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     immutable_absolute = access_contract.immutable_paths
     read_hints = access_contract.read_hints
     readable_files = access_contract.readable_files
+    if editor_mode:
+        prompt += _editor_read_source_evidence(sandbox, context, writable_files)
     owner_system_context = ""
     if harness_task:
         owner_system_context = _owner_workspace_guidance(
@@ -1325,7 +1584,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             str(task["llm"].get("reasoningEffort", settings.implementation_reasoning_effort)),
         )
         if editor_mode:
-            reasoning_effort = "low"
+            reasoning_effort = _direct_editor_reasoning_effort(task["llm"])
         if harness_task:
             workspace_preflight = preflight_owner_workspace(
                 sandbox,
@@ -1343,6 +1602,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     reasoning_effort=reasoning_effort,
                 )
                 if settings.implementation_openhands_canary
+                and not editor_mode
                 and isinstance(connection, LlmConnection)
                 else None
             )
@@ -1410,8 +1670,13 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         # The task conversation construction above instantiates and serializes
         # every real executor without calling its LLM. Only after that
         # deterministic check may the live protocol canary use the endpoint.
-        if harness_task and settings.implementation_openhands_canary and isinstance(
+        if (
+            harness_task
+            and not editor_mode
+            and settings.implementation_openhands_canary
+            and isinstance(
             connection, LlmConnection
+            )
         ):
             canary_result = ensure_model_tool_canary(
                 run_root,
@@ -1509,7 +1774,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         }
                     )
                 current_sources = "\n\n".join(
-                    f"### `{path}`\n```java\n{(sandbox / path).read_text(encoding='utf-8')}\n```"
+                    f"### `{path}`\n```{ {'.tsx': 'tsx', '.ts': 'typescript', '.jsx': 'jsx', '.js': 'javascript', '.css': 'css', '.java': 'java'}.get(Path(path).suffix.casefold(), 'text') }\n{(sandbox / path).read_text(encoding='utf-8')}\n```"
                     for path in editable_paths
                     if (sandbox / path).is_file()
                 )
@@ -2067,6 +2332,74 @@ def write_execution_result(
     (execution_dir / f"{task_id}.result.json").write_text(content, encoding="utf-8")
 
 
+class _DirectEditorConversation:
+    """One direct tool call that preserves the existing editor completion path."""
+
+    def __init__(
+        self,
+        sandbox: Path,
+        connection: LlmConnection,
+        llm_config: dict[str, object],
+        editable_files: list[str],
+        callbacks: list[object],
+    ) -> None:
+        self.sandbox = sandbox
+        self.connection = connection
+        self.llm_config = llm_config
+        self.editable_files = editable_files
+        self.callbacks = callbacks
+        self.prompt = ""
+        self.state = type("DirectEditorState", (), {"execution_status": None, "events": []})()
+
+    def send_message(self, message: str) -> None:
+        self.prompt = message
+
+    def run(self) -> None:
+        from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+        action = _request_direct_editor_action(
+            self.connection,
+            self.prompt,
+            self.llm_config,
+        )
+        journal = next(
+            (
+                callback
+                for callback in self.callbacks
+                if isinstance(callback, EventJournal)
+            ),
+            None,
+        )
+        if journal is None:
+            if len(action.source.encode("utf-8")) > EDITOR_WRITABLE_SOURCE_MAX_BYTES:
+                raise WorkspaceVerificationError(
+                    {
+                        "command": ["replace_source"],
+                        "exitCode": 1,
+                        "stdout": "",
+                        "stderr": "Replacement source exceeds the 64 KiB direct-editor limit.",
+                        "testResults": "",
+                    }
+                )
+            observation = SourceReplaceExecutor(self.sandbox, self.editable_files)(action)
+            if observation.is_error:
+                raise WorkspaceVerificationError(
+                    {
+                        "command": ["replace_source"],
+                        "exitCode": 1,
+                        "stdout": "",
+                        "stderr": str(observation),
+                        "testResults": "",
+                    }
+                )
+        else:
+            _apply_direct_editor_action(self.sandbox, self.editable_files, action, journal)
+        self.state.execution_status = ConversationExecutionStatus.FINISHED
+
+    def close(self) -> None:
+        return None
+
+
 def create_openhands_conversation(
     sandbox: Path,
     connection: LlmConnection,
@@ -2102,6 +2435,15 @@ def create_openhands_conversation(
     effective_owner_tool_mode = owner_tool_mode or (
         "terminal" if native_owner_tools else "restricted"
     )
+    if effective_owner_tool_mode == "editor":
+        direct = _DirectEditorConversation(
+            sandbox,
+            connection,
+            llm_config,
+            list(editable_files or []),
+            list(callbacks or []),
+        )
+        return direct, type("DirectEditorAgent", (), {"_tools": {"replace_source": None}})()
 
     from openhands.sdk import LLM, Agent, AgentContext, Conversation, Tool, register_tool
     from openhands.sdk.context.condenser import default_condenser

@@ -12,6 +12,7 @@ from app.design.graphs import subgraphs as design_subgraphs
 from app.design.knowledge.detectors import (
     api_accepted_interactions_covered,
     api_control_arguments,
+    api_control_outcomes,
     api_executable_schema_fields,
     api_spec_findings,
     api_trusted_context_provenance,
@@ -20,6 +21,7 @@ from app.design.rtm import build_design_rtm
 from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec import service
 from app.design.services.api_spec.normalization import (
+    _resolve_stable_field_path,
     normalize_api_spec_model,
 )
 from app.design.services.api_spec.projection import build_openapi_from_model
@@ -217,6 +219,53 @@ def test_typed_normalization_uses_exact_bce_contract_without_plantuml() -> None:
     assert endpoint.operation_id == "browseCatalog"
 
 
+def test_nonvoid_boundary_rejects_no_content_success_response() -> None:
+    proposal = _proposal().model_dump()
+    proposal["Endpoints"][0]["responses"] = [
+        {"status": 204, "description": "Catalog searched"}
+    ]
+    bce_model = _bce_model()
+    normalized = normalize_api_spec_model(
+        ApiSpecProposal.model_validate(proposal), bce_model
+    )
+
+    findings = api_control_outcomes(
+        normalized.model_dump(),
+        {"extracted_bce_classes": bce_model.model_dump(by_alias=True)},
+    )
+
+    assert any("Boundary 공개 반환 타입" in finding.message for finding in findings)
+
+
+def test_void_boundary_allows_no_content_success_response() -> None:
+    payload = _bce_model().model_dump(by_alias=True)
+    payload["Classes"][0]["operations"][0]["returnType"] = "void"
+    payload["Classes"][1]["operations"][0]["returnType"] = "void"
+    bce_model = BCEModel.model_validate(payload)
+    proposal = _proposal().model_dump()
+    proposal["Endpoints"][0]["responses"] = [
+        {"status": 204, "description": "Completed"}
+    ]
+    normalized = normalize_api_spec_model(
+        ApiSpecProposal.model_validate(proposal), bce_model
+    )
+
+    assert api_control_outcomes(
+        normalized.model_dump(),
+        {"extracted_bce_classes": bce_model.model_dump(by_alias=True)},
+    ) == []
+
+
+def test_typed_boundary_allows_body_bearing_success_response() -> None:
+    bce_model = _bce_model()
+    normalized = normalize_api_spec_model(_proposal(), bce_model)
+
+    assert api_control_outcomes(
+        normalized.model_dump(),
+        {"extracted_bce_classes": bce_model.model_dump(by_alias=True)},
+    ) == []
+
+
 def test_openapi_preserves_bce_string_formats() -> None:
     payload = _bce_model().model_dump(by_alias=True)
     payload["Classes"][2]["fields"] = [
@@ -383,6 +432,125 @@ def test_control_arguments_follow_explicit_collaboration_sources_not_names() -> 
         {"name": "firstValue", "source": "$query.rightInput"},
         {"name": "secondValue", "source": "$query.leftInput"},
     ]
+
+
+def test_control_arguments_accept_stable_boundary_call_refs() -> None:
+    payload = _bce_model().model_dump(by_alias=True)
+    payload["Classes"][0]["operations"][0]["parameters"][0]["stableRef"] = (
+        "param-filter-stable"
+    )
+    calls = payload["Collaborations"][0]["calls"]
+    calls[0]["stableId"] = "call-boundary-stable"
+    calls[1]["stableId"] = "call-control-stable"
+    calls[1]["argumentBindings"] = [
+        {
+            "parameter": "filter",
+            "sourceRef": "call-boundary-stable#param-filter-stable",
+        }
+    ]
+
+    endpoint = normalize_api_spec_model(
+        _proposal(), BCEModel.model_validate(payload)
+    ).Endpoints[0]
+
+    assert endpoint.control_binding is not None
+    assert [item.model_dump() for item in endpoint.control_binding.arguments] == [
+        {"name": "filter", "source": "$query.filter"}
+    ]
+
+
+def test_control_arguments_resolve_opaque_dto_field_refs_to_api_names() -> None:
+    payload = _bce_model().model_dump(by_alias=True)
+    boundary_operation = payload["Classes"][0]["operations"][0]
+    boundary_operation["parameters"] = [
+        {
+            "name": "request",
+            "type": "SwapRequest",
+            "stableRef": "opaque-boundary-param",
+        }
+    ]
+    control_operation = payload["Classes"][1]["operations"][0]
+    control_operation["parameters"] = [{"name": "registrationId", "type": "UUID"}]
+    payload["DataTypes"] = [
+        {
+            "name": "SwapRequest",
+            "kind": "valueObject",
+            "fields": ["actualRegistrationId : UUID"],
+            "fieldRefs": ["opaque-registration-field"],
+        }
+    ]
+    calls = payload["Collaborations"][0]["calls"]
+    calls[0]["receiverOperationId"] = (
+        "CatalogBoundary::browseCatalog(request:SwapRequest)"
+    )
+    calls[1]["receiverOperationId"] = (
+        "CatalogControl::searchCatalog(registrationId:UUID)"
+    )
+    calls[1]["argumentBindings"] = [
+        {
+            "parameter": "registrationId",
+            "sourceRef": "UC1::call:1#opaque-boundary-param.opaque-registration-field",
+        }
+    ]
+    bce_model = BCEModel.model_validate(payload)
+    proposal = _proposal().model_dump()
+    proposal["Endpoints"][0].update(
+        {
+            "path": "/registrations/swap",
+            "method": "post",
+            "interaction_id": (
+                "CatalogBoundary::browseCatalog(request:SwapRequest) -> "
+                "CatalogControl::searchCatalog(registrationId:UUID)"
+            ),
+        }
+    )
+
+    endpoint = normalize_api_spec_model(
+        ApiSpecProposal.model_validate(proposal), bce_model
+    ).Endpoints[0]
+
+    assert endpoint.control_binding is not None
+    assert [item.model_dump() for item in endpoint.control_binding.arguments] == [
+        {"name": "registrationId", "source": "$body.actualRegistrationId"}
+    ]
+    assert api_control_arguments(
+        normalize_api_spec_model(ApiSpecProposal.model_validate(proposal), bce_model)
+        .model_dump(by_alias=True),
+        {"extracted_bce_classes": bce_model.model_dump(by_alias=True)},
+    ) == []
+
+
+def test_nested_opaque_dto_field_refs_resolve_one_segment_at_a_time() -> None:
+    bce_model = BCEModel.model_validate(
+        {
+            "Classes": [],
+            "DataTypes": [
+                {
+                    "name": "SwapRequest",
+                    "kind": "valueObject",
+                    "fields": ["details : RegistrationDetails"],
+                    "fieldRefs": ["opaque-details"],
+                },
+                {
+                    "name": "RegistrationDetails",
+                    "kind": "valueObject",
+                    "fields": ["actualRegistrationId : UUID"],
+                    "fieldRefs": ["opaque-registration-id"],
+                },
+            ],
+            "Relationships": [],
+            "Collaborations": [],
+        }
+    )
+
+    assert _resolve_stable_field_path(
+        "SwapRequest",
+        "opaque-details.opaque-registration-id",
+        bce_model,
+    ) == "details.actualRegistrationId"
+    assert _resolve_stable_field_path(
+        "SwapRequest", "opaque-details.unknown-ref", bce_model
+    ) is None
 
 
 def test_control_arguments_do_not_fall_back_to_matching_names_or_types() -> None:

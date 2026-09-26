@@ -573,6 +573,244 @@ public interface OrdersApi {
     assert "EASYDEP_CONTROLLER_BODY_REQUIRED" not in source
 
 
+def test_controller_accepts_openapi_binary_for_bce_byte_array_response() -> None:
+    """OpenAPI format: binary and its generated Java byte[] are the same wire value."""
+    payload = _payload()["bceModel"]
+    payload["Classes"][1]["operations"][0]["parameters"] = []
+    payload["Classes"][1]["operations"][0]["returnType"] = "byte[]"
+    bce_model = BCEModel.model_validate(payload)
+    api_model = ApiSpecModel.model_validate(
+        {
+            "Endpoints": [
+                {
+                    "interaction_id": "export course schedule",
+                    "method": "GET",
+                    "path": "/course-schedule/export",
+                    "responses": [{"status": 200, "schema_name": "binary"}],
+                    "control_binding": {
+                        "control": "OrderControl",
+                        "method": "place",
+                        "arguments": [],
+                    },
+                }
+            ]
+        }
+    )
+    interface = """package com.example.orders.api;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+public interface OrdersApi {
+    @RequestMapping(method = RequestMethod.GET, value = "/course-schedule/export")
+    ResponseEntity<byte[]> exportCourseSchedule();
+}
+"""
+
+    _name, source = render_openapi_controller_scaffold(
+        interface,
+        "com.example.orders",
+        api_model=api_model,
+        bce_model=bce_model,
+    )
+
+    assert "var result = orderControl.place();" in source
+    assert "EASYDEP_CONTROLLER_BODY_REQUIRED" not in source
+
+
+@pytest.mark.parametrize(
+    ("query_source", "connected"),
+    [("$query.searchCriteria", True), ("$query.unavailable", False)],
+)
+def test_controller_binds_swagger_query_dto_to_typed_control(
+    query_source: str,
+    connected: bool,
+) -> None:
+    payload = _payload()["bceModel"]
+    payload["Classes"][1]["operations"][0]["parameters"] = [
+        {"name": "criteria", "type": "SearchCriteria"}
+    ]
+    payload["Classes"][1]["operations"][0]["returnType"] = "array<OrderReceipt>"
+    payload["DataTypes"].append(
+        {
+            "name": "SearchCriteria",
+            "kind": "valueObject",
+            "fields": ["query : string"],
+        }
+    )
+    bce_model = BCEModel.model_validate(payload)
+    api_model = ApiSpecModel.model_validate(
+        {
+            "Endpoints": [
+                {
+                    "interaction_id": "search orders with criteria",
+                    "method": "GET",
+                    "path": "/orders",
+                    "query_params": [
+                        {"name": "searchCriteria", "type": "SearchCriteria", "required": True}
+                    ],
+                    "responses": [
+                        {"status": 200, "schema_name": "OrderReceipt", "is_array": True}
+                    ],
+                    "control_binding": {
+                        "control": "OrderControl",
+                        "method": "place",
+                        "arguments": [{"name": "criteria", "source": query_source}],
+                        "outcomes": [{"status": 200, "outcome": "found"}],
+                    },
+                }
+            ],
+            "Schemas": [
+                {
+                    "name": "SearchCriteria",
+                    "fields": [{"name": "query", "type": "string", "required": True}],
+                },
+                {
+                    "name": "OrderReceipt",
+                    "fields": [
+                        {"name": "accepted", "type": "boolean", "required": True},
+                        {"name": "id", "type": "uuid", "required": True},
+                        {"name": "createdAt", "type": "LocalDateTime", "required": True},
+                        {"name": "tags", "type": "array<string>", "required": True},
+                    ],
+                },
+            ],
+        }
+    )
+    interface = """package com.example.orders.api;
+import com.example.orders.api.model.OrderReceipt;
+import com.example.orders.api.model.SearchCriteria;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.enums.ParameterIn;
+import jakarta.validation.Valid;
+import java.util.List;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+public interface OrdersApi {
+    @RequestMapping(method = RequestMethod.GET, value = "/orders")
+    ResponseEntity<List<OrderReceipt>> searchOrders(
+        @Parameter(name = "searchCriteria", in = ParameterIn.QUERY, required = true)
+        @Valid SearchCriteria searchCriteria);
+}
+"""
+
+    _name, source = render_openapi_controller_scaffold(
+        interface,
+        "com.example.orders",
+        api_model=api_model,
+        bce_model=bce_model,
+    )
+
+    if connected:
+        assert "var result = orderControl.place(" in source
+        assert (
+            "objectMapper.convertValue(searchCriteria, "
+            "com.example.orders.bce.SearchCriteria.class)"
+        ) in source
+        assert "var response = result.stream()" in source
+        assert "EASYDEP_CONTROLLER_BODY_REQUIRED" not in source
+    else:
+        assert "EASYDEP_CONTROLLER_BODY_REQUIRED:GET:/orders" in source
+        assert "orderControl.place(" not in source
+
+
+def test_controller_resolves_authenticated_uuid_context_through_provider() -> None:
+    payload = _payload()["bceModel"]
+    payload["Classes"][1]["operations"][0]["parameters"] = [
+        {"name": "actorId", "type": "UUID"}
+    ]
+    payload["Classes"][1]["operations"][0]["returnType"] = "void"
+    bce_model = BCEModel.model_validate(payload)
+    api_model = ApiSpecModel.model_validate(
+        {
+            "Endpoints": [
+                {
+                    "interaction_id": "authenticated registration",
+                    "method": "POST",
+                    "path": "/orders",
+                    "responses": [{"status": 204}],
+                    "control_binding": {
+                        "control": "OrderControl",
+                        "method": "place",
+                        "arguments": [
+                            {"name": "actorId", "source": "$context.actorId"}
+                        ],
+                    },
+                }
+            ]
+        }
+    )
+    interface = """package com.example.orders.api;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+public interface OrdersApi {
+    @RequestMapping(method = RequestMethod.POST, value = "/orders")
+    ResponseEntity<Void> registerOrder();
+}
+"""
+
+    _name, source = render_openapi_controller_scaffold(
+        interface,
+        "com.example.orders",
+        api_model=api_model,
+        bce_model=bce_model,
+    )
+
+    assert "import com.example.orders.config.AuthenticatedActorIdProvider;" in source
+    assert "private final AuthenticatedActorIdProvider authenticatedActorIdProvider;" in source
+    assert "AuthenticatedActorIdProvider authenticatedActorIdProvider" in source
+    assert "orderControl.place(authenticatedActorIdProvider.currentActorId());" in source
+    assert "EASYDEP_CONTROLLER_BODY_REQUIRED" not in source
+
+
+def test_controller_leaves_non_uuid_context_unresolved() -> None:
+    payload = _payload()["bceModel"]
+    payload["Classes"][1]["operations"][0]["parameters"] = [
+        {"name": "actorId", "type": "string"}
+    ]
+    payload["Classes"][1]["operations"][0]["returnType"] = "void"
+    bce_model = BCEModel.model_validate(payload)
+    api_model = ApiSpecModel.model_validate(
+        {
+            "Endpoints": [
+                {
+                    "interaction_id": "context source without uuid type",
+                    "method": "POST",
+                    "path": "/orders",
+                    "responses": [{"status": 204}],
+                    "control_binding": {
+                        "control": "OrderControl",
+                        "method": "place",
+                        "arguments": [
+                            {"name": "actorId", "source": "$context.actorId"}
+                        ],
+                    },
+                }
+            ]
+        }
+    )
+    interface = """package com.example.orders.api;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+public interface OrdersApi {
+    @RequestMapping(method = RequestMethod.POST, value = "/orders")
+    ResponseEntity<Void> registerOrder();
+}
+"""
+
+    _name, source = render_openapi_controller_scaffold(
+        interface,
+        "com.example.orders",
+        api_model=api_model,
+        bce_model=bce_model,
+    )
+
+    assert "AuthenticatedActorIdProvider" not in source
+    assert "EASYDEP_CONTROLLER_BODY_REQUIRED:POST:/orders" in source
+
+
 def test_controller_defers_body_when_deterministic_projection_is_unsafe() -> None:
     """Unsafe automatic mapping is delegated without rejecting the accepted design."""
     payload = _payload()["bceModel"]

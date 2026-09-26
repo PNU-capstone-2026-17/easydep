@@ -18,7 +18,11 @@ from typing import Any
 
 from app.config import settings
 from app.design.contracts.api_spec import ApiSpecModel
-from app.design.contracts.application_runtime import application_security_required
+from app.design.contracts.application_runtime import (
+    SYNTHETIC_UUID_BASIC_USERNAME,
+    application_security_required,
+    authenticated_uuid_context_required,
+)
 from app.design.schemas.class_model import BCEModel
 from app.design.schemas.sequence_model import SequenceCollection
 from app.llm_connection import build_openhands_llm_connection
@@ -944,6 +948,7 @@ tasks.withType(Test).configureEach {{ useJUnitPlatform() }}
     def _write_runtime_configuration(self, application: Path) -> None:
         """운영 DB와 test DB처럼 선택 여지가 없는 Spring 설정을 미리 만든다."""
         datasource_required = _requires_application_datasource(self.spec)
+        uuid_actor_required = _requires_uuid_authenticated_actor(self.spec)
         security_required = _requires_application_security(self.spec)
         production_security = (
             "  security:\n"
@@ -994,7 +999,7 @@ tasks.withType(Test).configureEach {{ useJUnitPlatform() }}
         test_security = (
             "  security:\n"
             "    user:\n"
-            "      name: easydep-test\n"
+            f"      name: {SYNTHETIC_UUID_BASIC_USERNAME if uuid_actor_required else 'easydep-test'}\n"
             "      password: easydep-test\n"
             "      roles: USER\n"
             if security_required
@@ -1017,6 +1022,8 @@ tasks.withType(Test).configureEach {{ useJUnitPlatform() }}
         )
         if security_required:
             self._write_security_configuration(application)
+            if uuid_actor_required:
+                self._write_authenticated_actor_id_provider(application)
 
     def _write_security_configuration(self, application: Path) -> None:
         """명시적인 인증 요구가 있을 때 Spring의 임의 기본 동작을 대신한다."""
@@ -1057,6 +1064,51 @@ public class SecurityConfiguration {{
                 .anyRequest().authenticated())
             .httpBasic(Customizer.withDefaults())
             .build();
+    }}
+}}
+""",
+            encoding="utf-8",
+        )
+
+    def _write_authenticated_actor_id_provider(self, application: Path) -> None:
+        """Expose the authenticated UUID principal as a typed application dependency."""
+
+        package = self.spec.base_package
+        target = (
+            application
+            / "src"
+            / "main"
+            / "java"
+            / Path(package.replace(".", "/"))
+            / "config"
+            / "AuthenticatedActorIdProvider.java"
+        )
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            f"""package {package}.config;
+
+import java.util.UUID;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+
+@Component
+public class AuthenticatedActorIdProvider {{
+    public UUID currentActorId() {{
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()) {{
+            throw new IllegalStateException("An authenticated UUID principal is required.");
+        }}
+        String principal = authentication.getName();
+        try {{
+            UUID actorId = UUID.fromString(principal);
+            if (!actorId.toString().equalsIgnoreCase(principal)) {{
+                throw new IllegalArgumentException("Principal is not a canonical UUID.");
+            }}
+            return actorId;
+        }} catch (RuntimeException exception) {{
+            throw new IllegalStateException("Authenticated principal is not a valid UUID.", exception);
+        }}
     }}
 }}
 """,
@@ -1316,11 +1368,12 @@ def _merge_implementation_tasks(
 
 
 def _requires_application_security(spec: JobSpec) -> bool:
-    """명시적인 API 또는 요구사항 근거가 있을 때만 Security를 켠다.
+    """명시적 security evidence 또는 UUID context binding에서만 Security를 켠다.
 
     현재 API 저장 모델에는 보안 항목이 없으므로 OpenAPI의 표준 ``security``와 승인된
-    요구사항 문장을 함께 본다. 단순히 actor 역할이 존재한다는 이유로 인증을 추측하지 않고,
-    인증·인가를 직접 요구한 문장만 사용한다.
+    요구사항 문장을 함께 본다. Actor 이름은 추론에 사용하지 않는다. 승인된 API Control
+    binding이 Control의 UUID parameter를 ``$context``에서 채울 때는 인증된 principal이
+    실행 계약에 포함된 것으로 처리한다.
     """
     def read_json_input(name: str) -> Any:
         path = spec.inputs.get(name)
@@ -1335,7 +1388,24 @@ def _requires_application_security(spec: JobSpec) -> bool:
     requirements = read_json_input("refinedRequirements")
     return application_security_required(
         openapi if isinstance(openapi, dict) else {}, requirements
-    )
+    ) or _requires_uuid_authenticated_actor(spec)
+
+
+def _requires_uuid_authenticated_actor(spec: JobSpec) -> bool:
+    """Return whether an accepted API binding needs a UUID security principal."""
+
+    def read_model(name: str) -> Any:
+        path = spec.inputs.get(name)
+        if not path or not path.is_file():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    api_model = read_model("apiModel")
+    bce_model = read_model("bceModel")
+    return authenticated_uuid_context_required(api_model, bce_model)
 
 
 def _requires_application_datasource(spec: JobSpec) -> bool:

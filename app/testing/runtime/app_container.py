@@ -15,10 +15,13 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
+from app.design.contracts.application_runtime import SYNTHETIC_UUID_BASIC_USERNAME
 from app.implementation.runtime.process import run_process_tree
 from app.testing.runtime.container_runner import (
+    GRADLE_CACHE_PATH,
     GRADLE_CACHE_VOLUME,
     configured_runner_image,
+    prepare_gradle_cache,
 )
 
 DEFAULT_START_TIMEOUT_SECONDS = 360
@@ -31,6 +34,7 @@ _ENVIRONMENT_BUILD_FAILURE_MARKERS = (
     "network is unreachable",
     "context deadline exceeded",
 )
+_GRADLE_CACHE_DENIAL_MARKERS = ("permission denied", "accessdeniedexception")
 _ACTIVE_TESTING_CONTAINERS: set[str] = set()
 
 
@@ -163,6 +167,11 @@ def _build_failure_defect_class(output: str) -> str:
     """
 
     lowered = output.casefold()
+    if (
+        GRADLE_CACHE_PATH.casefold() in lowered
+        and any(marker in lowered for marker in _GRADLE_CACHE_DENIAL_MARKERS)
+    ):
+        return "ENVIRONMENT_DEFECT"
     if any(marker in lowered for marker in _ENVIRONMENT_BUILD_FAILURE_MARKERS):
         return "ENVIRONMENT_DEFECT"
     return "SUT_DEFECT"
@@ -240,6 +249,13 @@ def running_application(
     network = runtime_network_name(name)
     host_port = free_port()
     runner_image = configured_runner_image()
+    try:
+        prepare_gradle_cache(runner_image)
+    except (RuntimeError, subprocess.TimeoutExpired) as error:
+        raise ApplicationLaunchError(
+            f"The shared Gradle cache could not be prepared: {error}",
+            defect_class="ENVIRONMENT_DEFECT",
+        ) from error
 
     # 같은 실행 ID의 이전 비정상 종료가 남겼을 수 있는 container와 network를 모두
     # 정리한다. container만 제거하면 재개 시 동일한 deterministic network 이름이
@@ -268,11 +284,11 @@ def running_application(
             "-v",
             f"{context.resolve()}:/easydep-application:rw",
             "-v",
-            f"{GRADLE_CACHE_VOLUME}:/tmp/easydep-gradle-cache",
+            f"{GRADLE_CACHE_VOLUME}:{GRADLE_CACHE_PATH}",
             "-w",
             "/easydep-application",
             "-e",
-            "GRADLE_USER_HOME=/tmp/easydep-gradle-cache",
+            f"GRADLE_USER_HOME={GRADLE_CACHE_PATH}",
             # Testing은 아직 CSP의 실제 DB를 provision하지 않는다. 생성 애플리케이션이
             # 외부 DB 주소 때문에 실패하지 않도록 함께 생성된 test profile과 임시 H2를 쓴다.
             "-e",
@@ -286,7 +302,7 @@ def running_application(
             # 생성기가 인증 요구를 발견하면 이 표준 Spring 변수를 필수로 만든다. 운영
             # 비밀값을 재사용하지 않고 Testing 전용 계정을 주입해 같은 image를 안전하게 띄운다.
             "-e",
-            "SPRING_SECURITY_USER_NAME=easydep-test",
+            f"SPRING_SECURITY_USER_NAME={SYNTHETIC_UUID_BASIC_USERNAME}",
             "-e",
             "SPRING_SECURITY_USER_PASSWORD=easydep-test",
             "-e",

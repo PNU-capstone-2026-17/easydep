@@ -25,6 +25,20 @@ artifacts/*
 /.pytest-*/
 /.pytest-tmp-*/
 /.test-tmp/
+# Root-local pytest and harness temporary directories
+/.pytest_cache/
+/.harness-test-tmp-progress-20260925/
+/.tmp-direct-editor-batch-tests/
+/.tmp-pytest-owner-transport/
+/.tmp-pytest-recovery-epoch/
+/.tmp_pytest_force_replace/
+/pytest-cache-files-fhchi1vn/
+/pytest-cache-files-gbqnumtd/
+/pytest-cache-files-vo5wm4g_/
+/Tempeasydep-owner-planning/
+/Tempeasydep-owner-planning-2/
+/Tempeasydep-owner-planning-final/
+/Tempeasydep-owner-planning-last/
 /.easydep-test-*/
 /.tmp-pytest-neutral-v2*/
 /.tmp-pytest-neutral-v3*/
