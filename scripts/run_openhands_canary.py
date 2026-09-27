@@ -33,6 +33,11 @@ def main() -> int:
         type=int,
         default=settings.implementation_openhands_canary_repetitions,
     )
+    parser.add_argument(
+        "--canary-mode",
+        choices=("openhands", "direct-editor"),
+        default="openhands",
+    )
     args = parser.parse_args()
     result = ensure_model_tool_canary(
         args.run_root.resolve(),
@@ -51,6 +56,7 @@ def main() -> int:
         retry_min_wait_seconds=settings.implementation_openhands_retry_min_wait_seconds,
         retry_max_wait_seconds=settings.implementation_openhands_retry_max_wait_seconds,
         retry_multiplier=settings.implementation_openhands_retry_multiplier,
+        canary_mode=args.canary_mode,
     )
     summary = {
         "canaryResultId": result["canaryResultId"],

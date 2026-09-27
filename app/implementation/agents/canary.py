@@ -24,6 +24,7 @@ from .harness import (
 )
 
 CANARY_SCHEMA_VERSION = "easydep-openhands-tool-canary/v5"
+CANARY_MODES = frozenset({"openhands", "direct-editor"})
 CANARY_SYSTEM_PROMPT = """You are running an EasyDep tool-protocol canary.
 Use only the supplied tools. First call easydep_canary_read with no arguments. Then pass
 the exact returned marker to easydep_canary_check using its marker argument. If it returns
@@ -198,16 +199,90 @@ def _canary_attempt(
     }
 
 
+def _direct_editor_canary_attempt(
+    connection: LlmConnection,
+    llm_config: dict[str, object],
+    reasoning_effort: str,  # noqa: ARG001 - direct editor deliberately normalizes to low.
+) -> dict[str, object]:
+    """Exercise the production direct-editor request and typed write boundary once."""
+
+    from .runtime import _request_direct_editor_action
+    from .source_replace_tool import (
+        SourceEditAction,
+        SourceEditExecutor,
+        SourceReplaceExecutor,
+    )
+
+    started = time.monotonic()
+    action_name: str | None = None
+    with tempfile.TemporaryDirectory(prefix="easydep-direct-editor-canary-") as temporary:
+        workspace = Path(temporary)
+        target = workspace / "CanaryToy.java"
+        original = "class CanaryToy { int value() { return 0; } }\n"
+        target.write_text(original, encoding="utf-8")
+        action = _request_direct_editor_action(
+            connection,
+            """Edit only the supplied synthetic Java source. Change the value method to return 1.
+Use one exact edit_source or replace_source tool call and preserve the class.
+
+### `CanaryToy.java`
+```java
+class CanaryToy { int value() { return 0; } }
+```""",
+            llm_config,
+            ["CanaryToy.java"],
+        )
+        action_name = "edit_source" if isinstance(action, SourceEditAction) else "replace_source"
+        executor = (
+            SourceEditExecutor(workspace, [str(target)])
+            if isinstance(action, SourceEditAction)
+            else SourceReplaceExecutor(workspace, [str(target)])
+        )
+        observation = executor(action)
+        updated = target.read_text(encoding="utf-8")
+    passed = not observation.is_error and updated != original and "return 1;" in updated
+    return {
+        "passed": passed,
+        "executionStatus": "finished" if passed else "error",
+        "actions": [action_name] if action_name else [],
+        "eventCount": 1 if action_name else 0,
+        "harnessErrorCounts": {},
+        "terminationReason": None if passed else "DIRECT_EDITOR_CANARY_WRITE_FAILED",
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "endpointRetries": {"retryCount": 0, "reasons": {}, "events": []},
+    }
+
+
+def _canary_contract(
+    connection: LlmConnection,
+    *,
+    owner_tool_mode: str,
+    reasoning_effort: str,
+    canary_mode: str,
+) -> dict[str, object]:
+    contract = build_harness_manifest(
+        connection,
+        owner_tool_mode=owner_tool_mode,
+        reasoning_effort=reasoning_effort,
+    )
+    if canary_mode == "direct-editor":
+        contract["canaryMode"] = canary_mode
+        contract["directEditorTools"] = ["replace_source", "edit_source"]
+    return contract
+
+
 def model_tool_canary_id(
     connection: LlmConnection,
     *,
     owner_tool_mode: str,
     reasoning_effort: str,
+    canary_mode: str = "openhands",
 ) -> str:
-    contract = build_harness_manifest(
+    contract = _canary_contract(
         connection,
         owner_tool_mode=owner_tool_mode,
         reasoning_effort=reasoning_effort,
+        canary_mode=canary_mode,
     )
     return manifest_id({**contract, "canarySchemaVersion": CANARY_SCHEMA_VERSION})
 
@@ -290,6 +365,7 @@ def ensure_model_tool_canary(
     retry_min_wait_seconds: float = 1.0,
     retry_max_wait_seconds: float = 8.0,
     retry_multiplier: float = 1.0,
+    canary_mode: str = "openhands",
 ) -> dict[str, object]:
     """Obtain the required successful canaries under a bounded retry policy."""
 
@@ -305,6 +381,8 @@ def ensure_model_tool_canary(
         raise ValueError("OpenHands canary retry waits are invalid")
     if retry_multiplier < 1:
         raise ValueError("OpenHands canary retry multiplier must be at least one")
+    if canary_mode not in CANARY_MODES:
+        raise ValueError(f"Unsupported OpenHands canary mode: {canary_mode}")
     policy = {
         "requiredSuccesses": repetitions,
         "maxAttempts": max_attempts,
@@ -313,15 +391,17 @@ def ensure_model_tool_canary(
         "retryMaxWaitSeconds": retry_max_wait_seconds,
         "retryMultiplier": retry_multiplier,
     }
-    contract = build_harness_manifest(
+    contract = _canary_contract(
         connection,
         owner_tool_mode=owner_tool_mode,
         reasoning_effort=reasoning_effort,
+        canary_mode=canary_mode,
     )
     canary_id = model_tool_canary_id(
         connection,
         owner_tool_mode=owner_tool_mode,
         reasoning_effort=reasoning_effort,
+        canary_mode=canary_mode,
     )
     now = datetime.now(UTC)
     circuit = _load_endpoint_circuit(run_root, canary_id)
@@ -371,7 +451,11 @@ def ensure_model_tool_canary(
     deterministic_failure = False
     while len(attempts) < max_attempts and successful_attempts < repetitions:
         try:
-            attempt = _canary_attempt(connection, llm_config, reasoning_effort)
+            attempt = (
+                _direct_editor_canary_attempt(connection, llm_config, reasoning_effort)
+                if canary_mode == "direct-editor"
+                else _canary_attempt(connection, llm_config, reasoning_effort)
+            )
         except Exception as error:
             attempt = {
                 "passed": False,

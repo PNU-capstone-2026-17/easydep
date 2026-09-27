@@ -107,6 +107,62 @@ def test_harness_error_has_a_machine_readable_first_line() -> None:
     assert detail == "Use a relative path."
 
 
+def test_direct_editor_canary_applies_one_synthetic_allowed_edit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class TemporaryDirectory:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def __enter__(self) -> str:
+            return str(tmp_path)
+
+        def __exit__(self, *_args: object) -> bool:
+            return False
+
+    def request(
+        connection: LlmConnection,
+        prompt: str,
+        llm_config: dict[str, object],
+        allowed_paths: list[str],
+    ) -> SourceEditAction:
+        captured.update(
+            model=connection.model,
+            prompt=prompt,
+            llm_config=llm_config,
+            allowed_paths=allowed_paths,
+        )
+        return SourceEditAction(
+            path="CanaryToy.java",
+            edits=[ExactSourceEdit(old_text="return 0;", new_text="return 1;")],
+        )
+
+    monkeypatch.setattr(
+        "app.implementation.agents.runtime._request_direct_editor_action", request
+    )
+    monkeypatch.setattr(canary_module.tempfile, "TemporaryDirectory", TemporaryDirectory)
+
+    attempt = canary_module._direct_editor_canary_attempt(
+        LlmConnection(
+            provider="cloudflare",
+            api_key="approved-key",
+            base_url="https://example.invalid/v1",
+            model="@cf/zai-org/glm-5.3-flash",
+            litellm_provider="openai",
+        ),
+        {"maxOutputTokens": 128},
+        "medium",
+    )
+
+    assert attempt["passed"] is True
+    assert attempt["actions"] == ["edit_source"]
+    assert captured["allowed_paths"] == ["CanaryToy.java"]
+    assert "return 0;" in str(captured["prompt"])
+
+
 def test_harness_guard_stops_a_protocol_leak_without_retry() -> None:
     from openhands.sdk.conversation.state import ConversationExecutionStatus
 
