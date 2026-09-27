@@ -21,7 +21,10 @@ def _openapi() -> dict[str, Any]:
     item = {
         "type": "object",
         "required": ["id", "name"],
-        "properties": {"id": {"type": "string"}, "name": {"type": "string"}},
+        "properties": {
+            "id": {"type": "string", "description": "The created inventory item identifier."},
+            "name": {"type": "string"},
+        },
     }
     return {
         "openapi": "3.0.3",
@@ -31,6 +34,7 @@ def _openapi() -> dict[str, Any]:
             "/items": {
                 "post": {
                     "operationId": "createItem",
+                    "summary": "Create an inventory item",
                     "x-easydep-use-case-ids": ["UC-1"],
                     "x-easydep-scenario-step-refs": ["UC-1:main:1"],
                     "parameters": [
@@ -55,7 +59,7 @@ def _openapi() -> dict[str, Any]:
                     },
                     "responses": {
                         "201": {
-                            "description": "created",
+                            "description": "A newly created inventory item is returned.",
                             "content": {"application/json": {"schema": item}},
                         }
                     },
@@ -194,6 +198,8 @@ def test_execution_candidates_expose_finite_typed_connection_choices() -> None:
     assert [(item["stepId"], item["operationId"]) for item in candidates] == [
         ("createItem", "createItem"),
         ("getItem", "getItem"),
+        ("auditItem", "auditItem"),
+        ("health", "health"),
     ]
     get_item = candidates[1]
     assert get_item["inputs"][0]["inputSlot"] == "path:id"
@@ -220,6 +226,78 @@ def test_execution_candidates_expose_finite_typed_connection_choices() -> None:
         },
     ]
     assert candidates[0]["successStatuses"] == ["201"]
+    assert candidates[0]["summary"] == "Create an inventory item"
+    assert candidates[0]["outputs"][0]["description"] == "The created inventory item identifier."
+    assert candidates[0]["outputs"][0]["responseDescription"] == (
+        "A newly created inventory item is returned."
+    )
+
+
+def test_execution_candidates_offer_untraced_setup_with_typed_connection() -> None:
+    openapi = _openapi()
+    openapi["paths"]["/audit"]["get"]["parameters"] = [
+        {
+            "name": "itemId",
+            "in": "query",
+            "required": True,
+            "schema": {"type": "string"},
+        }
+    ]
+    candidate = _candidate_for(
+        build_workflow_candidates(_requirements(), _use_cases(), openapi), "UC-2"
+    )
+
+    choices = build_execution_candidates([candidate], openapi)
+    audit = next(step for step in choices if step["operationId"] == "auditItem")
+
+    assert candidate["trace"]["useCaseIds"] == ["UC-2"]
+    assert {operation["operationId"] for operation in candidate["setupOperations"]} >= {
+        "createItem",
+        "getItem",
+        "health",
+    }
+    assert audit["inputs"][0]["connections"] == [
+        {
+            "connectionId": "createItem.bodyId->auditItem.query:itemId",
+            "sourceStepId": "createItem",
+            "sourceSlot": "body.id",
+            "outputName": "bodyId",
+            "outputExpression": "$response.body#/id",
+            "targetStepId": "auditItem",
+            "targetInputSlot": "query:itemId",
+            "value": "$steps.createItem.outputs.bodyId",
+        },
+        {
+            "connectionId": "createItem.bodyName->auditItem.query:itemId",
+            "sourceStepId": "createItem",
+            "sourceSlot": "body.name",
+            "outputName": "bodyName",
+            "outputExpression": "$response.body#/name",
+            "targetStepId": "auditItem",
+            "targetInputSlot": "query:itemId",
+            "value": "$steps.createItem.outputs.bodyName",
+        },
+        {
+            "connectionId": "getItem.bodyId->auditItem.query:itemId",
+            "sourceStepId": "getItem",
+            "sourceSlot": "body.id",
+            "outputName": "bodyId",
+            "outputExpression": "$response.body#/id",
+            "targetStepId": "auditItem",
+            "targetInputSlot": "query:itemId",
+            "value": "$steps.getItem.outputs.bodyId",
+        },
+        {
+            "connectionId": "getItem.bodyName->auditItem.query:itemId",
+            "sourceStepId": "getItem",
+            "sourceSlot": "body.name",
+            "outputName": "bodyName",
+            "outputExpression": "$response.body#/name",
+            "targetStepId": "auditItem",
+            "targetInputSlot": "query:itemId",
+            "value": "$steps.getItem.outputs.bodyName",
+        },
+    ]
 
 
 def test_execution_candidates_escape_json_pointer_tokens_and_ground_statuses() -> None:

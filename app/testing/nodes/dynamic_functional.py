@@ -37,8 +37,17 @@ from app.testing.utils.functional_executor import (
 from app.validation import stable_digest
 
 PLAN_SYSTEM_PROMPT = """Return exactly one workflow decision JSON object.
-Use the supplied workflowId exactly. Select only listed trace-linked `orderedStepIds`, compatible
-`connectionIds`, and grounded success status codes from `planningModel.availableSteps`.
+Use the supplied workflowId exactly. Select listed target or optional setup `orderedStepIds`, compatible
+`connectionIds`, and grounded success status codes from `planningModel.availableSteps`. Include at least
+one target operation; optional setup steps may precede it only when their typed response output prepares
+an input. Do not treat a schema-valid ID example as persisted data: use a supplied fixture or an earlier
+selected setup response when the target needs a resource.
+The same UUID or string shape does not prove the same resource: use operation, response, and schema
+descriptions to distinguish a parent resource ID from a newly created child ID (for example, an order-line
+creation can return a line ID rather than the parent order ID). A setup step must produce the target resource;
+a read/query step does not create a missing fixture.
+For each connected input, choose an exact ID from `connectionChoicesByInput`; never synthesize a
+source-to-target connection ID from operation or field names.
 Choose connection IDs by their semantic source/target meaning; code will compile all Arazzo
 parameters, request bodies, outputs, and runtime expressions. Do not return Arazzo fields,
 operation IDs, output names, expressions, literals, request bodies, retries, or prose.
@@ -169,9 +178,16 @@ def _response_format(candidate: dict[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
-def _validate_workflow_decision(value: dict[str, Any]) -> None:
+def _validate_workflow_decision(
+    value: dict[str, Any], candidate: dict[str, Any] | None = None
+) -> None:
+    schema = (
+        _response_format(candidate)["json_schema"]["schema"]
+        if candidate is not None
+        else _WORKFLOW_DECISION_SCHEMA
+    )
     errors = sorted(
-        jsonschema.Draft202012Validator(_WORKFLOW_DECISION_SCHEMA).iter_errors(value),
+        jsonschema.Draft202012Validator(schema).iter_errors(value),
         key=lambda item: tuple(map(str, item.absolute_path)),
     )
     if not errors:
@@ -206,6 +222,18 @@ def _compile_workflow_decision(
     ):
         raise ArazzoPlanningError("Workflow decision selects an unknown step ID.")
     positions = {step_id: index for index, step_id in enumerate(ordered_step_ids)}
+    target_operation_ids = {
+        str(operation.get("operationId") or "")
+        for operation in candidate.get("operations") or []
+        if isinstance(operation, dict) and operation.get("operationId")
+    }
+    if target_operation_ids and not any(
+        str(steps_by_id[step_id].get("operationId") or "") in target_operation_ids
+        for step_id in ordered_step_ids
+    ):
+        raise ArazzoPlanningError(
+            "Workflow decision must include at least one trace-linked target operation."
+        )
     connection_by_id = {
         str(connection.get("connectionId")): connection
         for step in available_steps if isinstance(step, dict)
@@ -674,8 +702,35 @@ def _planning_model(
         raise ArazzoPlanningError(
             f"No execution choices were projected for {candidate.get('workflowId')}."
         )
+    target_operation_ids = sorted(
+        str(operation["operationId"])
+        for operation in candidate.get("operations") or []
+        if isinstance(operation, dict) and isinstance(operation.get("operationId"), str)
+    )
+    connection_choices = {
+        f"{step['stepId']}.{input_slot['inputSlot']}": [
+            str(connection["connectionId"])
+            for connection in input_slot.get("connections") or []
+            if isinstance(connection, dict) and isinstance(connection.get("connectionId"), str)
+        ]
+        for step in available_steps
+        if isinstance(step, dict) and isinstance(step.get("stepId"), str)
+        for input_slot in step.get("inputs") or []
+        if isinstance(input_slot, dict)
+        and isinstance(input_slot.get("inputSlot"), str)
+        and input_slot.get("connections")
+    }
     return {
         "intent": {"requirements": requirements, "useCase": compact_use_case},
+        "targetOperationIds": target_operation_ids,
+        "optionalSetupStepIds": sorted(
+            str(step["stepId"])
+            for step in available_steps
+            if isinstance(step, dict)
+            and isinstance(step.get("stepId"), str)
+            and str(step.get("operationId") or "") not in target_operation_ids
+        ),
+        "connectionChoicesByInput": connection_choices,
         "availableSteps": deepcopy(available_steps),
     }
 
@@ -806,7 +861,7 @@ def _generate(
     if not isinstance(value, dict):
         raise TypeError("The workflow decision response must be one JSON object.")
     try:
-        _validate_workflow_decision(value)
+        _validate_workflow_decision(value, candidate)
         return _compile_workflow_decision(value, candidate)
     except ArazzoValidationError as exc:
         raise AuthoredWorkflowError(str(exc), value) from exc
@@ -913,7 +968,10 @@ def _validate_document(
                         )
         operations = {
             str(operation.get("operationId")): operation
-            for operation in candidate.get("operations") or []
+            for operation in [
+                *(candidate.get("operations") or []),
+                *(candidate.get("setupOperations") or []),
+            ]
             if isinstance(operation, dict) and operation.get("operationId")
         }
         for step in workflow.get("steps") or []:

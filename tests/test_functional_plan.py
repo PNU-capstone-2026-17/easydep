@@ -317,6 +317,51 @@ def test_workflow_decision_compiles_finite_choices_to_canonical_arazzo() -> None
     ]
 
 
+def test_workflow_decision_requires_one_trace_linked_target_among_setup_steps() -> None:
+    candidate = _two_step_decision_candidate()
+    candidate["operations"] = [{"operationId": "getItem"}]
+    planning_model = dynamic._planning_model(
+        candidate, candidate["planningModel"]["availableSteps"]
+    )
+    assert planning_model["targetOperationIds"] == ["getItem"]
+    assert planning_model["optionalSetupStepIds"] == ["createItem"]
+    assert planning_model["connectionChoicesByInput"] == {
+        "getItem.path:id": ["createItem.bodyId->getItem.path:id"]
+    }
+
+    with pytest.raises(dynamic.ArazzoValidationError, match="is not one of"):
+        dynamic._validate_workflow_decision(
+            {
+                "workflowId": "workflow-UC-1",
+                "orderedStepIds": ["createItem", "getItem"],
+                "connectionIds": [
+                    "searchCourseOfferings.body0OfferingId->registerForCourse.path:courseOfferingId"
+                ],
+            },
+            candidate,
+        )
+
+    with pytest.raises(dynamic.ArazzoPlanningError, match="trace-linked target"):
+        dynamic._compile_workflow_decision(
+            {
+                "workflowId": "workflow-UC-1",
+                "orderedStepIds": ["createItem"],
+                "connectionIds": [],
+            },
+            candidate,
+        )
+
+    workflow = dynamic._compile_workflow_decision(
+        {
+            "workflowId": "workflow-UC-1",
+            "orderedStepIds": ["createItem", "getItem"],
+            "connectionIds": ["createItem.bodyId->getItem.path:id"],
+        },
+        candidate,
+    )
+    assert [step["operationId"] for step in workflow["steps"]] == ["createItem", "getItem"]
+
+
 @pytest.mark.parametrize(
     ("ordered_step_ids", "connection_ids", "message"),
     [

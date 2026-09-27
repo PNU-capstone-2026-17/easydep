@@ -231,6 +231,7 @@ def _response_contracts(operation: Mapping[str, Any]) -> list[dict[str, Any]]:
         result.append(
             {
                 "status": str(status),
+                "description": str(response.get("description") or ""),
                 "schema": copy.deepcopy(json_content.get("schema"))
                 if isinstance(json_content, Mapping)
                 else None,
@@ -340,6 +341,8 @@ def _schema_slots(
         "format": str(resolved.get("format") or ""),
         "cardinality": "one",
     }
+    if isinstance(resolved.get("description"), str) and resolved["description"].strip():
+        value["description"] = resolved["description"].strip()
     if include_pointer:
         value["pointerParts"] = pointer_parts
     return [value]
@@ -405,6 +408,27 @@ def _current_operation_contract(
     return fallback
 
 
+def _candidate_operations(candidate: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return the target operations followed by optional catalog setup operations."""
+    target = candidate.get("operations")
+    setup = candidate.get("setupOperations")
+    if not isinstance(target, list):
+        raise ArazzoPlanningError("Selected workflow candidate has no operations.")
+    if setup is not None and not isinstance(setup, list):
+        raise ArazzoPlanningError("Selected workflow setup catalog must be a list.")
+    values: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for operation in [*target, *(setup or [])]:
+        if not isinstance(operation, Mapping):
+            raise ArazzoPlanningError("Selected candidate operation must be an object.")
+        operation_id = _id(operation, "operationId")
+        if operation_id in seen:
+            continue
+        seen.add(operation_id)
+        values.append(dict(operation))
+    return values
+
+
 def build_execution_candidates(
     candidates: Iterable[Mapping[str, Any]], openapi: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
@@ -415,13 +439,8 @@ def build_execution_candidates(
     for candidate in candidates:
         if not isinstance(candidate, Mapping):
             raise ArazzoPlanningError("Selected workflow candidate must be an object.")
-        operations = candidate.get("operations")
-        if not isinstance(operations, list):
-            raise ArazzoPlanningError("Selected workflow candidate has no operations.")
-        prior_outputs: list[dict[str, Any]] = []
-        for operation in sorted(operations, key=_operation_order):
-            if not isinstance(operation, Mapping):
-                raise ArazzoPlanningError("Selected candidate operation must be an object.")
+        workflow_steps: list[dict[str, Any]] = []
+        for operation in _candidate_operations(candidate):
             operation_id, step_id = _id(operation, "operationId"), _step_id(operation)
             operation = _current_operation_contract(openapi, operation_id, operation)
 
@@ -466,33 +485,30 @@ def build_execution_candidates(
                 if _is_empty_object(resolved) and resolved.get("additionalProperties") is False:
                     issues.append(f"{operation_id} has a closed empty JSON response at response {response.get('status')}")
                     continue
-                outputs.extend(slots(schema, "body", f"response {response.get('status')}", require_concrete=False, include_pointer=True))
+                response_outputs = slots(
+                    schema,
+                    "body",
+                    f"response {response.get('status')}",
+                    require_concrete=False,
+                    include_pointer=True,
+                )
+                description = response.get("description")
+                if isinstance(description, str) and description.strip():
+                    for output in response_outputs:
+                        output["responseDescription"] = description.strip()
+                outputs.extend(response_outputs)
             used_output_names: set[str] = set()
             for output in outputs:
                 pointer_parts = tuple(output.pop("pointerParts", ()))
                 output["outputName"] = _output_name(pointer_parts, used_output_names)
                 output["outputExpression"] = "$response.body" + _json_pointer(pointer_parts)
-            for input_slot in inputs:
-                input_slot["inputSlot"] = input_slot["slot"]
-                input_slot["connections"] = [
-                    {
-                        "connectionId": f"{output['stepId']}.{output['outputName']}->{step_id}.{input_slot['inputSlot']}",
-                        "sourceStepId": output["stepId"],
-                        "sourceSlot": output["slot"],
-                        "outputName": output["outputName"],
-                        "outputExpression": output["outputExpression"],
-                        "targetStepId": step_id,
-                        "targetInputSlot": input_slot["inputSlot"],
-                        "value": f"$steps.{output['stepId']}.outputs.{output['outputName']}",
-                    }
-                    for output in prior_outputs
-                    if all(input_slot[key] == output[key] for key in ("type", "format", "cardinality"))
-                ]
-            result.append(
+            workflow_steps.append(
                 {
                     "workflowId": _id(candidate, "workflowId"),
                     "stepId": step_id,
                     "operationId": operation_id,
+                    "summary": str(operation.get("summary") or ""),
+                    "description": str(operation.get("description") or ""),
                     "successStatuses": [
                         response["status"] for response in responses
                         if isinstance(response, Mapping) and str(response.get("status", "")).startswith("2")
@@ -501,7 +517,30 @@ def build_execution_candidates(
                     "outputs": outputs,
                 }
             )
-            prior_outputs.extend({**output, "stepId": step_id} for output in outputs)
+        all_outputs = [
+            {**output, "stepId": step["stepId"]}
+            for step in workflow_steps
+            for output in step["outputs"]
+        ]
+        for step in workflow_steps:
+            for input_slot in step["inputs"]:
+                input_slot["inputSlot"] = input_slot["slot"]
+                input_slot["connections"] = [
+                    {
+                        "connectionId": f"{output['stepId']}.{output['outputName']}->{step['stepId']}.{input_slot['inputSlot']}",
+                        "sourceStepId": output["stepId"],
+                        "sourceSlot": output["slot"],
+                        "outputName": output["outputName"],
+                        "outputExpression": output["outputExpression"],
+                        "targetStepId": step["stepId"],
+                        "targetInputSlot": input_slot["inputSlot"],
+                        "value": f"$steps.{output['stepId']}.outputs.{output['outputName']}",
+                    }
+                    for output in all_outputs
+                    if output["stepId"] != step["stepId"]
+                    and all(input_slot[key] == output[key] for key in ("type", "format", "cardinality"))
+                ]
+        result.extend(workflow_steps)
     if issues:
         raise ArazzoPlanningError("Selected frozen OpenAPI contracts are not executable: " + "; ".join(issues))
     return result
@@ -543,6 +582,8 @@ def _operation_projection(
         "operationId": operation_id,
         "method": method.upper(),
         "path": path,
+        "summary": str(operation.get("summary") or ""),
+        "description": str(operation.get("description") or ""),
         "parameters": _effective_parameters(path_item, operation),
         "requestBody": _request_contract(operation),
         "responses": _response_contracts(operation),
@@ -555,7 +596,7 @@ def _operation_projection(
     }
 
 
-def _operations(
+def _operation_catalog(
     openapi: Mapping[str, Any], use_case_id: str, requirement_ids: set[str]
 ) -> list[dict[str, Any]]:
     paths = openapi.get("paths")
@@ -585,13 +626,19 @@ def _operations(
             )
     if not by_id:
         raise ArazzoPlanningError("Frozen OpenAPI document has no operationIds.")
-    # An LLM must not infer a use-case workflow from every operation in the API.
-    # Design traceability already carries exact use-case, scenario-step, and
-    # requirement links; only that closed projection belongs in this candidate.
-    return sorted(
-        (item for item in by_id.values() if item["traceHints"]["relevant"]),
-        key=lambda item: item["operationId"],
-    )
+    return sorted(by_id.values(), key=lambda item: item["operationId"])
+
+
+def _operations(
+    openapi: Mapping[str, Any], use_case_id: str, requirement_ids: set[str]
+) -> list[dict[str, Any]]:
+    # The target workflow remains trace-closed.  The complete catalog is kept
+    # separately for optional setup choices during executable planning.
+    return [
+        item
+        for item in _operation_catalog(openapi, use_case_id, requirement_ids)
+        if item["traceHints"]["relevant"]
+    ]
 
 
 def _evidence_refs(*records: Mapping[str, Any]) -> list[str]:
@@ -621,6 +668,7 @@ def build_workflow_candidates(
         _unique(use_case_records, "id", "use_case_id", "useCaseId") if use_case_records else {}
     )
     trace_links = _traceability_links(use_cases)
+    setup_catalog = _operation_catalog(openapi, "", set())
     functional_requirements = {
         identifier: record
         for identifier, record in requirement_index.items()
@@ -658,6 +706,10 @@ def build_workflow_candidates(
                 "requirements": selected,
                 "useCase": use_case_spec,
                 "operations": operations,
+                "setupOperations": [
+                    item for item in setup_catalog
+                    if item["operationId"] not in {operation["operationId"] for operation in operations}
+                ],
                 "trace": {
                     "requirementIds": sorted(selected_ids),
                     "useCaseIds": [use_case_id],
