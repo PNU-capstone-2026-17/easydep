@@ -2311,7 +2311,9 @@ class WorkspaceService:
         )
 
     @staticmethod
-    def _source_testing_command(command: dict[str, Any]) -> dict[str, Any] | None:
+    def _source_testing_command(
+        command: dict[str, Any], implementation_job_id: str
+    ) -> dict[str, Any] | None:
         """Return the Testing command referenced by a retry action, if any."""
 
         app_id = str(command["app_id"])
@@ -2325,9 +2327,37 @@ class WorkspaceService:
             if str(referenced.get("app_id") or "") != app_id:
                 raise ValueError("The Testing repair chain belongs to another app.")
             if referenced.get("stage") == "testing":
+                payload = referenced.get("payload") or {}
+                checkpoint = payload.get("testing_checkpoint")
+                if bool(payload.get("_stop_requested")):
+                    return None
+                if isinstance(checkpoint, dict) and (
+                    str(checkpoint.get("implementation_job_id") or "")
+                    != implementation_job_id
+                ):
+                    return None
                 return referenced
+            command_id = str((referenced.get("payload") or {}).get("action_id") or "")
+        prior = repository.latest_command(
+            app_id,
+            exclude_command_id=str(command["command_id"]),
+            stage="testing",
+        )
+        if (
+            not isinstance(prior, dict)
+            or str(prior.get("status") or "") not in {"FAILED", "INTERRUPTED"}
+            or bool((prior.get("payload") or {}).get("_stop_requested"))
+        ):
             return None
-        return None
+        payload = prior.get("payload") or {}
+        checkpoint = payload.get("testing_checkpoint")
+        if (
+            not isinstance(checkpoint, dict)
+            or str(payload.get("implementation_job_id") or "") != implementation_job_id
+            or str(checkpoint.get("implementation_job_id") or "") != implementation_job_id
+        ):
+            return None
+        return prior
 
     def _dispatch(self, command: dict[str, Any]) -> dict[str, Any]:
         action = str(command["action"])
@@ -2530,7 +2560,7 @@ class WorkspaceService:
             )
         if handler == "start_testing":
             implementation_job_id = str(command["payload"]["implementation_job_id"])
-            source_testing = self._source_testing_command(command)
+            source_testing = self._source_testing_command(command, implementation_job_id)
             if source_testing is not None:
                 source_result = source_testing.get("result") or {}
                 previous_job = source_result.get("job")
@@ -2542,6 +2572,32 @@ class WorkspaceService:
                     for blocker in blockers
                 )
                 implementation_job = implementation_worker.get(implementation_job_id)
+                resumed_repair = False
+                if (
+                    str(implementation_job.get("status") or "")
+                    in {"FAILED", "INTERRUPTED"}
+                    and bool(implementation_job.get("checkpoint_retryable"))
+                ):
+                    resumed = self._retry_implementation_checkpoint(
+                        command, implementation_job_id
+                    )
+                    if (
+                        resumed.get("awaiting_input") is True
+                        or (resumed.get("job") or {}).get("status") != "COMPLETED"
+                    ):
+                        return resumed
+                    implementation_job = implementation_worker.get(implementation_job_id)
+                    resumed_repair = True
+                source_checkpoint = (source_testing.get("payload") or {}).get(
+                    "testing_checkpoint"
+                )
+                if isinstance(source_checkpoint, dict) and not resumed_repair:
+                    payload = {
+                        **dict(command.get("payload") or {}),
+                        "testing_checkpoint": dict(source_checkpoint),
+                    }
+                    command["payload"] = payload
+                    repository.update_command(str(command["command_id"]), payload=payload)
                 return self._run_testing_command(
                     command,
                     implementation_job_id,
@@ -2552,6 +2608,7 @@ class WorkspaceService:
                     repair_task_type=(
                         str(implementation_job.get("repair_task_type") or "") or None
                     ),
+                    reset_checkpoint=resumed_repair,
                 )
             return self._run_testing_command(
                 command,

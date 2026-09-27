@@ -4890,12 +4890,14 @@ def test_start_testing_after_repair_retry_reuses_the_failed_plan(monkeypatch) ->
         previous_job=None,
         preserve_test=False,
         repair_task_type=None,
+        reset_checkpoint=False,
     ):
         observed.update(
             implementation_job_id=implementation_job_id,
             previous_job=previous_job,
             preserve_test=preserve_test,
             repair_task_type=repair_task_type,
+            reset_checkpoint=reset_checkpoint,
         )
         return {"job": {"job_id": "retested"}}
 
@@ -4928,5 +4930,179 @@ def test_start_testing_after_repair_retry_reuses_the_failed_plan(monkeypatch) ->
         "previous_job": previous_job,
         "preserve_test": True,
         "repair_task_type": "testing-dynamic-functional",
+        "reset_checkpoint": False,
     }
     assert result["job"]["job_id"] == "retested"
+
+
+@pytest.mark.parametrize(
+    ("candidate_status", "candidate_job_id", "stopped", "expects_checkpoint"),
+    [
+        ("FAILED", "implementation-1", False, True),
+        ("FAILED", "other-implementation", False, False),
+        ("FAILED", "implementation-1", True, False),
+        ("COMPLETED", "implementation-1", False, False),
+    ],
+    ids=["matching", "other-job", "stopped", "fresh"],
+)
+def test_start_testing_reuses_only_matching_unstopped_failed_checkpoint(
+    monkeypatch,
+    candidate_status,
+    candidate_job_id,
+    stopped,
+    expects_checkpoint,
+) -> None:
+    command = {
+        "command_id": "new-testing-command",
+        "app_id": "app-1",
+        "action": "start_testing",
+        "stage": "testing",
+        "payload": {
+            "action_id": "implementation-command",
+            "implementation_job_id": "implementation-1",
+        },
+    }
+    implementation = {
+        "command_id": "implementation-command",
+        "app_id": "app-1",
+        "stage": "implementation",
+        "payload": {},
+    }
+    checkpoint = {
+        "implementation_job_id": candidate_job_id,
+        "testing_input": {
+            "app_id": "app-1",
+            "implementation_job_id": candidate_job_id,
+        },
+    }
+    prior = {
+        "command_id": "prior-testing-command",
+        "app_id": "app-1",
+        "stage": "testing",
+        "status": candidate_status,
+        "payload": {
+            "implementation_job_id": candidate_job_id,
+            "testing_checkpoint": checkpoint,
+            "_stop_requested": stopped,
+        },
+        "result": {"job": {"status": "COMPLETED", "result": {"passed": False}}},
+    }
+    updates: list[dict[str, Any]] = []
+    observed: dict[str, Any] = {}
+    monkeypatch.setattr(
+        repository,
+        "get_command",
+        lambda command_id: implementation if command_id == "implementation-command" else None,
+    )
+    monkeypatch.setattr(
+        repository,
+        "latest_command",
+        lambda *_args, **_kwargs: prior,
+    )
+    monkeypatch.setattr(
+        repository,
+        "update_command",
+        lambda _command_id, **changes: updates.append(changes),
+    )
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "get",
+        lambda _job_id: {"status": "COMPLETED", "repair_task_type": ""},
+    )
+
+    def run_testing_command(_self, current, _job_id, **_kwargs):
+        observed["checkpoint"] = (current.get("payload") or {}).get("testing_checkpoint")
+        return {"job": {"status": "COMPLETED"}}
+
+    monkeypatch.setattr(WorkspaceService, "_run_testing_command", run_testing_command)
+    service = WorkspaceService()
+    try:
+        service._dispatch(command)
+    finally:
+        service.shutdown()
+
+    assert observed["checkpoint"] == (checkpoint if expects_checkpoint else None)
+    assert bool(updates) is expects_checkpoint
+
+
+def test_start_testing_matching_checkpoint_resumes_the_same_interrupted_job(monkeypatch) -> None:
+    command = {
+        "command_id": "new-testing-command",
+        "app_id": "app-1",
+        "action": "start_testing",
+        "stage": "testing",
+        "payload": {
+            "action_id": "implementation-command",
+            "implementation_job_id": "implementation-1",
+        },
+    }
+    checkpoint = {
+        "implementation_job_id": "implementation-1",
+        "testing_input": {"app_id": "app-1", "implementation_job_id": "implementation-1"},
+    }
+    implementation = {
+        "command_id": "implementation-command",
+        "app_id": "app-1",
+        "stage": "implementation",
+        "payload": {},
+    }
+    prior = {
+        "command_id": "prior-testing-command",
+        "app_id": "app-1",
+        "stage": "testing",
+        "status": "FAILED",
+        "payload": {
+            "implementation_job_id": "implementation-1",
+            "testing_checkpoint": checkpoint,
+        },
+        "result": {"job": {"status": "COMPLETED", "result": {"passed": False}}},
+    }
+    job_states = iter(
+        [
+            {"status": "INTERRUPTED", "checkpoint_retryable": True},
+            {"status": "INTERRUPTED", "checkpoint_retryable": True},
+            {"status": "COMPLETED", "repair_task_type": "testing-dynamic-functional"},
+        ]
+    )
+    retried: list[str] = []
+    observed: dict[str, Any] = {}
+    monkeypatch.setattr(
+        repository,
+        "get_command",
+        lambda command_id: implementation if command_id == "implementation-command" else None,
+    )
+    monkeypatch.setattr(repository, "latest_command", lambda *_args, **_kwargs: prior)
+    monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(workspace_module.implementation_worker, "get", lambda _job_id: next(job_states))
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "retry_failed",
+        lambda job_id: retried.append(job_id) or {"job_id": job_id},
+    )
+    monkeypatch.setattr(
+        WorkspaceService,
+        "_monitor_implementation",
+        lambda _self, _job, **_kwargs: {"job": {"status": "COMPLETED"}},
+    )
+
+    def run_testing_command(_self, current, job_id, **_kwargs):
+        observed.update(
+            job_id=job_id,
+            checkpoint=current["payload"].get("testing_checkpoint"),
+            reset_checkpoint=_kwargs.get("reset_checkpoint"),
+        )
+        return {"job": {"status": "COMPLETED"}}
+
+    monkeypatch.setattr(WorkspaceService, "_run_testing_command", run_testing_command)
+    service = WorkspaceService()
+    try:
+        service._dispatch(command)
+    finally:
+        service.shutdown()
+
+    assert retried == ["implementation-1"]
+    assert observed == {
+        "job_id": "implementation-1",
+        "checkpoint": None,
+        "reset_checkpoint": True,
+    }
