@@ -3089,11 +3089,35 @@ class WorkspaceService:
         repair_job_id = str(repair_job.get("job_id") or "")
         if repair_job_id != implementation_job_id:
             raise RuntimeError("Implementation repair returned an unexpected job ID.")
-        repair_result = self._monitor_implementation(
-            repair_job,
-            command_id=str(command["command_id"]),
-        )
+        repair_result = self._monitor_testing_owner_repair(command, repair_job)
         return repair_result, implementation_job_id, repair_task_type
+
+    def _monitor_testing_owner_repair(
+        self, command: dict[str, Any], repair_job: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Monitor one already-scheduled Testing owner repair through checkpoint retry."""
+
+        job_id = str(repair_job.get("job_id") or "")
+        if not job_id:
+            raise RuntimeError("Implementation repair returned no job ID.")
+
+        def retry_operation() -> Callable[[], dict[str, Any]] | None:
+            current = implementation_worker.get(job_id)
+            if (
+                str(current.get("status") or "")
+                in {"FAILED", "INTERRUPTED"}
+                and bool(current.get("checkpoint_retryable"))
+            ):
+                return lambda: self._retry_implementation_checkpoint(command, job_id)
+            return None
+
+        return self._run_with_transient_retry(
+            command,
+            lambda: self._monitor_implementation(
+                repair_job, command_id=str(command["command_id"])
+            ),
+            retry_operation=retry_operation,
+        )
 
     def _rerun_from_stage(self, command: dict[str, Any]) -> dict[str, Any]:
         """선택 단계 직전까지 분기한 새 앱에서 정식 실행 경로를 시작한다."""

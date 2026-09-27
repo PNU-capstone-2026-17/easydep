@@ -751,7 +751,17 @@ def test_testing_repair_groups_findings_by_declared_source_task(monkeypatch) -> 
     ]
 
 
-def test_testing_repair_batches_declared_owners_before_one_monitor(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("owner_status", "checkpoint_retryable", "expects_retry"),
+    [
+        ("AWAITING_INPUT", False, False),
+        ("INTERRUPTED", True, True),
+    ],
+    ids=["preserves-owner-question", "retries-interrupted-checkpoint"],
+)
+def test_testing_repair_batches_declared_owners_before_one_monitor(
+    monkeypatch, owner_status, checkpoint_retryable, expects_retry
+) -> None:
     command = {
         "command_id": "testing-command",
         "app_id": "app-1",
@@ -773,6 +783,8 @@ def test_testing_repair_batches_declared_owners_before_one_monitor(monkeypatch) 
     }
     submitted: list[list[str]] = []
     monitored: list[str] = []
+    retried: list[str] = []
+    retry_records: list[dict[str, Any]] = []
     service = WorkspaceService()
     monkeypatch.setattr(
         service,
@@ -808,7 +820,16 @@ def test_testing_repair_batches_declared_owners_before_one_monitor(monkeypatch) 
     monkeypatch.setattr(
         workspace_module.implementation_worker,
         "get",
-        lambda _job_id: {"job_id": "implementation-1"},
+        lambda _job_id: {
+            "job_id": "implementation-1",
+            "status": owner_status,
+            "checkpoint_retryable": checkpoint_retryable,
+        },
+    )
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "retry_failed",
+        lambda job_id: retried.append(job_id) or {"job_id": job_id},
     )
     monkeypatch.setattr(
         workspace_module.implementation_worker,
@@ -821,23 +842,40 @@ def test_testing_repair_batches_declared_owners_before_one_monitor(monkeypatch) 
         )
         or {"job_id": "implementation-1"},
     )
+    def monitor(_job, **_kwargs):
+        monitored.append("implementation-1")
+        if expects_retry and len(monitored) == 1:
+            raise RuntimeError("owner repair interrupted")
+        return {
+            "job_id": "implementation-1",
+            "awaiting_input": not expects_retry,
+            "job": {"status": "COMPLETED" if expects_retry else "AWAITING_INPUT"},
+        }
+
+    monkeypatch.setattr(service, "_monitor_implementation", monitor)
+    monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         service,
-        "_monitor_implementation",
-        lambda _job, **_kwargs: monitored.append("implementation-1") or {
-            "awaiting_input": True,
-            "job": {"status": "AWAITING_INPUT"},
-        },
+        "_record_transient_retry",
+        lambda _command_id, _attempt, error: retry_records.append(
+            {"attempt": _attempt, "error_type": type(error).__name__}
+        ),
     )
-    monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service, "_sleep_for_retry", lambda *_args: None)
     try:
         repaired, job_id, task_type = service._repair_testing_with_owner(command, result)
     finally:
         service.shutdown()
 
     assert submitted == [["task:first-owner", "task:second-owner"]]
-    assert monitored == ["implementation-1"]
-    assert repaired["awaiting_input"] is True
+    assert monitored == ["implementation-1"] * (2 if expects_retry else 1)
+    assert retried == (["implementation-1"] if expects_retry else [])
+    assert retry_records == (
+        [{"attempt": 1, "error_type": "RuntimeError"}] if expects_retry else []
+    )
+    assert repaired["job"]["status"] == (
+        "COMPLETED" if expects_retry else "AWAITING_INPUT"
+    )
     assert job_id == "implementation-1"
     assert task_type == "testing-dynamic-functional"
 
