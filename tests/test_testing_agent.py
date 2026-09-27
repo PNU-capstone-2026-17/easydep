@@ -8,6 +8,7 @@ falls back to a stale directory reports a pass that means nothing.
 
 import hashlib
 from contextlib import contextmanager
+from pathlib import Path
 from threading import Barrier
 from unittest.mock import patch
 
@@ -417,6 +418,11 @@ def test_running_application_uses_current_fixed_runner_and_cleans_up(
         assert runtime["database"] == "h2-mysql-mode"
         assert runtime["processId"] == process.pid
         assert url.endswith(f":{runtime['hostPort']}")
+        log_path = Path(runtime["logPath"])
+        assert log_path.is_file()
+        spawned["stdout"].write(b"LiveBackendSentinel: request failed\n")
+        spawned["stdout"].flush()
+        assert "LiveBackendSentinel" in app_container.application_log(runtime)
 
     assert spawned["command"] == ["gradle", "bootRun", "--no-daemon", "--build-cache"]
     assert spawned["cwd"] == tmp_path
@@ -424,6 +430,7 @@ def test_running_application_uses_current_fixed_runner_and_cleans_up(
     assert spawned["env"]["SPRING_DATASOURCE_URL"].startswith("jdbc:h2:mem:")
     assert spawned["env"]["SERVER_ADDRESS"] == "127.0.0.1"
     assert cleaned == [process]
+    assert not log_path.exists()
 
 
 def test_running_application_reports_process_failure_and_cleans_up(
@@ -445,6 +452,7 @@ def test_running_application_reports_process_failure_and_cleans_up(
 
     def popen(_command, **kwargs):
         kwargs["stdout"].write(b"RootCauseSentinel: application startup failed")
+        kwargs["stdout"].flush()
         return process
 
     monkeypatch.setattr(app_container.subprocess, "Popen", popen)

@@ -41,6 +41,8 @@ _ENVIRONMENT_BUILD_FAILURE_MARKERS = (
 )
 _GRADLE_CACHE_DENIAL_MARKERS = ("permission denied", "accessdeniedexception")
 _ACTIVE_TESTING_CONTAINERS: set[str] = set()
+_PROCESS_LOG_PREFIX = "easydep-application-process-"
+_PROCESS_LOG_TAIL_BYTES = 64 * 1024
 
 
 class ApplicationLaunchError(Exception):
@@ -147,7 +149,23 @@ def application_log(runtime: Mapping[str, Any]) -> str:
     :func:`running_application`이 아직 소유하고 있는 이름만 허용한다.
     """
 
-    if not isinstance(runtime, Mapping) or runtime.get("source") != "application":
+    if not isinstance(runtime, Mapping):
+        return ""
+    if runtime.get("source") == "application-process":
+        raw_path = runtime.get("logPath")
+        if not isinstance(raw_path, str):
+            return ""
+        try:
+            path = Path(raw_path).resolve()
+            if (
+                path.parent != Path(tempfile.gettempdir()).resolve()
+                or not path.name.startswith(_PROCESS_LOG_PREFIX)
+            ):
+                return ""
+            return _process_log_text(path, max_bytes=_PROCESS_LOG_TAIL_BYTES)
+        except OSError:
+            return ""
+    if runtime.get("source") != "application":
         return ""
     name = runtime.get("container")
     if not isinstance(name, str):
@@ -232,10 +250,14 @@ def _wait_until_ready(name: str, url: str, timeout: int) -> None:
     )
 
 
-def _process_log_text(log_file: Any) -> str:
-    log_file.flush()
-    log_file.seek(0)
-    return log_file.read().decode("utf-8", errors="replace")
+def _process_log_text(log_path: Path, *, max_bytes: int | None = None) -> str:
+    """Read an owned process log through an independent handle without sharing offsets."""
+
+    with log_path.open("rb") as log_file:
+        if max_bytes is not None:
+            log_file.seek(0, os.SEEK_END)
+            log_file.seek(max(0, log_file.tell() - max_bytes))
+        return log_file.read().decode("utf-8", errors="replace")
 
 
 def _wait_until_process_ready(
@@ -293,23 +315,27 @@ def _running_application_in_fixed_runner(
         }
     )
     command = ["gradle", "bootRun", "--no-daemon", "--build-cache"]
-    with tempfile.TemporaryFile(mode="w+b") as log_file:
-        try:
-            process = subprocess.Popen(
-                command,
-                cwd=application_dir,
-                env=environment,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                start_new_session=(os.name != "nt"),
-            )
-        except OSError as error:
-            raise ApplicationLaunchError(
-                f"The application process could not start: {type(error).__name__}: {error}",
-                defect_class="ENVIRONMENT_DEFECT",
-            ) from error
+    named_log = tempfile.NamedTemporaryFile(prefix=_PROCESS_LOG_PREFIX, delete=False)
+    log_path = Path(named_log.name)
+    named_log.close()
+    process: subprocess.Popen | None = None
+    try:
+        with log_path.open("ab") as log_file:
+            try:
+                process = subprocess.Popen(
+                    command,
+                    cwd=application_dir,
+                    env=environment,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=(os.name != "nt"),
+                )
+            except OSError as error:
+                raise ApplicationLaunchError(
+                    f"The application process could not start: {type(error).__name__}: {error}",
+                    defect_class="ENVIRONMENT_DEFECT",
+                ) from error
 
-        try:
             normalized_health = (
                 health_path if health_path.startswith("/") else f"/{health_path}"
             )
@@ -318,7 +344,7 @@ def _running_application_in_fixed_runner(
                 process,
                 f"{base_url}{normalized_health}",
                 start_timeout_seconds,
-                log_file,
+                log_path,
             )
             runtime = {
                 "source": "application-process",
@@ -327,10 +353,16 @@ def _running_application_in_fixed_runner(
                 "healthPath": normalized_health,
                 "profile": "test",
                 "database": "h2-mysql-mode",
+                "logPath": str(log_path),
             }
             yield base_url, runtime
-        finally:
+    finally:
+        if process is not None:
             _terminate_process_tree(process)
+        try:
+            log_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 @contextmanager
