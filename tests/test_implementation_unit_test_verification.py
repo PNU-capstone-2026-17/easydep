@@ -651,6 +651,101 @@ def test_unit_failure_review_corrects_one_invalid_json_response(
     assert "weaken or remove contract-backed assertions" in correction
 
 
+def test_frontend_unit_failure_review_includes_declared_jsdom_blob_runtime_facts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source_path = "application/frontend/src/features/Export.tsx"
+    test_path = "application/frontend/src/features/Export.test.tsx"
+    candidate_path = "reports/agent-executions/export.frozen-test.tsx"
+    prompt_path = "reports/implementation-tasks/export.prompt.md"
+    context_path = "reports/implementation-tasks/export.context.json"
+    subject_context_path = "reports/implementation-tasks/export.subject-context.json"
+    operation_path = "reports/implementation-tasks/export.operation-contract.json"
+    report_path = tmp_path / "reports/agent-executions/export-unit.vitest.json"
+    files = {
+        source_path: "export function Export() { return null; }\n",
+        candidate_path: (
+            "const blob = new Blob(['schedule']);\n"
+            "const text = await new Response(blob).text();\n"
+            "expect(text).toBe('schedule');\n"
+        ),
+        prompt_path: "Write focused tests for the declared subject.\n",
+        context_path: json.dumps({"subjectContextPath": subject_context_path}),
+        subject_context_path: json.dumps(
+            {"generatedOperationContractsPath": operation_path}
+        ),
+        operation_path: '{"operation":"export","behavior":"downloads content"}',
+        "application/frontend/vite.config.ts": (
+            "export default { test: { environment: 'jsdom' } };\n"
+        ),
+    }
+    for relative, text in files.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps({"testResults": [{"assertionResults": [{"status": "failed"}]}]}),
+        encoding="utf-8",
+    )
+    failed: dict[str, object] = {
+        "task_id": "export-unit",
+        "task_type": "frontend-unit-test",
+        "allowed_write_paths": [test_path],
+        "required_test_paths": [test_path],
+        "prompt_file": prompt_path,
+        "context_file": context_path,
+        "verification_profile": {"unitTestSubjectPaths": [source_path]},
+        "depends_on": ["export-owner"],
+    }
+    candidate_text = (tmp_path / candidate_path).read_text(encoding="utf-8")
+    evidence: dict[str, object] = {
+        "unitTestResults": {"total": 1, "failed": 1, "skipped": 0},
+        "frozenTestCandidate": {
+            "path": candidate_path,
+            "sha256": hashlib.sha256(candidate_text.encode("utf-8")).hexdigest(),
+            "sourcePath": test_path,
+        },
+    }
+    review = {
+        "classification": "test_oracle",
+        "rationale": "The Blob inspection must use the browser test runtime.",
+        "evidence": ["The canonical assertion stringifies a jsdom Blob."],
+        "preserve_assertions": ["The downloaded content remains asserted."],
+        "correction_instruction": "Use FileReader only in the assigned test.",
+    }
+    calls: list[dict[str, object]] = []
+
+    class FakeCompletions:
+        def create(self, **kwargs: object) -> object:
+            calls.append(kwargs)
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(review)))]
+            )
+
+    monkeypatch.setattr(repair_module, "build_llm_connection", lambda: SimpleNamespace(
+        model="openai/gpt-oss-120b",
+        api_key="synthetic-test-key",
+        base_url="https://example.invalid/v1",
+        default_headers=lambda: {},
+    ))
+    monkeypatch.setattr(
+        repair_module,
+        "OpenAI",
+        lambda **_kwargs: SimpleNamespace(
+            chat=SimpleNamespace(completions=FakeCompletions())
+        ),
+    )
+
+    assert repair_module._unit_failure_review(tmp_path, failed, evidence) == review
+    payload = json.loads(calls[0]["messages"][1]["content"])
+    runtime = payload["frontendTestRuntime"]
+    assert runtime["testEnvironment"] == "jsdom"
+    assert runtime["currentTestAlreadyUsesNodeResponseForBlob"] is True
+    assert "FileReader" in runtime["blobInspectionGuidance"]
+    assert "Blob.text()" in runtime["blobInspectionGuidance"]
+
+
 def test_unit_failure_review_interruption_propagates_from_retry_backoff(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

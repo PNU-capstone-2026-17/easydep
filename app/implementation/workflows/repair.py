@@ -73,6 +73,37 @@ def _read_declared_text(run_root: Path, relative: object) -> str | None:
         return None
 
 
+def _frontend_test_runtime_note(
+    run_root: Path, candidate_source: str, test_source: str
+) -> dict[str, object] | None:
+    """Return small, declared frontend-runtime facts for one unit-review prompt."""
+
+    frontend_prefix = "application/frontend/"
+    if not candidate_source.startswith(frontend_prefix):
+        return None
+    vite_config = _read_declared_text(run_root, "application/frontend/vite.config.ts")
+    if vite_config is None:
+        return None
+    environment = "jsdom" if re.search(r"environment\s*:\s*['\"]jsdom['\"]", vite_config) else None
+    response_blob_text = bool(
+        re.search(r"new\s+Response\s*\(\s*blob\s*\)\s*\.text\s*\(", test_source)
+    )
+    note: dict[str, object] = {
+        "testEnvironment": environment,
+        "configPath": "application/frontend/vite.config.ts",
+    }
+    if response_blob_text:
+        note["currentTestAlreadyUsesNodeResponseForBlob"] = True
+    if environment == "jsdom":
+        note["blobInspectionGuidance"] = (
+            "jsdom browser Blob values and Node Response values can be different runtime brands. "
+            "Do not replace one unsupported Blob reader with another unverified fallback. "
+            "For a decoded-content assertion, use FileReader in the test DOM and retain exact content "
+            "and MIME-type assertions; do not use Node Response(blob).text() or Blob.text() as alternatives."
+        )
+    return note
+
+
 def _unit_failure_review(
     run_root: Path,
     failed: dict[str, object],
@@ -190,6 +221,7 @@ def _unit_failure_review(
         if not raw_report.get("testResults"):
             skip("backend_test_results_missing")
             return None
+    frontend_runtime = _frontend_test_runtime_note(run_root, candidate_source, test_source)
     payload = {
         "taskPrompt": prompt,
         "taskSpec": {
@@ -220,6 +252,8 @@ def _unit_failure_review(
             "rawReport": raw_report,
         },
     }
+    if frontend_runtime is not None:
+        payload["frontendTestRuntime"] = frontend_runtime
     try:
         connection = build_llm_connection()
         logger.info(
