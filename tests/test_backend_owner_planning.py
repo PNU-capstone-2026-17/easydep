@@ -8,6 +8,7 @@ from app.implementation.domain.models import JobSpec
 from app.implementation.planning.design_context import (
     _backend_source_task_id,
     generate_backend_owner_tasks,
+    generate_backend_unit_test_tasks,
 )
 
 
@@ -253,6 +254,62 @@ def test_backend_plan_persists_one_cohesive_owner_without_focused_test_contract(
     assert not set(context["designInputs"].values()).intersection(
         context["readSourcePaths"]
     )
+
+
+def test_marked_entity_owner_precedes_calling_service_and_its_unit(tmp_path: Path) -> None:
+    spec, run = _spec_and_run(tmp_path)
+    bce_path = spec.inputs["bceModel"]
+    bce = json.loads(bce_path.read_text(encoding="utf-8"))
+    bce["Classes"][1]["operations"] = [
+        {"operationId": "order-save", "name": "save", "returnType": "Order"}
+    ]
+    _write_json(bce_path, bce)
+    service_source = (
+        "application/src/main/java/com/example/orders/application/impl/"
+        "OrderControlService.java"
+    )
+    entity_source = "application/src/main/java/com/example/orders/bce/Order.java"
+    service_path = run / service_source
+    service_path.parent.mkdir(parents=True)
+    service_path.write_text(
+        "// EASYDEP-IMPLEMENT: complete place-order\n", encoding="utf-8"
+    )
+    (run / entity_source).write_text(
+        "// EASYDEP-IMPLEMENT: complete order-save\n", encoding="utf-8"
+    )
+    (run / "reports").mkdir()
+    _write_json(
+        run / "reports/generated-operation-contracts.json",
+        {
+            "schemaVersion": "generated-operation-contracts/v1",
+            "contracts": [
+                {
+                    "operationId": "place-order",
+                    "writableSource": service_source,
+                    "completionMarker": "EASYDEP-IMPLEMENT: complete place-order",
+                },
+                {
+                    "operationId": "order-save",
+                    "writableSource": entity_source,
+                    "completionMarker": "EASYDEP-IMPLEMENT: complete order-save",
+                },
+            ],
+        },
+    )
+
+    with patch(
+        "app.implementation.planning.design_context.llm_config",
+        return_value={"model": "test-model"},
+    ):
+        tasks = generate_backend_owner_tasks(spec, run)
+    by_source = {task.required_output_paths[0]: task for task in tasks}
+    entity = by_source[entity_source]
+    service = by_source[service_source]
+    assert entity.depends_on == []
+    assert service.depends_on == [entity.task_id]
+    units = generate_backend_unit_test_tasks(spec, run, tasks)
+    service_unit = next(task for task in units if task.depends_on == [service.task_id])
+    assert service_unit.depends_on == [service.task_id]
 
 
 def test_backend_owner_includes_an_existing_generated_operation_contract_sidecar(

@@ -111,7 +111,7 @@ def test_interface_and_entity_writable_contract_facts_are_honest():
     assert boundary.completion_marker is None
     entity = next(item for item in result.contracts if item.owner == "Order")
     assert entity.constructor_dependencies == []
-    assert entity.completion_marker is None
+    assert entity.completion_marker == "EASYDEP-IMPLEMENT: complete Order::rename()"
 
 
 def test_void_control_with_projected_call_has_no_completion_marker(monkeypatch):
@@ -218,7 +218,7 @@ def test_control_entity_hint_is_preserved_without_generated_wiring(monkeypatch):
     assert contract.interaction_hints[0].reasons == [
         "target_is_not_generated_spring_dependency"
     ]
-    assert entity.completion_marker is None
+    assert entity.completion_marker == "EASYDEP-IMPLEMENT: complete Order::listAll()"
 
 
 def test_entity_root_projection_retains_completion_marker(monkeypatch):
@@ -329,4 +329,4 @@ def test_entity_hint_marker_uses_matching_use_case_for_duplicate_call_id(monkeyp
     ).contracts
 
     entity = next(item for item in contracts if item.owner == "Order")
-    assert entity.completion_marker is None
+    assert entity.completion_marker == "EASYDEP-IMPLEMENT: complete Order::listAll()"

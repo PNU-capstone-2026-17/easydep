@@ -261,23 +261,6 @@ def build_generated_operation_contracts(
                     for call in slice_.outgoing
                 )
             )
-            entity_has_executable_inbound = bool(
-                projected_method
-                and projected_method.generation == "code"
-                and any(
-                    not (
-                        producers := [
-                            producer
-                            for use_case_id in slice_.use_case_ids
-                            for producer in outgoing_by_use_case_and_call_id.get(
-                                (use_case_id, slice_.incoming_call_id), []
-                            )
-                        ]
-                    )
-                    or any(producer.generation == "code" for producer in producers)
-                    for slice_ in projected_method.slices
-                )
-            )
             contracts.append(
                 GeneratedOperationContract(
                     operationId=operation.operation_id,
@@ -300,7 +283,7 @@ def build_generated_operation_contracts(
                     endpoints=endpoints_by_operation.get(operation.operation_id, []),
                     completionMarker=(
                         marker
-                        if (owner.stereotype == "Entity" and entity_has_executable_inbound)
+                        if owner.stereotype == "Entity"
                         or (owner.stereotype == "Control" and not rendered_void_body)
                         else None
                     ),

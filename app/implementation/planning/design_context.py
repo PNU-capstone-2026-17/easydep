@@ -135,10 +135,25 @@ def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec
         # are planned together.
         source_groups.append(([path], None))
 
+    entity_sources = {
+        owned_sources[0]
+        for owned_sources, _assigned_operation in source_groups
+        if owned_sources[0] in bce_paths
+    }
+    entity_task_ids = [
+        _backend_source_task_id([source]) for source in sorted(entity_sources)
+    ]
     tasks: list[TaskSpec] = []
     previous_task_by_source: dict[str, str] = {}
     for owned_sources, assigned_operation in source_groups:
         source = owned_sources[0]
+        dependencies = (
+            [previous_task_by_source[source]]
+            if source in previous_task_by_source
+            else []
+        )
+        if source not in entity_sources:
+            dependencies.extend(entity_task_ids)
         task = _build_backend_owner_task(
             spec,
             run_root,
@@ -149,11 +164,7 @@ def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec
             bundle,
             owned_sources=owned_sources,
             assigned_operation=assigned_operation,
-            depends_on=(
-                [previous_task_by_source[source]]
-                if source in previous_task_by_source
-                else []
-            ),
+            depends_on=dependencies,
         )
         tasks.append(task)
         previous_task_by_source[source] = task.task_id
