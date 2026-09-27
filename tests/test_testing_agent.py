@@ -377,6 +377,98 @@ def test_running_application_uses_test_database_and_keeps_container_for_logs(tmp
     ]
 
 
+def test_running_application_uses_current_fixed_runner_and_cleans_up(
+    tmp_path, monkeypatch
+):
+    from app.testing.runtime import app_container
+
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+    spawned = {}
+    cleaned = []
+
+    class RunningProcess:
+        pid = 4123
+
+        def poll(self):
+            return None
+
+    process = RunningProcess()
+
+    def popen(command, **kwargs):
+        spawned.update(command=command, **kwargs)
+        return process
+
+    monkeypatch.setattr(app_container.subprocess, "Popen", popen)
+    monkeypatch.setattr(app_container, "_responds", lambda _url: True)
+    monkeypatch.setattr(
+        app_container,
+        "_terminate_process_tree",
+        lambda value: cleaned.append(value),
+    )
+    monkeypatch.setattr(
+        app_container,
+        "_docker",
+        lambda *_args, **_kwargs: pytest.fail("fixed runner must not use nested Docker"),
+    )
+
+    with app_container.running_application("integration", tmp_path) as (url, runtime):
+        assert runtime["source"] == "application-process"
+        assert runtime["profile"] == "test"
+        assert runtime["database"] == "h2-mysql-mode"
+        assert runtime["processId"] == process.pid
+        assert url.endswith(f":{runtime['hostPort']}")
+
+    assert spawned["command"] == ["gradle", "bootRun", "--no-daemon", "--build-cache"]
+    assert spawned["cwd"] == tmp_path
+    assert spawned["env"]["SPRING_PROFILES_ACTIVE"] == "test"
+    assert spawned["env"]["SPRING_DATASOURCE_URL"].startswith("jdbc:h2:mem:")
+    assert spawned["env"]["SERVER_ADDRESS"] == "127.0.0.1"
+    assert cleaned == [process]
+
+
+def test_running_application_reports_process_failure_and_cleans_up(
+    tmp_path, monkeypatch
+):
+    from app.testing.runtime import app_container
+    from app.testing.runtime.app_container import ApplicationLaunchError
+
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+    cleaned = []
+
+    class FailedProcess:
+        pid = 4124
+
+        def poll(self):
+            return 1
+
+    process = FailedProcess()
+
+    def popen(_command, **kwargs):
+        kwargs["stdout"].write(b"RootCauseSentinel: application startup failed")
+        return process
+
+    monkeypatch.setattr(app_container.subprocess, "Popen", popen)
+    monkeypatch.setattr(app_container, "_responds", lambda _url: False)
+    monkeypatch.setattr(
+        app_container,
+        "_terminate_process_tree",
+        lambda value: cleaned.append(value),
+    )
+    monkeypatch.setattr(
+        app_container,
+        "_docker",
+        lambda *_args, **_kwargs: pytest.fail("fixed runner must not use nested Docker"),
+    )
+
+    with pytest.raises(ApplicationLaunchError, match="RootCauseSentinel") as raised:
+        with app_container.running_application("integration", tmp_path):
+            pytest.fail("an exited process cannot be ready")
+
+    assert raised.value.defect_class == "SUT_DEFECT"
+    assert "RootCauseSentinel" in raised.value.application_log
+    assert cleaned == [process]
+
+
 def test_functional_testing_uses_synthetic_uuid_username_by_default(monkeypatch) -> None:
     monkeypatch.delenv("EASYDEP_TEST_USERNAME", raising=False)
     monkeypatch.delenv("EASYDEP_TEST_PASSWORD", raising=False)
@@ -663,6 +755,60 @@ def test_repaired_implementation_preserves_test_across_trace_only_contract_chang
     assert observed["partial_result"]["preservedCandidatePlan"] == plan
 
 
+def test_repaired_launch_failure_without_plan_uses_normal_dynamic_generation(monkeypatch):
+    testing_input = FrozenTestingInput(
+        app_id="app-1",
+        implementation_job_id="implementation-2",
+        artifact_version_ids={TYPE_SOURCE_CODE: 3, TYPE_DEPLOYMENT_FILE: 4},
+    )
+    previous_job = {
+        "job_id": "testing-1",
+        "app_id": "app-1",
+        "implementation_job_id": "implementation-1",
+        "status": "COMPLETED",
+        "testing_input": testing_input.model_dump(mode="json"),
+        "result": {
+            "passed": False,
+            "verification": {"reports": {"dynamicFunctional": {"gateStatus": "FAIL"}}},
+        },
+    }
+    monkeypatch.setattr(
+        testing_service.implementation_worker,
+        "get_testing_input",
+        lambda _job_id: {
+            "app_id": "app-1",
+            "status": "COMPLETED",
+            "artifact_version_ids": testing_input.artifact_version_ids,
+            "contract_artifacts": testing_input.contract_artifacts.model_dump(
+                mode="json", exclude_none=True
+            ),
+        },
+    )
+    monkeypatch.setattr(
+        testing_service,
+        "capture_testing_input",
+        lambda *_args, **_kwargs: testing_input,
+    )
+    observed: dict = {}
+    monkeypatch.setattr(
+        testing_service,
+        "_run_test",
+        lambda _run_id, _input, **kwargs: (observed.update(kwargs) or ({"passed": True}, {})),
+    )
+
+    result = testing_service.run_testing(
+        "app-1",
+        "implementation-2",
+        run_id="testing-2",
+        previous_job=previous_job,
+        preserve_test=True,
+        repair_task_type="testing-dynamic-functional",
+    )
+
+    assert result["status"] == "COMPLETED"
+    assert "preservedCandidatePlan" not in observed["partial_result"]
+
+
 def test_dynamic_trace_hints_keep_only_trace_linked_backend_runtime_files(monkeypatch):
     """backend 직접 HTTP 실패는 frontend와 테스트 파일을 수정 후보로 열지 않는다."""
 
@@ -726,6 +872,64 @@ def test_dynamic_trace_hints_keep_only_trace_linked_backend_runtime_files(monkey
     assert "task:backend-order" in refs
     assert "task:frontend-order" not in refs
     assert "task:deployment-order" not in refs
+
+
+def test_launch_failure_trace_hints_require_one_exact_rtm_java_source(monkeypatch):
+    testing_input = FrozenTestingInput(
+        app_id="app-1",
+        implementation_job_id="implementation-1",
+        artifact_version_ids={TYPE_SOURCE_CODE: 1, TYPE_DEPLOYMENT_FILE: 2},
+        implementation_traceability={
+            "mappings": [
+                {
+                    "taskId": "backend-order",
+                    "target_file": "application/src/main/java/com/example/OrderService.java",
+                    "sourceRefs": ["api:createOrder"],
+                }
+            ]
+        },
+    )
+    monkeypatch.setattr(
+        testing_service,
+        "load_file_snapshot",
+        lambda *_args, **_kwargs: {"version_id": 1, "metadata": {}},
+    )
+    launch = {
+        "finding": {
+            "code": "APPLICATION_LAUNCH_FAILED",
+            "message": "Runtime proxy setup failed for com.example.OrderService",
+        }
+    }
+
+    assert testing_service._trace_hints(testing_input, launch, []) == (
+        ["application/src/main/java/com/example/OrderService.java"],
+        ["api:createOrder", "task:backend-order"],
+    )
+
+    unmatched = {
+        "finding": {
+            "code": "APPLICATION_LAUNCH_FAILED",
+            "message": "Runtime proxy setup failed for com.example.MissingService",
+        }
+    }
+    assert testing_service._trace_hints(testing_input, unmatched, []) == ([], [])
+
+    duplicate = FrozenTestingInput(
+        app_id="app-1",
+        implementation_job_id="implementation-1",
+        artifact_version_ids={TYPE_SOURCE_CODE: 1, TYPE_DEPLOYMENT_FILE: 2},
+        implementation_traceability={
+            "mappings": [
+                *testing_input.implementation_traceability["mappings"],
+                {
+                    "taskId": "backend-order-duplicate",
+                    "target_file": "application/src/main/java/com/example/OrderService.java",
+                    "sourceRefs": ["api:createOrderDuplicate"],
+                },
+            ]
+        },
+    )
+    assert testing_service._trace_hints(duplicate, launch, []) == ([], [])
 
 
 def test_running_application_does_not_rebuild_frontend_for_api_checks(

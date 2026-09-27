@@ -247,6 +247,25 @@ def test_structured_output_is_a_workflow_decision_subset() -> None:
     assert "immutable" in dynamic.PLAN_ROLE_PROMPT
 
 
+def test_candidate_response_schema_closes_connection_ids_to_supplied_catalog() -> None:
+    candidate = _two_step_decision_candidate()
+    response_schema = dynamic._response_format(candidate)["json_schema"]["schema"]
+    decision = {
+        "workflowId": "workflow-UC-1",
+        "orderedStepIds": ["createItem", "getItem"],
+        "connectionIds": ["createItem.bodyId->getItem.path:id"],
+    }
+
+    jsonschema.Draft202012Validator(response_schema).validate(decision)
+    with pytest.raises(jsonschema.ValidationError, match="is not one of"):
+        jsonschema.Draft202012Validator(response_schema).validate(
+            {**decision, "connectionIds": ["invented.connection"]}
+        )
+    assert dynamic._WORKFLOW_DECISION_SCHEMA["properties"]["connectionIds"]["items"] == {
+        "type": "string"
+    }
+
+
 @pytest.mark.parametrize(
     "invalid_field",
     [

@@ -14,6 +14,7 @@ from app.implementation.runtime.linux_runner_transport import (
     OWNER_TERMINAL_SHELL_ENV,
     OWNER_TERMINAL_USER,
     OWNER_TERMINAL_USER_ENV,
+    OWNER_WORKSPACE_VOLUME_PREFIX,
     RUNNER_GRADLE_CACHE_VOLUME,
     RUNNER_NPM_CACHE_VOLUME,
     RUNNER_TOFU_CACHE_PATH,
@@ -176,6 +177,7 @@ def test_runner_command_labels_run_workflow_root(tmp_path: Path):
 
 def test_runner_command_labels_run_owner_root(tmp_path: Path):
     _, container_job = _runner_job(tmp_path)
+    container_job_root = container_job.rsplit("/", 1)[0]
     run_root = "/easydep-workspace/.easydep/implementation-runs/job-1/generated/runs/run_abc"
     command = runner_command(
         image="runner:test",
@@ -188,6 +190,60 @@ def test_runner_command_labels_run_owner_root(tmp_path: Path):
 
     assert "easydep.job-id=job-1" in command
     assert "easydep.run-id=run_abc" in command
+    volume_mounts = [
+        command[index + 1]
+        for index, value in enumerate(command[:-1])
+        if value == "-v" and command[index + 1].startswith(OWNER_WORKSPACE_VOLUME_PREFIX)
+    ]
+    assert len(volume_mounts) == 1
+    assert volume_mounts[0].endswith(f":{container_job_root}/w:nocopy")
+    resumed = runner_command(
+        image="runner:test",
+        repository_root=tmp_path,
+        operation="cli",
+        arguments=["run-owner", run_root, container_job, "owner-2"],
+        environment={},
+        llm_environment={},
+    )
+    other_run = runner_command(
+        image="runner:test",
+        repository_root=tmp_path,
+        operation="cli",
+        arguments=[
+            "run-owner",
+            run_root.replace("run_abc", "run_def"),
+            container_job,
+            "owner-1",
+        ],
+        environment={},
+        llm_environment={},
+    )
+    resumed_volume = next(
+        resumed[index + 1]
+        for index, value in enumerate(resumed[:-1])
+        if value == "-v" and resumed[index + 1].startswith(OWNER_WORKSPACE_VOLUME_PREFIX)
+    )
+    workflow = runner_command(
+        image="runner:test",
+        repository_root=tmp_path,
+        operation="cli",
+        arguments=["run-workflow", run_root, container_job, "--retry-failed"],
+        environment={},
+        llm_environment={},
+    )
+    workflow_volume = next(
+        workflow[index + 1]
+        for index, value in enumerate(workflow[:-1])
+        if value == "-v" and workflow[index + 1].startswith(OWNER_WORKSPACE_VOLUME_PREFIX)
+    )
+    other_run_volume = next(
+        other_run[index + 1]
+        for index, value in enumerate(other_run[:-1])
+        if value == "-v" and other_run[index + 1].startswith(OWNER_WORKSPACE_VOLUME_PREFIX)
+    )
+    assert resumed_volume == volume_mounts[0]
+    assert workflow_volume == volume_mounts[0]
+    assert other_run_volume != volume_mounts[0]
 
 
 def test_member_runner_translates_run_owner_job_path(monkeypatch: pytest.MonkeyPatch):

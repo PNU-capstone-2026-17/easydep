@@ -14,7 +14,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.db.models import TYPE_DEPLOYMENT_FILE
-from app.implementation.agents.runtime import _owner_conversation_identity
 from app.implementation.agents.workspace import (
     cleanup_agent_workspace,
     prepare_agent_workspace,
@@ -24,6 +23,9 @@ from app.implementation.application.feedback import resolve_feedback_targets
 from app.implementation.application.jobs import ImplementationWorker, InvalidJobState
 from app.implementation.application.prototype import PrototypeClient, PrototypeExecutionError
 from app.implementation.config import ImplementationSettings
+from app.implementation.generation.frontend_scaffold import (
+    render_frontend_typescript_config,
+)
 from app.implementation.generation.orchestrator import PrototypeOrchestrator, load_job
 from app.implementation.interfaces.http import router
 from app.implementation.workflows import coordinator as coordinator_module
@@ -56,7 +58,7 @@ def test_unknown_implementation_task_type_is_rejected() -> None:
         phase_for_task("unregistered-task")
 
 
-def test_testing_repair_reuses_the_declared_owner_job_and_checkpoint(
+def test_testing_repair_selects_declared_owner_without_sdk_checkpoint(
     tmp_path: Path,
 ) -> None:
     worker = ImplementationWorker(settings(tmp_path))
@@ -128,22 +130,19 @@ def test_testing_repair_reuses_the_declared_owner_job_and_checkpoint(
         ),
     }
     with patch.object(worker.executor, "submit") as submit:
-        persistence_a, conversation_a = _owner_conversation_identity(
-            run_root,
-            "implement-backend-behavior-a",
-        )
-        checkpoint_a = persistence_a / conversation_a.hex / "base_state.json"
-        checkpoint_a.parent.mkdir(parents=True)
-        checkpoint_a.write_text("{}", encoding="utf-8")
-
-        # Exact evidence selects behavior B, so A's valid checkpoint cannot be reused.
-        with pytest.raises(InvalidJobState, match="no reusable OpenHands conversation"):
+        # Execution provenance is still required, but an SDK conversation state is
+        # not: direct-editor owners have no OpenHands base_state.json to resume.
+        workflow_state = reports / "workflow-state.json"
+        saved_workflow_state = workflow_state.read_bytes()
+        workflow_state.unlink()
+        with pytest.raises(InvalidJobState, match="reusable owner checkpoint"):
             worker.request_owner_repair(
                 job_id,
                 owner="backend",
                 evidence=evidence,
             )
         submit.assert_not_called()
+        workflow_state.write_bytes(saved_workflow_state)
 
         ambiguous_evidence = {
             "testResults": json.dumps(
@@ -158,6 +157,11 @@ def test_testing_repair_reuses_the_declared_owner_job_and_checkpoint(
                 }
             )
         }
+        missing_source_evidence = {
+            "testResults": json.dumps(
+                {"fileHints": ["application/src/main/java/com/example/Missing.java"]}
+            )
+        }
         for invalid_evidence in (ambiguous_evidence, conflicting_evidence):
             with pytest.raises(InvalidJobState, match="ambiguous"):
                 worker.request_owner_repair(
@@ -165,15 +169,14 @@ def test_testing_repair_reuses_the_declared_owner_job_and_checkpoint(
                     owner="backend",
                     evidence=invalid_evidence,
                 )
+        with pytest.raises(InvalidJobState, match="needs an exact task"):
+            worker.request_owner_repair(
+                job_id,
+                owner="backend",
+                evidence=missing_source_evidence,
+            )
         submit.assert_not_called()
 
-        persistence_b, conversation_b = _owner_conversation_identity(
-            run_root,
-            "implement-backend-behavior-b",
-        )
-        checkpoint_b = persistence_b / conversation_b.hex / "base_state.json"
-        checkpoint_b.parent.mkdir(parents=True)
-        checkpoint_b.write_text("{}", encoding="utf-8")
         result = worker.request_owner_repair(
             job_id,
             owner="backend",
@@ -191,6 +194,7 @@ def test_testing_repair_reuses_the_declared_owner_job_and_checkpoint(
     assert plan["entries"][-1]["ownerTaskIds"] == [
         "implement-backend-behavior-b"
     ]
+    assert plan["entries"][-1]["repairPaths"] == [source_b_path]
     submit.assert_called_once()
 
 
@@ -985,8 +989,9 @@ def settings(repository_root: Path) -> ImplementationSettings:
     )
 
 
+@pytest.mark.parametrize("frontend_exists", [False, True])
 def test_run_phase_uses_linux_runner_when_image_is_configured(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, frontend_exists: bool
 ) -> None:
     client = PrototypeClient(settings(tmp_path))
     (tmp_path / "app").mkdir()
@@ -996,6 +1001,16 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
     for path in (run_root, job_path.parent):
         path.mkdir(parents=True, exist_ok=True)
     job_path.write_text("{}", encoding="utf-8")
+    frontend = run_root / "application" / "frontend"
+    if frontend_exists:
+        frontend.mkdir(parents=True)
+        (frontend / "tsconfig.json").write_text('{"stale":true}\n', encoding="utf-8")
+        (frontend / "package.json").write_text('{"name":"preserve-me"}\n', encoding="utf-8")
+        source = frontend / "src" / "features" / "item.tsx"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const Item = 1;\n", encoding="utf-8")
+        test_source = frontend / "src" / "features" / "item.test.tsx"
+        test_source.write_text("expect(1).toBe(1);\n", encoding="utf-8")
     reports = run_root / "reports"
     reports.mkdir()
     (reports / "run-manifest.json").write_text(
@@ -1003,13 +1018,21 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
             {
                 "implementation_tasks": [
                     {
-                        "task_type": "frontend-implementation",
-                        "allowed_write_paths": [
-                            "application/frontend/src/pages/OverviewPage.tsx"
-                        ],
-                        "allowed_write_roots": [
-                            "application/frontend/src/components"
-                        ],
+                        "task_type": (
+                            "frontend-implementation"
+                            if frontend_exists
+                            else "backend-implementation"
+                        ),
+                        "allowed_write_paths": (
+                            ["application/frontend/src/pages/OverviewPage.tsx"]
+                            if frontend_exists
+                            else ["application/src/main/java/Example.java"]
+                        ),
+                        "allowed_write_roots": (
+                            ["application/frontend/src/components"]
+                            if frontend_exists
+                            else []
+                        ),
                     }
                 ]
             }
@@ -1044,9 +1067,20 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
     ]
     assert observed["operation_id"] == "job"
     assert result == {"status": "RUNNING"}
-    assert (run_root / "application/frontend/src/pages").is_dir()
-    assert (run_root / "application/frontend/src/components").is_dir()
-    assert (run_root / "application/frontend/dist/assets").is_dir()
+    if frontend_exists:
+        assert (run_root / "application/frontend/src/pages").is_dir()
+        assert (run_root / "application/frontend/src/components").is_dir()
+        assert (run_root / "application/frontend/dist/assets").is_dir()
+        assert (frontend / "tsconfig.json").read_text(encoding="utf-8") == (
+            render_frontend_typescript_config()
+        )
+        assert (frontend / "package.json").read_text(encoding="utf-8") == (
+            '{"name":"preserve-me"}\n'
+        )
+        assert source.read_text(encoding="utf-8") == "export const Item = 1;\n"
+        assert test_source.read_text(encoding="utf-8") == "expect(1).toBe(1);\n"
+    else:
+        assert not frontend.exists()
 
 
 @pytest.mark.parametrize("fails", [False, True])
@@ -1278,6 +1312,85 @@ def test_failed_job_without_checkpoint_requires_a_fresh_run(
             implementation_worker.retry_failed(job_id)
     finally:
         implementation_worker.shutdown()
+
+
+def test_paused_integration_checkpoint_reuses_its_checkpoint(
+    tmp_path: Path,
+) -> None:
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    job_id = "integration-admission"
+    job_root = implementation_worker.settings.work_root / job_id
+    run_root = job_root / "outputs" / "run_checkpoint"
+    reports = run_root / "reports" / "agent-executions"
+    reports.mkdir(parents=True)
+    job_path = job_root / "job.json"
+    job_path.write_text("{}", encoding="utf-8")
+    task_id = "implement-vertical-integration"
+    result_file = f"reports/agent-executions/{task_id}.result.json"
+    (reports / f"{task_id}.result.json").write_text(
+        json.dumps(
+            {
+                "status": "NEEDS_INPUT",
+                "terminationReason": "UPSTREAM_GAP",
+                "eventCount": 3,
+                "toolCounts": {"run_task_check": 1, "report_upstream_gap": 1},
+                "initialVerification": {"command": "application-startup health-check"},
+                "workspacePreflight": {"passed": True},
+                "candidateEvidence": {"changedFiles": ["application/frontend/src/config.ts"]},
+            }
+        ),
+        encoding="utf-8",
+    )
+    workflow = {
+        "status": "NEEDS_INPUT",
+        "currentPhase": "integration",
+        "tasks": [
+            {
+                "task_id": task_id,
+                "taskType": "integration-implementation",
+                "status": "NEEDS_INPUT",
+                "attempts": 1,
+                "resultFile": result_file,
+                "upstreamGap": {"sourceRef": "call:example"},
+                "candidateEvidence": {"changedFiles": []},
+            }
+        ],
+        "blockingReason": "obsolete admission",
+        "blockingDetails": [{"kind": "upstream_contract_gap"}],
+    }
+    (run_root / "reports" / "run-manifest.json").write_text("{}", encoding="utf-8")
+    (run_root / "reports" / "workflow-state.json").write_text(
+        json.dumps(workflow), encoding="utf-8"
+    )
+    implementation_worker._write(
+        {
+            "job_id": job_id,
+            "app_id": "app-1",
+            "status": "NEEDS_INPUT",
+            "job_path": str(job_path),
+            "run_root": str(run_root),
+            "workflow": workflow,
+        }
+    )
+    submitted: list[tuple[object, ...]] = []
+    implementation_worker.executor.submit = (  # type: ignore[method-assign]
+        lambda *args, **_kwargs: submitted.append(args)
+    )
+
+    try:
+        assert implementation_worker.get(job_id)["checkpoint_retryable"] is True
+        retried = implementation_worker.retry_failed(job_id)
+        persisted = implementation_worker._read(job_id)
+    finally:
+        implementation_worker.shutdown()
+
+    archived = reports / f"{task_id}.attempt-001.admission.result.json"
+    assert retried["status"] == "QUEUED"
+    assert archived.is_file()
+    assert not (reports / f"{task_id}.result.json").exists()
+    assert persisted["workflow"]["tasks"][0]["status"] == "PENDING"
+    assert persisted["workflow"]["blockingDetails"] == []
+    assert len(submitted) == 1
 
 
 def test_initial_job_is_blocked_when_required_snapshot_models_are_missing(tmp_path: Path) -> None:

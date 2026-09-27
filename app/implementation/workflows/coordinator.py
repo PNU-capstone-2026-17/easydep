@@ -37,6 +37,8 @@ from .conformance import (
 )
 from .repair import (
     apply_repair_directives,
+    repair_recheck_for_task,
+    repair_recheck_task_ids,
     repair_task_ids,
     schedule_cross_phase_repair,
     schedule_source_conformance_repair,
@@ -50,6 +52,7 @@ PHASES = (
         (),
         {
             "backend-implementation",
+            "backend-unit-test",
             "control",
             "testing-static",
             "testing-package",
@@ -57,7 +60,7 @@ PHASES = (
             "testing-dynamic-functional",
         },
     ),
-    ("frontend", ("backend",), {"frontend-implementation"}),
+    ("frontend", ("backend",), {"frontend-implementation", "frontend-unit-test"}),
     ("integration", ("frontend",), {"integration-implementation"}),
 )
 
@@ -115,6 +118,7 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
         item.get("task_id"): item for item in previous.get("tasks", []) if isinstance(item, dict)
     }
     repaired_tasks = repair_task_ids(run_root)
+    recheck_tasks = repair_recheck_task_ids(run_root)
     tasks: list[dict[str, object]] = []
     manifest_tasks = [
         task
@@ -138,7 +142,13 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
             and complete_outputs
             and result.get("promptSha256", prompt_sha) == prompt_sha
         )
-        repair_replay_required = (
+        frozen_recheck = repair_recheck_for_task(run_root, task_id)
+        recheck_complete = (
+            frozen_recheck is not None
+            and result.get("frozenRecheckCandidate")
+            == frozen_recheck.get("frozenTestCandidate")
+        )
+        repair_replay_required = (task_id in recheck_tasks and not recheck_complete) or (
             task_id in repaired_tasks and result.get("promptSha256") != prompt_sha
         )
         repair_only = bool(task.get("repair_only", False))

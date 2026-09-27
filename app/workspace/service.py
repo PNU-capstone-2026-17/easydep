@@ -281,6 +281,13 @@ class WorkspaceService:
         # 다시 실행하면 해당 경계에서 이어 간다.
         for command in repository.interrupted_testing_commands():
             self._executor.submit(self._execute, str(command["command_id"]))
+        # A typed question remains durable user work.  A non-interactive
+        # technical pause is different: it already has a persisted stage and
+        # must resume its existing checkpoint after process recovery.
+        for command in repository.interrupted_technical_retry_commands():
+            result = dict(command.get("result") or {})
+            if self._technical_retry_stage(command, result) is not None:
+                self._executor.submit(self._execute, str(command["command_id"]))
         return interrupted
 
     def shutdown(self) -> None:
@@ -293,6 +300,7 @@ class WorkspaceService:
             "RUNNING",
             "INTERRUPTED",
             "FAILED",
+            "AWAITING_INPUT",
         }:
             return command
         if command.get("stage") != "implementation":
@@ -320,6 +328,7 @@ class WorkspaceService:
                 if job_status == "NEEDS_INPUT":
                     pending = self._implementation_needs_input_result(job, job_id)
                     pending.pop("awaiting_input", None)
+                    pending["checkpoint_retryable"] = bool(job.get("checkpoint_retryable"))
                     result = result_with_contract(
                         {**command, "status": "AWAITING_INPUT"}, pending
                     )
@@ -906,6 +915,23 @@ class WorkspaceService:
         shaped_result = dict(result) if isinstance(result, dict) else {}
         if str(anchor.get("stage") or "") == "design":
             shaped_result = self._with_design_progress_hints(app_id, shaped_result)
+        if (
+            str(anchor.get("stage") or "") == "testing"
+            and str(anchor.get("status") or "")
+            in {"FAILED", "INTERRUPTED", "AWAITING_INPUT"}
+        ):
+            implementation_job_id = str(
+                (anchor.get("payload") or {}).get("implementation_job_id") or ""
+            )
+            if implementation_job_id:
+                try:
+                    job = implementation_worker.get(implementation_job_id)
+                except Exception:
+                    job = {}
+                if str(job.get("app_id") or "") == app_id:
+                    shaped_result["_linked_implementation_checkpoint_retryable"] = bool(
+                        job.get("checkpoint_retryable")
+                    )
         return {**anchor, "result": shaped_result}
 
     def _resolved_offered_actions(
@@ -1655,12 +1681,12 @@ class WorkspaceService:
             try:
                 return operation()
             except Exception as error:
-                if not self._is_transient_execution_error(error):
-                    raise
                 next_operation = retry_operation()
                 if next_operation is None:
-                    # Never repeat job creation, in-flight implementation monitoring,
-                    # or an uncheckpointed test after an ambiguous provider failure.
+                    # Never create a replacement job or replay an uncheckpointed
+                    # operation merely because it raised.  Checkpoint-backed
+                    # technical stages below are safe to retry regardless of
+                    # whether the provider classified the exception as transient.
                     raise
                 attempt += 1
                 self._record_transient_retry(command_id, attempt, error)
@@ -1695,23 +1721,35 @@ class WorkspaceService:
             # A persisted testing input is immutable, so its run can safely resume.
             latest = repository.get_command(command_id) or command
             checkpoint = (latest.get("payload") or {}).get("testing_checkpoint")
-            if isinstance(checkpoint, dict) and checkpoint.get("implementation_job_id"):
+            implementation_job_id = str(
+                (checkpoint.get("implementation_job_id") if isinstance(checkpoint, dict) else "")
+                or (latest.get("payload") or {}).get("implementation_job_id")
+                or ""
+            )
+            if implementation_job_id:
                 return lambda: self._run_testing_command(
-                    latest, str(checkpoint["implementation_job_id"])
+                    latest, implementation_job_id
                 )
-        if stage == "implementation" and command.get("action") == "retry_implementation":
-            job_id = str((command.get("payload") or {}).get("job_id") or "")
+        if stage == "implementation":
+            latest = repository.get_command(command_id) or command
+            job_id = str((latest.get("payload") or {}).get("job_id") or "")
             if not job_id:
-                return None
+                return lambda: self._dispatch(
+                    {**latest, "action": "rerun_implementation"}
+                )
             try:
                 job = implementation_worker.get(job_id)
             except Exception:
-                return None
+                return lambda: self._retry_implementation_checkpoint(latest, job_id)
             if (
-                str(job.get("status") or "") in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER"}
+                str(job.get("status") or "") in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER", "NEEDS_INPUT"}
                 and bool(job.get("checkpoint_retryable"))
             ):
-                return lambda: self._retry_implementation_checkpoint(command, job_id)
+                return lambda: self._retry_implementation_checkpoint(latest, job_id)
+            if str(job.get("status") or "") in TERMINAL_JOB_STATUSES:
+                return lambda: self._dispatch(
+                    {**latest, "action": "rerun_implementation"}
+                )
         return None
 
     def _retry_implementation_checkpoint(
@@ -1721,7 +1759,7 @@ class WorkspaceService:
 
         current = implementation_worker.get(job_id)
         if (
-            str(current.get("status") or "") not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER"}
+            str(current.get("status") or "") not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER", "NEEDS_INPUT"}
             or not bool(current.get("checkpoint_retryable"))
         ):
             raise RuntimeError("The implementation checkpoint is no longer safe to retry.")
@@ -2547,65 +2585,33 @@ class WorkspaceService:
         """
 
         current = result
-        seen_fingerprints: set[str] = set()
-        iterations = 0
-        class_reconcile_retry_attempted = False
+        retry_attempt = 0
         while True:
             if self._stop_requested(str(command["command_id"])):
                 raise WorkspaceStopRequested()
             repair_input = self._active_semantic_repair_input(current)
             if repair_input is None:
-                if (
-                    not class_reconcile_retry_attempted
-                    and self._stalled_class_reconcile_input(command, current)
-                ):
-                    status = session_status(str(command["app_id"]))
-                    if status.get("active") and status.get("stage") == "class_diagram":
-                        try:
-                            state = cast(
-                                dict[str, Any],
-                                artifact_repository.load_state(str(command["app_id"])),
-                            )
-                            spec = DESIGN_SPECS["class_diagram"]
-                            patch = spec.reconcile(state) if spec.reconcile else {}
-                            model_key = spec.model_key
-                        except Exception:
-                            patch = {}
-                            model_key = ""
-                            state = {}
-                        if (
-                            model_key
-                            and isinstance(patch, dict)
-                            and model_key in patch
-                            and patch[model_key] != state.get(model_key)
-                        ):
-                            class_reconcile_retry_attempted = True
-                            fingerprint = self._semantic_repair_fingerprint(current)
-                            response = self._run_design_operation(
-                                command,
-                                stage="class_diagram",
-                                label=self._design_stage_label("class_diagram", "Repairing"),
-                                operation=lambda: retry_design_session(str(command["app_id"])),
-                            )
-                            repaired = self._design_result(response)
-                            if self._semantic_repair_fingerprint(repaired) == fingerprint:
-                                return self._stalled_semantic_repair_result(repaired)
-                            current = repaired
-                            continue
-                return current
-            stage = str(command.get("stage") or "")
-            # Design findings remain at their saved gate.  The repair payload is
-            # diagnostic state, not user-provided feedback for a resumed session.
-            if stage == "design":
-                return current
-            if iterations >= _MAX_AUTOMATIC_SEMANTIC_REPAIR_ITERATIONS:
-                return self._stalled_semantic_repair_result(current)
+                stage = self._technical_retry_stage(command, current)
+                if stage is None:
+                    return current
+                retry_attempt += 1
+                fingerprint = self._semantic_repair_fingerprint(current)
+                self._record_technical_retry(
+                    command, retry_attempt, stage, fingerprint, current
+                )
+                repaired = self._retry_technical_checkpoint(command, current, stage)
+                if repaired is current:
+                    return current
+                current = repaired
+                self._sleep_for_retry(str(command["command_id"]), retry_attempt)
+                continue
+            stage = str(current.get("routing_stage") or command.get("stage") or "")
             repair_state, repairable = repair_input
             fingerprint = self._semantic_repair_fingerprint(current)
-            if fingerprint in seen_fingerprints:
-                return self._stalled_semantic_repair_result(current)
-            seen_fingerprints.add(fingerprint)
-            iterations += 1
+            retry_attempt += 1
+            self._record_technical_retry(
+                command, retry_attempt, stage, fingerprint, current
+            )
 
             if stage == "testing":
                 blockers = [
@@ -2631,7 +2637,7 @@ class WorkspaceService:
                     or len(implementation_blockers) != len(repairable_blockers)
                     or blocking_findings_route(blockers)
                 ):
-                    return current
+                    return self._retry_technical_checkpoint(command, current, stage)
                 previous_job = current.get("job")
                 if (
                     not isinstance(previous_job, dict)
@@ -2646,7 +2652,9 @@ class WorkspaceService:
                     repair_result.get("awaiting_input") is True
                     or (repair_result.get("job") or {}).get("status") != "COMPLETED"
                 ):
-                    return repair_result
+                    current = repair_result
+                    self._sleep_for_retry(str(command["command_id"]), retry_attempt)
+                    continue
                 current = self._run_with_transient_retry(
                     command,
                     lambda: self._run_testing_command(
@@ -2673,13 +2681,27 @@ class WorkspaceService:
                         )
                     ),
                 )
+            elif stage == "design":
+                design_stage = str(current.get("current_stage") or "design")
+                repaired = self._run_with_transient_retry(
+                    command,
+                    lambda: self._design_result(
+                        self._run_design_operation(
+                            command,
+                            stage=design_stage,
+                            label=self._design_stage_label(design_stage, "Repairing"),
+                            operation=lambda: retry_design_session(str(command["app_id"])),
+                        )
+                    ),
+                    retry_operation=lambda: self._transient_retry_operation(command),
+                )
             else:
-                # Implementation owner work and Testing checkpoints have
-                # independent execution/retry semantics and are not replayed.
-                return current
+                return self._retry_technical_checkpoint(command, current, stage)
 
             if self._semantic_repair_fingerprint(repaired) == fingerprint:
-                return self._stalled_semantic_repair_result(repaired)
+                current = repaired
+                self._sleep_for_retry(str(command["command_id"]), retry_attempt)
+                continue
             current = repaired
 
     @staticmethod
@@ -2722,7 +2744,9 @@ class WorkspaceService:
         ):
             return None
         repair_state = result.get("repair_state")
-        if not isinstance(repair_state, dict) or repair_state.get("status") != "ACTIVE":
+        if not isinstance(repair_state, dict) or str(
+            repair_state.get("status") or ""
+        ).upper() not in {"ACTIVE", "STALLED"}:
             return None
         repairable = [
             blocker
@@ -2730,6 +2754,126 @@ class WorkspaceService:
             if isinstance(blocker, dict) and blocker.get("repairable") is not False
         ]
         return (repair_state, repairable) if repairable else None
+
+    @staticmethod
+    def _technical_retry_stage(
+        command: dict[str, Any], result: dict[str, Any]
+    ) -> str | None:
+        """Return a stage only for a non-interactive technical pause.
+
+        Typed questions, resource choices, deployment choices, and revision
+        confirmation stay outside this loop.  The stage runners themselves
+        retain their existing checkpoint and repair ownership rules.
+        """
+
+        if result.get("awaiting_input") is not True:
+            return None
+        if (
+            result.get("feedback_question") is not None
+            or result.get("resource_question") is not None
+            or bool(result.get("resource_questions"))
+            or result.get("deployment_configuration_required") is True
+            or result.get("downstream_revision_handoff") is not None
+            or result.get("kind") == "question"
+            or bool(result.get("questions"))
+        ):
+            return None
+        findings = [
+            item
+            for key in ("blocking_findings", "finding_details")
+            for item in result.get(key) or []
+            if isinstance(item, dict)
+        ]
+        if any(
+            item.get("requires_user_input", item.get("requiresUserInput")) is True
+            for item in findings
+        ):
+            return None
+        if not (result.get("requires_revision") is True or findings):
+            return None
+        stage = str(result.get("routing_stage") or command.get("stage") or "")
+        return stage if stage in {"requirements", "design", "implementation", "testing"} else None
+
+    def _record_technical_retry(
+        self,
+        command: dict[str, Any],
+        attempt: int,
+        stage: str,
+        fingerprint: str,
+        result: dict[str, Any],
+    ) -> None:
+        """Persist automatic checkpoint progress without creating a new command."""
+
+        command_id = str(command["command_id"])
+        latest = repository.get_command(command_id)
+        if latest is None:
+            raise WorkspaceStopRequested()
+        payload = dict(latest.get("payload") or {})
+        payload["_technical_repair_retry"] = {
+            "attempt": attempt,
+            "stage": stage,
+            "finding_digest": fingerprint,
+        }
+        repository.update_command(command_id, payload=payload, result=dict(result))
+        repository.notify_command_changed(
+            str(latest["app_id"]), command_id=command_id, stage=stage
+        )
+
+    def _retry_technical_checkpoint(
+        self,
+        command: dict[str, Any],
+        result: dict[str, Any],
+        stage: str,
+    ) -> dict[str, Any]:
+        """Reuse an existing checkpoint runner for a non-question technical pause."""
+
+        if stage == "testing":
+            job = result.get("job")
+            implementation_job_id = (
+                str(job.get("implementation_job_id") or "")
+                if isinstance(job, dict)
+                else ""
+            )
+            if not implementation_job_id:
+                payload = command.get("payload") or {}
+                checkpoint = payload.get("testing_checkpoint")
+                implementation_job_id = str(
+                    (checkpoint.get("implementation_job_id") if isinstance(checkpoint, dict) else "")
+                    or payload.get("implementation_job_id")
+                    or ""
+                )
+            if implementation_job_id:
+                return self._run_testing_command(command, implementation_job_id)
+        if stage == "requirements":
+            app_id = str(command["app_id"])
+            progress = self._requirements_progress_reporter(app_id, str(command["command_id"]))
+            with requirements_telemetry.progress_scope(progress):
+                return self._requirements_result(
+                    retry_requirements_analysis(app_id, app_id=app_id)
+                )
+        if stage == "design":
+            design_stage = str(result.get("current_stage") or "design")
+            return self._design_result(
+                self._run_design_operation(
+                    command,
+                    stage=design_stage,
+                    label=self._design_stage_label(design_stage, "Repairing"),
+                    operation=lambda: retry_design_session(str(command["app_id"])),
+                )
+            )
+        if stage == "implementation":
+            job_id = str(result.get("job_id") or (command.get("payload") or {}).get("job_id") or "")
+            if job_id:
+                try:
+                    return self._retry_implementation_checkpoint(command, job_id)
+                except RuntimeError:
+                    return result
+            # There is no implementation checkpoint to resume. Reuse the
+            # existing rerun handler once; it persists its new job id onto this
+            # same command, so later loop turns monitor/retry that job instead
+            # of allocating another one.
+            return self._dispatch({**command, "action": "rerun_implementation"})
+        return result
 
     @staticmethod
     def _semantic_repair_fingerprint(result: dict[str, Any]) -> str:
@@ -2876,10 +3020,10 @@ class WorkspaceService:
             raise ValueError("The selected Testing finding does not belong to Implementation.")
         (
             selected_blockers,
-            repair_owner,
-            repair_task_type,
-            repair_file_hints,
-            verification_profile,
+            _repair_owner,
+            _repair_task_type,
+            _repair_file_hints,
+            _verification_profile,
         ) = self._testing_repair_request(
             str(command["app_id"]),
             result,
@@ -2889,51 +3033,67 @@ class WorkspaceService:
         previous_repair_results, older_repair_summaries = (
             self._implementation_repair_outcomes(original_implementation)
         )
-        feedback = self._testing_implementation_feedback(
-            result,
-            selected_blockers,
-            previous_repair_results=previous_repair_results,
-            older_repair_summaries=older_repair_summaries,
-        )
-        confirmed_target_refs, repair_file_hints = (
-            self._testing_implementation_repair_targets(
-                str(command["app_id"]), selected_blockers, repair_file_hints
-            )
-        )
         repair_payload = {
             **dict(command.get("payload") or {}),
             "job_id": implementation_job_id,
         }
         command["payload"] = repair_payload
         repository.update_command(str(command["command_id"]), payload=repair_payload)
-        repair_job = implementation_worker.request_owner_repair(
-            implementation_job_id,
-            owner=repair_owner,
-            evidence={
-                "command": ["testing", repair_task_type],
-                "stderr": feedback,
-                "testResults": json.dumps(
-                    {
-                        "confirmedTargetRefs": confirmed_target_refs,
-                        "fileHints": repair_file_hints,
-                        "verificationProfile": verification_profile,
+        batch_repairs: list[dict[str, object]] = []
+        repair_task_type = "testing-dynamic-functional"
+        for owner_blockers in self._testing_repair_owner_groups(
+            str(command["app_id"]), result, selected_blockers
+        ):
+            (
+                grouped_blockers,
+                repair_owner,
+                repair_task_type,
+                repair_file_hints,
+                verification_profile,
+            ) = self._testing_repair_request(
+                str(command["app_id"]), result, owner_blockers
+            )
+            feedback = self._testing_implementation_feedback(
+                result,
+                grouped_blockers,
+                previous_repair_results=previous_repair_results,
+                older_repair_summaries=older_repair_summaries,
+            )
+            confirmed_target_refs, repair_file_hints = (
+                self._testing_implementation_repair_targets(
+                    str(command["app_id"]), grouped_blockers, repair_file_hints
+                )
+            )
+            batch_repairs.append(
+                {
+                    "owner": repair_owner,
+                    "evidence": {
+                        "command": ["testing", repair_task_type],
+                        "stderr": feedback,
+                        "testResults": json.dumps(
+                            {
+                                "confirmedTargetRefs": confirmed_target_refs,
+                                "fileHints": repair_file_hints,
+                                "verificationProfile": verification_profile,
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        ),
                     },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
-            },
+                }
+            )
+        repair_job = implementation_worker.request_owner_repair_batch(
+            implementation_job_id,
+            repairs=batch_repairs,
         )
         repair_job_id = str(repair_job.get("job_id") or "")
         if repair_job_id != implementation_job_id:
             raise RuntimeError("Implementation repair returned an unexpected job ID.")
-        return (
-            self._monitor_implementation(
-                repair_job,
-                command_id=str(command["command_id"]),
-            ),
-            implementation_job_id,
-            repair_task_type,
+        repair_result = self._monitor_implementation(
+            repair_job,
+            command_id=str(command["command_id"]),
         )
+        return repair_result, implementation_job_id, repair_task_type
 
     def _rerun_from_stage(self, command: dict[str, Any]) -> dict[str, Any]:
         """선택 단계 직전까지 분기한 새 앱에서 정식 실행 경로를 시작한다."""
@@ -5582,6 +5742,38 @@ class WorkspaceService:
                 if failed_step_id:
                     profile["failed_step_id"] = failed_step_id
         return selected, repair_owner, task_type, file_hints, profile
+
+    def _testing_repair_owner_groups(
+        self,
+        app_id: str,
+        result: dict[str, Any],
+        blockers: list[dict[str, Any]],
+    ) -> list[list[dict[str, Any]]]:
+        """Partition a same-gate SUT aggregate by its declared source task."""
+
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for blocker in blockers:
+            (
+                _selected,
+                _owner,
+                _task_type,
+                file_hints,
+                _profile,
+            ) = self._testing_repair_request(app_id, result, [blocker])
+            target_refs, _normalized_hints = self._testing_implementation_repair_targets(
+                app_id, [blocker], file_hints
+            )
+            declared = {
+                ref.removeprefix("task:")
+                for ref in target_refs
+                if isinstance(ref, str) and ref.startswith("task:")
+            }
+            if len(declared) != 1:
+                raise ValueError(
+                    "Testing repair evidence must declare exactly one source task per finding."
+                )
+            grouped.setdefault(next(iter(declared)), []).append(blocker)
+        return list(grouped.values())
 
     @staticmethod
     def _testing_implementation_repair_targets(

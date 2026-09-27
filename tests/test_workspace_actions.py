@@ -173,6 +173,24 @@ def test_open_feedback_question_precedes_downstream_revision_handoff() -> None:
         ),
     )
 
+    retry_shaped = result_with_contract(
+        command(status="AWAITING_INPUT", stage="implementation"),
+        {
+            "job_id": "checkpoint-job",
+            "checkpoint_retryable": True,
+            "feedback_question": question.model_dump(mode="json"),
+        },
+    )
+    assert [item["action"] for item in retry_shaped["actions"]] == [
+        "message",
+        "message",
+        "retry_implementation",
+    ]
+    assert retry_shaped["actions"][-1]["payload"] == {
+        "action_id": "command-1",
+        "job_id": "checkpoint-job",
+    }
+
 
 def test_reviewed_implementation_gap_revision_returns_to_implementation() -> None:
     resumed = result_with_contract(
@@ -306,6 +324,62 @@ def test_choice_actions_carry_the_answer_in_their_payload() -> None:
     assert shaped["actions"][0]["description"] == "AWS Seoul region"
 
 
+def test_integration_checkpoint_retry_keeps_the_upstream_question_visible() -> None:
+    shaped = result_with_contract(
+        command(status="AWAITING_INPUT", stage="implementation"),
+        {
+            "job_id": "job-1",
+            "checkpoint_retryable": True,
+            "resource_question": {"allowFreeText": True},
+        },
+    )
+
+    assert shaped["wait_reason"] == "question"
+    assert [item["action"] for item in shaped["actions"]] == [
+        "message",
+        "retry_implementation",
+    ]
+    assert shaped["actions"][1]["payload"] == {
+        "action_id": "command-1",
+        "job_id": "job-1",
+    }
+
+
+@pytest.mark.parametrize(
+    ("retryable", "routing_stage", "actions"),
+    [
+        (True, None, ["message", "retry_implementation"]),
+        (True, "design", ["message", "retry_implementation"]),
+        (False, None, ["message"]),
+    ],
+)
+def test_testing_question_offers_only_a_retryable_linked_checkpoint(
+    retryable: bool,
+    routing_stage: str | None,
+    actions: list[str],
+) -> None:
+    shaped = result_with_contract(
+        command(
+            status="AWAITING_INPUT",
+            stage="testing",
+            payload={"implementation_job_id": "implementation-1"},
+        ),
+        {
+            "resource_question": {"allowFreeText": True},
+            "_linked_implementation_checkpoint_retryable": retryable,
+            **({"routing_stage": routing_stage} if routing_stage else {}),
+        },
+    )
+
+    assert shaped["wait_reason"] == "question"
+    assert [item["action"] for item in shaped["actions"]] == actions
+    if retryable:
+        assert shaped["actions"][-1]["payload"] == {
+            "action_id": "command-1",
+            "job_id": "implementation-1",
+        }
+
+
 def test_class_choice_copies_pinned_context_and_offers_free_text() -> None:
     context = {
         "element_ref": "class_diagram:Registration",
@@ -363,7 +437,7 @@ def test_deployment_configuration_wait_does_not_offer_early_advance() -> None:
     assert [item["action"] for item in shaped["actions"]] == ["message"]
 
 
-def test_stalled_repair_offers_only_user_feedback() -> None:
+def test_technical_repair_exposes_no_user_feedback_action() -> None:
     shaped = result_with_contract(
         command(status="AWAITING_INPUT", stage="design"),
         {
@@ -373,11 +447,10 @@ def test_stalled_repair_offers_only_user_feedback() -> None:
     )
 
     assert shaped["wait_reason"] == "repair"
-    assert [item["action"] for item in shaped["actions"]] == ["message"]
-    assert [item["auto_selectable"] for item in shaped["actions"]] == [False]
+    assert shaped["actions"] == []
 
 
-def test_technical_design_stall_offers_automatic_retry() -> None:
+def test_technical_design_stall_exposes_no_manual_retry() -> None:
     shaped = result_with_contract(
         command(status="AWAITING_INPUT", stage="design"),
         {
@@ -391,23 +464,10 @@ def test_technical_design_stall_offers_automatic_retry() -> None:
     )
 
     assert shaped["wait_reason"] == "repair"
-    assert shaped["actions"] == [
-        {
-            "action": "retry_design",
-            "label": "Retry automatic design repair",
-            "payload": {"action_id": "command-1"},
-            "auto_selectable": True,
-        },
-        {
-            "action": "message",
-            "label": "Send revision feedback",
-            "payload": {"action_id": "command-1"},
-            "auto_selectable": False,
-        },
-    ]
+    assert shaped["actions"] == []
 
 
-def test_retry_design_result_does_not_offer_another_automatic_retry() -> None:
+def test_retry_design_technical_result_exposes_no_manual_retry() -> None:
     shaped = result_with_contract(
         command(
             status="AWAITING_INPUT",
@@ -422,7 +482,13 @@ def test_retry_design_result_does_not_offer_another_automatic_retry() -> None:
         },
     )
 
-    assert [item["action"] for item in shaped["actions"]] == ["message"]
+    assert shaped["actions"] == []
+
+
+def test_terminal_technical_failure_exposes_no_manual_recovery_offer() -> None:
+    assert offered_actions(
+        command(status="FAILED", stage="implementation", result={"job_id": "job-1"})
+    ) == []
 
 
 @pytest.mark.parametrize(

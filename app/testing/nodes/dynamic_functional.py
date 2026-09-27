@@ -142,15 +142,29 @@ def _frozen(state: TestingState) -> dict[str, Any]:
     }
 
 
-def _response_format() -> dict[str, Any]:
-    """Constrain authoring to semantic decisions before code compiles Arazzo."""
-
+def _response_format(candidate: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Constrain decisions to the exact connection catalog supplied to the model."""
+    schema = deepcopy(_WORKFLOW_DECISION_SCHEMA)
+    planning_model = candidate.get("planningModel") if isinstance(candidate, dict) else None
+    available_steps = planning_model.get("availableSteps") if isinstance(planning_model, dict) else None
+    connection_ids = sorted({
+        str(connection["connectionId"])
+        for step in available_steps or [] if isinstance(step, dict)
+        for input_slot in step.get("inputs") or [] if isinstance(input_slot, dict)
+        for connection in input_slot.get("connections") or []
+        if isinstance(connection, dict) and isinstance(connection.get("connectionId"), str)
+    })
+    if connection_ids:
+        schema["properties"]["connectionIds"]["items"]["enum"] = connection_ids
+    else:
+        # With no legal edges the empty list remains valid, but no item is.
+        schema["properties"]["connectionIds"]["maxItems"] = 0
     return {
         "type": "json_schema",
         "json_schema": {
             "name": "ArazzoWorkflowDecision",
             "strict": False,
-            "schema": _WORKFLOW_DECISION_SCHEMA,
+            "schema": schema,
         },
     }
 
@@ -768,7 +782,7 @@ def _generate(
             {"role": "system", "content": PLAN_ROLE_PROMPT},
             {"role": "user", "content": _prompt(candidate, validation_error)},
         ],
-        "response_format": _response_format(),
+        "response_format": _response_format(candidate),
         "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens),
     }
     if profile.top_p is not None:

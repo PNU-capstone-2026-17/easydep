@@ -20,6 +20,7 @@ from ..workspace import cleanup_agent_workspace, prepare_agent_workspace
 from .frontend import (
     reuse_frontend_build,
     run_frontend_command,
+    run_frontend_unit_test_verification,
     run_frontend_verification,
     store_frontend_build,
 )
@@ -166,6 +167,7 @@ def verify_agent_workspace(
     task_type: str = "",
     allowed_write_paths: list[str] | None = None,
     verification_profile: dict[str, object] | None = None,
+    frontend_unit_report_path: Path | None = None,
 ) -> dict[str, object]:
     """기능 작업에는 관련 검사만, 최종 단계에는 전체 검사를 실행한다.
 
@@ -194,13 +196,68 @@ def verify_agent_workspace(
     if task_type == "integration-implementation":
         backend = verify_agent_workspace(sandbox)
         frontend = verify_frontend_workspace(sandbox)
+        from app.testing.runtime.app_container import (
+            ApplicationLaunchError,
+            running_application,
+        )
+
+        startup_started = time.monotonic()
+        try:
+            with running_application(
+                "implementation-integration",
+                sandbox / "application",
+                launch_id=str(sandbox.resolve()),
+            ) as (_target_url, runtime):
+                startup = {"status": "SUCCEEDED", "runtime": runtime}
+        except ApplicationLaunchError as error:
+            startup = {
+                "status": "FAILED",
+                "defectClass": error.defect_class,
+                "applicationLog": error.application_log,
+            }
+            startup_diagnostics = summarize_test_failure(error.application_log)
+            startup_error = str(error)
+            startup_stderr = (
+                f"{startup_error.splitlines()[0]}\n{startup_diagnostics}"
+                if startup_diagnostics
+                else startup_error
+            )
+            raise WorkspaceVerificationError(
+                {
+                    "command": ["application-startup", "health-check"],
+                    "exitCode": 1,
+                    "durationMs": int((time.monotonic() - startup_started) * 1000),
+                    "stdout": "",
+                    "stderr": startup_stderr,
+                    "applicationStartup": startup,
+                }
+            ) from error
         return {
-            "command": ["thin-integration", "backend-test", "frontend-build"],
+            "command": [
+                "thin-integration",
+                "backend-test",
+                "frontend-build",
+                "application-startup",
+                "health-check",
+            ],
             "exitCode": 0,
             "backendVerification": backend,
             "frontendVerification": frontend,
+            "applicationStartup": startup,
         }
-    if task_type in {"frontend", "frontend-implementation"}:
+    if task_type == "frontend-unit-test":
+        evidence = run_frontend_unit_test_verification(
+            sandbox,
+            allowed_write_paths or [],
+            run_frontend_command,
+            report_path=frontend_unit_report_path,
+        )
+        if evidence["exitCode"] != 0:
+            raise WorkspaceVerificationError(evidence)
+        return evidence
+    if task_type == "frontend-implementation":
+        return verify_frontend_typecheck_workspace(sandbox)
+    if task_type == "frontend":
         return verify_frontend_workspace(sandbox)
     command = task_verification_command(
         gradle_command(),
@@ -242,8 +299,32 @@ def verify_agent_workspace(
         "testResults": read_gradle_test_failures(sandbox),
         "diagnosticPaths": diagnostic_paths,
     }
+    # A focused Gradle test writes its class XML before returning nonzero for
+    # an assertion failure. Preserve those actual counters so repair routing
+    # can distinguish a source assertion from compilation or runner failure.
+    # Do not read a stale report when Gradle never reached ``:test``.
+    if (
+        task_type == "backend-unit-test"
+        and re.search(r"(?m)^> Task :test FAILED\s*$", result.stdout)
+    ):
+        evidence["unitTestResults"] = _gradle_unit_test_execution(
+            sandbox, verification_profile
+        )
     if result.returncode != 0:
         raise WorkspaceVerificationError(evidence)
+    if task_type == "backend-unit-test":
+        execution = evidence.get("unitTestResults") or _gradle_unit_test_execution(
+            sandbox, verification_profile
+        )
+        evidence["unitTestResults"] = execution
+        if execution["total"] - execution["skipped"] <= 0 or execution["failed"]:
+            evidence["exitCode"] = 1
+            evidence["stderr"] = (
+                "Focused JUnit result must contain an executed passing test: "
+                f"total={execution['total']}, failed={execution['failed']}, "
+                f"skipped={execution['skipped']}"
+            )
+            raise WorkspaceVerificationError(evidence)
     return evidence
 
 
@@ -370,6 +451,14 @@ def task_verification_command(
         # metadata: that made implementation readiness depend on an agent
         # inventing a JUnit file before it had edited production source.
         command = [*executable, "compileJava", "--build-cache"]
+    elif task_type == "backend-unit-test":
+        profile = verification_profile or {}
+        class_name = profile.get("unitTestClass")
+        if not isinstance(class_name, str) or not re.fullmatch(
+            r"[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+", class_name
+        ):
+            raise ValueError("backend-unit-test requires verification_profile.unitTestClass")
+        command = [*executable, "test", "--tests", class_name, "--build-cache"]
     else:
         test_names = sorted(
             {
@@ -394,6 +483,20 @@ def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:
     if demo_skip_validation_enabled():
         return _skipped_validation_evidence()
     evidence = run_frontend_verification(sandbox, run_frontend_command)
+    if evidence["exitCode"] != 0:
+        raise WorkspaceVerificationError(evidence)
+    return evidence
+
+
+def verify_frontend_typecheck_workspace(sandbox: Path) -> dict[str, object]:
+    """Run the per-owner TypeScript project check without producing a Vite bundle."""
+    if demo_skip_validation_enabled():
+        return _skipped_validation_evidence()
+    evidence = run_frontend_verification(
+        sandbox,
+        run_frontend_command,
+        verification_kind="typecheck",
+    )
     if evidence["exitCode"] != 0:
         raise WorkspaceVerificationError(evidence)
     return evidence
@@ -442,6 +545,33 @@ def read_gradle_test_failures(sandbox: Path) -> str:
         suffix = f" (+{remaining} more)" if remaining > 0 else ""
         lines.append(f"Other failing tests: {shown}{suffix}")
     return _truncate_log_snippet("\n".join(lines), max_chars=6000)
+
+
+def _gradle_unit_test_execution(
+    sandbox: Path, verification_profile: dict[str, object] | None
+) -> dict[str, int]:
+    """Count the selected JUnit class from Gradle's XML, not console text."""
+
+    profile = verification_profile or {}
+    class_name = profile.get("unitTestClass")
+    if not isinstance(class_name, str):
+        return {"total": 0, "failed": 0, "skipped": 0}
+    result_dir = sandbox / "application" / "build" / "test-results" / "test"
+    total = failed = skipped = 0
+    for report in sorted(result_dir.glob("*.xml")):
+        try:
+            root = ET.parse(report).getroot()
+        except (OSError, ET.ParseError):
+            continue
+        for case in root.findall(".//testcase"):
+            if case.get("classname") != class_name:
+                continue
+            total += 1
+            if case.find("failure") is not None or case.find("error") is not None:
+                failed += 1
+            elif case.find("skipped") is not None:
+                skipped += 1
+    return {"total": total, "failed": failed, "skipped": skipped}
 
 
 def verify_use_case_scenarios(sandbox: Path, run_root: Path) -> dict[str, object]:

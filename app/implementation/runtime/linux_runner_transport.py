@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -18,6 +19,7 @@ RUNNER_GRADLE_CACHE_VOLUME = "easydep-member-gradle-cache"
 RUNNER_NPM_CACHE_VOLUME = "easydep-member-npm-cache"
 RUNNER_TOFU_CACHE_VOLUME = "easydep-tofu-provider-cache"
 RUNNER_TOFU_CACHE_PATH = "/app/.cache/opentofu"
+OWNER_WORKSPACE_VOLUME_PREFIX = "easydep-owner-ws-"
 OWNER_TERMINAL_USER = "appuser"
 OWNER_TERMINAL_SHELL = "/usr/local/bin/easydep-owner-shell"
 OWNER_TERMINAL_HOME = "/var/lib/easydep-owner/home"
@@ -208,6 +210,29 @@ def to_host_path(value: str, repository_root: Path) -> str:
     return value
 
 
+def owner_workspace_volume_name(
+    run_root: str | Path, job_root: Path, repository_root: Path
+) -> str:
+    """Return the stable named volume for one run's disposable owner workspaces."""
+    root = repository_root.resolve()
+    job = job_root.resolve()
+    run = Path(to_host_path(str(run_root), root)).resolve()
+    job_relative = job.relative_to(root).as_posix()
+    run_relative = run.relative_to(job).as_posix()
+    identity = f"{job_relative}\0{run_relative}".encode("utf-8")
+    digest = hashlib.sha256(identity).hexdigest()[:24]
+    return OWNER_WORKSPACE_VOLUME_PREFIX + digest
+
+
+def remove_owner_workspace_volume(
+    run_root: str | Path, job_root: Path, repository_root: Path
+) -> bool:
+    """Remove only the exact owner-workspace volume derived for one run."""
+    volume_name = owner_workspace_volume_name(run_root, job_root, repository_root)
+    result = _docker_run(["volume", "rm", volume_name])
+    return result is not None and result.returncode == 0
+
+
 def runner_command(
     *,
     image: str,
@@ -270,10 +295,21 @@ def runner_command(
     if job_mount is not None:
         job_root, container_job_root = job_mount
         cache_mount_index = command.index("-v", command.index("-v") + 1)
-        command[cache_mount_index:cache_mount_index] = [
-            "-v",
-            f"{job_root}:{container_job_root.as_posix()}",
-        ]
+        job_mount_args = ["-v", f"{job_root}:{container_job_root.as_posix()}"]
+        if (
+            len(runner_arguments) >= 3
+            and runner_arguments[0] in {"run-owner", "run-workflow"}
+        ):
+            volume_name = owner_workspace_volume_name(
+                runner_arguments[1], job_root, root
+            )
+            job_mount_args.extend(
+                [
+                    "-v",
+                    f"{volume_name}:{(container_job_root / 'w').as_posix()}:nocopy",
+                ]
+            )
+        command[cache_mount_index:cache_mount_index] = job_mount_args
         command.extend(
             ["-e", f"{OWNER_CONTROL_ROOT_ENV}={container_job_root.as_posix()}"]
         )

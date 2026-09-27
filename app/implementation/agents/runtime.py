@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
 from app.config import settings
 from app.demo_validation import demo_skip_validation_enabled
 from app.llm_connection import LlmConnection
@@ -28,11 +30,10 @@ from ..runtime.linux_runner_transport import (
     OWNER_TERMINAL_HOME,
     OWNER_TERMINAL_SHELL_ENV,
 )
-from ..workflows.repair import active_repair_for_task
+from ..workflows.repair import active_repair_for_task, repair_recheck_for_task
+from ..workflows.traceability import declared_java_source_matches
 from .admission import (
     integration_evidence_paths,
-    preflight_semantic_integration,
-    prepare_integration_admission_payload,
 )
 from .canary import (
     TRANSIENT_CANARY_FAILURES,
@@ -58,11 +59,19 @@ from .provider import (
     openhands_connection,
 )
 from .source_replace_tool import (
+    SOURCE_EDIT_TOOL_NAME,
+    SOURCE_REPLACE_TOOL_NAME,
+    SourceEditAction,
+    SourceEditExecutor,
     SourceReplaceAction,
     SourceReplaceExecutor,
+    SourceReplaceObservation,
+    register_source_edit_tool,
     register_source_replace_tool,
+    source_replace_allowed_paths,
 )
 from .task_check import (
+    TaskCheckSession,
     consume_successful_task_check,
     has_successful_task_check,
     is_infrastructure_task_check_failure,
@@ -102,7 +111,13 @@ MAX_AGENT_TURN_ITERATIONS = 32
 # retry resumes the same persisted conversation.
 OWNER_TURN_ITERATIONS = 96
 OWNER_TASK_TYPES = frozenset(
-    {"backend-implementation", "frontend-implementation", "integration-implementation"}
+    {
+        "backend-implementation",
+        "frontend-implementation",
+        "integration-implementation",
+        "backend-unit-test",
+        "frontend-unit-test",
+    }
 )
 
 
@@ -215,17 +230,18 @@ OWNER_INITIAL_ACTION_MESSAGE = (
     "behavior, but do not inject dependencies or alter BCE ownership solely because of a hint."
 )
 OWNER_EDITOR_INITIAL_ACTION_MESSAGE = (
-    "Use replace_source now for one supplied writable source. Return its complete UTF-8 "
-    "body; do not search, inspect files, run checks, or use shell commands."
+    "For a small change to an existing source, use edit_source with exact unique old_text/new_text "
+    "contexts. For a new file or broad rewrite, use replace_source with the complete UTF-8 body. "
+    "Use only supplied writable paths; do not search, inspect files, run checks, or use shell commands."
 )
 EDITOR_REPAIR_MESSAGE = (
-    "The editor harness ran the focused check and it failed. Replace the complete current "
-    "source below to repair only this diagnosis. Do not search or run verification; the harness "
-    "will check exactly once after this repair.\n\n"
+    "The editor harness ran the focused check and it failed. Repair only this diagnosis using "
+    "exact edit_source contexts for a small change to an existing file, or replace_source for a "
+    "broad rewrite. Do not search or run verification; the harness will check after this repair.\n\n"
 )
 EDITOR_STUCK_RECOVERY_MESSAGE = (
-    "Do not explain or analyze. Immediately use replace_source to replace one supplied source "
-    "with its complete body, or report_upstream_gap only when public behavior is insufficient. "
+    "Do not explain or analyze. Immediately use edit_source for a small exact change to an "
+    "existing supplied source, replace_source for a complete rewrite, or report_upstream_gap only when public behavior is insufficient. "
     "The harness performs verification."
 )
 
@@ -259,9 +275,126 @@ def _direct_editor_source_is_eligible(
             return False
     source = sandbox / path
     try:
-        return source.is_file() and source.stat().st_size <= EDITOR_WRITABLE_SOURCE_MAX_BYTES
+        if source.is_file():
+            return source.stat().st_size <= EDITOR_WRITABLE_SOURCE_MAX_BYTES
+        return task_type in {"backend-unit-test", "frontend-unit-test"}
     except OSError:
         return False
+
+
+def _frontend_direct_editor_sdk_evidence(
+    sandbox: Path, context: dict[str, object]
+) -> list[tuple[str, Path, str]]:
+    """Return generated declarations for one frontend operation."""
+    operation_ids = context.get("operationIds")
+    context_paths = context.get("operationContextPaths")
+    if not (
+        isinstance(operation_ids, list)
+        and len(operation_ids) == 1
+        and isinstance(operation_ids[0], str)
+        and isinstance(context_paths, list)
+        and len(context_paths) == 1
+        and isinstance(context_paths[0], str)
+    ):
+        return []
+
+    sandbox_root = sandbox.resolve()
+    operation_path = (sandbox / context_paths[0]).resolve()
+    try:
+        operation_path.relative_to(sandbox_root)
+        if (
+            not operation_path.is_file()
+            or operation_path.stat().st_size > EDITOR_READ_EVIDENCE_MAX_BYTES
+        ):
+            return []
+        operation_context = json.loads(operation_path.read_text(encoding="utf-8"))
+        generated = operation_context["generatedClient"]
+        method_path = (sandbox / generated["generatedMethodPath"]).resolve()
+        method_path.relative_to(sandbox_root)
+        if not method_path.is_file() or generated.get("resolved") is not True:
+            return []
+
+        from ..planning.frontend_contracts import (
+            GeneratedClientContracts,
+            _agent_contract_surface,
+            _through_braced_declaration,
+        )
+
+        generated_root = method_path.parent.parent.parent
+        contracts = GeneratedClientContracts.discover(generated_root)
+        operation = contracts.resolve_operations(operation_ids).get(operation_ids[0])
+        if operation is None or operation.source_path.resolve() != method_path:
+            return []
+
+        declarations: list[tuple[str, Path, str]] = []
+        source = method_path.read_text(encoding="utf-8")
+        method_signature = next(
+            (
+                line.strip().removesuffix("{").rstrip()
+                for line in source.splitlines()
+                if line.lstrip().startswith(f"async {operation.operation_id}(")
+                and f"Promise<{operation.response_type}>" in line
+                and line.rstrip().endswith("{")
+            ),
+            "",
+        )
+        if (
+            operation.request_type
+            and generated.get("requestType") == operation.request_type
+        ):
+            marker = f"export interface {operation.request_type}"
+            start = source.find(marker)
+            if start >= 0:
+                declaration = _through_braced_declaration(source[start:], marker)
+                if declaration:
+                    if method_signature:
+                        declaration += f"\n\n{method_signature}"
+                    declarations.append(
+                        (
+                            f"{method_path.relative_to(sandbox_root).as_posix()} :: "
+                            f"{operation.request_type}",
+                            method_path,
+                            declaration,
+                        )
+                    )
+        elif method_signature:
+            declarations.append(
+                (
+                    f"{method_path.relative_to(sandbox_root).as_posix()} :: "
+                    f"SDK operation {operation.operation_id}",
+                    method_path,
+                    method_signature,
+                )
+            )
+
+        references = operation_context.get("referencedComponents", {})
+        schema_names = {
+            reference.rsplit("/", 1)[-1]
+            for reference in references
+            if isinstance(reference, str)
+            and reference.startswith("#/components/schemas/")
+        } if isinstance(references, dict) else set()
+        schema_names.add(operation.response_type)
+        model_files = {
+            path.stem: path for path in contracts.files if path.parent.name == "models"
+        }
+        for name in sorted(schema_names):
+            model_path = model_files.get(name)
+            if model_path is not None:
+                surface = _agent_contract_surface(
+                    model_path.read_text(encoding="utf-8"),
+                    model_path.relative_to(generated_root),
+                )
+                declarations.append(
+                    (
+                        f"{model_path.relative_to(sandbox_root).as_posix()} :: SDK model {name}",
+                        model_path,
+                        surface,
+                    )
+                )
+        return declarations
+    except (KeyError, OSError, ValueError, json.JSONDecodeError):
+        return []
 
 
 def _editor_read_source_evidence(
@@ -273,11 +406,13 @@ def _editor_read_source_evidence(
 
     sandbox_root = sandbox.resolve()
     writable = {Path(path).resolve() for path in writable_files}
-    candidates: list[tuple[str, Path]] = []
+    candidates: list[tuple[str, Path, str | None]] = []
     for path in writable_files:
         candidate = Path(path).resolve()
         if candidate.is_file():
-            candidates.append((path.replace("\\", "/"), candidate))
+            candidates.append(
+                (candidate.relative_to(sandbox_root).as_posix(), candidate, None)
+            )
     values = context.get("readSourcePaths", [])
     if isinstance(values, list):
         for value in values:
@@ -292,46 +427,82 @@ def _editor_read_source_evidence(
                 not in DIRECT_EDITOR_SOURCE_EXTENSIONS | {".json", ".txt"}
             ):
                 continue
-            candidates.append((value.replace("\\", "/"), candidate))
+            candidates.append((value.replace("\\", "/"), candidate, None))
+
+    sdk_declarations = (
+        _frontend_direct_editor_sdk_evidence(sandbox, context)
+        if len(writable_files) == 1
+        and Path(writable_files[0]).suffix.casefold() == ".tsx"
+        else []
+    )
+    candidates.extend((label, path, body) for label, path, body in sdk_declarations)
 
     included: list[str] = []
     omitted = 0
+    sdk_included = 0
     used = 0
     # Preserve the writable target first, then spend the finite evidence budget
     # on smaller dependencies so large context files cannot crowd out several
     # concise declarations.
+    unique_candidates = {path: (candidate, body) for path, candidate, body in candidates}
     ordered_candidates = sorted(
-        dict(candidates).items(),
+        unique_candidates.items(),
         key=lambda item: (
-            item[1] not in writable,
-            item[1].stat().st_size,
+            item[1][0] not in writable,
+            item[1][1] is None,
+            len(item[1][1].encode("utf-8"))
+            if item[1][1] is not None
+            else item[1][0].stat().st_size,
             item[0],
         ),
     )
-    for path, candidate in ordered_candidates:
-        body = candidate.read_text(encoding="utf-8")
+    for path, (candidate, body_override) in ordered_candidates:
+        body = (
+            body_override
+            if body_override is not None
+            else candidate.read_text(encoding="utf-8")
+        )
         body_size = len(body.encode("utf-8"))
         if used + body_size > EDITOR_READ_EVIDENCE_MAX_BYTES:
             omitted += 1
             continue
         fence = DIRECT_EDITOR_CODE_FENCES.get(
-            candidate.suffix.casefold(), candidate.suffix.lstrip(".") or "text"
+            ".ts" if body_override is not None else candidate.suffix.casefold(),
+            candidate.suffix.lstrip(".") or "text",
         )
-        label = "current writable source" if candidate in writable else "read-only evidence"
+        is_sdk_declaration = body_override is not None
+        label = (
+            "current writable source"
+            if candidate in writable
+            else "generated TypeScript SDK declaration"
+            if is_sdk_declaration
+            else "read-only evidence"
+        )
         included.append(f"### `{path}` ({label})\n```{fence}\n{body}\n```")
+        sdk_included += int(is_sdk_declaration)
         used += body_size
 
     if not included and not omitted:
         return ""
+    sdk_authority = (
+        "\nGenerated TypeScript SDK declarations below define application-facing value types. "
+        "Use them as the coding authority; operation context describes the wire schema and "
+        "may use different types when the SDK converts values.\n"
+        if sdk_included
+        else ""
+    )
     return (
         "\n\n## Supplied writable source and read-only evidence\n\n"
+        + sdk_authority
         + "\n\n".join(included)
         + f"\n\nEvidence bodies: {len(included)} included, {omitted} omitted "
         + f"(UTF-8 body cap {EDITOR_READ_EVIDENCE_MAX_BYTES} bytes)."
     )
 
 
-def _owner_evidence_boundary_message(required_test_paths: object) -> str:
+def _owner_evidence_boundary_message(
+    required_test_paths: object, task_type: str = ""
+) -> str:
     """Render owner-only prompt text; it does not change execution policy."""
 
     paths = [
@@ -342,6 +513,28 @@ def _owner_evidence_boundary_message(required_test_paths: object) -> str:
         "The listed writable task files, additional writable roots, and supplied read evidence "
         "are the complete boundary. Do not guess or probe unlisted file or directory paths."
     )
+    if task_type in {"backend-unit-test", "frontend-unit-test"}:
+        message = boundary
+        if paths:
+            message += (
+                "\nFocused test paths are supplied:\n"
+                + "\n".join(f"- `{path}`" for path in paths)
+                + "\nUse only these focused test paths for test evidence."
+            )
+        message += (
+            "\nThis is a focused unit-test authoring task. The supplied implementation "
+            "source and API evidence are read-only; create the assigned test file and keep "
+            "its assertions meaningful."
+        )
+        if task_type == "frontend-unit-test":
+            message += (
+                "\nDerive Testing Library queries from the supplied markup's actual accessible "
+                "roles and names; an HTML tag alone does not guarantee a role (for example, an "
+                "unnamed form is not a form landmark). For pending or disabled behavior, use the "
+                "known input and button, or inspect `closest('form')` only when a container "
+                "attribute is needed."
+            )
+        return message
     if paths:
         return (
             boundary
@@ -367,9 +560,94 @@ class OwnerConversationIncomplete(WorkspaceVerificationError):
 class DirectEditorResponseError(RuntimeError):
     """The one-shot editor response did not contain a usable source replacement."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_code: str = "DIRECT_EDITOR_RESPONSE_INVALID",
+        retryable: bool = False,
+        rejected_path: str | None = None,
+        source_sha256: str | None = None,
+        tool_name: str = SOURCE_REPLACE_TOOL_NAME,
+        field_issues: list[dict[str, str]] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.failure_code = failure_code
+        self.retryable = retryable
+        self.rejected_path = rejected_path[:512] if rejected_path else None
+        self.source_sha256 = source_sha256
+        self.tool_name = tool_name
+        self.field_issues = (field_issues or [])[:16]
+
 
 def _is_infrastructure_verification_failure(error: WorkspaceVerificationError) -> bool:
     return is_infrastructure_task_check_failure(str(error))
+
+
+def _integration_source_owner_attribution(
+    run_root: Path,
+    failed_task_id: str,
+    evidence: dict[str, object],
+    diagnosis: str,
+) -> dict[str, str] | None:
+    """Resolve one named Java failure to its exact declared implementation task."""
+
+    startup = evidence.get("applicationStartup")
+    application_log = (
+        startup.get("applicationLog", "") if isinstance(startup, dict) else ""
+    )
+    if not isinstance(application_log, str):
+        application_log = ""
+    text = "\n".join(
+        value[:65536]
+        for value in (diagnosis, str(evidence.get("stderr") or ""), application_log)
+        if value
+    )
+    rtm_path = run_root / "reports" / "rtm-traceability-map.json"
+    manifest_path = run_root / "reports" / "run-manifest.json"
+    try:
+        rtm = json.loads(rtm_path.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(rtm, dict) or not isinstance(manifest, dict):
+        return None
+    matches = declared_java_source_matches(rtm, text)
+    tasks = manifest.get("implementation_tasks")
+    if not isinstance(tasks, list):
+        return None
+    candidates: dict[tuple[str, str], dict[str, str]] = {}
+    for match in matches:
+        task_id = match.get("taskId")
+        target = str(match.get("target_file") or "").replace("\\", "/")
+        if not isinstance(task_id, str) or not task_id or not target:
+            continue
+        task_matches = [
+            task
+            for task in tasks
+            if isinstance(task, dict) and task.get("task_id") == task_id
+        ]
+        if len(task_matches) != 1 or task_id == failed_task_id:
+            continue
+        task = task_matches[0]
+        if task.get("task_type") not in {
+            "backend-implementation",
+            "frontend-implementation",
+        }:
+            continue
+        declared_paths = {
+            str(path).replace("\\", "/")
+            for key in ("allowed_write_paths", "required_output_paths")
+            for path in task.get(key, [])
+            if isinstance(path, str)
+        }
+        if target not in declared_paths:
+            continue
+        candidates[(task_id, target)] = {
+            "taskId": task_id,
+            "targetFile": target,
+        }
+    return next(iter(candidates.values())) if len(candidates) == 1 else None
 
 
 def run_openhands_conversation(conversation: object) -> None:
@@ -540,7 +818,71 @@ class EventJournal:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
         self.event_count += 1
         self.tool_counts["replace_source"] = self.tool_counts.get("replace_source", 0) + 1
+        self.tool_counts["replace_source_applied"] = (
+            self.tool_counts.get("replace_source_applied", 0) + 1
+        )
         self.latest_agent_message = "Direct editor applied replace_source."
+
+    def record_direct_source_edit(self, action: SourceEditAction, observation: SourceReplaceObservation) -> None:
+        """Persist bounded edit evidence without retaining source text."""
+
+        payload = {
+            "sequence": self.event_count,
+            "timestamp": time.time(),
+            "type": "DirectEditorAction",
+            "source": "agent",
+            "tool": SOURCE_EDIT_TOOL_NAME,
+            "event": {
+                "path": action.path,
+                "editCount": len(action.edits),
+                "sourceSha256": observation.source_sha256,
+            },
+        }
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self.event_count += 1
+        self.tool_counts[SOURCE_EDIT_TOOL_NAME] = self.tool_counts.get(SOURCE_EDIT_TOOL_NAME, 0) + 1
+        self.tool_counts[f"{SOURCE_EDIT_TOOL_NAME}_applied"] = self.tool_counts.get(
+            f"{SOURCE_EDIT_TOOL_NAME}_applied", 0
+        ) + 1
+        self.latest_agent_message = "Direct editor applied edit_source."
+
+    def record_direct_source_rejection(
+        self,
+        *,
+        failure_code: str,
+        rejected_path: str | None,
+        allowed_paths: list[str],
+        source_sha256: str | None,
+        tool_name: str = SOURCE_REPLACE_TOOL_NAME,
+        field_issues: list[dict[str, str]] | None = None,
+        failure_detail: str | None = None,
+    ) -> None:
+        """Persist bounded argument diagnostics without source bodies or raw responses."""
+
+        payload = {
+            "sequence": self.event_count,
+            "timestamp": time.time(),
+            "type": "DirectEditorActionRejected",
+            "source": "agent",
+            "tool": tool_name,
+            "event": {
+                "failureCode": failure_code[:80],
+                "rejectedPath": rejected_path[:512] if rejected_path else None,
+                "allowedPaths": allowed_paths[:16],
+                "sourceSha256": source_sha256,
+                "fieldIssues": (field_issues or [])[:16],
+                "failureDetail": failure_detail[:320] if failure_detail else None,
+            },
+        }
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self.event_count += 1
+        self.tool_counts[tool_name] = self.tool_counts.get(tool_name, 0) + 1
+        rejected_key = f"{tool_name}_rejected"
+        self.tool_counts[rejected_key] = (
+            self.tool_counts.get(rejected_key, 0) + 1
+        )
 
 class NoActionResponseGuard:
     """Turn a reasoning-only completion into one explicit action-recovery turn.
@@ -697,13 +1039,18 @@ def _owner_workspace_guidance(
             [
                 "- Requirements, caller-visible APIs, and observable behavior are hard constraints. Preserve generated public signatures and compile boundaries when a legal implementation exists.",
                 "- Generated class, sequence, RTM, collaborator, and wiring details are implementation hints; they may be incomplete.",
-                "- Start with one writable source containing an assigned completion marker. Make its first legal edit from local declarations and assigned task behavior. If a concrete implementation need remains, consult only the listed operation contract and declared dependency sources. Interaction hints are behavioral evidence; use them to understand delegated behavior, but do not inject dependencies or alter BCE ownership solely because of a hint.",
                 "- Read the listed contract or declared dependencies only for that concrete need. Do not reread unchanged files; let canonical verification identify remaining mechanics.",
                 "- A missing collaborator or wiring entry alone is not an upstream gap. When declared public behavior and existing dependency APIs are sufficient, choose conventional wiring in the writable component.",
                 "- Report an upstream gap only when required public input, output, or externally visible behavior is absent or contradictory, leaving no legal implementation without inventing product meaning.",
-                "- Preserve shared work and every generated body or implementation marker not assigned to this task.",
             ]
         )
+        if task_type not in {"backend-unit-test", "frontend-unit-test"}:
+            common.extend(
+                [
+                    "- Start with one writable source containing an assigned completion marker. Make its first legal edit from local declarations and assigned task behavior. If a concrete implementation need remains, consult only the listed operation contract and declared dependency sources. Interaction hints are behavioral evidence; use them to understand delegated behavior, but do not inject dependencies or alter BCE ownership solely because of a hint.",
+                    "- Preserve shared work and every generated body or implementation marker not assigned to this task.",
+                ]
+            )
     else:
         common.extend(
             [
@@ -713,7 +1060,7 @@ def _owner_workspace_guidance(
     if owner_tool_mode == "editor":
         common.extend(
             [
-                "- Use replace_source for one complete supplied source body. No file browser, grep, terminal, or model-run verification tool is available.",
+                "- Use edit_source for small exact changes to existing supplied sources; use replace_source for a new file or broad complete rewrite. No file browser, grep, terminal, or model-run verification tool is available.",
                 "- The harness runs the canonical verification after each editor attempt. On a non-infrastructure failure it provides one exact diagnosis for one repair attempt.",
                 "- Call FinishTool after a replacement; a plain-text summary does not complete the task.",
             ]
@@ -759,11 +1106,27 @@ def _owner_workspace_guidance(
                 "- Frontend project root: `application/frontend`.",
                 "- If dependencies are absent, run `npm ci --ignore-scripts --no-audit --no-fund --prefer-offline` once.",
                 (
-                    f"- Canonical frontend verification: `cd {logical_workspace / 'application' / 'frontend'} && npm run build`."
+                    f"- Canonical frontend verification: `cd {logical_workspace / 'application' / 'frontend'} && npm exec -- tsc -b`."
                     if owner_tool_mode == "terminal"
                     else "- Canonical frontend verification is the argument-free `run_task_check` tool."
                 ),
                 f"- npm uses the shared cache at `{OWNER_NPM_CACHE}`.",
+            ]
+        )
+    elif task_type == "backend-unit-test":
+        common.extend(
+            [
+                "- This task authors one focused JUnit test; the implementation subject is read-only evidence.",
+                "- The harness runs the selected Gradle test and requires at least one non-skipped passing JUnit case.",
+                "- Do not weaken assertions merely to make a failing implementation pass.",
+            ]
+        )
+    elif task_type == "frontend-unit-test":
+        common.extend(
+            [
+                "- This task authors one focused Vitest file; the implementation subject and generated client are read-only evidence.",
+                "- The harness runs only the assigned Vitest path and requires at least one non-skipped passing case.",
+                "- Do not weaken assertions merely to make a failing implementation pass.",
             ]
         )
     def logical_owner_path(value: str) -> str:
@@ -801,6 +1164,43 @@ def _owner_workspace_guidance(
         if not read_files:
             common.append("- none")
     return "\n".join(common)
+
+
+def _unit_test_subject_evidence(
+    sandbox: Path, verification_profile: dict[str, object] | None
+) -> str:
+    """Embed the planned implementation subject for a bounded test authoring task."""
+
+    profile = verification_profile or {}
+    paths = profile.get("unitTestSubjectPaths", [])
+    if not isinstance(paths, list):
+        return ""
+    root = sandbox.resolve()
+    included: list[str] = []
+    used = 0
+    for value in paths:
+        if not isinstance(value, str) or not value:
+            continue
+        candidate = (sandbox / value).resolve()
+        if (
+            not candidate.is_relative_to(root)
+            or not candidate.is_file()
+            or candidate.suffix.casefold() not in DIRECT_EDITOR_SOURCE_EXTENSIONS
+        ):
+            continue
+        body = candidate.read_text(encoding="utf-8")
+        size = len(body.encode("utf-8"))
+        if used + size > EDITOR_READ_EVIDENCE_MAX_BYTES:
+            continue
+        fence = DIRECT_EDITOR_CODE_FENCES.get(candidate.suffix.casefold(), "text")
+        included.append(
+            f"### `{candidate.relative_to(root).as_posix()}` (read-only unit-test subject)\n"
+            f"```{fence}\n{body}\n```"
+        )
+        used += size
+    if not included:
+        return ""
+    return "\n\n## Supplied implementation subject for this unit test\n\n" + "\n\n".join(included)
 
 
 def write_execution_plan(
@@ -1069,6 +1469,23 @@ class OwnerAccessContract:
             if task_type == "integration-implementation"
             else context.get("readSourcePaths", [])
         )
+        if task_type in {"backend-unit-test", "frontend-unit-test"}:
+            profile = task.get("verification_profile")
+            subjects = (
+                profile.get("unitTestSubjectPaths", [])
+                if isinstance(profile, dict)
+                else []
+            )
+            evidence_paths = [
+                *(evidence_paths if isinstance(evidence_paths, list) else []),
+                *(subjects if isinstance(subjects, list) else []),
+            ]
+        frozen_readonly = task.get("frozen_readonly_paths", [])
+        if isinstance(frozen_readonly, list):
+            evidence_paths = [
+                *(evidence_paths if isinstance(evidence_paths, list) else []),
+                *(value for value in frozen_readonly if isinstance(value, str)),
+            ]
         read_hints = [
             str(candidate)
             for value in evidence_paths
@@ -1168,19 +1585,236 @@ def _complete_verified_task_without_agent(
     return result
 
 
-def _direct_editor_tool_schema() -> dict[str, object]:
+def _frozen_unit_candidate(
+    run_root: Path, task: dict[str, object], repair: dict[str, object] | None
+) -> dict[str, str] | None:
+    """Validate the one retained unit-test candidate referenced by a repair plan."""
+
+    if repair is None:
+        return None
+    raw = repair.get("frozenTestCandidate")
+    if not isinstance(raw, dict):
+        return None
+    path = raw.get("path")
+    digest = raw.get("sha256")
+    source_path = raw.get("sourcePath")
+    if not all(isinstance(value, str) and value for value in (path, digest, source_path)):
+        return None
+    candidate = (run_root / path).resolve()
+    reports_root = (run_root / "reports" / "agent-executions").resolve()
+    if not candidate.is_relative_to(reports_root) or not candidate.is_file():
+        return None
+    if hashlib.sha256(candidate.read_bytes()).hexdigest() != digest:
+        return None
+    if str(task.get("task_type", "")) in {"backend-unit-test", "frontend-unit-test"}:
+        allowed = {
+            str(value).replace("\\", "/")
+            for value in task.get("allowed_write_paths", [])
+            if isinstance(value, str)
+        }
+        if source_path not in allowed:
+            return None
+    return {"path": path, "sha256": digest, "sourcePath": source_path}
+
+
+def _preserve_failed_unit_candidate(
+    sandbox: Path,
+    run_root: Path,
+    task: dict[str, object],
+    task_id: str,
+    evidence: dict[str, object],
+) -> dict[str, object] | None:
+    """Retain a failing, executed unit test before owner-workspace cleanup.
+
+    This is intentionally limited to an executed assertion failure. Compiler,
+    runner, zero-test, and all-skipped failures retain their normal unit-author
+    repair behavior instead of being attributed to the implementation subject.
+    """
+
+    if not _is_executed_unit_assertion_failure(evidence):
+        return None
+    results = evidence.get("unitTestResults")
+    if not isinstance(results, dict):
+        return None
+    candidates = [
+        str(value).replace("\\", "/")
+        for value in task.get("required_test_paths", task.get("requiredTestPaths", []))
+        if isinstance(value, str)
+    ]
+    if len(candidates) != 1:
+        return None
+    source_path = candidates[0]
+    source = (sandbox / source_path).resolve()
+    if not source.is_relative_to(sandbox.resolve()) or not source.is_file():
+        return None
+    target_dir = run_root / "reports" / "agent-executions"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / f"{task_id}.frozen-test{source.suffix}"
+    shutil.copyfile(source, target)
+    return {
+        "path": str(target.relative_to(run_root)).replace("\\", "/"),
+        "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        "sourcePath": source_path,
+    }
+
+
+def _is_executed_unit_assertion_failure(evidence: dict[str, object]) -> bool:
+    results = evidence.get("unitTestResults")
+    if not isinstance(results, dict):
+        return False
+    total, failed, skipped = (
+        results.get("total"), results.get("failed"), results.get("skipped", 0)
+    )
+    return (
+        all(isinstance(value, int) for value in (total, failed, skipped))
+        and total - skipped > 0
+        and failed > 0
+    )
+
+
+def _execute_frozen_unit_recheck(
+    run_root: Path,
+    task: dict[str, object],
+    task_id: str,
+    candidate: dict[str, str],
+) -> dict[str, object]:
+    """Run the existing canonical check with a hash-locked test and no LLM."""
+
+    started = time.monotonic()
+    task_type = str(task.get("task_type", ""))
+    allowed = [str(value) for value in task.get("allowed_write_paths", [])]
+    profile = task.get("verification_profile")
+    verification_profile = dict(profile) if isinstance(profile, dict) else None
+    sandbox = prepare_agent_workspace(
+        run_root,
+        task,
+        preserve_failed_edits=False,
+        persistent=True,
+        requires_owner_terminal=False,
+    )
+    try:
+        source = (run_root / candidate["path"]).resolve()
+        reports_root = (run_root / "reports" / "agent-executions").resolve()
+        target = (sandbox / candidate["sourcePath"]).resolve()
+        if (
+            not source.is_relative_to(reports_root)
+            or not source.is_file()
+            or not target.is_relative_to(sandbox.resolve())
+            or hashlib.sha256(source.read_bytes()).hexdigest() != candidate["sha256"]
+        ):
+            raise WorkspaceVerificationError({
+                "command": ["frozen-unit-recheck"], "exitCode": 1,
+                "stdout": "", "stderr": "Frozen unit-test candidate is missing or changed.",
+                "testResults": "",
+            })
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+        report_path = (
+            run_root / "reports" / "agent-executions" / f"{task_id}.vitest.json"
+            if task_type == "frontend-unit-test"
+            else None
+        )
+        verification = verify_agent_workspace(
+            sandbox, task_type, allowed, verification_profile, report_path
+        )
+        if hashlib.sha256(target.read_bytes()).hexdigest() != candidate["sha256"]:
+            raise WorkspaceVerificationError({
+                "command": ["frozen-unit-recheck"], "exitCode": 1,
+                "stdout": "", "stderr": "Canonical recheck modified the frozen unit test.",
+                "testResults": "",
+            })
+        _promote_changed_files(sandbox, run_root, {candidate["sourcePath"]})
+        attempt = execution_attempt(run_root, task_id)
+        execution_dir = run_root / "reports" / "agent-executions"
+        result: dict[str, object] = {
+            "taskId": task_id, "taskType": task_type,
+            "owner": str(task.get("owner") or ""),
+            "promptSha256": task.get("prompt_sha256"),
+            "effectiveModel": None, "changedFiles": [candidate["sourcePath"]],
+            "outputFiles": [candidate["sourcePath"]], "verification": verification,
+            "tools": [], "durationMs": int((time.monotonic() - started) * 1000),
+            "eventCount": 0, "toolCounts": {}, "rawResponse": "",
+            "conversationId": None, "conversationCheckpoint": None,
+            "resumedConversation": False, "executionStatus": "finished",
+            "completionPath": "frozen-unit-recheck", "agentInvoked": False,
+            "frozenRecheckCandidate": candidate, "status": "SUCCEEDED",
+        }
+        write_execution_result(execution_dir, task_id, attempt, result)
+        return result
+    except WorkspaceVerificationError as error:
+        execution_dir = run_root / "reports" / "agent-executions"
+        attempt = execution_attempt(run_root, task_id)
+        write_execution_result(execution_dir, task_id, attempt, {
+            "taskId": task_id, "taskType": task_type,
+            "owner": str(task.get("owner") or ""),
+            "promptSha256": task.get("prompt_sha256"),
+            "verification": error.evidence, "agentInvoked": False,
+            "completionPath": "frozen-unit-recheck",
+            "frozenRecheckCandidate": candidate,
+            "durationMs": int((time.monotonic() - started) * 1000),
+            "status": "FAILED",
+        })
+        raise
+    finally:
+        cleanup_agent_workspace(sandbox, run_root=run_root)
+
+
+def _direct_editor_tool_schema(allowed_paths: list[str]) -> dict[str, object]:
+    exact_paths = sorted(set(allowed_paths))
     return {
         "type": "function",
         "function": {
             "name": "replace_source",
-            "description": "Replace the complete UTF-8 body of exactly one supplied writable source file.",
+            "description": (
+                "Replace one complete UTF-8 source body. Set path to exactly one listed "
+                "workspace-relative writable path; never redirect to another file. Allowed paths: "
+                + ", ".join(exact_paths)
+            ),
             "parameters": {
                 "type": "object",
                 "additionalProperties": False,
                 "required": ["path", "source"],
                 "properties": {
-                    "path": {"type": "string", "minLength": 1},
+                    "path": {"type": "string", "enum": exact_paths},
                     "source": {"type": "string", "minLength": 1},
+                },
+            },
+        },
+}
+
+
+def _direct_editor_edit_tool_schema(allowed_paths: list[str]) -> dict[str, object]:
+    exact_paths = sorted(set(allowed_paths))
+    return {
+        "type": "function",
+        "function": {
+            "name": SOURCE_EDIT_TOOL_NAME,
+            "description": (
+                "Apply exact unique old_text/new_text edits to one existing supplied source. "
+                "All contexts are matched against the original source and validated before one write. "
+                "Use replace_source for a new file or broad rewrite. Allowed paths: "
+                + ", ".join(exact_paths)
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["path", "edits"],
+                "properties": {
+                    "path": {"type": "string", "enum": exact_paths},
+                    "edits": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 16,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["old_text", "new_text"],
+                            "properties": {
+                                "old_text": {"type": "string", "minLength": 1, "maxLength": 65536},
+                                "new_text": {"type": "string", "maxLength": 65536},
+                            },
+                        },
+                    },
                 },
             },
         },
@@ -1189,15 +1823,16 @@ def _direct_editor_tool_schema() -> dict[str, object]:
 
 def _direct_editor_reasoning_effort(llm_config: dict[str, object]) -> str:
     value = llm_config.get("reasoningEffort")
-    return value if isinstance(value, str) and value in {"low", "high", "max"} else "low"
+    return value if isinstance(value, str) and value in {"none", "low", "high", "max"} else "low"
 
 
 def _request_direct_editor_action(
     connection: LlmConnection,
     prompt: str,
     llm_config: dict[str, object],
- ) -> SourceReplaceAction:
-    """Request exact complete source bodies without starting an OpenHands loop."""
+    allowed_paths: list[str],
+) -> SourceReplaceAction | SourceEditAction:
+    """Request one exact source replacement or bounded exact-context edit."""
 
     if not connection.api_key:
         raise DirectEditorResponseError("Direct editor API key is not configured.")
@@ -1212,19 +1847,20 @@ def _request_direct_editor_action(
             {
                 "role": "system",
                 "content": (
-                    "You are a source editor. Return exactly one replace_source tool call. "
-                    "Do not explain, inspect, or call any other tool."
+                    "You are a source editor. Return exactly one edit_source or replace_source tool call. "
+                    "Use edit_source for small exact edits to an existing file; use replace_source "
+                    "for a new file or broad rewrite. Do not explain, inspect, or call other tools."
                 ),
             },
             {"role": "user", "content": prompt},
         ],
-        "tools": [_direct_editor_tool_schema()],
-        "tool_choice": {
-            "type": "function",
-            "function": {"name": "replace_source"},
-        },
+        "tools": [
+            _direct_editor_tool_schema(allowed_paths),
+            _direct_editor_edit_tool_schema(allowed_paths),
+        ],
+        "tool_choice": "required",
         "temperature": 0,
-        "max_tokens": raw_max_tokens,
+        "max_completion_tokens": raw_max_tokens,
     }
     if connection.provider == "cloudflare":
         request["reasoning_effort"] = _direct_editor_reasoning_effort(llm_config)
@@ -1238,58 +1874,123 @@ def _request_direct_editor_action(
     response = client.chat.completions.create(**request)
     choices = getattr(response, "choices", None) or []
     if not choices:
-        raise DirectEditorResponseError("Direct editor returned no completion choice.")
+        raise DirectEditorResponseError(
+            "Direct editor returned no completion choice.",
+            failure_code="NO_COMPLETION_CHOICE",
+            retryable=True,
+        )
     tool_calls = getattr(getattr(choices[0], "message", None), "tool_calls", None) or []
     if len(tool_calls) != 1:
         raise DirectEditorResponseError(
-            "Direct editor must return exactly one replace_source tool call."
+            "Direct editor must return exactly one source edit tool call.",
+            failure_code="INVALID_TOOL_CALL_COUNT",
+            retryable=True,
         )
     function = getattr(tool_calls[0], "function", None)
-    if getattr(function, "name", None) != "replace_source":
-        raise DirectEditorResponseError("Direct editor returned an unexpected tool name.")
+    tool_name = getattr(function, "name", None)
+    if tool_name not in {SOURCE_REPLACE_TOOL_NAME, SOURCE_EDIT_TOOL_NAME}:
+        raise DirectEditorResponseError(
+            "Direct editor returned an unexpected tool name.",
+            failure_code="UNEXPECTED_TOOL_NAME",
+            retryable=True,
+        )
     arguments = getattr(function, "arguments", None)
     if not isinstance(arguments, str):
-        raise DirectEditorResponseError("Direct editor returned non-text tool arguments.")
+        raise DirectEditorResponseError(
+            "Direct editor returned non-text tool arguments.",
+            failure_code="MISSING_TOOL_ARGUMENTS",
+            retryable=True,
+        )
     try:
         value = json.loads(arguments)
     except json.JSONDecodeError as error:
-        raise DirectEditorResponseError("Direct editor returned invalid tool JSON.") from error
-    try:
-        return SourceReplaceAction.model_validate(value)
-    except Exception as error:
         raise DirectEditorResponseError(
-            "Direct editor tool arguments do not match replace_source."
+            "Direct editor returned invalid tool JSON.",
+            failure_code="INVALID_TOOL_JSON",
+            retryable=True,
+        ) from error
+    action_type = SourceEditAction if tool_name == SOURCE_EDIT_TOOL_NAME else SourceReplaceAction
+    try:
+        return action_type.model_validate(value)
+    except ValidationError as error:
+        issues: list[dict[str, str]] = []
+        for item in error.errors(include_input=False)[:16]:
+            location = item.get("loc", ())
+            issues.append(
+                {
+                    "field": ".".join(str(part)[:80] for part in location)[:160],
+                    "type": str(item.get("type", "invalid"))[:80],
+                }
+            )
+        rejected_path = value.get("path") if isinstance(value, dict) else None
+        source = value.get("source") if isinstance(value, dict) else None
+        raise DirectEditorResponseError(
+            "Direct editor tool arguments do not match the selected source tool.",
+            failure_code="INVALID_TOOL_ARGUMENTS",
+            retryable=True,
+            rejected_path=rejected_path if isinstance(rejected_path, str) else None,
+            tool_name=tool_name,
+            source_sha256=(
+                hashlib.sha256(source.encode("utf-8")).hexdigest()
+                if isinstance(source, str)
+                else None
+            ),
+            field_issues=issues,
         ) from error
 
 
 def _apply_direct_editor_action(
     sandbox: Path,
     writable_files: list[str],
-    action: SourceReplaceAction,
-    journal: EventJournal,
-) -> None:
-    if len(action.source.encode("utf-8")) > EDITOR_WRITABLE_SOURCE_MAX_BYTES:
-        raise WorkspaceVerificationError(
-            {
-                "command": ["replace_source"],
-                "exitCode": 1,
-                "stdout": "",
-                "stderr": "Replacement source exceeds the 64 KiB direct-editor limit.",
-                "testResults": "",
-            }
+    action: SourceReplaceAction | SourceEditAction,
+    journal: EventJournal | None = None,
+) -> SourceReplaceObservation:
+    allowed_paths = source_replace_allowed_paths(sandbox, writable_files)
+    tool_name = SOURCE_EDIT_TOOL_NAME if isinstance(action, SourceEditAction) else SOURCE_REPLACE_TOOL_NAME
+    if action.path not in allowed_paths:
+        observation = SourceReplaceObservation.from_text(
+            text="WRITE_OUTSIDE_OWNER_SCOPE: path must exactly match one supplied workspace-relative path.",
+            is_error=True,
+            failure_code="INVALID_PATH_ARGUMENT",
+            rejected_path=action.path[:512],
+            allowed_paths=allowed_paths,
+            source_sha256=(
+                hashlib.sha256(action.source.encode("utf-8")).hexdigest()
+                if isinstance(action, SourceReplaceAction)
+                else None
+            ),
         )
-    observation = SourceReplaceExecutor(sandbox, writable_files)(action)
-    if observation.is_error:
-        raise WorkspaceVerificationError(
-            {
-                "command": ["replace_source"],
-                "exitCode": 1,
-                "stdout": "",
-                "stderr": str(observation),
-                "testResults": "",
-            }
+    elif isinstance(action, SourceReplaceAction) and len(action.source.encode("utf-8")) > EDITOR_WRITABLE_SOURCE_MAX_BYTES:
+        observation = SourceReplaceObservation.from_text(
+            text="Replacement source exceeds the 64 KiB direct-editor limit.",
+            is_error=True,
+            failure_code="SOURCE_TOO_LARGE",
+            rejected_path=action.path[:512],
+            allowed_paths=source_replace_allowed_paths(sandbox, writable_files),
+            source_sha256=hashlib.sha256(action.source.encode("utf-8")).hexdigest(),
         )
-    journal.record_direct_source_replacement(action)
+    else:
+        executor = (
+            SourceEditExecutor(sandbox, writable_files)
+            if isinstance(action, SourceEditAction)
+            else SourceReplaceExecutor(sandbox, writable_files)
+        )
+        observation = executor(action)
+    if journal is not None:
+        if observation.is_error:
+            journal.record_direct_source_rejection(
+                failure_code=observation.failure_code or "SOURCE_WRITE_FAILED",
+                rejected_path=observation.rejected_path,
+                allowed_paths=observation.allowed_paths,
+                source_sha256=observation.source_sha256,
+                tool_name=tool_name,
+                failure_detail=observation.failure_detail,
+            )
+        elif isinstance(action, SourceEditAction):
+            journal.record_direct_source_edit(action, observation)
+        else:
+            journal.record_direct_source_replacement(action)
+    return observation
 
 
 def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
@@ -1318,14 +2019,41 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         raise RuntimeError(
             "Harnessed OpenHands tasks require the isolated EasyDep Linux runner."
         )
+    frozen_recheck = repair_recheck_for_task(run_root, task_id)
+    frozen_candidate = _frozen_unit_candidate(run_root, task, frozen_recheck)
+    if frozen_recheck is not None:
+        if frozen_candidate is None:
+            raise WorkspaceVerificationError({
+                "command": ["frozen-unit-recheck"], "exitCode": 1,
+                "stdout": "", "stderr": "Frozen unit-test candidate is unavailable.",
+                "testResults": "",
+            })
+        return _execute_frozen_unit_recheck(
+            run_root, task, task_id, frozen_candidate
+        )
     active_repair = active_repair_for_task(run_root, task_id)
     editable_paths, editable_roots, immutable = _task_execution_scope(task, active_repair)
+    frozen_repair_candidate = _frozen_unit_candidate(run_root, task, active_repair)
+    active_review = (
+        active_repair.get("unitFailureReview")
+        if isinstance(active_repair, dict)
+        else None
+    )
+    editable_frozen_test = (
+        isinstance(active_review, dict)
+        and active_review.get("classification") == "test_oracle"
+    )
+    frozen_readonly_paths: list[str] = []
+    if frozen_repair_candidate is not None and not editable_frozen_test:
+        frozen_readonly_paths = [frozen_repair_candidate["sourcePath"]]
+        immutable = sorted({*immutable, *frozen_readonly_paths})
     required_paths = [str(path) for path in task.get("required_output_paths", editable_paths)]
     task = {
         **task,
         "allowed_write_paths": editable_paths,
         "allowed_write_roots": editable_roots,
         "immutable_paths": immutable,
+        "frozen_readonly_paths": frozen_readonly_paths,
     }
     owner_tool_mode = (
         str(task.get("owner_tool_mode") or settings.implementation_owner_tool_mode)
@@ -1343,32 +2071,15 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     bounded_evidence = task_type in {
         "backend-implementation",
         "integration-implementation",
+        "backend-unit-test",
+        "frontend-unit-test",
     }
-    if bounded_evidence and task_type != "backend-implementation":
+    if bounded_evidence and task_type not in {
+        "backend-implementation",
+        "backend-unit-test",
+        "frontend-unit-test",
+    }:
         owner_tool_mode = "restricted"
-    if owner_task and task_type == "integration-implementation":
-        source_refs = [
-            value
-            for value in task.get("source_refs", task.get("sourceRefs", []))
-            if isinstance(value, str) and value
-        ]
-        integration_payload = prepare_integration_admission_payload(
-            run_root, task, context, source_refs
-        )
-        if not demo_skip_validation_enabled():
-            admission_started = time.monotonic()
-            admission_gap = preflight_semantic_integration(
-                run_root, task, context, source_refs, payload=integration_payload
-            )
-            if admission_gap is not None:
-                return _persist_admission_gap(
-                    run_root,
-                    task,
-                    task_id,
-                    admission_gap,
-                    execution_attempt(run_root, task_id),
-                    admission_started,
-                )
     if (
         task.get('completion_mode', 'agent') == 'verify-or-repair'
         and task_type == 'integration-implementation'
@@ -1388,12 +2099,14 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             persistent=True,
             requires_owner_terminal=owner_tool_mode == 'terminal',
         )
-        passed, diagnosis = run_task_check(
+        precheck = TaskCheckSession(
             precheck_sandbox,
             task_type,
             editable_paths,
             precheck_profile,
         )
+        passed, diagnosis = precheck.run()
+        precheck_evidence = precheck.last_evidence
         if passed:
             verification = consume_successful_task_check(
                 precheck_sandbox,
@@ -1413,15 +2126,40 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                     precheck_started,
                 )
             diagnosis = 'TASK CHECK PASSED BUT ITS EVIDENCE COULD NOT BE REUSED'
-        if is_infrastructure_task_check_failure(diagnosis):
+        startup_evidence = (
+            precheck_evidence.get("applicationStartup")
+            if isinstance(precheck_evidence, dict)
+            else None
+        )
+        typed_startup_infrastructure_failure = (
+            isinstance(startup_evidence, dict)
+            and startup_evidence.get("defectClass") == "ENVIRONMENT_DEFECT"
+        )
+        if (
+            is_infrastructure_task_check_failure(diagnosis)
+            or typed_startup_infrastructure_failure
+        ):
             cleanup_agent_workspace(precheck_sandbox, run_root=run_root)
-            raise OwnerConversationIncomplete({
-                'command': ['run_task_check'],
-                'exitCode': 1,
-                'stdout': '',
-                'stderr': diagnosis,
-                'testResults': '',
-            })
+            raise OwnerConversationIncomplete(
+                precheck_evidence
+                if isinstance(precheck_evidence, dict)
+                else {
+                    'command': ['run_task_check'],
+                    'exitCode': 1,
+                    'stdout': '',
+                    'stderr': diagnosis,
+                    'testResults': '',
+                }
+            )
+        if isinstance(precheck_evidence, dict):
+            attributed = _integration_source_owner_attribution(
+                run_root, task_id, precheck_evidence, diagnosis
+            )
+            if attributed is not None:
+                precheck_evidence["repairTaskId"] = attributed["taskId"]
+                precheck_evidence["attributedTargetFile"] = attributed["targetFile"]
+                cleanup_agent_workspace(precheck_sandbox, run_root=run_root)
+                raise WorkspaceVerificationError(precheck_evidence)
         initial_verification = {'status': 'FAILED', 'diagnosis': diagnosis}
         completion_path = 'repair-agent'
     editor_mode = owner_task and owner_tool_mode == "editor"
@@ -1444,6 +2182,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         persistent=owner_task,
         requires_owner_terminal=requires_owner_terminal,
     )
+    if frozen_repair_candidate is not None:
+        frozen_source = run_root / frozen_repair_candidate["path"]
+        frozen_target = sandbox / frozen_repair_candidate["sourcePath"]
+        frozen_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(frozen_source, frozen_target)
     logical_workspace = (
         prepare_owner_workspace_alias(sandbox, task_id) if owner_task else sandbox
     )
@@ -1462,7 +2205,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             )
             + "\n\n## Evidence boundary\n\n"
             + _owner_evidence_boundary_message(
-                task.get("required_test_paths", task.get("requiredTestPaths", []))
+                task.get("required_test_paths", task.get("requiredTestPaths", [])), task_type
             )
         )
     if initial_verification is not None:
@@ -1495,6 +2238,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
         if isinstance(verification_profile, dict) and verification_profile
         else None
     )
+    if task_type in {"backend-unit-test", "frontend-unit-test"}:
+        prompt += _unit_test_subject_evidence(sandbox, verification_profile)
     access_contract = OwnerAccessContract.build(
         sandbox=sandbox,
         run_root=run_root,
@@ -1624,6 +2369,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             task_type=task_type,
             verification_paths=editable_paths,
             verification_profile=verification_profile,
+            frontend_unit_report_path=(
+                run_root / "reports" / "agent-executions" / f"{task_id}.vitest.json"
+                if task_type == "frontend-unit-test"
+                else None
+            ),
             editable_files=writable_files,
             editable_roots=writable_roots,
             readable_files=readable_files,
@@ -1739,7 +2489,15 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             run_openhands_conversation(conversation)
         if editor_mode and reported_upstream_gap(agent) is None:
             first_changes = changed_files(before, snapshot_files(sandbox))
-            if not any(path in editable_paths for path in first_changes):
+            # A persistent owner sandbox may already contain an unpromoted,
+            # canonical-different candidate from its prior conversation.  A
+            # repeated replace_source body then has no *attempt* delta, but it
+            # still needs the normal verifier and promotion-boundary decision.
+            candidate_changes = _candidate_application_changes(sandbox, run_root)
+            if (
+                not any(path in editable_paths for path in first_changes)
+                and not candidate_changes
+            ):
                 raise OwnerConversationIncomplete(
                     {
                         "command": ["replace_source"],
@@ -1749,10 +2507,27 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                         "testResults": "",
                     }
                 )
-            passed, diagnosis = run_task_check(
-                sandbox, task_type, editable_paths, verification_profile
+            editor_check = TaskCheckSession(
+                sandbox,
+                task_type,
+                editable_paths,
+                verification_profile,
+                (
+                    run_root / "reports" / "agent-executions" / f"{task_id}.vitest.json"
+                    if task_type == "frontend-unit-test"
+                    else None
+                ),
             )
+            passed, diagnosis = editor_check.run()
             if not passed:
+                if (
+                    task_type in {"backend-unit-test", "frontend-unit-test"}
+                    and isinstance(editor_check.last_evidence, dict)
+                    and _is_executed_unit_assertion_failure(editor_check.last_evidence)
+                ):
+                    # The test is now a frozen oracle. Do not send its failure
+                    # back to its test-writing editor, which could weaken it.
+                    raise WorkspaceVerificationError(editor_check.last_evidence)
                 if is_infrastructure_task_check_failure(diagnosis):
                     raise OwnerConversationIncomplete(
                         {
@@ -1773,10 +2548,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             "testResults": "",
                         }
                     )
-                current_sources = "\n\n".join(
-                    f"### `{path}`\n```{ {'.tsx': 'tsx', '.ts': 'typescript', '.jsx': 'jsx', '.js': 'javascript', '.css': 'css', '.java': 'java'}.get(Path(path).suffix.casefold(), 'text') }\n{(sandbox / path).read_text(encoding='utf-8')}\n```"
-                    for path in editable_paths
-                    if (sandbox / path).is_file()
+                repair_evidence = _editor_read_source_evidence(
+                    sandbox, context, writable_files
                 )
                 repair_before = snapshot_files(sandbox)
                 from openhands.sdk.conversation.state import ConversationExecutionStatus
@@ -1784,8 +2557,7 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 conversation.state.execution_status = ConversationExecutionStatus.IDLE
                 conversation.send_message(
                     EDITOR_REPAIR_MESSAGE
-                    + "## Current source\n\n"
-                    + current_sources
+                    + repair_evidence
                     + "\n\n## Exact diagnosis\n\n"
                     + diagnosis
                 )
@@ -1799,11 +2571,21 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                             "stdout": "",
                             "stderr": "Editor repair made no source change.",
                             "testResults": "",
+                            "initialTaskCheckDiagnosis": diagnosis,
+                            "initialTaskCheckEvidence": editor_check.last_evidence,
                         }
                     )
                 if reported_upstream_gap(agent) is None:
                     passed, diagnosis = run_task_check(
-                        sandbox, task_type, editable_paths, verification_profile
+                        sandbox,
+                        task_type,
+                        editable_paths,
+                        verification_profile,
+                        frontend_unit_report_path=(
+                            run_root / "reports" / "agent-executions" / f"{task_id}.vitest.json"
+                            if task_type == "frontend-unit-test"
+                            else None
+                        ),
                     )
                     if not passed:
                         if is_infrastructure_task_check_failure(diagnosis):
@@ -2038,6 +2820,8 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             "owner": str(task.get("owner") or ""),
             "promptSha256": task.get("prompt_sha256"),
             "status": "INTERRUPTED" if interrupted else "FAILED",
+            "completionPath": completion_path,
+            "initialVerification": initial_verification,
             "effectiveModel": connection.litellm_model(),
             "errorType": error.__class__.__name__,
             "error": str(error),
@@ -2088,6 +2872,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             ),
         }
         if isinstance(error, WorkspaceVerificationError):
+            frozen_candidate = _preserve_failed_unit_candidate(
+                sandbox, run_root, task, task_id, error.evidence
+            )
+            if frozen_candidate is not None:
+                error.evidence["frozenTestCandidate"] = frozen_candidate
             failure["verificationEvidence"] = error.evidence
         failure["conversationStats"] = _conversation_stats_snapshot(conversation)
         write_execution_result(execution_dir, task_id, attempt, failure)
@@ -2108,8 +2897,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     changed = candidate_changes
     promoted_files = changed | {path for path in required_paths if (sandbox / path).is_file()}
     _promote_changed_files(sandbox, run_root, promoted_files)
-    if task_type == "frontend-implementation":
-        store_frontend_build(run_root, sandbox, verification)
+    if task_type == "integration-implementation":
+        frontend_build = verification.get("frontendVerification")
+        if isinstance(frontend_build, dict):
+            store_frontend_build(run_root, sandbox, frontend_build)
     result = {
         "taskId": task_id,
         "taskType": task_type,
@@ -2348,20 +3139,27 @@ class _DirectEditorConversation:
         self.llm_config = llm_config
         self.editable_files = editable_files
         self.callbacks = callbacks
+        self.initial_prompt: str | None = None
         self.prompt = ""
         self.state = type("DirectEditorState", (), {"execution_status": None, "events": []})()
 
     def send_message(self, message: str) -> None:
-        self.prompt = message
+        if self.initial_prompt is None:
+            self.initial_prompt = message
+            self.prompt = message
+            return
+        # Direct editor calls are stateless API requests. Keep the original
+        # task contract on a repair request while replacing (rather than
+        # accumulating) the latest source evidence and diagnosis.
+        self.prompt = (
+            self.initial_prompt
+            + "\n\n## Latest repair context\n\n"
+            + message
+        )
 
     def run(self) -> None:
         from openhands.sdk.conversation.state import ConversationExecutionStatus
 
-        action = _request_direct_editor_action(
-            self.connection,
-            self.prompt,
-            self.llm_config,
-        )
         journal = next(
             (
                 callback
@@ -2370,30 +3168,90 @@ class _DirectEditorConversation:
             ),
             None,
         )
-        if journal is None:
-            if len(action.source.encode("utf-8")) > EDITOR_WRITABLE_SOURCE_MAX_BYTES:
-                raise WorkspaceVerificationError(
-                    {
-                        "command": ["replace_source"],
-                        "exitCode": 1,
-                        "stdout": "",
-                        "stderr": "Replacement source exceeds the 64 KiB direct-editor limit.",
-                        "testResults": "",
-                    }
+        allowed_paths = source_replace_allowed_paths(self.sandbox, self.editable_files)
+        base_request_prompt = self.prompt
+        retry_delay = 1
+        while True:
+            try:
+                action = _request_direct_editor_action(
+                    self.connection,
+                    self.prompt,
+                    self.llm_config,
+                    allowed_paths,
                 )
-            observation = SourceReplaceExecutor(self.sandbox, self.editable_files)(action)
-            if observation.is_error:
-                raise WorkspaceVerificationError(
-                    {
-                        "command": ["replace_source"],
-                        "exitCode": 1,
-                        "stdout": "",
-                        "stderr": str(observation),
-                        "testResults": "",
-                    }
+            except DirectEditorResponseError as error:
+                if not error.retryable:
+                    raise
+                failure = {
+                    "failureCode": error.failure_code,
+                    "rejectedPath": error.rejected_path,
+                    "allowedPaths": allowed_paths[:16],
+                    "sourceSha256": error.source_sha256,
+                    "fieldIssues": error.field_issues,
+                }
+                if journal is not None:
+                    journal.record_direct_source_rejection(
+                        failure_code=error.failure_code,
+                        rejected_path=error.rejected_path,
+                        allowed_paths=allowed_paths,
+                        source_sha256=error.source_sha256,
+                        tool_name=error.tool_name,
+                        field_issues=error.field_issues,
+                    )
+            else:
+                observation = _apply_direct_editor_action(
+                    self.sandbox, self.editable_files, action, journal
                 )
-        else:
-            _apply_direct_editor_action(self.sandbox, self.editable_files, action, journal)
+                if not observation.is_error:
+                    break
+                if observation.failure_code not in {
+                    "EMPTY_SOURCE",
+                    "SOURCE_TOO_LARGE",
+                    "INVALID_PATH_ARGUMENT",
+                    "PATH_OUTSIDE_WORKSPACE",
+                    "WRITE_OUTSIDE_OWNER_SCOPE",
+                    "EDIT_TARGET_MISSING",
+                    "EDIT_CONTEXT_STALE",
+                    "EDIT_CONTEXT_AMBIGUOUS",
+                    "EDIT_CONTEXT_OVERLAP",
+                }:
+                    raise WorkspaceVerificationError(
+                        {
+                            "command": [
+                                SOURCE_EDIT_TOOL_NAME
+                                if isinstance(action, SourceEditAction)
+                                else SOURCE_REPLACE_TOOL_NAME
+                            ],
+                            "exitCode": 1,
+                            "stdout": "",
+                            "stderr": observation.text[:1200],
+                            "testResults": "",
+                        "sourceReplaceFailure": {
+                            "failureCode": observation.failure_code,
+                            "rejectedPath": observation.rejected_path,
+                            "allowedPaths": observation.allowed_paths[:16],
+                            "sourceSha256": observation.source_sha256,
+                            "failureDetail": observation.failure_detail,
+                        },
+                        }
+                    )
+                failure = {
+                    "failureCode": observation.failure_code,
+                    "rejectedPath": observation.rejected_path,
+                    "allowedPaths": observation.allowed_paths[:16],
+                    "sourceSha256": observation.source_sha256,
+                    "fieldIssues": [],
+                }
+            self.prompt = (
+                base_request_prompt
+                + "\n\n## Latest source tool argument correction\n\n"
+                + json.dumps(failure, ensure_ascii=False, sort_keys=True)
+                + "\nChoose an allowed path exactly as listed. For edit_source provide unique "
+                "exact old_text/new_text contexts; otherwise use replace_source with a complete "
+                "source body. Do not edit or redirect to any other file."
+            )
+            time.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, 30)
         self.state.execution_status = ConversationExecutionStatus.FINISHED
 
     def close(self) -> None:
@@ -2408,6 +3266,7 @@ def create_openhands_conversation(
     task_type: str = "",
     verification_paths: list[str] | None = None,
     verification_profile: dict[str, object] | None = None,
+    frontend_unit_report_path: Path | None = None,
     editable_files: list[str] | None = None,
     editable_roots: list[str] | None = None,
     readable_files: list[str] | None = None,
@@ -2443,7 +3302,11 @@ def create_openhands_conversation(
             list(editable_files or []),
             list(callbacks or []),
         )
-        return direct, type("DirectEditorAgent", (), {"_tools": {"replace_source": None}})()
+        return direct, type(
+            "DirectEditorAgent",
+            (),
+            {"_tools": {"finish": None, "replace_source": None, "edit_source": None}},
+        )()
 
     from openhands.sdk import LLM, Agent, AgentContext, Conversation, Tool, register_tool
     from openhands.sdk.context.condenser import default_condenser
@@ -2913,7 +3776,11 @@ def create_openhands_conversation(
                 Tool(
                     name=register_source_replace_tool(),
                     params={"allowed_files": editable_files or []},
-                )
+                ),
+                Tool(
+                    name=register_source_edit_tool(),
+                    params={"allowed_files": editable_files or []},
+                ),
             ]
             if upstream_gap_source_refs is not None:
                 tools.append(
@@ -2949,6 +3816,9 @@ def create_openhands_conversation(
                             "task_type": task_type,
                             "allowed_write_paths": verification_paths or [],
                             "verification_profile": verification_profile or {},
+                            "frontend_unit_report_path": str(frontend_unit_report_path)
+                            if frontend_unit_report_path
+                            else None,
                         },
                     ),
                 ]
@@ -3002,6 +3872,9 @@ def create_openhands_conversation(
                     "task_type": task_type,
                     "allowed_write_paths": verification_paths or [],
                     "verification_profile": verification_profile or {},
+                    "frontend_unit_report_path": str(frontend_unit_report_path)
+                    if frontend_unit_report_path
+                    else None,
                 },
             ),
         ]

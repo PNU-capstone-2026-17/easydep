@@ -1,4 +1,5 @@
 import hashlib
+import hashlib
 import json
 from pathlib import Path
 
@@ -10,6 +11,11 @@ from app.implementation.diagnostics.owner_replay import (
     replay_owner_task,
     replay_owner_tasks_sequentially,
 )
+
+
+@pytest.fixture(autouse=True)
+def _avoid_docker_volume_cleanup(monkeypatch):
+    monkeypatch.setattr(owner_replay, "remove_owner_workspace_volume", lambda *_args: True)
 
 
 def _task(*, task_type: str = "backend-implementation", prompt: str = "new") -> dict[str, object]:
@@ -140,6 +146,12 @@ def test_replay_executes_one_owner_and_removes_workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(owner_replay, "materialize_owner_tasks", _materializer(materializer_calls))
     work_root = tmp_path / "diagnostics"
     client = FakeClient(work_root)
+    removed_volumes: list[tuple[Path, Path, Path]] = []
+    monkeypatch.setattr(
+        owner_replay,
+        "remove_owner_workspace_volume",
+        lambda run, job, repo: removed_volumes.append((run, job, repo)) or True,
+    )
 
     result = replay_owner_task(
         client, job_path=job, old_run_root=old_run, task_id="owner-1", output_root=tmp_path / "results"
@@ -162,6 +174,10 @@ def test_replay_executes_one_owner_and_removes_workspace(tmp_path, monkeypatch):
     assert payload["oldPromptSha256"] == hashlib.sha256(b"old").hexdigest()
     assert payload["newPromptSha256"] == hashlib.sha256(b"new").hexdigest()
     assert payload["execution"]["token"] == "[REDACTED]"  # noqa: S105
+    assert len(removed_volumes) == 1
+    assert removed_volumes[0][0] == client.calls[1][1]
+    assert removed_volumes[0][1] == cloned_job.parent
+    assert removed_volumes[0][2] == tmp_path.resolve()
     evidence_root = (tmp_path / "results") / payload["evidence"]["root"]
     assert (evidence_root / "task" / "task.json").is_file()
     assert (evidence_root / "task" / "prompt.md").is_file()
@@ -170,6 +186,126 @@ def test_replay_executes_one_owner_and_removes_workspace(tmp_path, monkeypatch):
     assert (old_run / "reports" / "implementation-tasks" / "owner-1.task.json").read_bytes() == old_checkpoint
     assert not list(work_root.glob("owner-replay-*"))
     assert result.is_file()
+
+
+def _unit_replay_fixture(tmp_path: Path, *, source_exists: bool = True):
+    job, old_run = _saved(tmp_path)
+    parent_id = "owner-1-implementation"
+    subject = "application/frontend/src/features/example.tsx"
+    test_path = "application/frontend/src/features/example.test.tsx"
+    task = {
+        **_task(task_type="frontend-unit-test", prompt="unit prompt"),
+        "depends_on": [parent_id],
+        "allowed_write_paths": [test_path],
+        "required_test_paths": [test_path],
+        "verification_profile": {"unitTestSubjectPaths": [subject]},
+    }
+    _write_task(old_run, task, "unit prompt")
+    manifest_path = old_run / "reports" / "run-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["implementation_tasks"] = [
+        {"task_id": parent_id, "allowed_write_paths": [subject]},
+        task,
+    ]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    source_bytes = b"export const completedSubject = true;\n"
+    (old_run / "reports" / "workflow-state.json").write_text(
+        json.dumps({
+            "tasks": [{
+                "task_id": parent_id,
+                "status": "SUCCEEDED",
+                "outputHashes": {subject: hashlib.sha256(source_bytes).hexdigest()},
+            }]
+        }),
+        encoding="utf-8",
+    )
+    if source_exists:
+        original = old_run / subject
+        original.parent.mkdir(parents=True, exist_ok=True)
+        original.write_bytes(source_bytes)
+
+    def materialize(run_root: Path, _spec: object) -> list[dict[str, object]]:
+        generated_subject = run_root / subject
+        assert generated_subject.read_text(encoding="utf-8") == "export const completedSubject = true;\n"
+        tasks = run_root / "reports" / "implementation-tasks"
+        tasks.mkdir(parents=True, exist_ok=True)
+        (tasks / "owner-1.task.json").write_text(json.dumps(task), encoding="utf-8")
+        (tasks / "owner-1.prompt.md").write_text("unit prompt", encoding="utf-8")
+        (tasks / "owner-1.context.json").write_text("{}", encoding="utf-8")
+        return [task]
+
+    return job, old_run, task, subject, test_path, materialize
+
+
+def test_unit_replay_copies_explicit_completed_subject_and_preserves_test_evidence(tmp_path, monkeypatch):
+    job, old_run, task, subject, test_path, materialize = _unit_replay_fixture(tmp_path)
+    monkeypatch.setattr(owner_replay, "materialize_owner_tasks", materialize)
+    original = (old_run / subject).read_bytes()
+    observed: list[bytes] = []
+
+    class UnitClient(FakeClient):
+        def generate(self, job_path):
+            run_root = super().generate(job_path)
+            generated_subject = run_root / subject
+            generated_subject.parent.mkdir(parents=True, exist_ok=True)
+            generated_subject.write_text("export const freshPlaceholder = true;\n", encoding="utf-8")
+            return run_root
+
+        def run_owner(self, run_root, job_path, task_id):
+            observed.append((run_root / subject).read_bytes())
+            test_file = run_root / test_path
+            test_file.parent.mkdir(parents=True, exist_ok=True)
+            test_file.write_text("describe('real subject', () => {});\n", encoding="utf-8")
+            execution_dir = run_root / "reports" / "agent-executions"
+            execution_dir.mkdir(parents=True, exist_ok=True)
+            (execution_dir / f"{task_id}.vitest.json").write_text('{"numTotalTests":1}', encoding="utf-8")
+            return {"status": "SUCCEEDED"}
+
+    output = tmp_path / "results"
+    result = replay_owner_task(
+        UnitClient(tmp_path / "diagnostics"),
+        job_path=job,
+        old_run_root=old_run,
+        task_id="owner-1",
+        output_root=output,
+    )
+    payload = json.loads(result.read_text(encoding="utf-8"))
+    assert observed == [original]
+    assert (old_run / subject).read_bytes() == original
+    assert payload["unitTestSubjectSources"] == [{
+        "path": subject,
+        "bytes": len(original),
+        "sha256": hashlib.sha256(original).hexdigest(),
+    }]
+    evidence_root = output / payload["evidence"]["root"]
+    assert (evidence_root / "task-output" / "unitSubjects" / "01-example.tsx").read_bytes() == original
+    assert (evidence_root / "task-output" / "unitTests" / "01-example.test.tsx").is_file()
+    assert (evidence_root / "agent-executions" / "owner-1.vitest.json").is_file()
+
+
+def test_unit_replay_fails_clearly_when_completed_subject_is_missing(tmp_path, monkeypatch):
+    job, old_run, _task_value, subject, _test_path, materialize = _unit_replay_fixture(
+        tmp_path, source_exists=False
+    )
+    monkeypatch.setattr(owner_replay, "materialize_owner_tasks", materialize)
+    class PlaceholderClient(FakeClient):
+        def generate(self, job_path):
+            run_root = super().generate(job_path)
+            generated_subject = run_root / subject
+            generated_subject.parent.mkdir(parents=True, exist_ok=True)
+            generated_subject.write_text("export const freshPlaceholder = true;\n", encoding="utf-8")
+            return run_root
+
+    client = PlaceholderClient(tmp_path / "diagnostics")
+    with pytest.raises(OwnerReplayError, match="Completed unit replay subject is missing"):
+        replay_owner_task(
+            client,
+            job_path=job,
+            old_run_root=old_run,
+            task_id="owner-1",
+            output_root=tmp_path / "results",
+        )
+    assert not [call for call in client.calls if isinstance(call, tuple) and call[0] == "owner"]
 
 
 def test_replay_can_map_a_saved_owner_to_one_fresh_operation_task(
@@ -329,6 +465,77 @@ def test_replay_writes_failure_result_and_cleans_up_when_owner_fails(tmp_path, m
     assert str(run_root) not in json.dumps(payload)
     assert str(run_root) not in json.dumps(copied_result)
     assert len(materializer_calls) == 1
+    assert not list(work_root.glob("owner-replay-*"))
+
+
+def test_replay_preserves_frontend_vitest_report_and_frozen_candidate(tmp_path, monkeypatch):
+    job, old_run, _task_value, _subject, test_source, materialize = _unit_replay_fixture(tmp_path)
+    task_id = "owner-1"
+    monkeypatch.setattr(owner_replay, "materialize_owner_tasks", materialize)
+    work_root = tmp_path / "diagnostics"
+    output = tmp_path / "results"
+    client = FakeClient(work_root)
+    report = {
+        "numTotalTests": 3,
+        "numPassedTests": 2,
+        "numFailedTests": 1,
+        "testResults": [
+            {
+                "assertionResults": [
+                    {
+                        "fullName": "DropRegistration handles API failure",
+                        "status": "failed",
+                        "failureMessages": ["expected 404, received 200"],
+                    }
+                ]
+            }
+        ],
+    }
+    frozen_path = f"reports/agent-executions/{task_id}.frozen-test.tsx"
+    frozen_source = "it('keeps the approved oracle', () => expect(true).toBe(false));\n"
+
+    def fail_with_unit_report(run_root: Path, _job_path: Path, _task: str) -> dict[str, object]:
+        execution_dir = run_root / "reports" / "agent-executions"
+        execution_dir.mkdir(parents=True, exist_ok=True)
+        (execution_dir / f"{task_id}.vitest.json").write_text(
+            json.dumps(report), encoding="utf-8"
+        )
+        (run_root / frozen_path).write_text(frozen_source, encoding="utf-8")
+        result = {
+            "taskId": task_id,
+            "status": "FAILED",
+            "verificationEvidence": {
+                "frozenTestCandidate": {
+                    "path": frozen_path,
+                    "sourcePath": test_source,
+                    "sha256": hashlib.sha256(frozen_source.encode("utf-8")).hexdigest(),
+                }
+            },
+        }
+        (execution_dir / f"{task_id}.result.json").write_text(
+            json.dumps(result), encoding="utf-8"
+        )
+        raise RuntimeError("owner failed after canonical unit check")
+
+    client.run_owner = fail_with_unit_report
+    with pytest.raises(RuntimeError, match="canonical unit check"):
+        replay_owner_task(
+            client,
+            job_path=job,
+            old_run_root=old_run,
+            task_id=task_id,
+            output_root=output,
+        )
+
+    payload = json.loads(next(output.glob("owner-replay-result-*.json")).read_text(encoding="utf-8"))
+    evidence_root = output / payload["evidence"]["root"] / "agent-executions"
+    preserved_report = evidence_root / f"{task_id}.vitest.json"
+    preserved_candidate = evidence_root / Path(frozen_path).name
+    assert json.loads(preserved_report.read_text(encoding="utf-8")) == report
+    assert preserved_candidate.read_text(encoding="utf-8") == frozen_source
+    copied = set(payload["evidence"]["agentExecutions"])
+    assert preserved_report.relative_to(output).as_posix() in copied
+    assert preserved_candidate.relative_to(output).as_posix() in copied
     assert not list(work_root.glob("owner-replay-*"))
 
 

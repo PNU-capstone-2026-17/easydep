@@ -3,6 +3,7 @@
   import { downloadImplementationArtifacts } from '$lib/api';
   import type { ActionOffer, WorkspaceCommand } from '$lib/types';
   import { Button } from '$lib/components/ui/button';
+  import { isRecoveryAction } from '$lib/auto-mode';
 
   let {
     command,
@@ -36,25 +37,25 @@
   let messageChoices = $derived(
     actions.filter((offer) => offer.action === 'message' && hasMessageText(offer))
   );
-  let messageInput = $derived(
-    actions.find((offer) => offer.action === 'message' && !hasMessageText(offer))
-  );
-  let buttonActions = $derived(
-    actions.filter(
-      offer =>
-        offer.action !== 'message' && offer.action !== 'rerun_implementation'
-    )
-  );
   let resourceQuestion = $derived(result?.resource_question ?? result?.resource_questions?.[0] ?? null);
   let questionText = $derived(
     String(resourceQuestion?.question ?? result?.question ?? result?.questions?.[0]?.question ?? '').trim()
   );
-  let requiresRevision = $derived(Boolean(result?.requires_revision));
-  let repairStalled = $derived(result?.repair_state?.status === 'STALLED');
-  let repairStallReason = $derived(String(result?.repair_state?.stall_reason ?? '').trim());
+  let messageInput = $derived(
+    result?.requires_revision && !questionText
+      ? undefined
+      : actions.find((offer) => offer.action === 'message' && !hasMessageText(offer))
+  );
+  let buttonActions = $derived(
+    actions.filter(
+      (offer) =>
+        offer.action !== 'message' &&
+        !isRecoveryAction(offer.action, command)
+    )
+  );
   let implementationAction = $derived(
     command?.stage === 'implementation' &&
-      ['retry_implementation', 'rerun_implementation', 'start_implementation'].includes(command.action)
+      command.action === 'start_implementation'
       ? command.action
       : null
   );
@@ -153,19 +154,9 @@
       </span>
     </div>
   {/if}
-  {#if questionText || requiresRevision}
+  {#if questionText}
     <div class="mb-2 rounded-xl border border-[#e5ddc9] bg-[#fffaf0] p-2.5 text-xs text-[#74520c]">
-      {#if questionText}<p class="text-sm font-medium text-[#5f4610]">{questionText}</p>{/if}
-      {#if requiresRevision}
-        <p class:mt-1={Boolean(questionText)}>
-          {repairStalled
-            ? 'Automatic repair could not reduce the blockers. Enter a specific revision request to continue.'
-            : 'Review the blocking findings and enter a specific revision request to continue.'}
-        </p>
-        {#if repairStallReason}
-          <p class="mt-1 text-[11px] text-[#876f45]">{repairStallReason}</p>
-        {/if}
-      {/if}
+      <p class="text-sm font-medium text-[#5f4610]">{questionText}</p>
     </div>
   {/if}
 

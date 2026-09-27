@@ -246,7 +246,9 @@ def test_subprocess_restores_the_same_provider_endpoint_and_model(
 ) -> None:
     """하위 프로세스도 host와 같은 연결을 복원하며 adapter도 바꾸지 않는다."""
 
-    config = _provider_settings(provider, base_url, model)
+    config = _provider_settings(provider, base_url, model).model_copy(
+        update={"implementation_reasoning_effort": "none"}
+    )
     environment = llm_subprocess_environment(config)
     expected_api_key = (
         "test-cloudflare-secret" if provider == "cloudflare" else "test-provider-secret"
@@ -260,6 +262,7 @@ def test_subprocess_restores_the_same_provider_endpoint_and_model(
     assert environment["API_KEY"] == expected_api_key
     assert environment["LLM_TIMEOUT_SECONDS"] == "300.0"
     assert environment["LLM_WALL_TIMEOUT_SECONDS"] == "330.0"
+    assert environment["IMPLEMENTATION_REASONING_EFFORT"] == "none"
     assert environment["IMPLEMENTATION_OPENHANDS_REQUEST_ATTEMPTS"] == "3"
     assert environment["IMPLEMENTATION_OPENHANDS_RETRY_MIN_WAIT_SECONDS"] == "1"
     assert environment["IMPLEMENTATION_OPENHANDS_RETRY_MAX_WAIT_SECONDS"] == "8"

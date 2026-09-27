@@ -104,7 +104,13 @@ def load_strict_task(
     prompt_path = (root / str(task["prompt_file"])).resolve()
     try:
         prompt_path.relative_to(root)
-        prompt_hash = prompt_file_sha256(prompt_path)
+        prompt_text = prompt_path.read_text(encoding="utf-8")
+        repair_prompt = task.get("repair_prompt_file")
+        if isinstance(repair_prompt, str) and repair_prompt:
+            repair_path = (root / repair_prompt).resolve()
+            repair_path.relative_to(root)
+            prompt_text += "\0" + repair_path.read_text(encoding="utf-8")
+        prompt_hash = hashlib.sha256(prompt_text.encode("utf-8")).hexdigest()
     except (OSError, ValueError) as error:
         raise ValueError(f"Task prompt is unavailable for {task_id!r}") from error
     if prompt_hash != task["prompt_sha256"]:
@@ -232,17 +238,16 @@ def prepare_agent_workspace(
     if sandbox_application.is_dir():
         if requires_owner_terminal:
             _restore_coordinator_access(sandbox)
-        if not (persistent and preserve_failed_edits and not requires_owner_terminal):
-            _refresh_agent_workspace(
-                run_root,
-                source_application,
-                sandbox,
-                sandbox_application,
-                editable,
-                editable_roots,
-                immutable,
-                preserve_failed_edits=preserve_failed_edits,
-            )
+        _refresh_agent_workspace(
+            run_root,
+            source_application,
+            sandbox,
+            sandbox_application,
+            editable,
+            editable_roots,
+            immutable,
+            preserve_failed_edits=preserve_failed_edits,
+        )
     else:
         sandbox.mkdir(parents=True, exist_ok=True)
         shutil.copytree(

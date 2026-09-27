@@ -4,7 +4,13 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from app.design.contracts.api_spec import ApiSpecProposal
+from app.design.contracts.api_spec import (
+    ApiEndpoint,
+    ApiField,
+    ApiSchema,
+    ApiSpecModel,
+    ApiSpecProposal,
+)
 from app.design.contracts.type_system import (
     api_type_for_design,
     canonical_design_type,
@@ -14,6 +20,7 @@ from app.design.contracts.type_system import (
 )
 from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec.normalization import (
+    api_input_type_for_control,
     interaction_contracts,
     normalize_api_spec_model,
 )
@@ -48,7 +55,21 @@ from app.testing.utils.arazzo_executor import execute_arazzo_workflow
         ("timestamp", "Instant", "Instant", "date-time", {"type": "string", "format": "date-time"}, "TIMESTAMP WITH TIME ZONE"),
         ("offsetdatetime", "OffsetDateTime", "OffsetDateTime", "date-time", {"type": "string", "format": "date-time"}, "TIMESTAMP WITH TIME ZONE"),
         ("zoneddatetime", "ZonedDateTime", "ZonedDateTime", "date-time", {"type": "string", "format": "date-time"}, "TIMESTAMP WITH TIME ZONE"),
-        ("time", "LocalTime", "LocalTime", "string", {"type": "string"}, "TIME"),
+        (
+            "time", "LocalTime", "LocalTime", "time",
+            {
+                "type": "string",
+                "format": "local-time",
+                "pattern": (
+                    r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]"
+                    r"(?::[0-5][0-9](?:\.[0-9]{1,9})?)?$"
+                ),
+                "description": (
+                    "Local time without a UTC offset, in Java LocalTime ISO_LOCAL_TIME form."
+                ),
+            },
+            "TIME",
+        ),
         ("byte[]", "byte[]", "byte[]", "binary", {"type": "string", "format": "byte"}, "BLOB"),
     ],
 )
@@ -82,6 +103,47 @@ def test_aliases_and_nested_containers_have_canonical_semantics() -> None:
         "type": "array",
         "items": {"type": "number"},
     }
+
+
+def test_local_time_wire_shape_survives_api_normalization_and_openapi_projection() -> None:
+    local_time = openapi_schema_for_type("time", declared_types=set())
+    assert api_input_type_for_control("java.time.LocalTime") == "time"
+    assert api_type_for_design("List<LocalTime>") == "time[]"
+    assert openapi_schema_for_type("List<LocalTime>", declared_types=set()) == {
+        "type": "array",
+        "items": local_time,
+    }
+
+    model = ApiSpecModel(
+        Endpoints=[
+            ApiEndpoint(
+                operation_id="findSchedules",
+                path="/schedules",
+                method="get",
+                query_params=[ApiField(name="startTime", type="LocalTime")],
+            ),
+            ApiEndpoint(
+                operation_id="createSchedule",
+                path="/schedules",
+                method="post",
+                request_schema="MeetingSchedule",
+            ),
+        ],
+        Schemas=[
+            ApiSchema(
+                name="MeetingSchedule",
+                fields=[ApiField(name="startTime", type="LocalTime")],
+            )
+        ],
+    )
+    openapi = build_openapi_from_model(model)
+    assert openapi["paths"]["/schedules"]["get"]["parameters"][0]["schema"] == local_time
+    assert openapi["components"]["schemas"]["MeetingSchedule"]["properties"]["startTime"] == local_time
+    assert (
+        openapi["paths"]["/schedules"]["post"]["requestBody"]["content"]
+        ["application/json"]["schema"]
+        == {"$ref": "#/components/schemas/MeetingSchedule"}
+    )
 
 
 def test_unsupported_or_unresolved_types_fail_before_code_generation() -> None:

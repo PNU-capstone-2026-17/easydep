@@ -67,9 +67,13 @@ class ActionOffer(BaseModel):
 
 
 class AwaitingOutcome(BaseModel):
-    """`AWAITING_INPUT` 명령이 반드시 제공할 상호작용 필드다."""
+    """`AWAITING_INPUT` 명령의 사용자 상호작용 계약이다.
+
+    기술 수리는 실행 중 기존 체크포인트를 자동 재개하므로 사용자 action을
+    요구하지 않는다. 실제 질문일 때만 하나 이상의 action을 제공한다.
+    """
 
     model_config = ConfigDict(extra="forbid", use_enum_values=True)
 
     wait_reason: WaitReason
-    actions: list[ActionOffer] = Field(min_length=1)
+    actions: list[ActionOffer] = Field(default_factory=list)

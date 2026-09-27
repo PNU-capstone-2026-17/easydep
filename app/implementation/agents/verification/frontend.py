@@ -10,6 +10,7 @@ import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 MUTATING_HTTP_METHODS = {"post", "put", "patch", "delete"}
 FRONTEND_BUILD_REPORT = Path("reports/frontend-build.json")
@@ -275,6 +276,23 @@ def _frontend_command_environment() -> dict[str, str]:
     return environment
 
 
+def _frontend_dependency_commands(frontend: Path, executable: str) -> list[list[str]]:
+    """Install once per workspace; build and focused Vitest share this preparation."""
+
+    if (frontend / "node_modules" / ".package-lock.json").is_file():
+        return []
+    return [
+        [
+            executable,
+            "ci",
+            "--ignore-scripts",
+            "--no-audit",
+            "--no-fund",
+            "--prefer-offline",
+        ]
+    ]
+
+
 def frontend_source_digest(workspace_root: Path) -> str:
     """production bundle을 결정하는 frontend 입력만 안정적으로 식별한다."""
     frontend = workspace_root / "application" / "frontend"
@@ -311,6 +329,8 @@ def store_frontend_build(
     evidence: dict[str, object],
 ) -> dict[str, object] | None:
     """검증된 dist와 source 지문을 run에 보존해 같은 build를 다시 하지 않는다."""
+    if evidence.get("verificationKind") != "production-build":
+        return None
     source_dist = build_workspace / "application" / "frontend" / "dist"
     if evidence.get("exitCode") != 0 or not (source_dist / "index.html").is_file():
         return None
@@ -355,6 +375,7 @@ def reuse_frontend_build(run_root: Path) -> dict[str, object] | None:
     if (
         report.get("sourceDigest") != frontend_source_digest(run_root)
         or not isinstance(evidence, dict)
+        or evidence.get("verificationKind") != "production-build"
         or evidence.get("exitCode") != 0
     ):
         return None
@@ -365,15 +386,23 @@ def run_frontend_verification(
     sandbox: Path,
     run_command: Callable[..., subprocess.CompletedProcess[str]],
     *,
+    verification_kind: Literal["typecheck", "production-build"] = "production-build",
     timeout_seconds: int = 300,
 ) -> dict[str, object]:
     frontend = sandbox / "application" / "frontend"
     package = frontend / "package.json"
     lock = frontend / "package-lock.json"
+    executable = "npm.cmd" if os.name == "nt" else "npm"
+    final_command = (
+        [executable, "exec", "--", "tsc", "-b"]
+        if verification_kind == "typecheck"
+        else [executable, "run", "build"]
+    )
     if not package.is_file() or not lock.is_file():
         missing = "package.json" if not package.is_file() else "package-lock.json"
         return {
-            "command": ["npm", "run", "build"],
+            "verificationKind": verification_kind,
+            "command": final_command,
             "commands": [],
             "exitCode": 1,
             "durationMs": 0,
@@ -392,7 +421,8 @@ def run_frontend_verification(
     )
     if not has_hash_router:
         return {
-            "command": ["npm", "run", "build"],
+            "verificationKind": verification_kind,
+            "command": final_command,
             "commands": [],
             "exitCode": 1,
             "durationMs": 0,
@@ -400,22 +430,10 @@ def run_frontend_verification(
             "stderr": "Frontend static deployment requires HashRouter in src/main.tsx",
             "testResults": "",
         }
-    executable = "npm.cmd" if os.name == "nt" else "npm"
-    commands = []
+    commands = _frontend_dependency_commands(frontend, executable)
     # 같은 task의 repair는 같은 sandbox를 쓴다. 성공한 ``npm ci``가 남긴 lock record가
     # 있으면 dependency를 다시 지우고 설치하지 않고 TypeScript build만 반복한다.
-    if not (frontend / "node_modules" / ".package-lock.json").is_file():
-        commands.append(
-            [
-                executable,
-                "ci",
-                "--ignore-scripts",
-                "--no-audit",
-                "--no-fund",
-                "--prefer-offline",
-            ]
-        )
-    commands.append([executable, "run", "build"])
+    commands.append(final_command)
     started = time.monotonic()
     outputs: list[str] = []
     errors: list[str] = []
@@ -459,6 +477,7 @@ def run_frontend_verification(
         if exit_code != 0:
             break
     return {
+        "verificationKind": verification_kind,
         "command": executed_command,
         "commands": commands,
         "exitCode": exit_code,
@@ -466,4 +485,186 @@ def run_frontend_verification(
         "stdout": "\n".join(outputs)[-16000:],
         "stderr": "\n".join(errors)[-16000:],
         "testResults": "",
+    }
+
+
+def _frontend_unit_test_path(allowed_write_paths: list[str]) -> str:
+    """Return the single test target a focused frontend owner may create."""
+
+    candidates = [
+        path.replace("\\", "/")
+        for path in allowed_write_paths
+        if isinstance(path, str)
+        and path.replace("\\", "/").startswith("application/frontend/")
+        and re.search(r"\.(?:test|spec)\.[cm]?[jt]sx?$", path, re.IGNORECASE)
+    ]
+    if len(candidates) != 1:
+        raise RuntimeError(
+            "Frontend unit-test task requires exactly one allowed .test/.spec TypeScript path"
+        )
+    return candidates[0]
+
+
+def _vitest_execution_summary(report_path: Path) -> dict[str, int]:
+    """Read only the execution counters needed to reject empty Vitest runs."""
+
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("Vitest JSON report was not produced") from error
+    if not isinstance(report, dict):
+        raise RuntimeError("Vitest JSON report has an invalid root")
+
+    def count(name: str) -> int:
+        value = report.get(name, 0)
+        return value if isinstance(value, int) and value >= 0 else 0
+
+    total = count("numTotalTests")
+    failed = count("numFailedTests")
+    skipped = count("numPendingTests") + count("numTodoTests")
+    # Vitest's older JSON reporter nests Jest-compatible assertion results.
+    if total == 0 and isinstance(report.get("testResults"), list):
+        assertions = [
+            assertion
+            for suite in report["testResults"]
+            if isinstance(suite, dict)
+            for assertion in suite.get("assertionResults", [])
+            if isinstance(assertion, dict)
+        ]
+        total = len(assertions)
+        failed = sum(
+            1 for assertion in assertions if assertion.get("status") == "failed"
+        )
+        skipped = sum(
+            1
+            for assertion in assertions
+            if assertion.get("status") in {"pending", "todo", "skipped"}
+        )
+    return {"total": total, "failed": failed, "skipped": skipped}
+
+
+def run_frontend_unit_test_verification(
+    sandbox: Path,
+    allowed_write_paths: list[str],
+    run_command: Callable[..., subprocess.CompletedProcess[str]],
+    *,
+    report_path: Path | None = None,
+    timeout_seconds: int = 300,
+) -> dict[str, object]:
+    """Run exactly the focused Vitest file and require a non-empty result."""
+
+    target = _frontend_unit_test_path(allowed_write_paths)
+    frontend = sandbox / "application" / "frontend"
+    target_from_frontend = Path(target).relative_to("application/frontend").as_posix()
+    package = frontend / "package.json"
+    lock = frontend / "package-lock.json"
+    executable = "npm.cmd" if os.name == "nt" else "npm"
+    if not package.is_file() or not lock.is_file():
+        missing = "package.json" if not package.is_file() else "package-lock.json"
+        return {
+            "command": [executable, "run", "test:unit", "--", target_from_frontend],
+            "commands": [],
+            "exitCode": 1,
+            "durationMs": 0,
+            "stdout": "",
+            "stderr": f"Frontend {missing} was not found",
+            "testResults": "",
+        }
+
+    try:
+        package_data = json.loads(package.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        package_data = {}
+    scripts = package_data.get("scripts") if isinstance(package_data, dict) else None
+    if not isinstance(scripts, dict) or not isinstance(scripts.get("test:unit"), str):
+        return {
+            "command": [executable, "run", "test:unit", "--", target_from_frontend],
+            "commands": [],
+            "exitCode": 1,
+            "durationMs": 0,
+            "stdout": "",
+            "stderr": "Frontend package.json does not provide the test:unit Vitest script",
+            "testResults": "",
+        }
+
+    report = report_path or frontend / "reports" / "easydep-vitest-unit.json"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    report.unlink(missing_ok=True)
+    commands = _frontend_dependency_commands(frontend, executable)
+    commands.append(
+        [
+            executable,
+            "run",
+            "test:unit",
+            "--",
+            "--reporter=json",
+            f"--outputFile={report.as_posix()}",
+            target_from_frontend,
+        ]
+    )
+    started = time.monotonic()
+    outputs: list[str] = []
+    errors: list[str] = []
+    executed_command = commands[0]
+    exit_code = 0
+    environment = _frontend_command_environment()
+    for command in commands:
+        executed_command = command
+        try:
+            result = run_command(
+                command,
+                cwd=frontend,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout_seconds,
+                check=False,
+                env=environment,
+            )
+        except subprocess.TimeoutExpired as error:
+            exit_code = 1
+            outputs.append(_timeout_output(error.stdout or error.output)[-12000:])
+            errors.append(
+                f"Frontend unit-test command timed out after {timeout_seconds} seconds: {' '.join(command)}"
+            )
+            errors.append(_timeout_output(error.stderr)[-12000:])
+            break
+        except OSError as error:
+            exit_code = 1
+            errors.append(str(error))
+            break
+        outputs.append(result.stdout[-12000:])
+        errors.append(result.stderr[-12000:])
+        exit_code = result.returncode
+        if exit_code != 0:
+            break
+
+    summary: dict[str, int] | None = None
+    # The report was unlinked before this command, so an existing JSON result
+    # is fresh evidence even when Vitest returns nonzero for an assertion.
+    if report.is_file():
+        try:
+            summary = _vitest_execution_summary(report)
+            if exit_code == 0 and (
+                summary["total"] - summary["skipped"] <= 0 or summary["failed"]
+            ):
+                exit_code = 1
+                errors.append(
+                    "Vitest focused result must contain an executed passing test: "
+                    f"total={summary['total']}, failed={summary['failed']}, skipped={summary['skipped']}"
+                )
+        except RuntimeError as error:
+            if exit_code == 0:
+                exit_code = 1
+                errors.append(str(error))
+    return {
+        "command": executed_command,
+        "commands": commands,
+        "exitCode": exit_code,
+        "durationMs": int((time.monotonic() - started) * 1000),
+        "stdout": "\n".join(outputs)[-16000:],
+        "stderr": "\n".join(item for item in errors if item)[-16000:],
+        "testResults": json.dumps(summary, ensure_ascii=False) if summary else "",
+        "unitTestResults": summary or {},
     }

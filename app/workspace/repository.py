@@ -926,3 +926,16 @@ def interrupted_testing_commands() -> list[dict[str, Any]]:
             for row in rows
             if isinstance((row.payload or {}).get("testing_checkpoint"), dict)
         ]
+
+
+def interrupted_technical_retry_commands() -> list[dict[str, Any]]:
+    """Return only marked technical retries interrupted by a server restart."""
+
+    with session_scope() as session:
+        rows = session.scalars(
+            select(WorkspaceCommand).where(
+                WorkspaceCommand.status.in_(("AWAITING_INPUT", "INTERRUPTED")),
+                WorkspaceCommand.payload["_technical_repair_retry"].is_not(None),
+            )
+        ).all()
+        return [command_dict(row) for row in rows]

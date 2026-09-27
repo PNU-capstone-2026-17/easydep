@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 
 from app.db.models import TYPE_FRONTEND_SOURCE_CODE
-from app.implementation.agents.verification.build import verify_frontend_workspace
+from app.implementation.agents.verification.build import (
+    verify_frontend_typecheck_workspace,
+    verify_frontend_workspace,
+)
 from app.implementation.agents.verification.frontend import (
     frontend_contract_violations,
     repair_frontend_accessibility_contract,
@@ -116,6 +119,8 @@ def test_repairs_typescript_fetch_inline_model_export_collisions(tmp_path: Path)
 
 def test_react_scaffold_contains_no_hardcoded_operation_implementation() -> None:
     files = react_scaffold_files("Order Console", "/service")
+    package = json.loads(files["package.json"])
+    tsconfig = json.loads(files["tsconfig.json"])
 
     assert {
         "package.json",
@@ -127,6 +132,25 @@ def test_react_scaffold_contains_no_hardcoded_operation_implementation() -> None
     assert "EASYDEP-IMPLEMENT" not in files["src/App.tsx"]
     assert "OpenAPI Generator" in files["README.md"]
     assert "HashRouter" in files["src/main.tsx"]
+    assert package["scripts"]["test:unit"] == "vitest run"
+    assert package["devDependencies"]["vitest"] == "4.0.18"
+    assert package["devDependencies"]["@testing-library/react"] == "16.3.3"
+    assert package["devDependencies"]["@testing-library/jest-dom"] == "7.0.1"
+    assert "setupFiles: ['./src/test/setup.ts']" in files["vite.config.ts"]
+    assert "environment: 'jsdom'" in files["vite.config.ts"]
+    assert "import '@testing-library/jest-dom/vitest'" in files["src/test/setup.ts"]
+    assert "afterEach(cleanup)" in files["src/test/setup.ts"]
+    assert "npm run test:unit" in files["README.md"]
+    assert tsconfig["include"] == ["src"]
+    assert {
+        "src/**/*.test.ts",
+        "src/**/*.test.tsx",
+        "src/**/*.spec.ts",
+        "src/**/*.spec.tsx",
+        "src/**/__tests__/**",
+        "src/test/**",
+        "src/tests/**",
+    } <= set(tsconfig["exclude"])
 
 
 def test_react_scaffold_emits_one_composed_feature_per_operation() -> None:
@@ -782,9 +806,64 @@ def test_frontend_verification_runs_install_then_production_build(
     result = verify_frontend_workspace(tmp_path)
 
     assert result["exitCode"] == 0
+    assert result["verificationKind"] == "production-build"
     assert commands[0][1] == "ci"
     assert "--prefer-offline" in commands[0]
     assert commands[1][1:] == ["run", "build"]
+
+
+def test_frontend_typecheck_runs_tsc_build_without_vite(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frontend = tmp_path / "application/frontend"
+    (frontend / "src").mkdir(parents=True)
+    (frontend / "node_modules").mkdir()
+    (frontend / "node_modules/.package-lock.json").write_text("{}", encoding="utf-8")
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+    (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+    (frontend / "src/main.tsx").write_text(
+        "import { HashRouter } from 'react-router-dom'; const app=<HashRouter />;",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+
+    def completed(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "ok", "")
+
+    monkeypatch.setattr(
+        "app.implementation.agents.verification.build.run_frontend_command", completed
+    )
+    result = verify_frontend_typecheck_workspace(tmp_path)
+
+    assert result["verificationKind"] == "typecheck"
+    assert result["exitCode"] == 0
+    assert len(commands) == 1
+    assert commands[0][1:] == ["exec", "--", "tsc", "-b"]
+    assert not (frontend / "dist").exists()
+
+
+def test_typecheck_success_with_stale_dist_is_not_frontend_build_evidence(
+    tmp_path: Path,
+) -> None:
+    run = tmp_path / "run"
+    sandbox = tmp_path / "sandbox"
+    frontend = sandbox / "application/frontend"
+    (frontend / "src").mkdir(parents=True)
+    stale_dist = frontend / "dist"
+    stale_dist.mkdir()
+    (stale_dist / "index.html").write_text("stale", encoding="utf-8")
+
+    stored = store_frontend_build(
+        run,
+        sandbox,
+        {"verificationKind": "typecheck", "exitCode": 0, "command": ["npm", "exec"]},
+    )
+
+    assert stored is None
+    assert not (run / "reports/frontend-build.json").exists()
+    assert not (run / "application/frontend/dist/index.html").exists()
 
 
 def test_frontend_repair_reuses_installed_dependencies(tmp_path: Path) -> None:
@@ -826,13 +905,22 @@ def test_verified_frontend_bundle_is_reused_only_for_the_same_source(
     dist.mkdir()
     (dist / "index.html").write_text("<main>ready</main>", encoding="utf-8")
 
-    stored = store_frontend_build(run, sandbox, {"exitCode": 0, "command": ["npm"]})
+    stored = store_frontend_build(
+        run,
+        sandbox,
+        {
+            "verificationKind": "production-build",
+            "exitCode": 0,
+            "command": ["npm", "run", "build"],
+        },
+    )
 
     assert stored is not None
     assert (run / "application/frontend/dist/index.html").is_file()
     assert reuse_frontend_build(run) == {
+        "verificationKind": "production-build",
         "exitCode": 0,
-        "command": ["npm"],
+        "command": ["npm", "run", "build"],
         "reusedFromFrontendTask": True,
     }
     (run / "application/frontend/src/App.tsx").write_text(

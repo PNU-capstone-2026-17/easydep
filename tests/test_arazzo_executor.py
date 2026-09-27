@@ -10,8 +10,12 @@ import httpx
 import pytest
 
 from app.testing.progress import testing_progress_scope as _testing_progress_scope
-from app.testing.utils.arazzo_executor import execute_arazzo_workflow
-from app.testing.utils.functional_executor import InputValueRequest
+from app.testing.utils.arazzo_executor import _parameters, execute_arazzo_workflow
+from app.testing.utils.functional_executor import (
+    InputValueRequest,
+    operation_for_id,
+    operation_url,
+)
 
 TARGET_URL = "http://127.0.0.1:8765"
 
@@ -347,6 +351,100 @@ def test_explicit_query_header_and_body_replacement_are_sent(
     assert recorder.calls[0]["json"] == {"name": "new", "role": "admin"}
     assert parse_qs(urlsplit(recorder.calls[1]["url"]).query) == {"q": ["books"]}
     assert recorder.calls[1]["headers"]["X-Token"] == "test-token"
+
+
+@pytest.mark.parametrize(
+    ("style", "explode", "expected"),
+    [
+        (None, None, {"courseId": ["CS101"], "termId": ["Fall2024"], "instructorId": ["john.doe"]}),
+        ("form", False, {"searchCriteria": ["courseId,CS101,termId,Fall2024,instructorId,john.doe"]}),
+        ("deepObject", True, {
+            "searchCriteria[courseId]": ["CS101"],
+            "searchCriteria[termId]": ["Fall2024"],
+            "searchCriteria[instructorId]": ["john.doe"],
+        }),
+    ],
+)
+def test_query_object_uses_openapi_style_and_explode_defaults(
+    style: str | None,
+    explode: bool | None,
+    expected: dict[str, list[str]],
+) -> None:
+    parameter: dict[str, Any] = {
+        "name": "searchCriteria",
+        "in": "query",
+        "required": True,
+        "schema": {
+            "type": "object",
+            "required": ["courseId", "termId", "instructorId"],
+            "properties": {
+                "courseId": {"type": "string"},
+                "termId": {"type": "string"},
+                "instructorId": {"type": "string"},
+            },
+        },
+    }
+    if style is not None:
+        parameter["style"] = style
+    if explode is not None:
+        parameter["explode"] = explode
+    openapi = {
+        "paths": {
+            "/offerings": {
+                "get": {
+                    "operationId": "searchOfferings",
+                    "parameters": [parameter],
+                }
+            }
+        }
+    }
+    operation = operation_for_id(openapi, "searchOfferings")
+    _, query, _, _ = _parameters(
+        operation,
+        {
+            "parameters": [{
+                "name": "searchCriteria",
+                "in": "query",
+                "value": {"courseId": "CS101", "termId": "Fall2024", "instructorId": "john.doe"},
+            }]
+        },
+        {},
+        openapi,
+        None,
+    )
+
+    url = operation_url(TARGET_URL, operation, {}, query)
+    assert parse_qs(urlsplit(url).query) == expected
+
+
+def test_query_array_keeps_repeated_value_encoding() -> None:
+    openapi = {
+        "paths": {
+            "/items": {
+                "get": {
+                    "operationId": "searchItems",
+                    "parameters": [
+                        {
+                            "name": "q",
+                            "in": "query",
+                            "schema": {"type": "array", "items": {"type": "string"}},
+                        }
+                    ],
+                }
+            }
+        }
+    }
+    operation = operation_for_id(openapi, "searchItems")
+    _, query, _, _ = _parameters(
+        operation,
+        {"parameters": [{"name": "q", "in": "query", "value": ["books", "pens"]}]},
+        {},
+        openapi,
+        None,
+    )
+
+    url = operation_url(TARGET_URL, operation, {}, query)
+    assert parse_qs(urlsplit(url).query) == {"q": ["books", "pens"]}
 
 
 def test_expected_4xx_can_be_success_when_criterion_matches(

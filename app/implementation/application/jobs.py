@@ -673,7 +673,8 @@ class ImplementationWorker:
     def retry_failed(self, job_id: str) -> dict[str, Any]:
         """저장된 checkpoint에서 실패했거나 감사에 멈춘 단계만 다시 시작한다."""
         record = self._read(job_id)
-        if record.get("status") not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER"}:
+        integration_retry = self._integration_checkpoint_retryable(record)
+        if record.get("status") not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER"} and not integration_retry:
             raise InvalidJobState(
                 "Only a failed, interrupted, or audit-blocked implementation job can be retried: "
                 f"{record.get('status')}"
@@ -684,6 +685,8 @@ class ImplementationWorker:
                 "start a fresh implementation run instead."
             )
 
+        if integration_retry:
+            self._reset_integration_checkpoint(record)
         record["status"] = "QUEUED"
         record["checkpoint_retry_count"] = int(
             record.get("checkpoint_retry_count", 0)
@@ -707,11 +710,11 @@ class ImplementationWorker:
         owner: str,
         evidence: dict[str, object],
     ) -> dict[str, Any]:
-        """Resume a completed implementation task from its stored source and checkpoint.
+        """Schedule one owner repair from a completed implementation checkpoint.
 
         Testing has already classified the failing gate and declares its implementation
-        owner. Current owner tasks reuse their OpenHands conversation. Legacy operation
-        tasks had no persisted conversation and rerun briefly over the preserved source.
+        owner. The repair reuses the preserved run, task definition, source, and repair
+        evidence; an SDK conversation file is not a delivery prerequisite.
         """
         if owner not in {"backend", "frontend"}:
             raise ValueError(f"Unknown implementation repair owner: {owner}")
@@ -742,22 +745,7 @@ class ImplementationWorker:
         except RepairRoutingError as error:
             raise InvalidJobState(str(error)) from error
 
-        # Reuse the runtime's stable identity calculation instead of reconstructing the
-        # OpenHands storage layout here. A manifest/workflow checkpoint is not enough:
-        # without the SDK base state the runtime would silently create a new conversation.
-        from ..agents.runtime import _owner_conversation_identity
-
         owner_task_id = str(owner_task["task_id"])
-        persistence_dir, conversation_id = _owner_conversation_identity(
-            run_root,
-            owner_task_id,
-        )
-        conversation_checkpoint = persistence_dir / conversation_id.hex / "base_state.json"
-        if not conversation_checkpoint.is_file():
-            raise InvalidJobState(
-                f"Implementation owner {owner} has no reusable OpenHands conversation "
-                "checkpoint; start a new implementation run instead."
-            )
 
         from ..workflows.repair import schedule_cross_phase_repair
 
@@ -791,6 +779,88 @@ class ImplementationWorker:
         )
         return self.public_record(record)
 
+    def request_owner_repair_batch(
+        self,
+        job_id: str,
+        *,
+        repairs: list[dict[str, object]],
+    ) -> dict[str, Any]:
+        """Queue declared Testing repairs as one checkpoint workflow cycle.
+
+        Each item keeps the normal owner-routing evidence, but the workflow is
+        submitted once so its final integration gate runs after all owners and
+        their linked frozen unit rechecks.
+        """
+        if not repairs:
+            raise ValueError("At least one owner repair is required.")
+        record = self._read(job_id)
+        if record.get("status") != "COMPLETED":
+            raise InvalidJobState(
+                "Only a completed implementation can accept a Testing repair: "
+                f"{record.get('status')}"
+            )
+        if not self._execution_checkpoint_exists(record):
+            raise InvalidJobState("The implementation has no reusable owner checkpoint.")
+
+        run_root = Path(str(record["run_root"]))
+        from ..workflows.repair import (
+            RepairRoutingError,
+            schedule_cross_phase_repair_batch,
+            select_repair_task,
+        )
+
+        scheduled_repairs: list[tuple[str, dict[str, object]]] = []
+        owner_task_ids: list[str] = []
+        for repair in repairs:
+            owner = str(repair.get("owner") or "")
+            if owner not in {"backend", "frontend"}:
+                raise ValueError(f"Unknown implementation repair owner: {owner}")
+            raw_evidence = repair.get("evidence")
+            if not isinstance(raw_evidence, dict):
+                raise ValueError("Owner repair evidence must be an object.")
+            evidence = dict(raw_evidence)
+            failed_task_id = str(
+                evidence.get("failed_task_id") or evidence.get("failedTaskId") or ""
+            )
+            try:
+                owner_task = select_repair_task(
+                    run_root,
+                    owner=owner,
+                    failed_task_id=failed_task_id,
+                    evidence=evidence,
+                )
+            except RepairRoutingError as error:
+                raise InvalidJobState(str(error)) from error
+            owner_task_ids.append(str(owner_task["task_id"]))
+            evidence["owner"] = owner
+            scheduled_repairs.append((failed_task_id or str(owner_task["task_id"]), evidence))
+
+        try:
+            scheduled = schedule_cross_phase_repair_batch(run_root, scheduled_repairs)
+        except RepairRoutingError as error:
+            raise InvalidJobState(str(error)) from error
+        if scheduled is None:
+            raise InvalidJobState("Could not schedule the declared implementation repairs.")
+
+        record["status"] = "QUEUED"
+        record["updated_at"] = _now()
+        record["owner_repair"] = {
+            "owner": "batch",
+            "task_id": owner_task_ids[0],
+            "task_ids": owner_task_ids,
+            "repair_plan": "reports/repair-plan.json",
+            "requested_at": record["updated_at"],
+        }
+        record.pop("error", None)
+        record.pop("blocking_details", None)
+        self._write(record)
+        self.executor.submit(
+            langsmith_metrics.bind_context(self._run),
+            job_id,
+            True,
+        )
+        return self.public_record(record)
+
     @staticmethod
     def _execution_checkpoint_exists(record: dict[str, Any]) -> bool:
         job_path_value = record.get("job_path")
@@ -807,9 +877,82 @@ class ImplementationWorker:
     @staticmethod
     def _checkpoint_retryable(record: dict[str, Any]) -> bool:
         """실행 checkpoint를 같은 Job에서 안전하게 재사용할 수 있는지 확인한다."""
-        if record.get("status") not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER"}:
+        if record.get("status") not in {
+            "FAILED",
+            "INTERRUPTED",
+            "NEEDS_PLANNER",
+            "NEEDS_INPUT",
+        }:
             return False
-        return ImplementationWorker._execution_checkpoint_exists(record)
+        if not ImplementationWorker._execution_checkpoint_exists(record):
+            return False
+        return record.get("status") != "NEEDS_INPUT" or ImplementationWorker._integration_checkpoint_retryable(record)
+
+    @staticmethod
+    def _integration_checkpoint_retryable(record: dict[str, Any]) -> bool:
+        """Return whether the sole paused integration task can be explicitly retried.
+
+        This does not resolve or discard an upstream question.  Workspace keeps that
+        question visible and offers this retry separately; only an explicit retry
+        resets the existing integration checkpoint.
+        """
+        if record.get("status") != "NEEDS_INPUT":
+            return False
+        workflow = record.get("workflow")
+        if not isinstance(workflow, dict) or workflow.get("currentPhase") != "integration":
+            return False
+        pending = [
+            task for task in workflow.get("tasks", [])
+            if isinstance(task, dict) and task.get("status") != "SUCCEEDED"
+        ]
+        if len(pending) != 1:
+            return False
+        task = pending[0]
+        if (
+            task.get("taskType") != "integration-implementation"
+            or task.get("status") != "NEEDS_INPUT"
+            or not isinstance(task.get("resultFile"), str)
+        ):
+            return False
+        run_root_value = record.get("run_root")
+        if not isinstance(run_root_value, str):
+            return False
+        run_root = Path(run_root_value)
+        result_path = run_root / str(task["resultFile"])
+        try:
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        return (
+            result.get("status") == "NEEDS_INPUT"
+            and result.get("terminationReason") == "UPSTREAM_GAP"
+        )
+
+    @staticmethod
+    def _reset_integration_checkpoint(record: dict[str, Any]) -> None:
+        """Archive a paused integration result before an explicit checkpoint retry."""
+        workflow = record["workflow"]
+        assert isinstance(workflow, dict)
+        task = next(
+            item for item in workflow["tasks"]
+            if isinstance(item, dict) and item.get("status") == "NEEDS_INPUT"
+        )
+        run_root = Path(str(record["run_root"]))
+        result_path = run_root / str(task["resultFile"])
+        archived = result_path.with_name(
+            f"{task['task_id']}.attempt-{int(task.get('attempts', 0)):03d}.admission.result.json"
+        )
+        if archived.exists():
+            raise InvalidJobState("The integration admission evidence is already archived.")
+        result_path.replace(archived)
+        task["status"] = "PENDING"
+        task["resultFile"] = None
+        task["upstreamGap"] = None
+        task["candidateEvidence"] = None
+        workflow["status"] = "READY"
+        workflow["blockingReason"] = None
+        workflow["blockingDetails"] = []
+        record["workflow"] = workflow
 
     def get_testing_input(self, job_id: str) -> dict[str, Any]:
         """Testing API가 버전이 고정된 입력을 만들 때 필요한 정보를 반환한다.

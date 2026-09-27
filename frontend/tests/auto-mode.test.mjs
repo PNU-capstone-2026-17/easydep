@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { nextAutoAction } from '../src/lib/auto-mode.ts';
+import { isRecoveryAction, nextAutoAction } from '../src/lib/auto-mode.ts';
 
 function command(result, overrides = {}) {
   return {
@@ -54,6 +54,49 @@ test('auto mode does not infer actions from legacy result fields or command stat
     request_id: 'request-1'
   }, { stage: 'implementation' })), null);
   assert.equal(nextAutoAction(command({}, { status: 'COMPLETED' })), null);
+});
+
+test('recovery offers are filtered while the implementation-to-testing transition remains', () => {
+  assert.equal(isRecoveryAction('retry_implementation'), true);
+  assert.equal(isRecoveryAction('rerun_implementation'), true);
+  assert.equal(isRecoveryAction('start_testing', { stage: 'testing', status: 'AWAITING_INPUT' }), true);
+  assert.equal(isRecoveryAction('start_testing', { stage: 'testing', status: 'FAILED' }), true);
+  assert.equal(isRecoveryAction('start_testing', { stage: 'implementation', status: 'COMPLETED' }), false);
+  assert.equal(isRecoveryAction('start_implementation'), false);
+  assert.deepEqual(
+    nextAutoAction(command({
+      actions: [
+        {
+          action: 'retry_implementation',
+          label: 'Retry implementation',
+          payload: { action_id: 'command-1' },
+          auto_selectable: true
+        },
+        {
+          action: 'rerun_implementation',
+          label: 'Rerun implementation',
+          payload: { action_id: 'command-1' },
+          auto_selectable: true
+        },
+        {
+          action: 'start_implementation',
+          label: 'Start implementation',
+          payload: { action_id: 'command-1' },
+          auto_selectable: true
+        }
+      ]
+    })),
+    {
+      action: 'start_implementation',
+      extra: { action_id: 'command-1' }
+    }
+  );
+  assert.equal(
+    nextAutoAction(command({ actions: [{ action: 'start_testing', auto_selectable: true }] }, {
+      stage: 'testing', status: 'FAILED'
+    })),
+    null
+  );
 });
 
 test('auto mode stops when no offer is explicitly auto selectable', () => {

@@ -334,7 +334,9 @@ _API_SCALARS = {
     "uuid": "uuid",
     "instant": "date-time",
     "integer": "integer",
-    "time": "string",
+    # Keep the temporal kind through API normalization. It is still a JSON
+    # string, but OpenAPI needs the distinction to describe LocalTime input.
+    "time": "time",
     "long": "long",
     "offset_datetime": "date-time",
     "short": "short",
@@ -453,9 +455,24 @@ def openapi_schema_for_type(value: str, *, declared_types: set[str]) -> dict[str
             return {"type": "string", "format": "uuid"}
         if name == "date":
             return {"type": "string", "format": "date"}
+        if name == "time":
+            # java.time.LocalTime's ISO_LOCAL_TIME wire form: HH:mm, optionally
+            # followed by seconds and a 1–9 digit fractional second. Unlike
+            # RFC3339 full-time this deliberately has no UTC offset.
+            return {
+                "type": "string",
+                "format": "local-time",
+                "pattern": (
+                    r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]"
+                    r"(?::[0-5][0-9](?:\.[0-9]{1,9})?)?$"
+                ),
+                "description": (
+                    "Local time without a UTC offset, in Java LocalTime ISO_LOCAL_TIME form."
+                ),
+            }
         if name in {"datetime", "instant", "offset_datetime", "zoned_datetime"}:
             return {"type": "string", "format": "date-time"}
-        if name in {"character", "string", "time"}:
+        if name in {"character", "string"}:
             return {"type": "string"}
         if name in {"byte", "short", "integer", "long", "big_integer"}:
             schema: dict[str, object] = {"type": "integer"}

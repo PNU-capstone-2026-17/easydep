@@ -52,11 +52,19 @@ class TaskCheckSession:
     task_type: str
     allowed_write_paths: list[str]
     verification_profile: dict[str, object] | None = None
+    frontend_unit_report_path: Path | None = None
     _failed_source_snapshot: dict[str, str] | None = field(
         default=None,
         init=False,
         repr=False,
     )
+    _last_evidence: dict[str, object] | None = field(default=None, init=False, repr=False)
+
+    @property
+    def last_evidence(self) -> dict[str, object] | None:
+        """Latest canonical evidence; callers never need to parse display text."""
+
+        return self._last_evidence
 
     def run(self) -> tuple[bool, str]:
         """source가 바뀐 경우에만 실제 focused 검사를 실행한다."""
@@ -77,7 +85,9 @@ class TaskCheckSession:
             self.task_type,
             self.allowed_write_paths,
             self.verification_profile,
+            self.frontend_unit_report_path,
         )
+        self._last_evidence = evidence
         self._failed_source_snapshot = None if passed else current_snapshot
         if passed and evidence is not None:
             key = str(self.sandbox.resolve())
@@ -97,6 +107,7 @@ def run_task_check(
     task_type: str,
     allowed_write_paths: list[str],
     verification_profile: dict[str, object] | None = None,
+    frontend_unit_report_path: Path | None = None,
 ) -> tuple[bool, str]:
     """현재 작업에 정해진 검사를 실행하고 에이전트가 읽을 짧은 결과를 반환한다.
 
@@ -108,6 +119,7 @@ def run_task_check(
         task_type,
         allowed_write_paths,
         verification_profile,
+        frontend_unit_report_path,
     ).run()
 
 
@@ -116,6 +128,7 @@ def _execute_task_check(
     task_type: str,
     allowed_write_paths: list[str],
     verification_profile: dict[str, object] | None = None,
+    frontend_unit_report_path: Path | None = None,
 ) -> tuple[bool, str, dict[str, object] | None]:
     try:
         if verification_profile is None:
@@ -124,6 +137,7 @@ def _execute_task_check(
                 sandbox,
                 task_type,
                 allowed_write_paths,
+                frontend_unit_report_path=frontend_unit_report_path,
             )
         else:
             evidence = verify_agent_workspace(
@@ -131,6 +145,7 @@ def _execute_task_check(
                 task_type,
                 allowed_write_paths,
                 verification_profile,
+                frontend_unit_report_path,
             )
     except WorkspaceVerificationError as error:
         return False, _render_check_result("FAILED", error.evidence), error.evidence

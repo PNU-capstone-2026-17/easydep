@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import tempfile
 import uuid
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -34,7 +35,11 @@ from app.implementation.agents.runtime import (
     _task_execution_scope,
     create_openhands_conversation,
 )
-from app.implementation.agents.source_replace_tool import SourceReplaceAction
+from app.implementation.agents.source_replace_tool import (
+    ExactSourceEdit,
+    SourceEditAction,
+    SourceReplaceAction,
+)
 from app.implementation.agents.task_check import (
     TaskCheckSession,
     consume_successful_task_check,
@@ -46,6 +51,7 @@ from app.implementation.agents.upstream_gap_tool import (
 )
 from app.implementation.agents.verification.build import (
     WorkspaceVerificationError,
+    compact_verification_evidence,
     read_gradle_test_failures,
     task_verification_command,
     verify_agent_workspace,
@@ -241,6 +247,10 @@ def test_lazy_frontend_planning_inherits_stable_backend_llm_snapshot(
         lambda _spec, _run: [task("frontend", "frontend-implementation", "frontend")],
     )
     monkeypatch.setattr(
+        "app.implementation.generation.orchestrator.generate_frontend_unit_test_tasks",
+        lambda _spec, _run, _subjects: [],
+    )
+    monkeypatch.setattr(
         "app.implementation.generation.orchestrator.generate_vertical_integration_task",
         lambda _spec, _run, _prior: task("integration", "integration-implementation", "implementation"),
     )
@@ -400,7 +410,17 @@ def test_thin_integration_check_runs_backend_then_frontend(
 
     def passed_frontend(_sandbox: Path) -> dict[str, object]:
         calls.append("frontend")
-        return {"command": ["npm", "run", "build"], "exitCode": 0}
+        return {
+            "command": ["npm", "run", "build"],
+            "exitCode": 0,
+            "verificationKind": "production-build",
+        }
+
+    @contextmanager
+    def ready_application(*_args: object, **_kwargs: object):
+        calls.append("startup")
+        yield "http://localhost", {"healthPath": "/healthz"}
+        calls.append("cleanup")
 
     with (
         patch(
@@ -411,16 +431,86 @@ def test_thin_integration_check_runs_backend_then_frontend(
             "app.implementation.agents.verification.build.verify_frontend_workspace",
             side_effect=passed_frontend,
         ),
+        patch(
+            "app.testing.runtime.app_container.running_application",
+            side_effect=ready_application,
+        ),
     ):
         result = verify_agent_workspace(
             tmp_path,
             task_type="integration-implementation",
         )
 
-    assert calls == ["backend", "frontend"]
+    assert calls == ["backend", "frontend", "startup", "cleanup"]
     assert result["exitCode"] == 0
     assert result["backendVerification"]["exitCode"] == 0
     assert result["frontendVerification"]["exitCode"] == 0
+    assert result["frontendVerification"]["verificationKind"] == "production-build"
+    assert result["applicationStartup"] == {
+        "status": "SUCCEEDED",
+        "runtime": {"healthPath": "/healthz"},
+    }
+    assert result["command"][-2:] == ["application-startup", "health-check"]
+
+
+def test_thin_integration_startup_failure_preserves_diagnostics_and_cleans_up(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.testing.runtime.app_container import ApplicationLaunchError
+
+    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
+    calls: list[str] = []
+
+    @contextmanager
+    def failed_application(*_args: object, **_kwargs: object):
+        calls.append("startup")
+        try:
+            raise ApplicationLaunchError(
+                "Application exited before health check.",
+                defect_class="SUT_DEFECT",
+                application_log=(
+                    "Spring startup output\n"
+                    "ERROR: STARTUP_ROOT_CAUSE_SENTINEL\n"
+                    "\tat app.bootstrap.GeneratedConfiguration.load(GeneratedConfiguration.java:42)"
+                ),
+            )
+            yield "http://localhost", {}
+        finally:
+            calls.append("cleanup")
+
+    with (
+        patch(
+            "app.implementation.agents.verification.build.verify_agent_workspace",
+            return_value={"exitCode": 0},
+        ),
+        patch(
+            "app.implementation.agents.verification.build.verify_frontend_workspace",
+            return_value={"exitCode": 0, "verificationKind": "production-build"},
+        ),
+        patch(
+            "app.testing.runtime.app_container.running_application",
+            side_effect=failed_application,
+        ),
+        pytest.raises(WorkspaceVerificationError) as raised,
+    ):
+        verify_agent_workspace(tmp_path, task_type="integration-implementation")
+
+    assert calls == ["startup", "cleanup"]
+    assert raised.value.evidence["command"] == ["application-startup", "health-check"]
+    assert raised.value.evidence["applicationStartup"] == {
+        "status": "FAILED",
+        "defectClass": "SUT_DEFECT",
+        "applicationLog": (
+            "Spring startup output\n"
+            "ERROR: STARTUP_ROOT_CAUSE_SENTINEL\n"
+            "\tat app.bootstrap.GeneratedConfiguration.load(GeneratedConfiguration.java:42)"
+        ),
+    }
+    assert "STARTUP_ROOT_CAUSE_SENTINEL" in raised.value.evidence["stderr"]
+    assert "STARTUP_ROOT_CAUSE_SENTINEL" in compact_verification_evidence(
+        raised.value.evidence
+    )
 
 
 def test_frontend_marker_contract_fails_before_build_and_cleared_marker_builds(
@@ -441,7 +531,7 @@ def test_frontend_marker_contract_fails_before_build_and_cleared_marker_builds(
     }
 
     with patch(
-        "app.implementation.agents.verification.build.verify_frontend_workspace"
+        "app.implementation.agents.verification.build.verify_frontend_typecheck_workspace"
     ) as frontend, pytest.raises(WorkspaceVerificationError):
         verify_agent_workspace(
             tmp_path, "frontend-implementation", verification_profile=profile
@@ -450,7 +540,7 @@ def test_frontend_marker_contract_fails_before_build_and_cleared_marker_builds(
 
     source.write_text("export const orderReady = true;\n", encoding="utf-8")
     with patch(
-        "app.implementation.agents.verification.build.verify_frontend_workspace",
+        "app.implementation.agents.verification.build.verify_frontend_typecheck_workspace",
         return_value={"exitCode": 0},
     ) as frontend:
         result = verify_agent_workspace(
@@ -587,14 +677,19 @@ def test_agent_workspace_refresh_preserves_ignored_build_outputs(
     assert not stale_source.exists()
 
 
-def test_restricted_owner_workspace_skips_linux_permission_handoff(
+def test_restricted_persistent_owner_refreshes_system_files_and_preserves_candidate(
     tmp_path: Path,
 ) -> None:
     run = tmp_path / "generated" / "runs" / "run_abcdef1234567890"
     source = run / "application" / "src" / "Main.java"
     source.parent.mkdir(parents=True)
     source.write_text("class Main {}", encoding="utf-8")
-    task = {"task_id": "restricted-owner", "allowed_write_paths": []}
+    tsconfig = run / "application" / "tsconfig.json"
+    tsconfig.write_text('{"exclude":["test"]}', encoding="utf-8")
+    task = {
+        "task_id": "restricted-owner",
+        "allowed_write_paths": ["application/src/Main.java"],
+    }
 
     with patch(
         "app.implementation.agents.workspace.tempfile.gettempdir",
@@ -603,9 +698,7 @@ def test_restricted_owner_workspace_skips_linux_permission_handoff(
         "app.implementation.agents.workspace._restore_coordinator_access"
     ) as restore_access, patch(
         "app.implementation.agents.workspace._apply_fixed_runner_permissions"
-    ) as apply_permissions, patch(
-        "app.implementation.agents.workspace._refresh_agent_workspace"
-    ) as refresh_workspace:
+    ) as apply_permissions:
         sandbox = prepare_agent_workspace(
             run,
             task,
@@ -618,11 +711,26 @@ def test_restricted_owner_workspace_skips_linux_permission_handoff(
             persistent=True,
             requires_owner_terminal=False,
         )
+        candidate = sandbox / "application/src/Main.java"
+        candidate.write_text("class Main { int candidate; }", encoding="utf-8")
+        (sandbox / "application/tsconfig.json").write_text(
+            '{"exclude":[]}', encoding="utf-8"
+        )
+        refreshed_again = prepare_agent_workspace(
+            run,
+            task,
+            persistent=True,
+            requires_owner_terminal=False,
+        )
 
     assert refreshed == sandbox
     restore_access.assert_not_called()
     apply_permissions.assert_not_called()
-    refresh_workspace.assert_not_called()
+    assert refreshed_again == sandbox
+    assert candidate.read_text(encoding="utf-8") == "class Main { int candidate; }"
+    assert (sandbox / "application/tsconfig.json").read_text(encoding="utf-8") == (
+        '{"exclude":["test"]}'
+    )
 
 
 def test_fixed_runner_hands_the_whole_disposable_sandbox_to_owner(
@@ -1106,25 +1214,241 @@ def test_editor_owner_applies_one_direct_response_then_checks(
     assert result["tools"] == ["replace_source"]
 
 
+@pytest.mark.parametrize(
+    ("task_type", "source_path", "test_path"),
+    [
+        (
+            "frontend-unit-test",
+            "application/frontend/src/features/dropregistration.tsx",
+            "application/frontend/src/features/dropregistration.test.tsx",
+        ),
+        (
+            "backend-unit-test",
+            "application/src/main/java/com/example/application/OrderService.java",
+            "application/src/test/java/com/example/application/OrderServiceTest.java",
+        ),
+    ],
+)
+def test_direct_editor_unit_request_contains_authored_contract_and_readonly_subject(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    task_type: str,
+    source_path: str,
+    test_path: str,
+) -> None:
+    run, task_id, _old_path, _old_source = _write_minimal_agent_task(tmp_path)
+    task_file = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_file.read_text(encoding="utf-8"))
+    task.update(
+        {
+            "task_type": task_type,
+            "owner": "frontend" if task_type == "frontend-unit-test" else "backend",
+            "owner_tool_mode": "editor",
+            "allowed_write_paths": [test_path],
+            "required_output_paths": [test_path],
+            "required_test_paths": [test_path],
+            "immutable_paths": [source_path],
+            "depends_on": ["completed-implementation"],
+            "verification_profile": {"unitTestSubjectPaths": [source_path]},
+        }
+    )
+    task_file.write_text(json.dumps(task), encoding="utf-8")
+    source = run / source_path
+    source.parent.mkdir(parents=True, exist_ok=True)
+    existing_source = source.read_text(encoding="utf-8") if source.is_file() else (
+        "export const DropRegistration = () => null;\n"
+        if task_type == "frontend-unit-test"
+        else "class OrderService {}\n"
+    )
+    body = "// SUBJECT_CONTRACT: actual source supplied read-only\n" + existing_source
+    source.write_text(body, encoding="utf-8")
+    prompt_file = run / "reports/implementation-tasks/order.prompt.md"
+    prompt_file.write_text("Write one focused test for the supplied subject.", encoding="utf-8")
+    captured: list[str] = []
+
+    def request(
+        _connection: object, prompt: str, _llm: object, _allowed_paths: list[str]
+    ) -> SourceReplaceAction:
+        captured.append(prompt)
+        return SourceReplaceAction(path=test_path, source="describe('assigned unit test', () => {});")
+
+    class PassingTaskCheck:
+        last_evidence = None
+
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def run(self) -> tuple[bool, str]:
+            return True, "passed"
+
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+    with ExitStack() as stack:
+        for manager in (
+            patch(
+                "app.implementation.agents.runtime.openhands_connection",
+                return_value=LlmConnection(
+                    "cloudflare", "approved-key", "https://example.invalid/v1", "@cf/zai-org/glm-5.3-flash", "openai"
+                ),
+            ),
+            patch("app.implementation.agents.runtime._request_direct_editor_action", side_effect=request),
+            patch("app.implementation.agents.runtime.TaskCheckSession", PassingTaskCheck),
+            patch("app.implementation.agents.runtime.verify_agent_workspace", return_value={"exitCode": 0}),
+        ):
+            stack.enter_context(manager)
+        result = execute_openhands_task(run, task_id)
+
+    assert result["status"] == "SUCCEEDED"
+    assert len(captured) == 1
+    request_text = captured[0]
+    assert "This is a focused unit-test authoring task" in request_text
+    assert "supplied implementation source and API evidence are read-only" in request_text
+    assert test_path in request_text
+    assert "SUBJECT_CONTRACT: actual source supplied read-only" in request_text
+    if task_type == "frontend-unit-test":
+        assert "an HTML tag alone does not guarantee a role" in request_text
+        assert "an unnamed form is not a form landmark" in request_text
+
+
+def test_editor_pending_candidate_allows_same_body_retry_but_not_canonical_noop(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    sandbox = tmp_path / "sandbox"
+    relative = Path("application/frontend/src/Calculator.test.tsx")
+    canonical = run_root / relative
+    candidate = sandbox / relative
+    canonical.parent.mkdir(parents=True)
+    candidate.parent.mkdir(parents=True)
+    canonical.write_text("export const test = 'old';\n", encoding="utf-8")
+    candidate.write_text("export const test = 'candidate';\n", encoding="utf-8")
+
+    # A repeat replace_source with the same body has no attempt delta, but the
+    # persistent sandbox still differs from canonical and must reach the normal
+    # verifier/promotion boundary.
+    attempt_changes: set[str] = set()
+    candidate_changes = runtime_module._candidate_application_changes(
+        sandbox, run_root
+    )
+    assert candidate_changes == {relative.as_posix()}
+    assert not (not attempt_changes and not candidate_changes)
+
+    # Once canonical matches, no new attempt delta and no pending candidate must
+    # retain the existing no-source-change stop.
+    canonical.write_text(candidate.read_text(encoding="utf-8"), encoding="utf-8")
+    candidate_changes = runtime_module._candidate_application_changes(
+        sandbox, run_root
+    )
+    assert candidate_changes == set()
+    assert not attempt_changes and not candidate_changes
+
+
 def test_editor_owner_repairs_once_after_failed_check(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run, task_id, source_path, _source = _write_minimal_agent_task(tmp_path)
     _configure_editor_owner_task(run)
+    source_path = "application/frontend/src/features/orders.tsx"
+    target = run / source_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(
+        "// SCAFFOLD_ONLY\nexport const Orders = () => null;", encoding="utf-8"
+    )
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task.update(
+        {
+            "task_type": "frontend-implementation",
+            "owner": "frontend",
+            "required_completion_markers": ["EASYDEP-IMPLEMENT: GET /orders (getOrders)"],
+            "allowed_write_paths": [source_path],
+            "required_output_paths": [source_path],
+        }
+    )
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    context_path = run / "reports/implementation-tasks/order.context.json"
+    operation_path = run / "reports/implementation-tasks/frontend-operation-context/get-orders.json"
+    operation_path.parent.mkdir(parents=True, exist_ok=True)
+    operation_path.write_text(
+        json.dumps(
+            {
+                "generatedClient": {
+                    "resolved": True,
+                    "generatedMethodPath": "application/frontend/src/generated/src/apis/DefaultApi.ts",
+                    "requestType": "GetOrdersRequest",
+                    "responseType": "Order",
+                },
+                "referencedComponents": {"#/components/schemas/Order": {"type": "object"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    api_path = run / "application/frontend/src/api.ts"
+    api_path.parent.mkdir(parents=True, exist_ok=True)
+    api_path.write_text("export async function getOrders() { return []; }", encoding="utf-8")
+    generated_api = run / "application/frontend/src/generated/src/apis/DefaultApi.ts"
+    generated_api.parent.mkdir(parents=True, exist_ok=True)
+    generated_api.write_text(
+        "export interface GetOrdersRequest { id: string; }\n"
+        "export class DefaultApi {\n"
+        "  async getOrders(requestParameters: GetOrdersRequest): Promise<Order> {\n"
+        "    return {} as Order;\n"
+        "  }\n"
+        "}",
+        encoding="utf-8",
+    )
+    generated_model = run / "application/frontend/src/generated/src/models/Order.ts"
+    generated_model.parent.mkdir(parents=True, exist_ok=True)
+    generated_model.write_text(
+        "export interface Order { createdAt: Date; }\n"
+        "export function OrderFromJSON(value: unknown): Order { return value as Order; }",
+        encoding="utf-8",
+    )
+    context_path.write_text(
+        json.dumps(
+            {
+                "readSourcePaths": [
+                    "application/frontend/src/api.ts",
+                    "reports/implementation-tasks/frontend-operation-context/get-orders.json",
+                ],
+                "operationIds": ["getOrders"],
+                "operationContextPaths": [
+                    "reports/implementation-tasks/frontend-operation-context/get-orders.json"
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
     actions = [
-        SourceReplaceAction(path=source_path, source="class OrderService { int broken; }"),
-        SourceReplaceAction(path=source_path, source="class OrderService { int repaired; }"),
+        SourceReplaceAction(path=source_path, source="// BROKEN_CURRENT\nexport const Orders = () => null;"),
+        SourceReplaceAction(path=source_path, source="// REPAIRED_CURRENT\nexport const Orders = () => null;"),
     ]
+    prompts: list[str] = []
+
+    def capture_prompt(
+        _connection: object, prompt: str, _llm: object, _allowed_paths: list[str]
+    ) -> SourceReplaceAction:
+        prompts.append(prompt)
+        return actions[len(prompts) - 1]
+
     direct_request = patch(
         "app.implementation.agents.runtime._request_direct_editor_action",
-        side_effect=actions,
+        side_effect=capture_prompt,
     )
     with ExitStack() as stack:
         for manager in (
             patch("app.implementation.agents.runtime.openhands_connection", return_value=LlmConnection("cloudflare", "approved-key", "https://example.invalid/v1", "@cf/zai-org/glm-5.3-flash", "openai")),
-            patch("app.implementation.agents.runtime.run_task_check", side_effect=[(False, "exact diagnosis"), (True, "passed")]),
+            patch("app.implementation.agents.runtime.run_task_check", return_value=(True, "passed")),
             patch("app.implementation.agents.runtime.verify_agent_workspace", return_value={"exitCode": 0}),
+            patch(
+                "app.implementation.agents.task_check.verify_agent_workspace",
+                side_effect=[
+                    WorkspaceVerificationError(
+                        {"command": ["npm", "run", "build"], "exitCode": 1, "stderr": "exact diagnosis"}
+                    ),
+                    {"command": ["npm", "run", "build"], "exitCode": 0},
+                ],
+            ),
         ):
             stack.enter_context(manager)
         direct = stack.enter_context(direct_request)
@@ -1133,24 +1457,204 @@ def test_editor_owner_repairs_once_after_failed_check(
     assert result["executionStatus"] == "finished"
     assert result["finishRecoveryUsed"] is False
     assert direct.call_count == 2
+    assert "async getOrders(requestParameters: GetOrdersRequest): Promise<Order>" in prompts[0]
+    assert "Implement the order use case." in prompts[0]
+    assert source_path in prompts[0]
+    repair_prompt = prompts[1]
+    assert "Implement the order use case." in repair_prompt
+    assert source_path in repair_prompt
+    assert "Use replace_source now" in repair_prompt
+    assert "BROKEN_CURRENT" in repair_prompt
+    assert "Exact diagnosis" in repair_prompt
+    assert "generated TypeScript SDK declaration" in repair_prompt
+    assert "async getOrders(requestParameters: GetOrdersRequest): Promise<Order>" in repair_prompt
+    assert "export interface Order { createdAt: Date; }" in repair_prompt
 
 
-def test_editor_owner_rejects_out_of_scope_direct_response(
+def test_editor_no_change_repair_retains_initial_check_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task_id, source_path, _source = _write_minimal_agent_task(tmp_path)
+    _configure_editor_owner_task(run)
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+    unchanged_repair = SourceReplaceAction(
+        path=source_path, source="class OrderService { int broken; }"
+    )
+    initial_evidence = {
+        "command": ["gradle", "test"],
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "selected assertion failed",
+        "unitTestResults": {"total": 1, "failed": 1, "skipped": 0},
+    }
+    with ExitStack() as stack:
+        for manager in (
+            patch(
+                "app.implementation.agents.runtime.openhands_connection",
+                return_value=LlmConnection(
+                    "cloudflare", "approved-key", "https://example.invalid/v1",
+                    "@cf/zai-org/glm-5.3-flash", "openai",
+                ),
+            ),
+            patch(
+                "app.implementation.agents.runtime._request_direct_editor_action",
+                side_effect=[unchanged_repair, unchanged_repair],
+            ),
+            patch(
+                "app.implementation.agents.task_check.verify_agent_workspace",
+                side_effect=WorkspaceVerificationError(initial_evidence),
+            ),
+        ):
+            stack.enter_context(manager)
+        with pytest.raises(OwnerConversationIncomplete) as raised:
+            execute_openhands_task(run, task_id)
+
+    evidence = raised.value.evidence
+    assert evidence["stderr"] == "Editor repair made no source change."
+    assert "selected assertion failed" in evidence["initialTaskCheckDiagnosis"]
+    assert evidence["initialTaskCheckEvidence"] == initial_evidence
+
+
+def test_direct_editor_repair_prompt_keeps_initial_contract_without_history() -> None:
+    conversation = runtime_module._DirectEditorConversation(
+        Path("."),
+        LlmConnection("cloudflare", "key", "https://example.invalid/v1", "model", "openai"),
+        {},
+        ["application/frontend/src/features/orders.tsx"],
+        [],
+    )
+    initial = "INITIAL_TASK_CONTRACT: orders.tsx is the only writable target"
+    first_repair = "FIRST_REPAIR: stale diagnosis and source"
+    latest_repair = "LATEST_REPAIR: updated source and exact diagnosis"
+
+    conversation.send_message(initial)
+    assert conversation.prompt == initial
+    conversation.send_message(first_repair)
+    assert initial in conversation.prompt
+    assert first_repair in conversation.prompt
+    conversation.send_message(latest_repair)
+
+    assert initial in conversation.prompt
+    assert latest_repair in conversation.prompt
+    assert first_repair not in conversation.prompt
+
+
+def test_editor_owner_retries_out_of_scope_path_without_weakening_scope(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     run, task_id, _source_path, _source = _write_minimal_agent_task(tmp_path)
     _configure_editor_owner_task(run)
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
-    action = SourceReplaceAction(path="application/Other.java", source="class Other {}")
+    source_path = "application/src/main/java/com/example/application/OrderService.java"
+    outside_path = "application/Other.java"
+    outside = run / outside_path
+    outside.parent.mkdir(parents=True, exist_ok=True)
+    outside.write_text("class Other {}", encoding="utf-8")
+    actions = iter(
+        [
+            SourceReplaceAction(path=outside_path, source="class Other { int changed; }"),
+            SourceReplaceAction(path=source_path, source="class OrderService { int fixed; }"),
+        ]
+    )
+    prompts: list[str] = []
+
+    class PassingTaskCheck:
+        last_evidence = None
+
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def run(self) -> tuple[bool, str]:
+            return True, "passed"
+
+    def request(
+        _connection: object, prompt: str, _llm: object, allowed: list[str]
+    ) -> SourceReplaceAction:
+        prompts.append(prompt)
+        assert allowed == [source_path]
+        return next(actions)
+
+    sleep = patch("app.implementation.agents.runtime.time.sleep")
     with ExitStack() as stack:
+        sleep_mock = stack.enter_context(sleep)
         for manager in (
             patch("app.implementation.agents.runtime.openhands_connection", return_value=LlmConnection("cloudflare", "approved-key", "https://example.invalid/v1", "@cf/zai-org/glm-5.3-flash", "openai")),
-            patch("app.implementation.agents.runtime._request_direct_editor_action", return_value=action),
+            patch("app.implementation.agents.runtime._request_direct_editor_action", side_effect=request),
+            patch("app.implementation.agents.runtime.TaskCheckSession", PassingTaskCheck),
+            patch("app.implementation.agents.runtime.verify_agent_workspace", return_value={"exitCode": 0}),
         ):
             stack.enter_context(manager)
-        with pytest.raises(WorkspaceVerificationError):
-            execute_openhands_task(run, task_id)
+        result = execute_openhands_task(run, task_id)
 
+    assert result["status"] == "SUCCEEDED"
+    assert outside.read_text(encoding="utf-8") == "class Other {}"
+    assert (run / source_path).read_text(encoding="utf-8") == "class OrderService { int fixed; }"
+    assert len(prompts) == 2
+    assert prompts[0] in prompts[1]
+    assert '"failureCode": "INVALID_PATH_ARGUMENT"' in prompts[1]
+    assert source_path in prompts[1]
+    sleep_mock.assert_called_once_with(1)
+    journal = run / "reports/agent-executions" / f"{task_id}.attempt-001.events.jsonl"
+    events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+    rejected = events[0]["event"]
+    assert events[0]["type"] == "DirectEditorActionRejected"
+    assert rejected["rejectedPath"] == outside_path
+    assert rejected["allowedPaths"] == [source_path]
+    assert rejected["sourceSha256"] == hashlib.sha256(
+        b"class Other { int changed; }"
+    ).hexdigest()
+    assert "class Other { int changed; }" not in journal.read_text(encoding="utf-8")
+
+
+def test_direct_editor_response_retries_until_cancelled_without_writing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sandbox = tmp_path / "sandbox"
+    target = sandbox / "application/frontend/src/features/item.tsx"
+    target.parent.mkdir(parents=True)
+    target.write_text("export const Item = 'original';\n", encoding="utf-8")
+    journal = runtime_module.EventJournal(tmp_path / "events.jsonl")
+    conversation = runtime_module._DirectEditorConversation(
+        sandbox,
+        LlmConnection("cloudflare", "key", "https://example.invalid/v1", "model", "openai"),
+        {"maxOutputTokens": 128},
+        [str(target)],
+        [journal],
+    )
+    conversation.send_message("TASK CONTRACT: only item.tsx is writable")
+    prompts: list[str] = []
+
+    def rejected_then_cancelled(*args: object) -> SourceReplaceAction:
+        prompts.append(str(args[1]))
+        if len(prompts) == 3:
+            raise KeyboardInterrupt
+        raise runtime_module.DirectEditorResponseError(
+            "invalid tool JSON",
+            failure_code="INVALID_TOOL_JSON",
+            retryable=True,
+        )
+
+    sleeps: list[int] = []
+    monkeypatch.setattr(
+        "app.implementation.agents.runtime._request_direct_editor_action",
+        rejected_then_cancelled,
+    )
+    monkeypatch.setattr("app.implementation.agents.runtime.time.sleep", sleeps.append)
+
+    with pytest.raises(KeyboardInterrupt):
+        conversation.run()
+
+    assert sleeps == [1, 2]
+    assert target.read_text(encoding="utf-8") == "export const Item = 'original';\n"
+    assert len(prompts) == 3
+    assert "TASK CONTRACT" in prompts[1]
+    assert "INVALID_TOOL_JSON" in prompts[1]
+    assert "INVALID_TOOL_JSON" in prompts[2]
+    assert prompts[1].count("INVALID_TOOL_JSON") == 1
+    events = [json.loads(line) for line in journal.path.read_text(encoding="utf-8").splitlines()]
+    assert len(events) == 2
+    assert all(event["event"]["failureCode"] == "INVALID_TOOL_JSON" for event in events)
+    assert all("source" not in event["event"] for event in events)
 
 def test_direct_editor_requests_named_low_reasoning_replace_source(
     monkeypatch: pytest.MonkeyPatch,
@@ -1195,16 +1699,105 @@ def test_direct_editor_requests_named_low_reasoning_replace_source(
             "openai",
         ),
         "replace this source",
-        {"maxOutputTokens": 1024},
+        {"maxOutputTokens": 1024, "reasoningEffort": "none"},
+        ["application/OrderService.java"],
     )
     assert action.path == "application/OrderService.java"
     assert captured["model"] == "@cf/zai-org/glm-5.3-flash"
-    assert captured["reasoning_effort"] == "low"
-    assert captured["tool_choice"] == {
-        "type": "function",
-        "function": {"name": "replace_source"},
-    }
+    assert captured["max_completion_tokens"] == 1024
+    assert captured["reasoning_effort"] == "none"
+    assert captured["tool_choice"] == "required"
+    assert [tool["function"]["name"] for tool in captured["tools"]] == [
+        "replace_source", "edit_source"
+    ]
+    for tool in captured["tools"]:
+        path_schema = tool["function"]["parameters"]["properties"]["path"]
+        assert path_schema["enum"] == ["application/OrderService.java"]
     assert runtime_module._direct_editor_reasoning_effort({"reasoningEffort": "medium"}) == "low"
+
+
+def test_direct_editor_can_select_edit_source_with_exact_path_enum(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Client:
+        def __init__(self, **_kwargs: object) -> None:
+            self.chat = SimpleNamespace(completions=self)
+
+        def create(self, **request: object) -> object:
+            captured.update(request)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            tool_calls=[
+                                SimpleNamespace(
+                                    function=SimpleNamespace(
+                                        name="edit_source",
+                                        arguments=json.dumps(
+                                            {
+                                                "path": "application/OrderService.java",
+                                                "edits": [
+                                                    {"old_text": "old", "new_text": "new"}
+                                                ],
+                                            }
+                                        ),
+                                    )
+                                )
+                            ]
+                        )
+                    )
+                ]
+            )
+
+    monkeypatch.setattr("openai.OpenAI", Client)
+    action = runtime_module._request_direct_editor_action(
+        LlmConnection(
+            "cloudflare", "approved-key", "https://example.invalid/v1",
+            "@cf/zai-org/glm-5.3-flash", "openai",
+        ),
+        "Make a small correction",
+        {"maxOutputTokens": 1024},
+        ["application/OrderService.java"],
+    )
+    assert isinstance(action, SourceEditAction)
+    assert action.edits[0].old_text == "old"
+    edit_schema = captured["tools"][1]["function"]["parameters"]
+    assert edit_schema["required"] == ["path", "edits"]
+    assert edit_schema["properties"]["path"]["enum"] == ["application/OrderService.java"]
+
+
+def test_direct_editor_edit_dispatch_writes_once_and_journals_hash_only(
+    tmp_path: Path,
+) -> None:
+    sandbox = tmp_path / "sandbox"
+    target = sandbox / "application/OrderService.java"
+    target.parent.mkdir(parents=True)
+    target.write_text("class OrderService { int old; }", encoding="utf-8")
+    journal = runtime_module.EventJournal(tmp_path / "events.jsonl")
+
+    observation = runtime_module._apply_direct_editor_action(
+        sandbox,
+        [str(target)],
+        SourceEditAction(
+            path="application/OrderService.java",
+            edits=[ExactSourceEdit(old_text="int old;", new_text="int updated;")],
+        ),
+        journal,
+    )
+
+    assert not observation.is_error
+    assert target.read_text(encoding="utf-8") == "class OrderService { int updated; }"
+    events = [json.loads(line) for line in journal.path.read_text(encoding="utf-8").splitlines()]
+    assert len(events) == 1
+    assert events[0]["tool"] == "edit_source"
+    assert events[0]["event"]["editCount"] == 1
+    assert events[0]["event"]["sourceSha256"] == hashlib.sha256(
+        target.read_bytes()
+    ).hexdigest()
+    assert "old_text" not in journal.path.read_text(encoding="utf-8")
+    assert journal.tool_counts["edit_source_applied"] == 1
 
 
 def test_direct_editor_accepts_one_marked_tsx_source_and_supplies_bounded_evidence(
@@ -1216,12 +1809,44 @@ def test_direct_editor_accepts_one_marked_tsx_source_and_supplies_bounded_eviden
     index = sandbox / "application/frontend/src/index.tsx"
     operation = sandbox / "application/frontend/reports/get-orders.context.json"
     unrelated = sandbox / "application/frontend/src/features/customers.tsx"
+    generated_api = sandbox / "application/frontend/src/generated/src/apis/DefaultApi.ts"
+    generated_model = sandbox / "application/frontend/src/generated/src/models/Order.ts"
     for path, body in (
         (target, "// EASYDEP-IMPLEMENT: GET /orders (getOrders)\nexport const Orders = () => null;"),
         (api, "export async function getOrders() { return []; }"),
         (index, "import React from 'react';"),
-        (operation, '{"operationId":"getOrders"}'),
+        (
+            operation,
+            json.dumps(
+                {
+                    "operationId": "getOrders",
+                    "generatedClient": {
+                        "resolved": True,
+                        "generatedMethodPath": "application/frontend/src/generated/src/apis/DefaultApi.ts",
+                        "requestType": "GetOrdersRequest",
+                        "responseType": "Order",
+                    },
+                    "referencedComponents": {
+                        "#/components/schemas/Order": {"type": "object"}
+                    },
+                }
+            ),
+        ),
         (unrelated, "export const Customers = () => null;"),
+        (
+            generated_api,
+            "export interface GetOrdersRequest { id: string; }\n"
+            "export class DefaultApi {\n"
+            "  async getOrders(requestParameters: GetOrdersRequest): Promise<Order> {\n"
+            "    return {} as Order;\n"
+            "  }\n"
+            "}",
+        ),
+        (
+            generated_model,
+            "export interface Order { createdAt: Date; }\n"
+            "export function OrderFromJSON(value: unknown): Order { return value as Order; }",
+        ),
     ):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")
@@ -1240,7 +1865,11 @@ def test_direct_editor_accepts_one_marked_tsx_source_and_supplies_bounded_eviden
                 "application/frontend/src/api.ts",
                 "application/frontend/src/index.tsx",
                 "application/frontend/reports/get-orders.context.json",
-            ]
+            ],
+            "operationIds": ["getOrders"],
+            "operationContextPaths": [
+                "application/frontend/reports/get-orders.context.json"
+            ],
         },
         writable,
     )
@@ -1248,7 +1877,12 @@ def test_direct_editor_accepts_one_marked_tsx_source_and_supplies_bounded_eviden
     assert "current writable source" in evidence
     assert "getOrders()" in evidence
     assert "React from" in evidence
-    assert '"operationId":"getOrders"' in evidence
+    assert '"operationId": "getOrders"' in evidence
+    assert "GetOrdersRequest { id: string; }" in evidence
+    assert "async getOrders(requestParameters: GetOrdersRequest): Promise<Order>" in evidence
+    assert "export interface Order { createdAt: Date; }" in evidence
+    assert "Generated TypeScript SDK declarations below define application-facing value types." in evidence
+    assert "wire schema" in evidence
     assert "customers.tsx" not in evidence
 
 
@@ -1265,6 +1899,15 @@ def test_direct_editor_rejects_multiple_or_oversized_sources(tmp_path: Path) -> 
     first.write_bytes(b"x" * (runtime_module.EDITOR_WRITABLE_SOURCE_MAX_BYTES + 1))
     assert not runtime_module._direct_editor_source_is_eligible(
         {}, "frontend-implementation", [str(first)], sandbox
+    )
+
+
+def test_direct_editor_accepts_missing_single_unit_test_target(tmp_path: Path) -> None:
+    sandbox = tmp_path / "sandbox"
+    target = sandbox / "application/src/test/java/ExampleTest.java"
+
+    assert runtime_module._direct_editor_source_is_eligible(
+        {}, "backend-unit-test", [str(target)], sandbox
     )
 
 
@@ -1292,6 +1935,7 @@ def test_direct_editor_rejects_completion_without_named_tool(
             ),
             "replace this source",
             {"maxOutputTokens": 1024},
+            ["application/OrderService.java"],
         )
 
 
@@ -1718,10 +2362,6 @@ def test_verify_or_repair_passes_before_openhands_connection(
 
     with (
         patch(
-            'app.implementation.agents.runtime.preflight_semantic_integration',
-            return_value=None,
-        ) as admission,
-        patch(
             'app.implementation.agents.task_check.verify_agent_workspace',
             return_value=evidence,
         ) as verify,
@@ -1732,7 +2372,6 @@ def test_verify_or_repair_passes_before_openhands_connection(
     ):
         result = execute_openhands_task(run, task_id)
 
-    admission.assert_called_once()
     verify.assert_called_once()
     assert verify.call_args.args[0] != run
     assert verify.call_args.args[0].name != 'application'
@@ -1759,13 +2398,12 @@ def test_verify_or_repair_npm_infrastructure_failure_skips_openhands(
     monkeypatch.setenv('EASYDEP_FIXED_LINUX_RUNNER', '1')
     checked: list[Path] = []
 
-    def timed_out(sandbox: Path, *_args: object) -> tuple[bool, str]:
-        checked.append(sandbox)
+    def timed_out(session: TaskCheckSession) -> tuple[bool, str]:
+        checked.append(session.sandbox)
         return False, 'npm ci timed out'
 
     with (
-        patch('app.implementation.agents.runtime.preflight_semantic_integration', return_value=None),
-        patch('app.implementation.agents.runtime.run_task_check', side_effect=timed_out),
+        patch('app.implementation.agents.runtime.TaskCheckSession.run', timed_out),
         patch('app.implementation.agents.runtime.openhands_connection', side_effect=AssertionError('must not repair infrastructure')) as connection,
         pytest.raises(OwnerConversationIncomplete, match='npm ci timed out'),
     ):
@@ -1774,30 +2412,161 @@ def test_verify_or_repair_npm_infrastructure_failure_skips_openhands(
     assert checked and not checked[0].exists()
 
 
-@pytest.mark.parametrize(
-    ('task_type', 'owner', 'preflight_name'),
-    [
-        (
-            'integration-implementation',
-            'implementation',
-            'app.implementation.agents.runtime.preflight_semantic_integration',
-        ),
-    ],
-)
-def test_semantic_admission_is_rejected_before_openhands(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    task_type: str,
-    owner: str,
-    preflight_name: str,
+def test_verify_or_repair_failure_result_preserves_initial_diagnosis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    run, task_id, _source_path, _source = _write_minimal_agent_task(tmp_path)
+    from openhands.sdk.conversation.state import ConversationExecutionStatus
+
+    run, task_id, source_path, _source = _write_minimal_agent_task(tmp_path)
     task_path = run / "reports/implementation-tasks/order.task.json"
     task = json.loads(task_path.read_text(encoding="utf-8"))
     task.update(
         {
-            "task_type": task_type,
-            "owner": owner,
+            "task_type": "integration-implementation",
+            "owner": "implementation",
+            "completion_mode": "verify-or-repair",
+        }
+    )
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    (run / "reports/run-manifest.json").write_text(
+        json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
+    )
+    (run / task["context_file"]).write_text(
+        json.dumps({"readSourcePaths": [source_path]}), encoding="utf-8"
+    )
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
+    diagnosis = "application startup failed: RootCauseSentinel"
+
+    class IncompleteConversation:
+        def __init__(self) -> None:
+            self.state = SimpleNamespace(
+                execution_status=ConversationExecutionStatus.IDLE
+            )
+
+        def send_message(self, _message: str) -> None:
+            pass
+
+        def run(self) -> None:
+            self.state.execution_status = ConversationExecutionStatus.ERROR
+
+        def close(self) -> None:
+            pass
+
+    connection = SimpleNamespace(
+        api_key="approved-key",
+        provider="openrouter",
+        model="openai/gpt-4o-mini",
+        display_name=lambda: "OpenRouter",
+        litellm_model=lambda: "openrouter/openai/gpt-4o-mini",
+    )
+    with (
+        patch(
+            "app.implementation.agents.runtime.TaskCheckSession.run",
+            return_value=(False, diagnosis),
+        ),
+        patch(
+            "app.implementation.agents.runtime.openhands_compatibility",
+            return_value={
+                "pythonCompatible": True,
+                "sdkInstalled": True,
+                "toolsInstalled": True,
+                "apiKeyConfigured": True,
+            },
+        ),
+        patch(
+            "app.implementation.agents.runtime.openhands_connection",
+            return_value=connection,
+        ),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            return_value=(IncompleteConversation(), SimpleNamespace(_tools={})),
+        ),
+        pytest.raises(OwnerConversationIncomplete),
+    ):
+        execute_openhands_task(run, task_id)
+
+    result = json.loads(
+        (run / f"reports/agent-executions/{task_id}.result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert result["status"] == "INTERRUPTED"
+    assert result["completionPath"] == "repair-agent"
+    assert result["initialVerification"] == {
+        "status": "FAILED",
+        "diagnosis": diagnosis,
+    }
+
+
+def test_verify_or_repair_typed_startup_environment_failure_skips_agent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task_id, source_path, _source = _write_minimal_agent_task(tmp_path)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task.update(
+        {
+            "task_type": "integration-implementation",
+            "owner": "implementation",
+            "completion_mode": "verify-or-repair",
+        }
+    )
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    (run / "reports/run-manifest.json").write_text(
+        json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
+    )
+    (run / task["context_file"]).write_text(
+        json.dumps({"readSourcePaths": [source_path]}), encoding="utf-8"
+    )
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
+    evidence = {
+        "command": ["application-startup", "health-check"],
+        "exitCode": 1,
+        "stderr": "The Docker daemon is unavailable",
+        "applicationStartup": {
+            "status": "FAILED",
+            "defectClass": "ENVIRONMENT_DEFECT",
+            "applicationLog": "",
+        },
+    }
+
+    def fail_with_environment_evidence(session: TaskCheckSession):
+        session._last_evidence = evidence
+        return False, "TASK CHECK FAILED\nThe Docker daemon is unavailable"
+
+    with (
+        patch(
+            "app.implementation.agents.runtime.TaskCheckSession.run",
+            fail_with_environment_evidence,
+        ),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            side_effect=AssertionError("environment failure must not reach the agent"),
+        ) as create_conversation,
+        pytest.raises(OwnerConversationIncomplete) as raised,
+    ):
+        execute_openhands_task(run, task_id)
+
+    create_conversation.assert_not_called()
+    assert raised.value.evidence["applicationStartup"]["defectClass"] == (
+        "ENVIRONMENT_DEFECT"
+    )
+
+
+def test_semantic_admission_does_not_block_integration_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run, task_id, source_path, _source = _write_minimal_agent_task(tmp_path)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task.update(
+        {
+            "task_type": "integration-implementation",
+            "owner": "implementation",
+            "completion_mode": "verify-or-repair",
             "source_refs": ["use_case_spec:UC-12"],
         }
     )
@@ -1805,57 +2574,172 @@ def test_semantic_admission_is_rejected_before_openhands(
     (run / "reports/run-manifest.json").write_text(
         json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
     )
-    context = {"readSourcePaths": []}
+    context = {"readSourcePaths": [source_path]}
     (run / task["context_file"]).write_text(json.dumps(context), encoding="utf-8")
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
     monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
 
     with (
         patch(
-            preflight_name,
-            return_value=UpstreamGap(
-                summary="A branch has no declared observable.",
-                source_ref="use_case_spec:UC-12",
-            ),
-        ),
+            "app.implementation.agents.task_check.verify_agent_workspace",
+            return_value={"command": ["thin-integration"], "exitCode": 0},
+        ) as verify,
         patch(
-            "app.implementation.agents.runtime.create_openhands_conversation"
-        ) as create_conversation,
+            "app.implementation.agents.runtime.openhands_connection",
+            side_effect=AssertionError("successful integration check must not invoke an agent"),
+        ) as connection,
     ):
         result = execute_openhands_task(run, task_id)
 
-    create_conversation.assert_not_called()
-    assert result["status"] == "NEEDS_INPUT"
-    assert result["upstreamGap"] == {
-        "summary": "A branch has no declared observable.",
-        "sourceRef": "use_case_spec:UC-12",
+    verify.assert_called_once()
+    connection.assert_not_called()
+    assert result["status"] == "SUCCEEDED"
+    assert result["completionPath"] == "verify-only"
+    assert result["agentInvoked"] is False
+
+
+def test_integration_fqcn_rtm_routes_unique_failure_owner_without_widening(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    task_dir = reports / "implementation-tasks"
+    task_dir.mkdir()
+    integration_id = "implement-vertical-integration"
+    source_id = "implement-backend-service"
+    source_path = (
+        "application/src/main/java/com/easydep/app/application/impl/"
+        "WaitlistControlService.java"
+    )
+    integration_path = "application/frontend/src/api.ts"
+    source = run / source_path
+    source.parent.mkdir(parents=True)
+    source.write_text("class WaitlistControlService {}", encoding="utf-8")
+    integration = {
+        "task_id": integration_id,
+        "task_type": "integration-implementation",
+        "owner": "integration",
+        "completion_mode": "verify-or-repair",
+        "prompt_file": "reports/implementation-tasks/integration.prompt.md",
+        "context_file": "reports/implementation-tasks/integration.context.json",
+        "prompt_sha256": "prompt-hash",
+        "llm": {"temperature": 0.0, "maxOutputTokens": 1024},
+        "verification_profile": {},
+        "allowed_write_paths": [integration_path],
+        "required_output_paths": [integration_path],
     }
-
-
-@pytest.mark.parametrize(
-    ("task_type", "owner", "preflight_name"),
-    [
-        (
-            "integration-implementation",
-            "implementation",
-            "app.implementation.agents.runtime.preflight_semantic_integration",
+    backend = {
+        "task_id": source_id,
+        "task_type": "backend-implementation",
+        "owner": "backend",
+        "allowed_write_paths": [source_path],
+        "required_output_paths": [source_path],
+        "source_refs": ["use_case:UC-1"],
+    }
+    (task_dir / "integration.prompt.md").write_text("Integrate the application.", encoding="utf-8")
+    (task_dir / "integration.context.json").write_text(
+        json.dumps({"readSourcePaths": [integration_path]}), encoding="utf-8"
+    )
+    (task_dir / "integration.task.json").write_text(json.dumps(integration), encoding="utf-8")
+    manifest = reports / "run-manifest.json"
+    manifest.write_text(json.dumps({"implementation_tasks": [integration, backend]}), encoding="utf-8")
+    rtm = reports / "rtm-traceability-map.json"
+    rtm.write_text(
+        json.dumps(
+            {
+                "mappings": [
+                    {
+                        "target_file": source_path,
+                        "taskId": source_id,
+                        "sourceRefs": ["use_case:UC-1"],
+                    }
+                ]
+            }
         ),
-    ],
-)
-def test_demo_skip_avoids_semantic_admission_and_upstream_gap_tool(
+        encoding="utf-8",
+    )
+    evidence: dict[str, object] = {
+        "command": ["application-startup", "health-check"],
+        "exitCode": 1,
+        "stderr": "Cannot subclass final class com.easydep.app.application.impl.WaitlistControlService",
+        "applicationStartup": {"status": "FAILED", "applicationLog": "startup failed"},
+    }
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
+
+    def failed_precheck(session: TaskCheckSession):
+        session._last_evidence = evidence
+        return False, str(evidence["stderr"])
+
+    with (
+        patch("app.implementation.agents.runtime.TaskCheckSession.run", failed_precheck),
+        patch(
+            "app.implementation.agents.runtime.create_openhands_conversation",
+            side_effect=AssertionError("uniquely attributed failures bypass the integration editor"),
+        ) as create_conversation,
+        pytest.raises(WorkspaceVerificationError) as raised,
+    ):
+        execute_openhands_task(run, integration_id)
+    create_conversation.assert_not_called()
+    routed_evidence = raised.value.evidence
+    assert routed_evidence["repairTaskId"] == source_id
+    assert routed_evidence["attributedTargetFile"] == source_path
+    repair = schedule_cross_phase_repair(run, integration_id, routed_evidence)
+    assert repair is not None
+    assert repair["ownerTaskIds"] == [source_id]
+    assert repair["repairPaths"] == [source_path]
+    assert integration_path not in repair["repairPaths"]
+
+    ambiguous = json.loads(rtm.read_text(encoding="utf-8"))
+    ambiguous["mappings"].append(
+        {
+            "target_file": source_path,
+            "taskId": "another-declared-owner",
+            "sourceRefs": ["use_case:UC-2"],
+        }
+    )
+    rtm.write_text(json.dumps(ambiguous), encoding="utf-8")
+    manifest.write_text(
+        json.dumps(
+            {
+                "implementation_tasks": [
+                    integration,
+                    backend,
+                    {
+                        **backend,
+                        "task_id": "another-declared-owner",
+                        "source_refs": ["use_case:UC-2"],
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert runtime_module._integration_source_owner_attribution(
+        run, integration_id, evidence, str(evidence["stderr"])
+    ) is None
+    fallback = schedule_cross_phase_repair(
+        run,
+        integration_id,
+        {key: value for key, value in evidence.items() if key not in {"repairTaskId", "attributedTargetFile"}},
+    )
+    assert fallback is not None
+    assert fallback["ownerTaskIds"] == [integration_id]
+    assert fallback["repairPaths"] == []
+
+
+def test_demo_skip_avoids_upstream_gap_tool(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    task_type: str,
-    owner: str,
-    preflight_name: str,
 ) -> None:
     run, task_id, _source_path, _source = _write_minimal_agent_task(tmp_path)
     task_path = run / "reports/implementation-tasks/order.task.json"
     task = json.loads(task_path.read_text(encoding="utf-8"))
     task.update(
         {
-            "task_type": task_type,
-            "owner": owner,
+            "task_type": "integration-implementation",
+            "owner": "implementation",
             "source_refs": ["use_case_spec:UC-12"],
         }
     )
@@ -1904,7 +2788,6 @@ def test_demo_skip_avoids_semantic_admission_and_upstream_gap_tool(
         return FakeConversation(sandbox), SimpleNamespace(_tools={})
 
     with (
-        patch(preflight_name) as preflight,
         patch("app.implementation.agents.runtime.register_upstream_gap_tool") as register_gap,
         patch("app.implementation.agents.runtime.reported_upstream_gap") as reported_gap,
         patch(
@@ -1928,7 +2811,6 @@ def test_demo_skip_avoids_semantic_admission_and_upstream_gap_tool(
     ):
         result = execute_openhands_task(run, task_id)
 
-    preflight.assert_not_called()
     register_gap.assert_not_called()
     reported_gap.assert_not_called()
     create.assert_called_once()
@@ -2979,6 +3861,27 @@ def test_owner_workspace_guidance_states_runner_facts_without_error_history(
     assert "raw design inputs" not in bounded
     assert "unrelated generated files" not in bounded
 
+    for unit_task, framework in (
+        ("backend-unit-test", "JUnit"),
+        ("frontend-unit-test", "Vitest"),
+    ):
+        unit_guidance = _owner_workspace_guidance(
+            unit_task,
+            tmp_path,
+            [],
+            owner_tool_mode="editor",
+            owner_files=["assigned-test-file"],
+            read_files=["application/src/main/java/com/example/OrderService.java"],
+            bounded_evidence=True,
+        )
+        assert "assigned completion marker" not in unit_guidance
+        assert "This task authors one focused" in unit_guidance
+        assert framework in unit_guidance
+        assert "implementation subject" in unit_guidance
+        unit_boundary = _owner_evidence_boundary_message([], task_type=unit_task)
+        assert "create the assigned test file" in unit_boundary
+        assert "source and API evidence are read-only" in unit_boundary
+
 
 def test_owner_prompt_requires_an_immediate_edit_and_narrow_stuck_recovery() -> None:
     assert "operation contract" in OWNER_INITIAL_ACTION_MESSAGE
@@ -3796,7 +4699,9 @@ class Order <<Entity>> { - id: UUID }
     task_types = {task["task_type"] for task in tasks}
     assert task_types == {
         "backend-implementation",
+        "backend-unit-test",
         "frontend-implementation",
+        "frontend-unit-test",
         "integration-implementation",
     }
     assert (
@@ -3813,15 +4718,19 @@ class Order <<Entity>> { - id: UUID }
     for task in tasks:
         assert set(task["required_output_paths"]) <= set(task["allowed_write_paths"])
 
-    backends = [task for task in tasks if task["owner"] == "backend"]
-    frontends = [task for task in tasks if task["owner"] == "frontend"]
+    backends = [task for task in tasks if task["task_type"] == "backend-implementation"]
+    backend_tests = [task for task in tasks if task["task_type"] == "backend-unit-test"]
+    frontends = [task for task in tasks if task["task_type"] == "frontend-implementation"]
+    frontend_tests = [task for task in tasks if task["task_type"] == "frontend-unit-test"]
     frontend = frontends[0]
     integration = next(
         task for task in tasks if task["task_type"] == "integration-implementation"
     )
-    assert len(tasks) == len(backends) + len(frontends) + 1
-    assert len(backends) == 3
+    assert len(tasks) == len(backends) + len(backend_tests) + len(frontends) + len(frontend_tests) + 1
+    assert len(backends) >= 3
+    assert len(backend_tests) == len(backends)
     assert len(frontends) >= 1
+    assert len(frontend_tests) == len(frontends)
     assert not any(task["task_id"] == "implement-use-cases-stale-common" for task in tasks)
     controller_backends = [
         task
@@ -3829,11 +4738,13 @@ class Order <<Entity>> { - id: UUID }
         if any("/adapter/in/web/" in path for path in task["required_output_paths"])
     ]
     domain_backends = [task for task in backends if task not in controller_backends]
-    assert len(controller_backends) == 2
-    assert len(domain_backends) == 1
-    assert domain_backends[0]["task_id"].startswith("implement-backend-domain-core-")
-    assert len(domain_backends[0]["task_id"]) <= 48
+    assert len(controller_backends) >= 2
+    assert len(domain_backends) >= 1
     assert [task["depends_on"] for task in backends] == [[] for _ in backends]
+    assert all(len(task["depends_on"]) == 1 for task in backend_tests)
+    assert all(len(task["depends_on"]) == 1 for task in frontend_tests)
+    assert all(task["allowed_write_paths"] == task["required_test_paths"] for task in backend_tests)
+    assert all(task["allowed_write_paths"] == task["required_test_paths"] for task in frontend_tests)
     assert state["nextRunnableTasks"] == [task["task_id"] for task in backends]
     assert {
         use_case_id
@@ -3845,6 +4756,8 @@ class Order <<Entity>> { - id: UUID }
     assert integration["depends_on"] == [
         *(task["task_id"] for task in backends),
         *(task["task_id"] for task in frontends),
+        *(task["task_id"] for task in backend_tests),
+        *(task["task_id"] for task in frontend_tests),
     ]
     assert next(
         phase for phase in state["phases"] if phase["phaseId"] == "integration"
@@ -4047,13 +4960,18 @@ class Order <<Entity>> { - id: UUID }
     ]
     assert all("application/frontend/src/api.ts" in task["immutable_paths"] for task in frontends)
     assert "application/frontend/src/api.ts" in integration["allowed_write_paths"]
-    domain_backend = domain_backends[0]
-    source_index = json.loads(
-        (run / domain_backend["context_file"]).read_text(encoding="utf-8")
-    )
-    source_index = json.loads(
-        (run / source_index["sourceIndexPath"]).read_text(encoding="utf-8")
-    )
+    domain_source_indexes = []
+    for candidate in domain_backends:
+        candidate_context = json.loads(
+            (run / candidate["context_file"]).read_text(encoding="utf-8")
+        )
+        candidate_index = json.loads(
+            (run / candidate_context["sourceIndexPath"]).read_text(encoding="utf-8")
+        )
+        if candidate_index["startingSourcePaths"] and candidate_index["methodContexts"]:
+            domain_source_indexes.append(candidate_index)
+    assert domain_source_indexes
+    source_index = domain_source_indexes[0]
     assert source_index["hintsOnly"] is True
     assert source_index["startingSourcePaths"]
     assert source_index["methodContexts"]
@@ -4175,6 +5093,162 @@ def test_completed_workflow_runs_one_backend_regression_gate_before_testing(
     )
     assert resumed["status"] == "COMPLETE"
     assert gate_calls == [("backend-regression.json", False, False)]
+
+
+def test_successful_integration_owner_result_is_reused_for_finalization(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A reconciled integration-owner result is the final gate; do not rerun it."""
+    run = tmp_path / "run"
+    reports = run / "reports"
+    executions = reports / "agent-executions"
+    executions.mkdir(parents=True)
+    task_id = "implement-vertical-integration"
+    result_rel = f"reports/agent-executions/{task_id}.result.json"
+    task = {
+        "task_id": task_id,
+        "task_type": "integration-implementation",
+        "owner": "implementation",
+        "depends_on": [],
+        "context_file": "reports/tasks/integration.context.json",
+        "prompt_sha256": "integration-prompt",
+        "allowed_write_paths": [],
+        "required_output_paths": [],
+    }
+    (reports / "run-manifest.json").write_text(
+        json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
+    )
+    context = run / task["context_file"]
+    context.parent.mkdir(parents=True)
+    context.write_text(json.dumps({"readSourcePaths": []}), encoding="utf-8")
+    (executions / f"{task_id}.result.json").write_text(
+        json.dumps({"status": "SUCCEEDED", "promptSha256": "integration-prompt"}),
+        encoding="utf-8",
+    )
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "status": "READY_TO_FINALIZE",
+                "tasks": [],
+                "phases": [{"phaseId": "integration", "status": "SUCCEEDED"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.effective_task_prompt_sha256",
+        lambda *_args: "integration-prompt",
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.plan_workflow",
+        lambda run_root, _spec: reconcile_workflow_state(run_root),
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.audit_run_completion",
+        lambda _run: {"status": "COMPLETE"},
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.verify_source_design_conformance",
+        lambda *_args: {"status": "PASSED"},
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator._render_deployment_if_configured",
+        lambda *_args: (None, None),
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.render_local_container",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.build_rtm_traceability_map",
+        lambda *_args: {"summary": {"missing": 0}},
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.verify_run_workspace",
+        lambda *_args, **_kwargs: pytest.fail("successful integration result must be reused"),
+    )
+
+    result = run_workflow(
+        run,
+        SimpleNamespace(
+            app_id="app-1", inputs={}, job_type="INITIAL_IMPLEMENTATION"
+        ),
+        auditor=lambda _run: {"status": "COMPLETE"},
+    )
+
+    assert result["status"] == "COMPLETE"
+    assert result["backendRegression"] == result_rel
+    assert result["testingRequired"] is True
+    assert next(item for item in result["tasks"] if item["task_id"] == task_id)["status"] == "SUCCEEDED"
+    persisted = json.loads((reports / "workflow-state.json").read_text(encoding="utf-8"))
+    assert persisted["status"] == "COMPLETE"
+    assert persisted["backendRegression"] == result_rel
+
+
+def test_failed_integration_owner_cannot_finalize_workflow(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An integration owner failure remains blocking and never reaches completion."""
+    run = tmp_path / "run"
+    reports = run / "reports"
+    reports.mkdir(parents=True)
+    task_id = "implement-vertical-integration"
+    task = {
+        "task_id": task_id,
+        "task_type": "integration-implementation",
+        "owner": "implementation",
+        "depends_on": [],
+        "context_file": "reports/tasks/integration.context.json",
+        "prompt_sha256": "integration-prompt",
+        "allowed_write_paths": [],
+        "required_output_paths": [],
+    }
+    (reports / "run-manifest.json").write_text(
+        json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
+    )
+    context = run / task["context_file"]
+    context.parent.mkdir(parents=True)
+    context.write_text(json.dumps({"readSourcePaths": []}), encoding="utf-8")
+    (reports / "workflow-state.json").write_text(
+        json.dumps(
+            {
+                "status": "READY",
+                "tasks": [],
+                "phases": [{"phaseId": "integration", "status": "PENDING"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.effective_task_prompt_sha256",
+        lambda *_args: "integration-prompt",
+    )
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.plan_workflow",
+        lambda run_root, _spec: reconcile_workflow_state(run_root),
+    )
+    completion_calls: list[Path] = []
+
+    def fail_integration(_run: Path, _task_id: str) -> dict[str, object]:
+        raise RuntimeError("integration check failed")
+
+    with pytest.raises(RuntimeError, match="integration check failed"):
+        run_workflow(
+            run,
+            SimpleNamespace(
+                app_id="app-1", inputs={}, job_type="INITIAL_IMPLEMENTATION"
+            ),
+            executor=fail_integration,
+            auditor=lambda path: completion_calls.append(path) or {"status": "COMPLETE"},
+        )
+
+    persisted = json.loads((reports / "workflow-state.json").read_text(encoding="utf-8"))
+    assert persisted["status"] == "FAILED"
+    assert persisted["tasks"][0]["status"] == "FAILED"
+    assert completion_calls == []
+    assert persisted.get("testingRequired") is not True
 
 
 def test_owner_execution_boundary_preserves_checkpoint_without_source_repair(

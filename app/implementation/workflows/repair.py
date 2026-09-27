@@ -8,11 +8,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
+import shutil
+import time
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from app.config import settings
+from app.llm_connection import build_llm_connection
+from openai import APIError, OpenAI
+from pydantic import BaseModel, ValidationError
 
 REPAIR_SCHEMA = "implementation-repair-plan/v4"
 REPAIR_PLAN = Path("reports/repair-plan.json")
@@ -20,10 +28,345 @@ REPAIR_PROMPT_DIR = Path("reports/implementation-tasks")
 REPAIR_PROMPT_HEADING = "## Automatic repair task"
 REPAIR_PROMPT_START = "<!-- easydep:repair-directives:start -->"
 REPAIR_PROMPT_END = "<!-- easydep:repair-directives:end -->"
+logger = logging.getLogger(__name__)
 
 
 class RepairRoutingError(ValueError):
     """Structured repair evidence cannot identify one implementation task."""
+
+
+class UnitFailureReview(BaseModel):
+    """One bounded OSS decision for an executed focused-test failure."""
+
+    classification: Literal["implementation", "test_oracle", "undetermined"]
+    rationale: str
+    evidence: list[str]
+    preserve_assertions: list[str]
+    correction_instruction: str
+
+
+_UNIT_FAILURE_REVIEW_PROMPT = """Assess whether the generated focused test oracle is valid or the implementation violates its contract. Use only the supplied explicit operation/behavior contract and source/test evidence. Return exactly JSON with fields: classification (implementation|test_oracle|undetermined), rationale (string), evidence (array of strings), preserve_assertions (array of strings naming every existing passing or contract-backed assertion to retain), correction_instruction (string). A failure alone or source/test disagreement alone does not prove a bad oracle. Mark test_oracle only if the failed assertion is invalid or contradicts authoritative contract; mark implementation only if a valid contract-backed assertion is violated by the SUT; otherwise undetermined. Never weaken/delete passing or contract-backed assertions. For test_oracle, the SUT is read-only and correction_instruction must change only the assigned existing test file, retaining the behavior assertion; do not suggest adding attributes/markers to the SUT. For implementation, keep the supplied test byte-for-byte unchanged and restrict correction_instruction to the assigned subject source. Do not edit code."""
+
+
+def _run_file(run_root: Path, relative: object) -> Path | None:
+    """Resolve one declared run-relative evidence path without discovery."""
+
+    if not isinstance(relative, str) or not relative:
+        return None
+    candidate = (run_root / relative).resolve()
+    try:
+        candidate.relative_to(run_root.resolve())
+    except ValueError:
+        return None
+    return candidate
+
+
+def _read_declared_text(run_root: Path, relative: object) -> str | None:
+    path = _run_file(run_root, relative)
+    if path is None or not path.is_file():
+        return None
+    try:
+        if path.stat().st_size > 65536:
+            return None
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _unit_failure_review(
+    run_root: Path,
+    failed: dict[str, object],
+    evidence: dict[str, object],
+) -> dict[str, object] | None:
+    """Ask the configured reviewer about one executed, SHA-pinned unit failure.
+
+    Missing declared contract or raw check evidence is deliberately undetermined:
+    this path must never infer that a test is wrong merely from source disagreement.
+    """
+
+    task_id = str(failed.get("task_id", ""))
+    logger.info("unit failure review entered task_id=%s", task_id)
+
+    def skip(reason: str) -> None:
+        logger.info("unit failure review skipped task_id=%s reason=%s", task_id, reason)
+
+    results = evidence.get("unitTestResults")
+    candidate = evidence.get("frozenTestCandidate")
+    profile = failed.get("verification_profile")
+    if not isinstance(results, dict) or not isinstance(candidate, dict) or not isinstance(profile, dict):
+        skip("missing_results_candidate_or_profile")
+        return None
+    if not (
+        isinstance(results.get("total"), int)
+        and isinstance(results.get("failed"), int)
+        and isinstance(results.get("skipped", 0), int)
+        and results["failed"] > 0
+        and results["total"] - results.get("skipped", 0) > 0
+    ):
+        skip("no_executed_assertion_failure")
+        return None
+    candidate_path = candidate.get("path")
+    candidate_sha = candidate.get("sha256")
+    candidate_source = candidate.get("sourcePath")
+    test_source = _read_declared_text(run_root, candidate_path)
+    if not (
+        isinstance(candidate_sha, str)
+        and isinstance(candidate_source, str)
+        and test_source is not None
+        and hashlib.sha256(test_source.encode("utf-8")).hexdigest() == candidate_sha
+    ):
+        skip("frozen_candidate_missing_or_sha_mismatch")
+        return None
+    subject_paths = profile.get("unitTestSubjectPaths")
+    if not isinstance(subject_paths, list) or not subject_paths or not all(
+        isinstance(path, str) and path for path in subject_paths
+    ):
+        skip("subject_paths_missing")
+        return None
+    subject_sources = {
+        path: _read_declared_text(run_root, path)
+        for path in subject_paths
+    }
+    if any(body is None for body in subject_sources.values()):
+        skip("subject_source_missing_or_unreadable")
+        return None
+    context_path = _run_file(run_root, failed.get("context_file", failed.get("contextFile")))
+    if context_path is None or not context_path.is_file():
+        skip("task_context_missing_or_unreadable")
+        return None
+    try:
+        context = _read_json(context_path)
+    except (OSError, json.JSONDecodeError):
+        skip("subject_context_missing_or_unreadable")
+        return None
+    subject_context_path = context.get("subjectContextPath")
+    subject_context_file = _run_file(run_root, subject_context_path)
+    if subject_context_file is None or not subject_context_file.is_file():
+        skip("operation_context_paths_missing")
+        return None
+    try:
+        subject_context = _read_json(subject_context_file)
+    except (OSError, json.JSONDecodeError):
+        skip("operation_contract_missing_or_unreadable")
+        return None
+    operation_paths = subject_context.get("operationContextPaths")
+    if not isinstance(operation_paths, list) or not operation_paths:
+        generated_contract = subject_context.get("generatedOperationContractsPath")
+        operation_paths = [generated_contract] if isinstance(generated_contract, str) else []
+    if not isinstance(operation_paths, list) or not operation_paths or not all(
+        isinstance(path, str) and path for path in operation_paths
+    ):
+        skip("task_prompt_missing_or_unreadable")
+        return None
+    operation_contracts = {
+        path: _read_declared_text(run_root, path)
+        for path in operation_paths
+    }
+    if any(body is None for body in operation_contracts.values()):
+        return None
+    prompt = _read_declared_text(run_root, failed.get("prompt_file", failed.get("promptFile")))
+    if prompt is None:
+        return None
+    task_type = str(failed.get("task_type", ""))
+    raw_report: object
+    if task_type == "frontend-unit-test":
+        report_path = run_root / "reports" / "agent-executions" / f"{failed['task_id']}.vitest.json"
+        if not report_path.is_file() or report_path.stat().st_size > 65536:
+            skip("frontend_raw_report_missing_or_oversized")
+            return None
+        try:
+            raw_report = _read_json(report_path)
+        except (OSError, json.JSONDecodeError):
+            skip("frontend_raw_report_invalid")
+            return None
+    else:
+        # Backend has no stable run-root XML artifact. Its canonical verifier already
+        # projects selected-class XML failures into this evidence when available.
+        raw_report = {
+            key: evidence.get(key)
+            for key in ("testResults", "stdout", "stderr", "diagnosticPaths")
+            if key in evidence
+        }
+        if not raw_report.get("testResults"):
+            skip("backend_test_results_missing")
+            return None
+    payload = {
+        "taskPrompt": prompt,
+        "taskSpec": {
+            key: failed.get(key)
+            for key in (
+                "task_id", "task_type", "allowed_write_paths", "required_output_paths",
+                "required_test_paths", "verification_profile", "depends_on",
+            )
+        },
+        "materializedContext": {
+            key: context.get(key)
+            for key in ("readSourcePaths", "availableReadPaths", "subjectContextPath", "designInputs")
+            if key in context
+        },
+        "subjectContext": {
+            key: subject_context.get(key)
+            for key in (
+                "operationContextPaths", "generatedOperationContractsPath",
+                "readSourcePaths", "sourceRefs",
+            )
+            if key in subject_context
+        },
+        "operationContracts": operation_contracts,
+        "subjectSources": subject_sources,
+        "frozenTestSource": test_source,
+        "observedCheckEvidence": {
+            "unitTestResults": results,
+            "rawReport": raw_report,
+        },
+    }
+    try:
+        connection = build_llm_connection()
+        logger.info(
+            "unit failure review request started task_id=%s model=%s",
+            task_id,
+            connection.model,
+        )
+        if not connection.api_key:
+            logger.warning(
+                "unit failure review unavailable task_id=%s model=%s reason=no_api_key",
+                task_id,
+                connection.model,
+            )
+            return None
+        client = OpenAI(
+            api_key=connection.api_key,
+            base_url=connection.base_url,
+            default_headers=connection.default_headers(),
+            timeout=settings.llm_timeout_seconds,
+            max_retries=0,
+        )
+        messages = [
+            {"role": "system", "content": _UNIT_FAILURE_REVIEW_PROMPT},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+        ]
+
+        def request_review(current_messages: list[dict[str, str]]) -> object:
+            return client.chat.completions.create(
+                model=connection.model,
+                messages=current_messages,
+                temperature=0.1,
+                max_completion_tokens=2048,
+                reasoning_effort=settings.design_reasoning_effort,
+                response_format={"type": "json_object"},
+            )
+
+        latest_invalid_content = ""
+        latest_issues: list[dict[str, object]] = []
+        correction_attempt = 0
+        while True:
+            request_messages = messages
+            if correction_attempt:
+                schema_json = json.dumps(
+                    UnitFailureReview.model_json_schema(), ensure_ascii=False
+                )
+                correction = (
+                    "Reassess the original evidence under the original system instructions. "
+                    "Your latest response failed schema validation. Return one complete JSON "
+                    "object conforming to this exact schema; do not omit required fields, "
+                    "default a verdict, weaken or remove contract-backed assertions, or broaden "
+                    "the permitted edit target. This is a format/schema correction only; a "
+                    "valid undetermined classification is acceptable when evidence is uncertain. "
+                    f"Schema: {schema_json}\nValidation issues: "
+                    f"{json.dumps(latest_issues, ensure_ascii=False)}"
+                )
+                request_messages = [
+                    *messages,
+                    {"role": "assistant", "content": latest_invalid_content},
+                    {"role": "user", "content": correction},
+                ]
+            response = request_review(request_messages)
+            choices = response.choices or []
+            content = choices[0].message.content if choices else None
+            if isinstance(content, str):
+                try:
+                    review = UnitFailureReview.model_validate_json(content).model_dump()
+                    break
+                except ValidationError as validation_error:
+                    latest_invalid_content = content
+                    latest_issues = [
+                        {"loc": list(item.get("loc", ())), "type": item.get("type")}
+                        for item in validation_error.errors(include_input=False)
+                    ]
+            else:
+                latest_invalid_content = ""
+                latest_issues = [
+                    {"loc": ["message", "content"], "type": "missing_content"}
+                ]
+            correction_attempt += 1
+            logger.warning(
+                "unit failure review response failed schema task_id=%s model=%s attempt=%s issues=%s",
+                task_id,
+                connection.model,
+                correction_attempt,
+                latest_issues,
+            )
+            # The Workspace stop path terminates this registered runner process.
+            # Capped backoff avoids a tight loop while leaving retries uncapped.
+            time.sleep(min(30.0, float(2 ** min(correction_attempt - 1, 5))))
+        logger.info(
+            "unit failure review completed task_id=%s model=%s classification=%s",
+            task_id,
+            connection.model,
+            review["classification"],
+        )
+        return review
+    except ValidationError as error:
+        issues = [
+            {"loc": list(item.get("loc", ())), "type": item.get("type")}
+            for item in error.errors(include_input=False)
+        ]
+        logger.warning(
+            "unit failure review invalid schema task_id=%s model=%s issues=%s",
+            task_id,
+            getattr(locals().get("connection"), "model", "unknown"),
+            issues,
+        )
+        return None
+    except APIError as error:
+        body = getattr(error, "body", None)
+        body_error = body.get("error", body) if isinstance(body, dict) else None
+        body_error = body_error if isinstance(body_error, dict) else {}
+        provider_param = body_error.get("param") or getattr(error, "param", None)
+        provider_code = body_error.get("code") or getattr(error, "code", None)
+        provider_message = body_error.get("message")
+        safe_message = (
+            str(provider_message)[:800]
+            if isinstance(provider_message, str)
+            and not any(
+                marker in provider_message.casefold()
+                for marker in (
+                    "api key", "api_key", "authorization", "bearer", "credential",
+                    "secret", "access_token", "refresh_token", "secret_token",
+                )
+            )
+            else None
+        )
+        logger.warning(
+            "unit failure review API error task_id=%s model=%s error_type=%s status=%s param=%s code=%s message=%s",
+            task_id,
+            getattr(locals().get("connection"), "model", "unknown"),
+            type(error).__name__,
+            getattr(error, "status_code", None),
+            str(provider_param)[:160] if provider_param is not None else None,
+            str(provider_code)[:160] if provider_code is not None else None,
+            safe_message,
+        )
+        return None
+    except (OSError, ValueError) as error:
+        logger.warning(
+            "unit failure review failed task_id=%s model=%s error_type=%s errno=%s",
+            task_id,
+            getattr(locals().get("connection"), "model", "unknown"),
+            type(error).__name__,
+            getattr(error, "errno", None),
+        )
+        return None
 
 
 def select_repair_task(
@@ -43,6 +386,9 @@ def select_repair_task(
     ]
     failed = next((task for task in tasks if task["task_id"] == failed_task_id), None)
     if failed is not None:
+        unit_subject = _unit_subject_repair_task(failed, tasks, evidence)
+        if unit_subject is not None:
+            return unit_subject
         failed_owner = str(failed.get("owner", ""))
         if owner and failed_owner and owner != failed_owner:
             raise RepairRoutingError(
@@ -105,8 +451,11 @@ def schedule_cross_phase_repair(
     run_root: Path,
     failed_task_id: str,
     evidence: dict[str, object],
+    *,
+    batch_id: str | None = None,
 ) -> dict[str, object] | None:
     """Schedule repair with the explicitly declared implementation owner."""
+    batch_id = batch_id or uuid.uuid4().hex
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = _read_json(manifest_path)
     tasks = [
@@ -122,26 +471,66 @@ def schedule_cross_phase_repair(
         (task for task in tasks if str(task.get("task_id")) == failed_task_id),
         None,
     )
+    plan_path = run_root / REPAIR_PLAN
+    current_plan = _read_json(plan_path) if plan_path.is_file() else {"entries": []}
+    current_entries = [
+        entry
+        for entry in current_plan.get("entries", [])
+        if isinstance(entry, dict) and entry.get("failedTaskId") == failed_task_id
+    ]
+    repair_revision = len(current_entries) + 1
 
-    explicit_owner = evidence.get("owner")
-    owner = (
-        explicit_owner.strip()
-        if isinstance(explicit_owner, str) and explicit_owner.strip()
-        else ""
-    )
-    if not owner and failed is not None:
-        owner = str(failed.get("owner", "")).strip()
-    if not owner:
-        owner = _owner_for_paths(tasks, paths)
-    if not owner:
-        return None
-    selected = select_repair_task(
-        run_root,
-        owner=owner,
-        failed_task_id=failed_task_id,
-        evidence=evidence,
-    )
-    owner = str(selected.get("owner", owner))
+    unit_recheck_ids: set[str] = set()
+    selected = _unit_subject_repair_task(failed, tasks, evidence)
+    frozen_candidate: dict[str, object] | None = None
+    unit_failure_review: dict[str, object] | None = None
+    if selected is not None:
+        unit_failure_review = _unit_failure_review(run_root, failed, evidence)
+        if unit_failure_review is None or unit_failure_review["classification"] == "undetermined":
+            return None
+        frozen_candidate = dict(evidence["frozenTestCandidate"])
+        source_path = frozen_candidate.get("sourcePath")
+        if isinstance(source_path, str) and source_path not in paths:
+            paths.append(source_path)
+        if unit_failure_review["classification"] == "test_oracle":
+            selected = failed
+        else:
+            unit_recheck_ids.add(str(failed["task_id"]))
+        owner = str(selected.get("owner", "")).strip()
+    else:
+        attributed = _attributed_source_repair_task(failed, tasks, evidence)
+        if attributed is not None:
+            selected = attributed
+            owner = str(selected.get("owner", "")).strip()
+            target = str(evidence.get("attributedTargetFile", "")).replace("\\", "/")
+            if target and target not in paths:
+                paths.append(target)
+            linked_unit = _freeze_linked_unit_test(
+                run_root, tasks, selected, failed_task_id, repair_revision
+            )
+            if linked_unit is not None:
+                unit_task_id, frozen_candidate = linked_unit
+                unit_recheck_ids.add(unit_task_id)
+        else:
+            explicit_owner = evidence.get("owner")
+            owner = (
+                explicit_owner.strip()
+                if isinstance(explicit_owner, str) and explicit_owner.strip()
+                else ""
+            )
+            if not owner and failed is not None:
+                owner = str(failed.get("owner", "")).strip()
+            if not owner:
+                owner = _owner_for_paths(tasks, paths)
+            if not owner:
+                return None
+            selected = select_repair_task(
+                run_root,
+                owner=owner,
+                failed_task_id=failed_task_id,
+                evidence=evidence,
+            )
+            owner = str(selected.get("owner", owner))
     owner_ids = {str(selected["task_id"])}
 
     current_text = _evidence_text(evidence)
@@ -151,11 +540,7 @@ def schedule_cross_phase_repair(
         if plan_path.is_file()
         else {"schemaVersion": REPAIR_SCHEMA, "entries": []}
     )
-    entries = [
-        entry
-        for entry in plan.get("entries", [])
-        if isinstance(entry, dict) and entry.get("failedTaskId") == failed_task_id
-    ]
+    entries = current_entries
     repair_paths = _repair_paths(tasks, owner_ids, paths)
     source_digest = _source_digest(
         run_root,
@@ -171,9 +556,13 @@ def schedule_cross_phase_repair(
     strategy = _repair_strategy(same_failure_count)
     now = datetime.now(UTC).isoformat()
     entry = {
+        "batchId": batch_id,
         "failedTaskId": failed_task_id,
         "owner": owner,
         "ownerTaskIds": sorted(owner_ids),
+        "recheckTaskIds": sorted(unit_recheck_ids),
+        "frozenTestCandidate": frozen_candidate,
+        "unitFailureReview": unit_failure_review,
         "outcome": "scheduled",
         "evidence": _bounded_evidence(current_text),
         "relatedPaths": paths,
@@ -191,6 +580,7 @@ def schedule_cross_phase_repair(
         {
             "schemaVersion": REPAIR_SCHEMA,
             "status": "ACTIVE",
+            "activeBatchId": batch_id,
             "entries": [*all_entries, entry],
             "updatedAt": now,
         }
@@ -198,6 +588,84 @@ def schedule_cross_phase_repair(
     plan.pop("stallReason", None)
     _write_json(plan_path, plan)
     return entry
+
+
+def schedule_cross_phase_repair_batch(
+    run_root: Path,
+    repairs: list[tuple[str, dict[str, object]]],
+) -> list[dict[str, object]] | None:
+    """Append declared repairs and activate them as one coordinator batch."""
+    if not repairs:
+        return None
+    plan_path = run_root / REPAIR_PLAN
+    original_plan = plan_path.read_bytes() if plan_path.is_file() else None
+    original_candidate_paths: set[str] | None = set()
+    if original_plan is not None:
+        try:
+            original_candidate_paths = {
+                str(candidate.get("path"))
+                for entry in json.loads(original_plan).get("entries", [])
+                if isinstance(entry, dict)
+                and isinstance((candidate := entry.get("frozenTestCandidate")), dict)
+            }
+        except (json.JSONDecodeError, OSError):
+            original_candidate_paths = None
+    batch_id = uuid.uuid4().hex
+    scheduled: list[dict[str, object]] = []
+    failed = False
+    try:
+        for failed_task_id, evidence in repairs:
+            entry = schedule_cross_phase_repair(
+                run_root, failed_task_id, evidence, batch_id=batch_id
+            )
+            if entry is None:
+                failed = True
+                break
+            scheduled.append(entry)
+    except Exception:
+        _rollback_repair_batch(run_root, plan_path, original_plan, original_candidate_paths)
+        raise
+    if failed:
+        _rollback_repair_batch(run_root, plan_path, original_plan, original_candidate_paths)
+        return None
+    return scheduled
+
+
+def _rollback_repair_batch(
+    run_root: Path,
+    plan_path: Path,
+    original_plan: bytes | None,
+    original_candidate_paths: set[str] | None,
+) -> None:
+    if original_candidate_paths is not None and plan_path.is_file():
+        try:
+            current = _read_json(plan_path)
+            for entry in current.get("entries", []):
+                candidate = entry.get("frozenTestCandidate") if isinstance(entry, dict) else None
+                relative = candidate.get("path") if isinstance(candidate, dict) else None
+                if (
+                    isinstance(relative, str)
+                    and relative not in original_candidate_paths
+                    and relative.startswith("reports/agent-executions/")
+                ):
+                    candidate_path = _run_file(run_root, relative)
+                    if candidate_path is not None and candidate_path.is_file():
+                        candidate_path.unlink()
+        except (OSError, ValueError, TypeError):
+            logger.exception("Could not clean incomplete repair-batch candidates")
+    if original_plan is None:
+        plan_path.unlink(missing_ok=True)
+    else:
+        plan_path.write_bytes(original_plan)
+
+
+def _active_repair_entries(plan: dict[str, object]) -> list[dict[str, object]]:
+    """Return only entries queued by the current repair submission."""
+    entries = [entry for entry in plan.get("entries", []) if isinstance(entry, dict)]
+    batch_id = plan.get("activeBatchId")
+    if isinstance(batch_id, str) and batch_id:
+        return [entry for entry in entries if entry.get("batchId") == batch_id]
+    return entries[-1:]
 
 
 def schedule_source_conformance_repair(
@@ -233,13 +701,21 @@ def apply_repair_directives(run_root: Path) -> None:
         return
     plan = _read_json(plan_path)
     entries = [item for item in plan.get("entries", []) if isinstance(item, dict)]
-    if not entries:
+    active_entries = _active_repair_entries(plan)
+    if not active_entries:
         return
 
-    active = entries[-1]
-    active_ids = {str(value) for value in active.get("ownerTaskIds", [])}
+    active_ids = {
+        str(value)
+        for active in active_entries
+        for value in active.get("ownerTaskIds", [])
+    }
     manifest_path = run_root / "reports" / "run-manifest.json"
     manifest = _read_json(manifest_path)
+    if _prepare_linked_unit_recheck(run_root, plan, manifest):
+        _write_json(plan_path, plan)
+        entries = [item for item in plan.get("entries", []) if isinstance(item, dict)]
+        active_entries = _active_repair_entries(plan)
     task_files = _task_files(run_root)
 
     for task in manifest.get("implementation_tasks", []):
@@ -257,9 +733,12 @@ def apply_repair_directives(run_root: Path) -> None:
         relevant = [
             entry for entry in entries if task_id in entry.get("ownerTaskIds", [])
         ]
+        active_relevant = [
+            entry for entry in active_entries if task_id in entry.get("ownerTaskIds", [])
+        ]
         repair_prompt_path = run_root / REPAIR_PROMPT_DIR / f"{task_id}.repair.md"
         repair_prompt = ""
-        if task_id in active_ids and relevant:
+        if task_id in active_ids and active_relevant:
             current = relevant[-1]
             previous = relevant[-4:-1]
             plan_history = "\n".join(
@@ -274,6 +753,42 @@ def apply_repair_directives(run_root: Path) -> None:
             source_hints = "\n".join(
                 f"- `{path}`" for path in current.get("relatedPaths", [])
             ) or "- Start with the source paths from the task definition"
+            frozen_context = ""
+            review = current.get("unitFailureReview")
+            test_oracle_repair = (
+                isinstance(review, dict)
+                and review.get("classification") == "test_oracle"
+            )
+            frozen_oracle = current.get("frozenTestCandidate")
+            if isinstance(frozen_oracle, dict):
+                candidate_path = frozen_oracle.get("path")
+                source_path = frozen_oracle.get("sourcePath")
+                candidate = run_root / candidate_path if isinstance(candidate_path, str) else None
+                if candidate is not None and candidate.is_file() and isinstance(source_path, str):
+                    source = candidate.read_text(encoding="utf-8")
+                    if len(source.encode("utf-8")) <= 65536:
+                        if test_oracle_repair:
+                            preserve = review.get("preserve_assertions", [])
+                            preserve_text = "\n".join(
+                                f"- {item}" for item in preserve if isinstance(item, str)
+                            ) or "- Preserve every passing and contract-backed assertion."
+                            instruction = review.get("correction_instruction", "")
+                            frozen_context = (
+                                "## Editable focused test evidence\n\n"
+                                f"`{source_path}` is the SHA-pinned executed test candidate. Correct only this "
+                                "assigned test file. The supplied implementation subject is read-only; do not "
+                                "weaken or delete valid assertions.\n\n"
+                                f"### Assertions to preserve\n\n{preserve_text}\n\n"
+                                f"### Reviewer correction boundary\n\n{instruction}\n\n"
+                                f"```\n{source}\n```\n\n"
+                            )
+                        else:
+                            frozen_context = (
+                                "## Frozen focused test (read-only)\n\n"
+                                f"`{source_path}` is the executed failing oracle. Do not edit it; repair only "
+                                "your declared implementation source and let the system recheck it.\n\n"
+                                f"```\n{source}\n```\n\n"
+                            )
             immutable = "\n".join(
                 f"- `{path}`" for path in task.get("immutable_paths", [])
             ) or "- None"
@@ -311,11 +826,17 @@ def apply_repair_directives(run_root: Path) -> None:
                 + "When it passes, call FinishTool immediately; do not end with a plain-text "
                 "summary.\n"
             )
+            repair_goal = (
+                "Correct only the assigned focused test oracle. The supplied implementation source is "
+                "read-only. Retain every listed valid assertion and do not alter unrelated behavior."
+                if test_oracle_repair
+                else "Resolve the technical failure below. Choose the implementation, tests, and edit order "
+                "autonomously. Do not change unrelated features or generated public contracts. Read needed "
+                "source with the file editor."
+            )
             repair_prompt = (
                 f"# {REPAIR_PROMPT_HEADING.removeprefix('## ')}\n\n"
-                "Resolve the technical failure below. Choose the "
-                "implementation, tests, and edit order autonomously. Do not change unrelated "
-                "features or generated public contracts. Read needed source with the file editor.\n\n"
+                f"{repair_goal}\n\n"
                 f"{reproduce_instruction}"
                 f"## Current approach\n\n{current.get('strategy', 'focused-fix')}\n\n"
                 "## Starting source hints\n\n"
@@ -325,6 +846,7 @@ def apply_repair_directives(run_root: Path) -> None:
                 f"## Previous failed approaches\n\n{history}\n\n"
                 "## Current failure\n\n```text\n"
                 f"{current.get('evidence', '')}\n```\n\n"
+                f"{frozen_context}"
                 "Resolve every item in the current failure evidence before running verification; "
                 "a passing build alone does not clear implementation markers or controller stubs. "
                 f"{completion_instruction}"
@@ -362,19 +884,244 @@ def apply_repair_directives(run_root: Path) -> None:
     _write_json(manifest_path, manifest)
 
 
+def _prepare_linked_unit_recheck(
+    run_root: Path, plan: dict[str, object], manifest: dict[str, object]
+) -> bool:
+    """Ensure an active source repair rechecks its unique declared dependent unit."""
+
+    entries = _active_repair_entries(plan)
+    if not entries:
+        return False
+    tasks = [
+        task
+        for task in manifest.get("implementation_tasks", [])
+        if isinstance(task, dict) and task.get("task_id")
+    ]
+    changed = False
+    for active in entries:
+        if active.get("frozenTestCandidate") or active.get("recheckTaskIds"):
+            continue
+        if active.get("unitFailureReview") is not None:
+            continue
+        owner_ids = active.get("ownerTaskIds", [])
+        if not isinstance(owner_ids, list) or len(owner_ids) != 1:
+            continue
+        owner_task = next(
+            (task for task in tasks if str(task.get("task_id")) == str(owner_ids[0])),
+            None,
+        )
+        if owner_task is None or str(owner_task.get("task_type", "")) not in {
+            "backend-implementation",
+            "frontend-implementation",
+        }:
+            continue
+        linked = _freeze_linked_unit_test(
+            run_root,
+            tasks,
+            owner_task,
+            str(active.get("failedTaskId", "")),
+            int(active.get("revision", 1)),
+        )
+        if linked is None:
+            continue
+        unit_task_id, candidate = linked
+        active["frozenTestCandidate"] = candidate
+        active["recheckTaskIds"] = [unit_task_id]
+        changed = True
+    return changed
+
+
 def repair_task_ids(run_root: Path) -> set[str]:
     """현재 자동 수리를 수행할 기능 작업 ID를 반환한다."""
     plan_path = run_root / REPAIR_PLAN
     if not plan_path.is_file():
         return set()
-    entries = [
-        entry
-        for entry in _read_json(plan_path).get("entries", [])
-        if isinstance(entry, dict)
-    ]
-    if not entries:
+    return {
+        str(value)
+        for entry in _active_repair_entries(_read_json(plan_path))
+        for value in entry.get("ownerTaskIds", [])
+    }
+
+
+def repair_recheck_task_ids(run_root: Path) -> set[str]:
+    """Return frozen unit-test tasks that must rerun after a subject repair."""
+
+    plan_path = run_root / REPAIR_PLAN
+    if not plan_path.is_file():
         return set()
-    return {str(value) for value in entries[-1].get("ownerTaskIds", [])}
+    return {
+        str(value)
+        for entry in _active_repair_entries(_read_json(plan_path))
+        for value in entry.get("recheckTaskIds", [])
+    }
+
+
+def repair_recheck_for_task(
+    run_root: Path, task_id: str
+) -> dict[str, object] | None:
+    """Return the active frozen unit-test recheck contract for one task."""
+
+    plan_path = run_root / REPAIR_PLAN
+    if not plan_path.is_file():
+        return None
+    entries = _active_repair_entries(_read_json(plan_path))
+    matching = [
+        entry
+        for entry in entries
+        if task_id in entry.get("recheckTaskIds", [])
+        and isinstance(entry.get("frozenTestCandidate"), dict)
+    ]
+    return matching[-1] if matching else None
+
+
+def _unit_subject_repair_task(
+    failed: dict[str, object] | None,
+    tasks: list[dict[str, object]],
+    evidence: dict[str, object],
+) -> dict[str, object] | None:
+    """Map a real focused assertion failure to its declared implementation subject."""
+
+    if failed is None or str(failed.get("task_type", "")) not in {
+        "backend-unit-test",
+        "frontend-unit-test",
+    }:
+        return None
+    results = evidence.get("unitTestResults")
+    if not isinstance(results, dict):
+        return None
+    total = results.get("total")
+    failed_count = results.get("failed")
+    skipped = results.get("skipped", 0)
+    if not all(isinstance(value, int) for value in (total, failed_count, skipped)):
+        return None
+    if total - skipped <= 0 or failed_count <= 0:
+        return None
+    candidate = evidence.get("frozenTestCandidate")
+    if not isinstance(candidate, dict) or not all(
+        isinstance(candidate.get(key), str) and candidate[key]
+        for key in ("path", "sha256", "sourcePath")
+    ):
+        return None
+    profile = failed.get("verification_profile")
+    subjects = profile.get("unitTestSubjectPaths") if isinstance(profile, dict) else None
+    if not isinstance(subjects, list) or not subjects or not all(
+        isinstance(path, str) and path for path in subjects
+    ):
+        return None
+    parent_ids = {
+        str(task_id)
+        for task_id in failed.get("depends_on", failed.get("dependsOn", []))
+        if isinstance(task_id, str)
+    }
+    candidates = [
+        task
+        for task in tasks
+        if str(task.get("task_id")) in parent_ids
+        and str(task.get("task_type")) in {
+            "backend-implementation",
+            "frontend-implementation",
+        }
+        and set(subjects).issubset(
+            {
+                str(path)
+                for path in task.get("allowed_write_paths", task.get("allowedWritePaths", []))
+                if isinstance(path, str)
+            }
+        )
+    ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _attributed_source_repair_task(
+    failed: dict[str, object] | None,
+    tasks: list[dict[str, object]],
+    evidence: dict[str, object],
+) -> dict[str, object] | None:
+    """Honor a unique RTM-attributed source task only inside its declared scope."""
+
+    if failed is None or str(failed.get("task_type", "")) != "integration-implementation":
+        return None
+    task_id = evidence.get("repairTaskId")
+    target = evidence.get("attributedTargetFile")
+    if not isinstance(task_id, str) or not task_id or not isinstance(target, str):
+        return None
+    matches = [task for task in tasks if str(task.get("task_id")) == task_id]
+    if len(matches) != 1 or task_id == str(failed.get("task_id", "")):
+        return None
+    selected = matches[0]
+    if str(selected.get("task_type", "")) not in {
+        "backend-implementation",
+        "frontend-implementation",
+    } or str(selected.get("owner", "")) == str(failed.get("owner", "")):
+        return None
+    declared_paths = {
+        str(path).replace("\\", "/")
+        for key in ("allowed_write_paths", "required_output_paths")
+        for path in selected.get(key, [])
+        if isinstance(path, str)
+    }
+    return selected if target.replace("\\", "/") in declared_paths else None
+
+
+def _freeze_linked_unit_test(
+    run_root: Path,
+    tasks: list[dict[str, object]],
+    owner_task: dict[str, object],
+    failed_task_id: str,
+    repair_revision: int,
+) -> tuple[str, dict[str, object]] | None:
+    """Freeze the uniquely declared unit test dependent on a repaired source task."""
+
+    owner_id = str(owner_task.get("task_id", ""))
+    owner_paths = {
+        str(path).replace("\\", "/")
+        for path in owner_task.get("allowed_write_paths", owner_task.get("allowedWritePaths", []))
+        if isinstance(path, str)
+    }
+    linked: list[tuple[dict[str, object], str]] = []
+    for task in tasks:
+        task_type = str(task.get("task_type", task.get("taskType", "")))
+        dependencies = task.get("depends_on", task.get("dependsOn", []))
+        profile = task.get("verification_profile", task.get("verificationProfile", {}))
+        subjects = profile.get("unitTestSubjectPaths") if isinstance(profile, dict) else None
+        required_tests = task.get("required_test_paths", task.get("requiredTestPaths", []))
+        if (
+            task_type not in {"backend-unit-test", "frontend-unit-test"}
+            or owner_id not in dependencies
+            or not isinstance(subjects, list)
+            or not subjects
+            or not all(isinstance(path, str) and path for path in subjects)
+            or not set(subjects).issubset(owner_paths)
+            or not isinstance(required_tests, list)
+            or len(required_tests) != 1
+            or not isinstance(required_tests[0], str)
+        ):
+            continue
+        test_path = required_tests[0].replace("\\", "/")
+        if _run_file(run_root, test_path) is not None and _run_file(run_root, test_path).is_file():
+            linked.append((task, test_path))
+
+    # The repair plan has one frozen candidate slot. Do not assign one test's
+    # bytes to multiple unit tasks or guess when the manifest is ambiguous.
+    if len(linked) != 1:
+        return None
+    task, source_path = linked[0]
+    source = _run_file(run_root, source_path)
+    if source is None:
+        return None
+    target_dir = run_root / "reports" / "agent-executions"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    task_id = str(task.get("task_id", ""))
+    identity = hashlib.sha256(
+        f"{failed_task_id}:{task_id}:{repair_revision}".encode("utf-8")
+    ).hexdigest()[:12]
+    target = target_dir / f"{identity}.frozen-test{source.suffix}"
+    shutil.copyfile(source, target)
+    return task_id, {
+        "path": target.relative_to(run_root).as_posix(),
+        "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+        "sourcePath": source_path,
+    }
 
 
 def active_repair_for_task(
@@ -384,14 +1131,11 @@ def active_repair_for_task(
     plan_path = run_root / REPAIR_PLAN
     if not plan_path.is_file():
         return None
-    entries = [
-        item
-        for item in _read_json(plan_path).get("entries", [])
-        if isinstance(item, dict)
+    entries = _active_repair_entries(_read_json(plan_path))
+    matching = [
+        entry for entry in entries if task_id in entry.get("ownerTaskIds", [])
     ]
-    if not entries or task_id not in entries[-1].get("ownerTaskIds", []):
-        return None
-    return entries[-1]
+    return matching[-1] if matching else None
 
 
 def referenced_source_paths(evidence: dict[str, object]) -> list[str]:

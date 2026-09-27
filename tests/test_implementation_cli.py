@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -8,6 +9,7 @@ import pytest
 
 from app.implementation.agents.workspace import load_strict_task
 from app.implementation.interfaces import cli
+from app.implementation.workflows.repair import apply_repair_directives
 
 
 def test_run_owner_validates_one_task_without_running_a_workflow(
@@ -140,3 +142,55 @@ def test_strict_owner_task_loader_normalizes_crlf_prompt_hash(tmp_path: Path) ->
         "owner-1",
         allowed_task_types=cli.OWNER_TASK_TYPES,
     ) == task
+
+
+def test_strict_owner_loader_accepts_system_repaired_prompt_and_rejects_tampering(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "repair-hash"
+    task = _write_owner_task(run_root, "owner-1")
+    reports = run_root / "reports"
+    candidate_path = "reports/agent-executions/unit.frozen-test.java"
+    candidate = run_root / candidate_path
+    candidate.parent.mkdir(parents=True, exist_ok=True)
+    candidate.write_text("class FrozenTest {}", encoding="utf-8")
+    repair_plan = {
+        "schemaVersion": "implementation-repair-plan/v4",
+        "entries": [
+            {
+                "failedTaskId": "unit-1",
+                "owner": "backend",
+                "ownerTaskIds": ["owner-1"],
+                "recheckTaskIds": ["unit-1"],
+                "frozenTestCandidate": {
+                    "path": candidate_path,
+                    "sourcePath": "application/src/test/java/example/FrozenTest.java",
+                    "sha256": hashlib.sha256(candidate.read_bytes()).hexdigest(),
+                },
+                "relatedPaths": ["application/src/main/java/example/Service.java"],
+                "repairPaths": ["application/src/main/java/example/Service.java"],
+                "strategy": "focused source correction",
+                "evidence": "The frozen unit assertion failed on the current implementation.",
+            }
+        ],
+    }
+    (reports / "repair-plan.json").write_text(json.dumps(repair_plan), encoding="utf-8")
+
+    apply_repair_directives(run_root)
+
+    repaired_task = load_strict_task(
+        run_root,
+        "owner-1",
+        allowed_task_types=cli.OWNER_TASK_TYPES,
+    )
+    assert repaired_task["repair_prompt_file"] == (
+        "reports/implementation-tasks/owner-1.repair.md"
+    )
+    repair_prompt = run_root / str(repaired_task["repair_prompt_file"])
+    repair_prompt.write_text("tampered repair directive", encoding="utf-8")
+    with pytest.raises(ValueError, match="prompt hash is inconsistent"):
+        load_strict_task(
+            run_root,
+            "owner-1",
+            allowed_task_types=cli.OWNER_TASK_TYPES,
+        )

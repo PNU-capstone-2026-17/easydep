@@ -17,6 +17,7 @@ from ..agents.runtime import OWNER_TASK_TYPES
 from ..agents.workspace import load_strict_task, prompt_file_sha256
 from ..application.prototype import PrototypeClient
 from ..generation.orchestrator import load_job
+from ..runtime.linux_runner_transport import remove_owner_workspace_volume
 from ..workflows.coordinator import materialize_owner_tasks
 
 
@@ -86,6 +87,63 @@ def _copy_evidence(source: Path, destination: Path) -> None:
         target = destination / resolved.relative_to(source)
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(resolved, target)
+
+
+def _copy_unit_test_subjects(
+    task: dict[str, Any], *, old_run_root: Path, new_run_root: Path
+) -> list[dict[str, Any]]:
+    """Seed a diagnostic unit replay with its explicitly declared completed subject."""
+    if task.get("task_type") not in {"backend-unit-test", "frontend-unit-test"}:
+        return []
+    profile = task.get("verification_profile")
+    subjects = profile.get("unitTestSubjectPaths") if isinstance(profile, dict) else None
+    dependencies = task.get("depends_on")
+    if not isinstance(subjects, list) or not subjects or not isinstance(dependencies, list) or len(dependencies) != 1:
+        raise OwnerReplayError("Unit replay requires declared subject paths and one implementation dependency")
+
+    manifest_path = old_run_root / "reports" / "run-manifest.json"
+    state_path = old_run_root / "reports" / "workflow-state.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise OwnerReplayError("Unit replay requires the saved implementation manifest and workflow state") from exc
+    parent_id = dependencies[0]
+    planned = manifest.get("implementation_tasks")
+    parent_tasks = [
+        item for item in planned if isinstance(item, dict) and item.get("task_id") == parent_id
+    ] if isinstance(planned, list) else []
+    states = state.get("tasks")
+    parent_states = [
+        item for item in states if isinstance(item, dict) and item.get("task_id") == parent_id
+    ] if isinstance(states, list) else []
+    if len(parent_tasks) != 1 or len(parent_states) != 1 or parent_states[0].get("status") != "SUCCEEDED":
+        raise OwnerReplayError("Unit replay subject owner is not a uniquely declared completed task")
+
+    allowed = parent_tasks[0].get("allowed_write_paths")
+    output_hashes = parent_states[0].get("outputHashes")
+    if not isinstance(allowed, list):
+        raise OwnerReplayError("Unit replay subject owner has no declared write paths")
+    if not isinstance(output_hashes, dict):
+        raise OwnerReplayError("Unit replay subject owner has no saved output hashes")
+    copied: list[dict[str, Any]] = []
+    for raw in subjects:
+        if not isinstance(raw, str) or not raw or Path(raw).is_absolute() or ".." in Path(raw).parts:
+            raise OwnerReplayError("Unit replay subject path must be a safe run-relative path")
+        relative = Path(raw).as_posix()
+        if relative not in allowed:
+            raise OwnerReplayError("Unit replay subject is outside its declared implementation owner scope")
+        source = _run_path(old_run_root, relative)
+        destination = _run_path(new_run_root, relative)
+        if source is None or destination is None or not source.is_file():
+            raise OwnerReplayError(f"Completed unit replay subject is missing: {relative}")
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        if output_hashes.get(relative) != digest:
+            raise OwnerReplayError(f"Completed unit replay subject hash does not match workflow state: {relative}")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        copied.append({"path": relative, "bytes": source.stat().st_size, "sha256": digest})
+    return copied
 
 
 def _stable_reference(
@@ -236,6 +294,24 @@ def _preserve_replay_evidence(
         if isinstance(relative, str):
             copy_file(relative, evidence_root / "task" / f"{name}{Path(relative).suffix}", name)
 
+    if task.get("task_type") in {"backend-unit-test", "frontend-unit-test"}:
+        profile = task.get("verification_profile")
+        for field, label in (
+            ((profile or {}).get("unitTestSubjectPaths", []) if isinstance(profile, dict) else [], "unitSubjects"),
+            (task.get("required_test_paths", []), "unitTests"),
+        ):
+            if not isinstance(field, list):
+                continue
+            for index, relative in enumerate(field, start=1):
+                if isinstance(relative, str):
+                    source = _run_path(run_root, relative)
+                    if source is not None and source.is_file():
+                        copy_file(
+                            relative,
+                            evidence_root / "task-output" / label / f"{index:02d}-{source.name}",
+                            f"{label}{index}",
+                        )
+
     execution_dir = run_root / "reports" / "agent-executions"
     copied_execution: list[str] = []
 
@@ -261,6 +337,20 @@ def _preserve_replay_evidence(
                 source.name,
             ):
                 copy_execution(source)
+        if task.get("task_type") == "frontend-unit-test":
+            vitest_report = execution_dir / f"{task_id}.vitest.json"
+            if vitest_report.is_file():
+                copy_execution(vitest_report)
+        verification_evidence = latest_result.get("verificationEvidence")
+        frozen_candidate = latest_result.get("frozenTestCandidate")
+        if not isinstance(frozen_candidate, dict) and isinstance(verification_evidence, dict):
+            frozen_candidate = verification_evidence.get("frozenTestCandidate")
+        if isinstance(frozen_candidate, dict):
+            candidate_path = frozen_candidate.get("path")
+            if isinstance(candidate_path, str):
+                candidate = _run_path(run_root, candidate_path)
+                if candidate is not None and candidate.is_file():
+                    copy_execution(candidate)
         journal = latest_result.get("eventJournal")
         if isinstance(journal, str):
             source = _run_path(run_root, journal)
@@ -380,6 +470,9 @@ def replay_owner_task(
     diagnostic_root: Path | None = None
     result_path: Path | None = None
     new_run_root: Path | None = None
+    new_job_path: Path | None = None
+    repository_root: Path | None = None
+    owner_execution_started = False
     selected: dict[str, Any] | None = None
     evidence_root: Path | None = None
     copied_roots: dict[Path, Path] = {}
@@ -415,6 +508,9 @@ def replay_owner_task(
         new_run_root = client.generate(new_job_path).resolve()
         if diagnostic_root not in new_run_root.parents:
             raise OwnerReplayError("Generated diagnostic run escaped work root")
+        unit_subject_sources = _copy_unit_test_subjects(
+            old_task, old_run_root=old_run_root.resolve(), new_run_root=new_run_root
+        )
         spec = load_job(new_job_path)
         fresh = materialize_owner_tasks(new_run_root, spec)
         fresh = [task for task in fresh if task.get("task_id") == selected_task_id]
@@ -427,11 +523,25 @@ def replay_owner_task(
             raise OwnerReplayError(
                 f"Fresh task {selected_task_id!r} is not an owner task"
             )
+        if selected.get("task_type") in {"backend-unit-test", "frontend-unit-test"}:
+            original_profile = old_task.get("verification_profile")
+            selected_profile = selected.get("verification_profile")
+            if (
+                old_task.get("task_type") != selected.get("task_type")
+                or not isinstance(original_profile, dict)
+                or not isinstance(selected_profile, dict)
+                or original_profile.get("unitTestSubjectPaths") != selected_profile.get("unitTestSubjectPaths")
+                or old_task.get("depends_on") != selected.get("depends_on")
+                or not unit_subject_sources
+            ):
+                raise OwnerReplayError("Fresh unit task does not match the saved subject-owner contract")
         payload.update({
             "newPromptSha256": _hash_prompt(selected, new_run_root),
             "task": _sanitized(selected),
             "planning": {"materialized": True},
+            **({"unitTestSubjectSources": unit_subject_sources} if unit_subject_sources else {}),
         })
+        owner_execution_started = True
         execution = client.run_owner(new_run_root, new_job_path, selected_task_id)
         payload.update({"status": "SUCCEEDED", "execution": _sanitized(execution)})
         return result_path
@@ -463,11 +573,25 @@ def replay_owner_task(
                 if primary_error is None and not interrupted:
                     payload.update({"status": "FAILED", "error": str(exc)})
         cleanup_error: Exception | None = None
+        if (
+            owner_execution_started
+            and new_run_root is not None
+            and new_job_path is not None
+            and repository_root is not None
+        ):
+            try:
+                if not remove_owner_workspace_volume(
+                    new_run_root, new_job_path.parent, repository_root
+                ):
+                    raise OwnerReplayError("Owner workspace volume cleanup failed")
+            except Exception as exc:
+                cleanup_error = exc
+                payload["cleanupError"] = str(exc)
         try:
             if diagnostic_root is not None and diagnostic_root.exists():
                 shutil.rmtree(diagnostic_root)
         except Exception as exc:
-            cleanup_error = exc
+            cleanup_error = cleanup_error or exc
             payload["cleanupError"] = str(exc)
         result_error: Exception | None = None
         try:
@@ -586,11 +710,14 @@ def replay_owner_tasks_sequentially(
     diagnostic_root: Path | None = None
     result_path: Path | None = None
     new_run_root: Path | None = None
+    new_job_path: Path | None = None
+    repository_root: Path | None = None
     selected: list[dict[str, Any]] = []
     evidence_root: Path | None = None
     copied_roots: dict[Path, Path] = {}
     primary_error: Exception | None = None
     interrupted = False
+    owner_execution_started = False
     payload: dict[str, Any] = {
         "schemaVersion": "owner-sequence-replay-result/v1alpha1",
         "taskIds": task_ids,
@@ -647,6 +774,7 @@ def replay_owner_tasks_sequentially(
         evidence_root = output_root / f"owner-sequence-replay-evidence-{result_path.stem.rsplit('-', 1)[-1]}"
         for index, task in enumerate(selected, start=1):
             task_id = str(task["task_id"])
+            owner_execution_started = True
             execution = client.run_owner(new_run_root, new_job_path, task_id)
             payload["steps"].append(
                 {
@@ -696,11 +824,25 @@ def replay_owner_tasks_sequentially(
                 if primary_error is None and not interrupted:
                     payload.update({"status": "FAILED", "error": str(exc)})
         cleanup_error: Exception | None = None
+        if (
+            owner_execution_started
+            and new_run_root is not None
+            and new_job_path is not None
+            and repository_root is not None
+        ):
+            try:
+                if not remove_owner_workspace_volume(
+                    new_run_root, new_job_path.parent, repository_root
+                ):
+                    raise OwnerReplayError("Owner workspace volume cleanup failed")
+            except Exception as exc:
+                cleanup_error = exc
+                payload["cleanupError"] = str(exc)
         try:
             if diagnostic_root is not None and diagnostic_root.exists():
                 shutil.rmtree(diagnostic_root)
         except Exception as exc:
-            cleanup_error = exc
+            cleanup_error = cleanup_error or exc
             payload["cleanupError"] = str(exc)
         result_error: Exception | None = None
         try:

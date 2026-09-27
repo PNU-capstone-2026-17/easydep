@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import socket
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -16,7 +18,10 @@ from pathlib import Path
 from typing import Any
 
 from app.design.contracts.application_runtime import SYNTHETIC_UUID_BASIC_USERNAME
-from app.implementation.runtime.process import run_process_tree
+from app.implementation.runtime.process import (
+    _terminate_process_tree,
+    run_process_tree,
+)
 from app.testing.runtime.container_runner import (
     GRADLE_CACHE_PATH,
     GRADLE_CACHE_VOLUME,
@@ -227,6 +232,107 @@ def _wait_until_ready(name: str, url: str, timeout: int) -> None:
     )
 
 
+def _process_log_text(log_file: Any) -> str:
+    log_file.flush()
+    log_file.seek(0)
+    return log_file.read().decode("utf-8", errors="replace")
+
+
+def _wait_until_process_ready(
+    process: subprocess.Popen,
+    url: str,
+    timeout: int,
+    log_file: Any,
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _responds(url):
+            return
+        if process.poll() is not None:
+            logs = _process_log_text(log_file)
+            excerpt = _log_excerpt(logs)
+            raise ApplicationLaunchError(
+                "The generated application exited before accepting requests:\n"
+                f"{excerpt}",
+                defect_class=_build_failure_defect_class(logs),
+                application_log=logs,
+            )
+        time.sleep(2)
+    logs = _process_log_text(log_file)
+    raise ApplicationLaunchError(
+        f"The generated application did not respond at {url} within {timeout} seconds:\n"
+        f"{_log_excerpt(logs)}",
+        defect_class="ENVIRONMENT_DEFECT",
+        application_log=logs,
+    )
+
+
+@contextmanager
+def _running_application_in_fixed_runner(
+    application_dir: Path,
+    *,
+    health_path: str,
+    start_timeout_seconds: int,
+) -> Iterator[tuple[str, dict[str, Any]]]:
+    """Run the final integration app in its existing Linux runner (no nested Docker)."""
+    host_port = free_port()
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "SPRING_PROFILES_ACTIVE": "test",
+            "SPRING_DATASOURCE_URL": (
+                "jdbc:h2:mem:easydep_testing;MODE=MySQL;DB_CLOSE_DELAY=-1"
+            ),
+            "SPRING_DATASOURCE_USERNAME": "sa",
+            "SPRING_DATASOURCE_PASSWORD": "",
+            "SPRING_SECURITY_USER_NAME": SYNTHETIC_UUID_BASIC_USERNAME,
+            "SPRING_SECURITY_USER_PASSWORD": "easydep-test",
+            "SPRING_SECURITY_USER_ROLES": "USER",
+            "SERVER_ADDRESS": "127.0.0.1",
+            "SERVER_PORT": str(host_port),
+        }
+    )
+    command = ["gradle", "bootRun", "--no-daemon", "--build-cache"]
+    with tempfile.TemporaryFile(mode="w+b") as log_file:
+        try:
+            process = subprocess.Popen(
+                command,
+                cwd=application_dir,
+                env=environment,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=(os.name != "nt"),
+            )
+        except OSError as error:
+            raise ApplicationLaunchError(
+                f"The application process could not start: {type(error).__name__}: {error}",
+                defect_class="ENVIRONMENT_DEFECT",
+            ) from error
+
+        try:
+            normalized_health = (
+                health_path if health_path.startswith("/") else f"/{health_path}"
+            )
+            base_url = f"http://127.0.0.1:{host_port}"
+            _wait_until_process_ready(
+                process,
+                f"{base_url}{normalized_health}",
+                start_timeout_seconds,
+                log_file,
+            )
+            runtime = {
+                "source": "application-process",
+                "processId": process.pid,
+                "hostPort": host_port,
+                "healthPath": normalized_health,
+                "profile": "test",
+                "database": "h2-mysql-mode",
+            }
+            yield base_url, runtime
+        finally:
+            _terminate_process_tree(process)
+
+
 @contextmanager
 def running_application(
     app_id: str,
@@ -244,6 +350,15 @@ def running_application(
     고정 툴체인과 공유 Gradle cache로 Spring Boot backend만 실행한다.
     """
     context = Path(application_dir)
+    if os.environ.get("EASYDEP_FIXED_LINUX_RUNNER") == "1":
+        with _running_application_in_fixed_runner(
+            context,
+            health_path=health_path,
+            start_timeout_seconds=start_timeout_seconds,
+        ) as runtime:
+            yield runtime
+        return
+
     container_port = exposed_port(context)
     _, name = runtime_identity(app_id, launch_id)
     network = runtime_network_name(name)

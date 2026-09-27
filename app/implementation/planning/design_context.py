@@ -160,6 +160,169 @@ def generate_backend_owner_tasks(spec: JobSpec, run_root: Path) -> list[TaskSpec
     return tasks
 
 
+def generate_backend_unit_test_tasks(
+    spec: JobSpec, run_root: Path, subject_tasks: list[TaskSpec]
+) -> list[TaskSpec]:
+    """Plan one test-only owner for each backend implementation source owner."""
+    result: list[TaskSpec] = []
+    for subject in subject_tasks:
+        source_paths = [
+            path for path in subject.required_output_paths or [] if path.endswith(".java")
+        ]
+        if not source_paths:
+            continue
+        source = source_paths[0]
+        source_parts = Path(source).parts
+        try:
+            java_index = source_parts.index("java")
+        except ValueError:
+            continue
+        package_parts = list(source_parts[java_index + 1 : -1])
+        package_name = ".".join(package_parts)
+        source_name = Path(source).stem
+        test_name = f"{source_name}Test"
+        test_path = "/".join(
+            ["application/src/test/java", *package_parts, f"{test_name}.java"]
+        )
+        test_class = ".".join(part for part in (package_name, test_name) if part)
+        result.append(
+            _build_unit_test_task(
+                spec,
+                run_root,
+                subject,
+                task_type="backend-unit-test",
+                owner="backend",
+                test_path=test_path,
+                subject_paths=source_paths,
+                verification_profile={
+                    "unitTestSubjectPaths": source_paths,
+                    "unitTestClass": test_class,
+                },
+            )
+        )
+    return result
+
+
+def generate_frontend_unit_test_tasks(
+    spec: JobSpec, run_root: Path, subject_tasks: list[TaskSpec]
+) -> list[TaskSpec]:
+    """Plan one Vitest owner per frontend feature, with only its test file writable."""
+    result: list[TaskSpec] = []
+    for subject in subject_tasks:
+        source_paths = [
+            path
+            for path in subject.required_output_paths or []
+            if path.startswith("application/frontend/src/features/")
+            and path.endswith(".tsx")
+        ]
+        if not source_paths:
+            continue
+        source = source_paths[0]
+        test_path = source.removesuffix(".tsx") + ".test.tsx"
+        result.append(
+            _build_unit_test_task(
+                spec,
+                run_root,
+                subject,
+                task_type="frontend-unit-test",
+                owner="frontend",
+                test_path=test_path,
+                subject_paths=source_paths,
+                verification_profile={"unitTestSubjectPaths": source_paths},
+            )
+        )
+    return result
+
+
+def _build_unit_test_task(
+    spec: JobSpec,
+    run_root: Path,
+    subject: TaskSpec,
+    *,
+    task_type: str,
+    owner: str,
+    test_path: str,
+    subject_paths: list[str],
+    verification_profile: dict[str, object],
+) -> TaskSpec:
+    task_id = f"{subject.task_id}-unit-test"
+    output = run_root / "reports" / "implementation-tasks"
+    output.mkdir(parents=True, exist_ok=True)
+    subject_context = _read_json(run_root / subject.context_file)
+    design_inputs = subject_context.get("designInputs")
+    read_path_set = {
+        *subject_paths,
+        *(
+            str(path)
+            for path in subject_context.get("readSourcePaths", [])
+            if isinstance(path, str)
+        ),
+    }
+    if isinstance(design_inputs, dict):
+        read_path_set.update(str(path) for path in design_inputs.values() if isinstance(path, str))
+    read_paths = sorted(read_path_set)
+    context = {
+        "schemaVersion": "implementation-unit-test-context/v1alpha1",
+        "taskId": task_id,
+        "taskType": task_type,
+        "owner": owner,
+        "dependsOn": [subject.task_id],
+        "unitTestSubjectPaths": subject_paths,
+        "requiredTestPaths": [test_path],
+        "readSourcePaths": read_paths,
+        "subjectContextPath": subject.context_file,
+        **({"designInputs": design_inputs} if isinstance(design_inputs, dict) else {}),
+    }
+    context_path = output / f"{task_id}.context.json"
+    context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
+    language = "Java/JUnit 5 with Mockito" if owner == "backend" else "React/Vitest with Testing Library"
+    prompt = f"""# Unit test task: {spec.name} / {Path(subject_paths[0]).stem}
+
+Write focused behavioral unit tests for the completed implementation in `{subject_paths[0]}`.
+The current subject source will be supplied as read-only evidence when this task runs; do not
+copy it into planning artifacts or modify it.
+
+- Use {language} and write only `{test_path}`. The subject implementation and all API/generated
+  contracts are immutable.
+- Derive expected behavior from the admitted requirement, operation, and public-contract evidence
+  in `{subject.context_file}` and its referenced read-only sources. Assert user-visible or
+  collaborator-observable behavior, including a meaningful boundary case when the contract defines one.
+- Do not mirror implementation branches mechanically, inspect source text, assert constants without
+  behavior, use empty tests, `assert true`, skipped/pending tests, or weaken expectations to fit output.
+- Keep dependencies deterministic and local; do not call live services or databases.
+- Complete the test source with English identifiers and messages. The focused test runner must execute
+  at least one passing test without skipped-only results.
+"""
+    prompt += render_allowed_output_rules([test_path])
+    prompt_path = output / f"{task_id}.prompt.md"
+    prompt_path.write_text(prompt, encoding="utf-8")
+    task = TaskSpec(
+        task_id=task_id,
+        control=f"{spec.name} unit tests for {Path(subject_paths[0]).stem}",
+        prompt_file=_relative(run_root, prompt_path),
+        context_file=_relative(run_root, context_path),
+        allowed_write_paths=[test_path],
+        required_output_paths=[test_path],
+        immutable_paths=sorted(set([*subject_paths, *subject.immutable_paths])),
+        source_artifacts=dict(subject.source_artifacts),
+        prompt_sha256=hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+        llm=llm_config(spec),
+        owner=owner,
+        owner_tool_mode="editor",
+        task_type=task_type,
+        depends_on=[subject.task_id],
+        requirement_ids=list(subject.requirement_ids),
+        use_case_ids=list(subject.use_case_ids),
+        required_test_paths=[test_path],
+        source_refs=list(subject.source_refs),
+        verification_profile=verification_profile,
+    )
+    (output / f"{task_id}.task.json").write_text(
+        json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return task
+
+
 def _is_work_component(component: ComponentIR) -> bool:
     return component.stereotype.casefold() in {
         "control",
@@ -990,6 +1153,7 @@ def generate_frontend_tasks(
         task_operation_ids = [operation_id]
         read_paths = sorted(dict.fromkeys([
             *([operation_context_path] if operation_context_path else []),
+            *[str(path) for path in design_inputs.values()],
             _relative(run_root, client_index_path),
             "application/frontend/src/api.ts",
         ]))
@@ -1180,6 +1344,11 @@ def generate_vertical_integration_task(
     frontend_tasks = [
         task for task in prior_tasks if task.get("task_type") == "frontend-implementation"
     ]
+    unit_test_tasks = [
+        task
+        for task in prior_tasks
+        if task.get("task_type") in {"backend-unit-test", "frontend-unit-test"}
+    ]
     if not backend_tasks or not frontend_tasks:
         raise ValueError("Vertical integration requires backend tasks and frontend feature tasks")
 
@@ -1210,7 +1379,9 @@ def generate_vertical_integration_task(
         }
     )
     dependencies = [
-        str(task["task_id"]) for task in owner_tasks if task.get("task_id")
+        str(task["task_id"])
+        for task in [*owner_tasks, *unit_test_tasks]
+        if task.get("task_id")
     ]
     writable_config_candidates = [
         "application/frontend/src/api.ts",

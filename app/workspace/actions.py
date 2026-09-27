@@ -239,6 +239,35 @@ def _answer_offers(command_id: str, result: dict[str, Any]) -> list[ActionOffer]
     ]
 
 
+def _integration_checkpoint_retry_offer(
+    command: dict[str, Any],
+    result: dict[str, Any],
+    stage: str,
+    common: dict[str, str],
+) -> ActionOffer | None:
+    """Offer an explicit retry beside, never instead of, an integration question."""
+
+    payload = command.get("payload") or {}
+    command_stage = str(command.get("stage") or "")
+    if command_stage == "testing":
+        if result.get("_linked_implementation_checkpoint_retryable") is not True:
+            return None
+        job_id = str(payload.get("implementation_job_id") or "")
+    elif stage == "implementation":
+        if result.get("checkpoint_retryable") is not True:
+            return None
+        job_id = str(result.get("job_id") or payload.get("job_id") or "")
+    else:
+        return None
+    if not job_id:
+        return None
+    return _offer(
+        WorkspaceAction.RETRY_IMPLEMENTATION,
+        "Retry implementation checkpoint",
+        {**common, "job_id": job_id},
+    )
+
+
 def blocking_findings_route(blockers: list[dict[str, Any]]) -> str:
     """Return a user-action route from explicit Testing classification metadata."""
 
@@ -309,6 +338,7 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
 
     if result.get("resource_question") or result.get("resource_questions"):
         question = result.get("resource_question") or {}
+        retry_action = _integration_checkpoint_retry_offer(command, result, stage, common)
         if isinstance(question, dict) and question.get("kind") == "suggested":
             return AwaitingOutcome(
                 wait_reason=WaitReason.REVIEW,
@@ -320,11 +350,15 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
                         common,
                         auto=True,
                     ),
+                    *([retry_action] if retry_action is not None else []),
                 ],
             )
         return AwaitingOutcome(
             wait_reason=WaitReason.QUESTION,
-            actions=_answer_offers(command_id, result),
+            actions=[
+                *_answer_offers(command_id, result),
+                *([retry_action] if retry_action is not None else []),
+            ],
         )
 
     raw_feedback_question = result.get("feedback_question")
@@ -372,6 +406,9 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
                         },
                     )
                 )
+            retry_action = _integration_checkpoint_retry_offer(command, result, stage, common)
+            if retry_action is not None:
+                actions.append(retry_action)
             return AwaitingOutcome(wait_reason=WaitReason.QUESTION, actions=actions)
 
     if isinstance(result.get("downstream_revision_handoff"), dict):
@@ -401,76 +438,22 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
     if blocking_route == "environment" and stage == "testing" and testing_implementation_job_id:
         return AwaitingOutcome(
             wait_reason=WaitReason.EXTERNAL_WAIT,
-            actions=[
-                _offer(
-                    WorkspaceAction.START_TESTING,
-                    "Retry testing after environment recovery",
-                    {
-                        **common,
-                        "implementation_job_id": testing_implementation_job_id,
-                    },
-                )
-            ],
+            actions=[],
         )
     if blocking_route == "environment" and repair_job_id:
         return AwaitingOutcome(
             wait_reason=WaitReason.EXTERNAL_WAIT,
-            actions=[
-                _offer(
-                    WorkspaceAction.RETRY_IMPLEMENTATION,
-                    "Retry after environment recovery",
-                    {**common, "job_id": repair_job_id},
-                )
-            ],
+            actions=[],
         )
     if blocking_route == "platform":
-        actions = [
-            _offer(
-                WorkspaceAction.MESSAGE,
-                "Ask about this EasyDep platform issue",
-                common,
-            )
-        ]
-        if stage == "testing" and testing_implementation_job_id:
-            actions.append(
-                _offer(
-                    WorkspaceAction.START_TESTING,
-                    "Retry testing after EasyDep update",
-                    {
-                        **common,
-                        "implementation_job_id": testing_implementation_job_id,
-                    },
-                )
-            )
         return AwaitingOutcome(
             wait_reason=WaitReason.EXTERNAL_WAIT,
-            actions=actions,
+            actions=[],
         )
     if blocking_route in {"design", "platform-or-design"}:
-        label = (
-            "Send design revision feedback"
-            if blocking_route == "design"
-            else "Review deployment design or platform issue"
-        )
-        actions = [_offer(WorkspaceAction.MESSAGE, label, common)]
-        # A design-data ambiguity can still be retried against the unchanged
-        # implementation. Keep that retry explicit and non-automatic: the
-        # user may want to confirm a transient or externally seeded condition
-        # before revising the frozen design artifacts.
-        if stage == "testing" and testing_implementation_job_id:
-            actions.append(
-                _offer(
-                    WorkspaceAction.START_TESTING,
-                    "Retry testing with current artifacts",
-                    {
-                        **common,
-                        "implementation_job_id": testing_implementation_job_id,
-                    },
-                )
-            )
         return AwaitingOutcome(
             wait_reason=WaitReason.REPAIR,
-            actions=actions,
+            actions=[],
         )
 
     if result.get("requires_revision"):
@@ -488,37 +471,25 @@ def awaiting_outcome(command: dict[str, Any]) -> AwaitingOutcome:
             for item in result.get("finding_details") or []
             if isinstance(item, dict)
         ]
-        repair_state = result.get("repair_state")
-        technical_design_stall = (
-            stage == "design"
-            and command.get("action") != WorkspaceAction.RETRY_DESIGN.value
-            and isinstance(repair_state, dict)
-            and str(repair_state.get("status") or "").upper() == "STALLED"
-            and any(item.get("repairable") is True for item in findings)
+        technical_repair = (
+            any(item.get("repairable") is not False for item in findings)
             and not any(
                 item.get("requires_user_input", item.get("requiresUserInput")) is True
                 for item in [*findings, *finding_details]
             )
+            and result.get("feedback_question") is None
+            and result.get("resource_question") is None
+            and not result.get("resource_questions")
         )
-        if technical_design_stall:
+        if technical_repair:
             return AwaitingOutcome(
                 wait_reason=WaitReason.REPAIR,
-                actions=[
-                    _offer(
-                        WorkspaceAction.RETRY_DESIGN,
-                        "Retry automatic design repair",
-                        common,
-                        auto=True,
-                    ),
-                    _offer(WorkspaceAction.MESSAGE, "Send revision feedback", common),
-                ],
+                actions=[],
             )
-        return AwaitingOutcome(
-            wait_reason=WaitReason.REPAIR,
-            actions=[
-                _offer(WorkspaceAction.MESSAGE, "Send revision feedback", common),
-            ],
-        )
+        # A bare revision flag is neither an answer contract nor permission for
+        # free-form edits.  Typed questions were returned above; all remaining
+        # technical pauses are consumed by the shared checkpoint loop.
+        return AwaitingOutcome(wait_reason=WaitReason.REPAIR, actions=[])
 
     if result.get("kind") == "question" or result.get("questions"):
         actions = _answer_offers(command_id, result)
@@ -578,6 +549,9 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
     if result.get("feedback_question_answered_by"):
         return [_offer(WorkspaceAction.MESSAGE, "Continue conversation", common)]
     if status in {"FAILED", "INTERRUPTED"}:
+        # Non-question technical failures are resumed by the common durable
+        # loop; exposing another retry/rerun action can create duplicate work.
+        return []
         discuss = _offer(WorkspaceAction.MESSAGE, "Ask about this error", common)
         if command.get("action") == "confirm_change":
             source_action_id = str((command.get("payload") or {}).get("action_id") or "")
@@ -638,6 +612,15 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
                 (command.get("payload") or {}).get("implementation_job_id") or ""
             )
             if implementation_job_id:
+                if result.get("_linked_implementation_checkpoint_retryable") is True:
+                    return [
+                        discuss,
+                        _offer(
+                            WorkspaceAction.RETRY_IMPLEMENTATION,
+                            "Retry implementation checkpoint",
+                            {**common, "job_id": implementation_job_id},
+                        ),
+                    ]
                 return [
                     discuss,
                     _offer(

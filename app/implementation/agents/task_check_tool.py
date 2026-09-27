@@ -34,12 +34,14 @@ class TaskCheckExecutor(ToolExecutor):
         task_type: str,
         allowed_write_paths: list[str],
         verification_profile: dict[str, object] | None = None,
+        frontend_unit_report_path: Path | None = None,
     ) -> None:
         self.session = TaskCheckSession(
             sandbox,
             task_type,
             list(allowed_write_paths),
             dict(verification_profile) if verification_profile else None,
+            frontend_unit_report_path,
         )
 
     def __call__(self, _action, conversation=None):  # noqa: ANN001, ARG002
@@ -73,6 +75,7 @@ class TaskCheckTool(ToolDefinition[TaskCheckAction, TaskCheckObservation]):
         task_type: str,
         allowed_write_paths: list[str],
         verification_profile: dict[str, object] | None = None,
+        frontend_unit_report_path: str | None = None,
     ) -> Sequence[Self]:
         sandbox = Path(conv_state.workspace.working_dir)
         return [
@@ -90,6 +93,7 @@ class TaskCheckTool(ToolDefinition[TaskCheckAction, TaskCheckObservation]):
                     task_type,
                     allowed_write_paths,
                     verification_profile,
+                    Path(frontend_unit_report_path) if frontend_unit_report_path else None,
                 ),
                 annotations=ToolAnnotations(
                     title=TASK_CHECK_TOOL_NAME,

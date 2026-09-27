@@ -33,6 +33,9 @@ from app.implementation.agents.harness import (
 )
 from app.implementation.agents.runtime import create_openhands_conversation
 from app.implementation.agents.source_replace_tool import (
+    ExactSourceEdit,
+    SourceEditAction,
+    SourceEditExecutor,
     SourceReplaceAction,
     SourceReplaceExecutor,
 )
@@ -400,7 +403,7 @@ def test_restricted_owner_uses_the_minimal_tools_and_custom_prompt(tmp_path: Pat
         conversation.close()
 
 
-def test_editor_owner_exposes_only_replace_source_and_finish(tmp_path: Path) -> None:
+def test_editor_owner_exposes_exact_edit_replace_and_finish(tmp_path: Path) -> None:
     source = tmp_path / "application/src/main/java/example/App.java"
     source.parent.mkdir(parents=True)
     source.write_text("class App {}", encoding="utf-8")
@@ -421,7 +424,7 @@ def test_editor_owner_exposes_only_replace_source_and_finish(tmp_path: Path) -> 
     )
     try:
         conversation.send_message("Initialize tools without calling the model.")
-        assert sorted(agent._tools) == ["finish", "replace_source"]
+        assert sorted(agent._tools) == ["edit_source", "finish", "replace_source"]
     finally:
         conversation.close()
 
@@ -438,6 +441,68 @@ def test_replace_source_rejects_empty_and_out_of_scope_paths(tmp_path: Path) -> 
         SourceReplaceAction(path="application/App.java", source="class App { int x; }")
     ).is_error
     assert source.read_text(encoding="utf-8") == "class App { int x; }"
+
+
+def test_replace_source_creates_an_exact_missing_allowed_path(tmp_path: Path) -> None:
+    source = tmp_path / "application/test/AppTest.java"
+    executor = SourceReplaceExecutor(tmp_path, [str(source)])
+
+    assert not executor(
+        SourceReplaceAction(path="application/test/AppTest.java", source="class AppTest {}")
+    ).is_error
+    assert source.read_text(encoding="utf-8") == "class AppTest {}"
+
+
+def test_edit_source_applies_replacement_insertion_and_deletion_atomically(tmp_path: Path) -> None:
+    source = tmp_path / "application/App.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class App {\n  int oldValue;\n  int removeMe;\n}\n", encoding="utf-8")
+    executor = SourceEditExecutor(tmp_path, [str(source)])
+
+    result = executor(
+        SourceEditAction(
+            path="application/App.java",
+            edits=[
+                ExactSourceEdit(old_text="int oldValue;", new_text="int newValue;"),
+                ExactSourceEdit(old_text="  int removeMe;\n", new_text=""),
+                ExactSourceEdit(old_text="class App {\n", new_text="class App {\n  int added;\n"),
+            ],
+        )
+    )
+
+    assert not result.is_error
+    assert result.source_sha256
+    assert source.read_text(encoding="utf-8") == "class App {\n  int added;\n  int newValue;\n}\n"
+
+
+@pytest.mark.parametrize(
+    ("original", "old_text", "failure"),
+    [
+        ("class App { int value; }", "missing", "EDIT_CONTEXT_STALE"),
+        ("class App { x + x; }", "x", "EDIT_CONTEXT_AMBIGUOUS"),
+    ],
+)
+def test_edit_source_rejects_stale_or_ambiguous_context_without_partial_write(
+    tmp_path: Path, original: str, old_text: str, failure: str
+) -> None:
+    source = tmp_path / "application/App.java"
+    source.parent.mkdir(parents=True)
+    source.write_text(original, encoding="utf-8")
+    executor = SourceEditExecutor(tmp_path, [str(source)])
+
+    result = executor(
+        SourceEditAction(
+            path="application/App.java",
+            edits=[
+                    ExactSourceEdit(old_text="class App", new_text="class Changed"),
+                ExactSourceEdit(old_text=old_text, new_text="replacement"),
+            ],
+        )
+    )
+
+    assert result.is_error
+    assert result.failure_code == failure
+    assert source.read_text(encoding="utf-8") == original
 
 
 def test_openhands_completion_has_one_wall_timeout(

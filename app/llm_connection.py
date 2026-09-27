@@ -194,6 +194,7 @@ def llm_subprocess_environment(config: Settings = settings) -> dict[str, str]:
         "ARAZZO_MODEL": arazzo_connection.model,
         "LLM_TIMEOUT_SECONDS": str(config.llm_timeout_seconds),
         "LLM_WALL_TIMEOUT_SECONDS": str(config.llm_wall_timeout_seconds),
+        "IMPLEMENTATION_REASONING_EFFORT": config.implementation_reasoning_effort,
         "IMPLEMENTATION_OWNER_TOOL_MODE": config.implementation_owner_tool_mode,
         "IMPLEMENTATION_OPENHANDS_CANARY": str(
             config.implementation_openhands_canary

@@ -26,6 +26,7 @@ from app.db.models import TYPE_IAC_CODE, TYPE_SOURCE_CODE
 from app.demo_validation import demo_skip_validation_enabled
 from app.implementation.application.jobs import JobNotFound
 from app.implementation.application.jobs import worker as implementation_worker
+from app.implementation.workflows.traceability import declared_java_source_matches
 from app.metrics import langsmith as langsmith_metrics
 from app.repositories.artifact_repository import load_file_snapshot
 from app.testing.progress import (
@@ -121,6 +122,42 @@ def _dynamic_target_ids(report: dict[str, Any]) -> list[str]:
     ]
 
 
+def _launch_failure_trace_hints(
+    implementation_rtm: dict[str, Any], dynamic: dict[str, Any]
+) -> tuple[list[str], list[str]]:
+    """Resolve a launch-only Java failure through one declared RTM source file.
+
+    A failed HTTP workflow normally supplies an operation ID.  A Spring launch
+    failure occurs before such a workflow exists, so it may only name a Java
+    FQCN.  This fallback is deliberately usable only when that FQCN maps to
+    exactly one runtime source entry in the frozen implementation RTM.
+    """
+
+    finding = dynamic.get("finding")
+    finding = finding if isinstance(finding, dict) else {}
+    if str(finding.get("code") or "") != "APPLICATION_LAUNCH_FAILED":
+        return [], []
+    message = str(finding.get("message") or "")
+    matches = [
+        mapping
+        for mapping in declared_java_source_matches(implementation_rtm, message)
+        if _is_dynamic_runtime_source(str(mapping.get("target_file") or ""))
+    ]
+    if len(matches) != 1:
+        return [], []
+    match = matches[0]
+    target_file = str(match.get("target_file") or "")
+    refs = [
+        *(str(ref) for ref in match.get("sourceRefs") or [] if isinstance(ref, str) and ref),
+        *(
+            [f"task:{match['taskId']}"]
+            if isinstance(match.get("taskId"), str) and match["taskId"]
+            else []
+        ),
+    ]
+    return [target_file], sorted(set(refs))
+
+
 def _trace_hints(
     testing_input: TestingInput,
     dynamic: dict[str, Any],
@@ -162,6 +199,9 @@ def _trace_hints(
         source_contracts, frozen_contracts
     ):
         return [], []
+
+    if not target_ids:
+        return _launch_failure_trace_hints(implementation_rtm, dynamic)
 
     trace = project_artifact_trace(
         projection_state_from_testing_contracts(frozen_contracts),
@@ -1045,31 +1085,30 @@ def _run_testing(
                     "dynamicFunctional"
                 ) or {}
                 preserved_plan = dynamic.get("candidatePlan")
-                if not isinstance(preserved_plan, dict) or not preserved_plan:
-                    raise ValueError("The previous Testing result has no executable test plan.")
-                partial_result["preservedCandidatePlan"] = dict(preserved_plan)
-                partial_result["failedWorkflowId"] = str(
-                    dynamic.get("failedWorkflowId") or ""
-                )
-                partial_result["failedStepId"] = str(dynamic.get("failedStepId") or "")
-                partial_result["workflowInputs"] = dict(
-                    dynamic.get("workflowInputs") or {}
-                )
-                partial_result["inputValues"] = dict(dynamic.get("inputValues") or {})
-                workflows = dynamic.get("workflows")
-                # A selective repair reuses only PASS workflows from the same implementation.
-                # A new implementation still reruns every workflow against the changed files.
-                partial_result["preservedWorkflowResults"] = (
-                    [
-                        dict(item)
-                        for item in workflows
-                        if isinstance(item, dict)
-                        and str((item.get("result") or {}).get("gateStatus") or "").upper()
-                        == "PASS"
-                    ]
-                    if same_candidate and isinstance(workflows, list)
-                    else []
-                )
+                if isinstance(preserved_plan, dict) and preserved_plan:
+                    partial_result["preservedCandidatePlan"] = dict(preserved_plan)
+                    partial_result["failedWorkflowId"] = str(
+                        dynamic.get("failedWorkflowId") or ""
+                    )
+                    partial_result["failedStepId"] = str(dynamic.get("failedStepId") or "")
+                    partial_result["workflowInputs"] = dict(
+                        dynamic.get("workflowInputs") or {}
+                    )
+                    partial_result["inputValues"] = dict(dynamic.get("inputValues") or {})
+                    workflows = dynamic.get("workflows")
+                    # A selective repair reuses only PASS workflows from the same implementation.
+                    # A new implementation still reruns every workflow against the changed files.
+                    partial_result["preservedWorkflowResults"] = (
+                        [
+                            dict(item)
+                            for item in workflows
+                            if isinstance(item, dict)
+                            and str((item.get("result") or {}).get("gateStatus") or "").upper()
+                            == "PASS"
+                        ]
+                        if same_candidate and isinstance(workflows, list)
+                        else []
+                    )
 
     def save_progress(state: dict[str, Any]) -> None:
         if progress is None:

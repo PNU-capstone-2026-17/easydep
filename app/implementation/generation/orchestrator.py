@@ -36,7 +36,9 @@ from ..domain.models import CommandEvidence, Diagnostic, JobSpec, RunManifest
 from ..planning.design_context import (
     TaskSpec,
     generate_backend_owner_tasks,
+    generate_backend_unit_test_tasks,
     generate_frontend_tasks,
+    generate_frontend_unit_test_tasks,
     generate_vertical_integration_task,
     llm_config,
 )
@@ -1294,13 +1296,16 @@ def plan_backend_owner_task(spec: JobSpec, run_root: Path) -> None:
             # mutable tree would change task scope and checkpoint identity.
             # Older owner/marker plans remain valid only inside their own run.
             return
+    backend_tasks = generate_backend_owner_tasks(spec, run_root)
+    unit_test_tasks = generate_backend_unit_test_tasks(spec, run_root, backend_tasks)
     _merge_implementation_tasks(
         run_root,
-        generate_backend_owner_tasks(spec, run_root),
+        [*backend_tasks, *unit_test_tasks],
         replace_types={
             "use-case",
             "wiring",
             "backend-implementation",
+            "backend-unit-test",
         },
     )
 
@@ -1319,6 +1324,7 @@ def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> None:
     if not backend_tasks:
         raise ValueError("Frontend planning requires a persisted backend task plan.")
     frontend_tasks = generate_frontend_tasks(spec, run_root)
+    frontend_test_tasks = generate_frontend_unit_test_tasks(spec, run_root, frontend_tasks)
     inherited_llm = next(
         (
             task.get("llm")
@@ -1329,17 +1335,33 @@ def plan_frontend_tasks(spec: JobSpec, run_root: Path) -> None:
     )
     if isinstance(inherited_llm, dict):
         frontend_tasks = [replace(task, llm=dict(inherited_llm)) for task in frontend_tasks]
+        frontend_test_tasks = [
+            replace(task, llm=dict(inherited_llm)) for task in frontend_test_tasks
+        ]
     integration_task = generate_vertical_integration_task(
         spec,
         run_root,
-        [*backend_tasks, *(task.to_dict() for task in frontend_tasks)],
+        [
+            *backend_tasks,
+            *(
+                task
+                for task in manifest.get("implementation_tasks", [])
+                if isinstance(task, dict) and task.get("task_type") == "backend-unit-test"
+            ),
+            *(task.to_dict() for task in frontend_tasks),
+            *(task.to_dict() for task in frontend_test_tasks),
+        ],
     )
     if isinstance(inherited_llm, dict):
         integration_task = replace(integration_task, llm=dict(inherited_llm))
     _merge_implementation_tasks(
         run_root,
-        [*frontend_tasks, integration_task],
-        replace_types={"frontend-implementation", "integration-implementation"},
+        [*frontend_tasks, *frontend_test_tasks, integration_task],
+        replace_types={
+            "frontend-implementation",
+            "frontend-unit-test",
+            "integration-implementation",
+        },
     )
 
 

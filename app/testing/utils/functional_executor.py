@@ -217,8 +217,34 @@ def operation_url(
         path = path.replace("{" + name + "}", quote(str(value), safe=""))
     if "{" in path or "}" in path:
         raise UpstreamAmbiguity(f"A required path parameter cannot be populated: {operation.path}")
+    parameters: dict[str, dict[str, Any]] = {}
+    for owner in (operation.path_item, operation.value):
+        for parameter in owner.get("parameters") or []:
+            if (
+                isinstance(parameter, dict)
+                and parameter.get("in") == "query"
+                and isinstance(parameter.get("name"), str)
+            ):
+                parameters[parameter["name"]] = parameter
+    query_pairs: list[tuple[str, Any]] = []
+    for name, value in query.items():
+        parameter = parameters.get(name, {})
+        if isinstance(value, dict):
+            style = parameter.get("style", "form")
+            explode = parameter.get("explode", style == "form")
+            if style == "form" and explode:
+                query_pairs.extend((str(key), item) for key, item in value.items())
+                continue
+            if style == "form":
+                flattened = [part for pair in value.items() for part in (pair[0], pair[1])]
+                query_pairs.append((name, ",".join(str(part) for part in flattened)))
+                continue
+            if style == "deepObject" and explode:
+                query_pairs.extend((f"{name}[{key}]", item) for key, item in value.items())
+                continue
+        query_pairs.append((name, value))
     return urljoin(target_url.rstrip("/") + "/", path.lstrip("/")) + (
-        ("?" + urlencode(query, doseq=True)) if query else ""
+        ("?" + urlencode(query_pairs, doseq=True)) if query_pairs else ""
     )
 
 

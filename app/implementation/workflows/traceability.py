@@ -3,10 +3,35 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 SCHEMA_VERSION = "implementation-rtm-traceability/v1alpha2"
+_JAVA_FQCN_TOKEN = re.compile(
+    r"\b([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*){2,})\b"
+)
+
+
+def declared_java_source_matches(
+    implementation_rtm: dict[str, Any], text: str
+) -> list[dict[str, Any]]:
+    """Return RTM rows whose declared Java target exactly matches a named FQCN."""
+
+    fqcn_matches = set(_JAVA_FQCN_TOKEN.findall(text))
+    mappings = implementation_rtm.get("mappings")
+    matched: list[dict[str, Any]] = []
+    for mapping in mappings if isinstance(mappings, list) else []:
+        if not isinstance(mapping, dict):
+            continue
+        target = str(mapping.get("target_file") or "").replace("\\", "/")
+        prefix = "application/src/main/java/"
+        if not target.startswith(prefix) or not target.endswith(".java"):
+            continue
+        fqcn = target.removeprefix(prefix).removesuffix(".java").replace("/", ".")
+        if fqcn in fqcn_matches:
+            matched.append(mapping)
+    return matched
 
 
 def build_rtm_traceability_map(spec: Any, run_root: Path) -> dict[str, Any]:

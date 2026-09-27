@@ -89,7 +89,7 @@ Classify the user's utterance without inventing state or artifact references.
   current cloud provider or region, VM SKU, cost or performance, VM Free Tier, or deployment resource topology;
   otherwise leave it empty.
 - command: an explicit request to advance, answer a pending question, revise project content,
-  delegate an offered repair, approve or dismiss a pending revision plan, create a checkpoint
+  review a pending revision plan, create a checkpoint
   branch, or rerun a delivery stage. Select confirm_revision or dismiss_revision only when the
   corresponding pending-plan action is present in the supplied workspace context. Branch supports
   requirements, design, and implementation; rerun also supports testing. Choose only one stage.
