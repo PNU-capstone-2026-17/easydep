@@ -4,11 +4,22 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+from app.design.contracts.api_spec import ApiSpecModel
+from app.design.schemas.class_model import BCEModel
+from app.design.schemas.sequence_model import SequenceCollection
 from app.implementation.domain.models import JobSpec
+from app.implementation.generation.java_scaffold import (
+    JavaScaffoldInput,
+    render_java_scaffold,
+)
 from app.implementation.planning.design_context import (
     _backend_source_task_id,
     generate_backend_owner_tasks,
     generate_backend_unit_test_tasks,
+)
+from app.implementation.generation.operation_contracts import (
+    build_generated_operation_contracts,
+    write_generated_operation_contracts,
 )
 
 
@@ -264,37 +275,41 @@ def test_marked_entity_owner_precedes_calling_service_and_its_unit(tmp_path: Pat
         {"operationId": "order-save", "name": "save", "returnType": "Order"}
     ]
     _write_json(bce_path, bce)
+    bce_model = BCEModel.model_validate(bce)
+    files = render_java_scaffold(
+        JavaScaffoldInput(
+            bceModel=bce_model,
+            basePackage=spec.base_package,
+            applicationName="Orders",
+        )
+    )
+    for relative_path, source in files.items():
+        output = run / "application/src/main/java" / relative_path
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(source, encoding="utf-8")
+    contracts = build_generated_operation_contracts(
+        bce_model=bce_model,
+        sequence_model=SequenceCollection.model_validate_json(
+            spec.inputs["sequenceModel"].read_text(encoding="utf-8")
+        ),
+        api_model=ApiSpecModel.model_validate_json(
+            spec.inputs["apiModel"].read_text(encoding="utf-8")
+        ),
+        base_package=spec.base_package,
+    )
+    write_generated_operation_contracts(run, contracts)
     service_source = (
         "application/src/main/java/com/example/orders/application/impl/"
         "OrderControlService.java"
     )
     entity_source = "application/src/main/java/com/example/orders/bce/Order.java"
-    service_path = run / service_source
-    service_path.parent.mkdir(parents=True)
-    service_path.write_text(
-        "// EASYDEP-IMPLEMENT: complete place-order\n", encoding="utf-8"
+    entity_contract = next(
+        contract
+        for contract in contracts.contracts
+        if contract.writable_source == entity_source
     )
-    (run / entity_source).write_text(
-        "// EASYDEP-IMPLEMENT: complete order-save\n", encoding="utf-8"
-    )
-    (run / "reports").mkdir()
-    _write_json(
-        run / "reports/generated-operation-contracts.json",
-        {
-            "schemaVersion": "generated-operation-contracts/v1",
-            "contracts": [
-                {
-                    "operationId": "place-order",
-                    "writableSource": service_source,
-                    "completionMarker": "EASYDEP-IMPLEMENT: complete place-order",
-                },
-                {
-                    "operationId": "order-save",
-                    "writableSource": entity_source,
-                    "completionMarker": "EASYDEP-IMPLEMENT: complete order-save",
-                },
-            ],
-        },
+    assert entity_contract.completion_marker in (run / entity_source).read_text(
+        encoding="utf-8"
     )
 
     with patch(
@@ -306,6 +321,10 @@ def test_marked_entity_owner_precedes_calling_service_and_its_unit(tmp_path: Pat
     entity = by_source[entity_source]
     service = by_source[service_source]
     assert entity.depends_on == []
+    assert entity.allowed_write_paths == [entity_source]
+    assert entity.verification_profile["requiredAbsentMarkers"] == [
+        {"path": entity_source, "markers": [entity_contract.completion_marker]}
+    ]
     assert service.depends_on == [entity.task_id]
     units = generate_backend_unit_test_tasks(spec, run, tasks)
     service_unit = next(task for task in units if task.depends_on == [service.task_id])
