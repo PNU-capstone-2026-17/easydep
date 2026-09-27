@@ -401,6 +401,8 @@ def test_renders_compile_safe_service_calls() -> None:
 
     assert "private final LookupControl lookupControl;" in root
     assert "private final SaveControl saveControl;" in root
+    assert "public class RootControlService implements RootControl {" in root
+    assert "public final class RootControlService" not in root
     assert root.index("lookupControl.lookup(value)") < root.index(
         "saveControl.save(lookupResult1)"
     )

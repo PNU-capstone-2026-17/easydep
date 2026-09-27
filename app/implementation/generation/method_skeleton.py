@@ -113,7 +113,7 @@ def _render_service(
         "import org.springframework.stereotype.Service;",
         "",
         "@Service",
-        f"public final class {class_name}Service implements {class_name} {{",
+        f"public class {class_name}Service implements {class_name} {{",
     ]
     for dependency in dependencies:
         lines.append(f"    private final {dependency} {_field_name(dependency)};")
