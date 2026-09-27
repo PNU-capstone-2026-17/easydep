@@ -32,6 +32,10 @@
 - 비용이 큰 E2E 검증 전에 영향 범위에 맞는 다양하고 작은 부분 검증으로 각 구성 요소가 동작하는지 확인한다. LLM이 결과를 생성하는 단계를 변경한 경우에는 영향받는 각 단계별로 소규모 실제 LLM 호출 검증을 수행하고 모두 통과한 뒤 E2E를 실행한다. 사소한 변경마다 전체 실행을 반복하지 않으며, 무관한 작은 UI 변경에는 검증을 추가하지 않는다.
 - 실모델 검토에서 발견한 결함을 처리할 때 에이전트가 사용자 역할의 자유 피드백을 작성·제출하지 않는다. 기술적으로 고칠 수 있는 결함은 자동 수리하고, 실제 사용자 결정이 필수인 사항은 시스템이 먼저 근거 있는 선택지로 질문한다. 근거 있는 선택지가 없는 필수 값만 값 입력 질문으로 요청한다. 사용자가 완성된 산출물에 자발적으로 주는 자유 피드백은 허용한다.
 
+### Synthetic deployment technical-choice delegation
+
+- When the user explicitly delegates synthetic deployment capacity, SKU, replica, or provider-region sizing choices, Codex may use the existing structured sizing UI/API with disclosed conservative baselines and catalog-backed, budget-fitting recommendations. This delegation never covers business policy, authentication, identity, requirements, or free-form feedback; those remain system-question/user-owned.
+
 ## Windows UTF-8 실행
 
 - Windows에서 Python으로 JSON, LLM 응답, 다이어그램 텍스트처럼 비ASCII 문자가 포함될 수 있는 값을 표준 출력하거나 파일로 읽고 쓸 때에는 첫 실행부터 UTF-8 모드를 사용한다. Python은 `-X utf8`로 실행하거나 `PYTHONUTF8=1`을 명시한다.
@@ -40,6 +44,7 @@
 
 ## 로그·대형 JSON 조사
 
+- Before diagnosing a missing verification, inspect the raw result and the producing status-specific schema. Do not infer that execution was skipped from one projected field or stale embedded state when a newer canonical state exists.
 - 로그나 대형 JSON을 조사하기 전에는 먼저 파일 크기를 확인한다.
 - `Get-Content` 전체 결과를 파이프해 `Select-Object -Last` 또는 `ConvertTo-Json`으로 넘기지 않는다. 반드시 `-Tail`·`-TotalCount`, DB projection, 또는 streaming parser를 사용한다.
 - 조사 명령에는 유한한 timeout과 출력 제한을 두고, 명령 종료 후 자신이 만든 프로세스가 남지 않았는지 확인한다.

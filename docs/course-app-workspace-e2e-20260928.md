@@ -1,0 +1,175 @@
+# Course app Workspace checkpoint — 2026-09-28
+
+- Current branch app: `8b6702dd-1560-423f-bf06-d2e755cdf932`.
+- Design completed through the normal Workspace path after the user's explicitly delegated synthetic deployment choice: AWS `ap-northeast-2`, budget USD 500, `compute-1` = `t3a.medium` (2 vCPU, 4 GiB, one replica).
+- The compute component is USD 34.164/month. The known total floor is USD 38.726/month, with incomplete usage-based pricing; it is **not** a fixed total price.
+- Implementation command: `e4d4d7a1-fbb6-49c1-924a-ee81bbb8ad93`; job: `bdada8c575f340f6887dfadd1f206829`; run: `run_036381fa0834`.
+- This is a genuine normal path: no demo bypass and no manual generated-app artifact edits.
+- Generation succeeded with 35 tasks. Latest projection (`2026-09-27 16:11:12 UTC`): `RUNNING/backend`; 4 `SUCCEEDED`, 1 `RUNNING`, 30 `PENDING`; active owner `termmanagementcontrolservice`.
+- Completed source-owner checks: `CourseOfferingControlService` 74.526s (compile 37.616s, exit 0); `RegistrationControlService` 147.260s (compile 35.935s, exit 0); `RegistrationQueryControlService` 58.612s (verification exit 0); `ScheduleExportControlService` (verification 50.462s, exit 0).
+- Observed coding model: `openai/@cf/zai-org/glm-5.3-flash`.
+- Frozen OpenAPI: `.easydep/implementation-runs/bdada8c575f340f6887dfadd1f206829/design-context/openapi.json`; `MeetingSchedule` start/end stay `string` with the `local-time` pattern, while location remains an ordinary string.
+
+These are source-owner check facts only—not proof that unit tests, final build, application startup, Testing, or full E2E have completed. All of those remain pending.
+
+System baseline commit is `b57bdf3`; the latest narrow AGENTS deployment-delegation note remains uncommitted.
+
+## Implementation progress update (2026-09-28 01:15 KST)
+
+- `TermManagementControlService` attempt 1 failed the canonical `compileJava` check (exit 1; four compiler errors, including unresolved `AcademicTermEntity`). The normal automatic technical-repair path then applied one scoped `edit_source` in attempt 2; `compileJava` passed (exit 0, 28.751s). No manual source edit or user feedback was submitted.
+- The workflow advanced to real backend unit checks after all five backend source tasks completed. Latest saved workflow projection (`2026-09-27 16:14:39 UTC`): 5 backend implementations `SUCCEEDED`; first backend unit task `CourseOfferingControlService-unit-test` `RUNNING`; four more backend unit tasks pending; 12 frontend implementation tasks, 12 frontend unit tasks, and the final integration task pending.
+- Source-owner `compileJava` success is not counted as JUnit/Vitest coverage. No unit-test total, final build/startup, or Testing result is claimed yet.
+
+## Backend unit-test progress (2026-09-28 01:27 KST)
+
+- Latest saved workflow projection (`2026-09-27 16:26:08 UTC`): all 5 backend source tasks succeeded; backend unit tasks 2 succeeded, 1 running, 2 pending; frontend source/unit tasks and the final integration task were still pending. The active unit task was `RegistrationQueryControlServiceTest`.
+- Canonical executed JUnit evidence so far: `CourseOfferingControlServiceTest` 14/0/0 and `RegistrationControlServiceTest` 17/0/0 (total 31 executed, 0 failed, 0 skipped across these two tasks only). CourseOffering's first two test attempts failed; the third passed with Gradle test exit 0 in 31.780s. No failed attempt is counted as a current pass.
+- The unit-test source-edit attempts used coding model `openai/@cf/zai-org/glm-5.3-flash`; the separate semantic failure review used OSS. The unit-task write scope was only its assigned test file. No generated app file was edited manually.
+- Frontend owner/unit checks, final integration build/startup, and Testing remain pending; these partial JUnit results are not overall completion evidence.
+
+## Latest backend-unit checkpoint (2026-09-28 01:45 KST)
+
+- The live implementation command remains `e4d4d7a1-fbb6-49c1-924a-ee81bbb8ad93` (RUNNING), job `bdada8c575f340f6887dfadd1f206829`, run `run_036381fa0834`. Use the standalone canonical `generated/runs/run_036381fa0834/reports/workflow-state.json` for task state. Its 16:45:06 UTC projection is RUNNING/READY with 9 tasks succeeded and 26 pending; the embedded workflow snapshot in `easydep-job-state.json` is older (16:24:01 UTC, READY) and must not be treated as a separate run or the latest state.
+- `ScheduleExportControlServiceTest` failed its assertion because the expected `REGISTRATION,reg-2,,,,` had one excess comma; actual was `REGISTRATION,reg-2,,,`. A saved OSS review classified the test oracle as invalid and instructed changing only the assigned test expectation, including the schedule row’s four blank fields. Attempt 7 reports one `edit_source_applied` and a successful canonical Gradle check: exit 0, `unitTestResults` 4/0/0, 31.382s (`verification.reusedFromTaskCheck=true`). The earlier review missed this because it projected failure-side `verificationEvidence` instead of the success-side `verification` object; this was an evidence-reading error, not a workflow defect. The repeated failed attempts followed by a test-only correction consumed seven task attempts; this is a measured workflow delay, not a measured model-time breakdown.
+- `TermManagementControlServiceTest` failed two checks because its fixture registration-period start preceded the term start, violating the implementation’s existing validation contract. The saved OSS review classified this as `test_oracle` and directed correcting fixture dates while preserving assertions. Attempt 2 reports a test-only `edit_source_applied` and canonical Gradle exit 0, `unitTestResults` 8/0/0, 36.218s (`verification.reusedFromTaskCheck=true`).
+- Canonical JUnit evidence across all five backend unit tasks is now 47 total / 0 failed / 0 skipped: CourseOffering 14, Registration 17, RegistrationQuery 4, ScheduleExport 4, TermManagement 8. The latter two pass counts come from their success-side `verification` objects, not `verificationEvidence`.
+- Latest standalone workflow projection (`2026-09-27 17:28:59 UTC`) is RUNNING with 30 succeeded, 1 running, and 4 pending. Eight frontend unit suites now have canonical success results totaling 46/0/0: the previous seven (38) plus `ManageCourseOffering` 8/0/0 after a test-only correction. `RegisterForCourse` unit is active; three other frontend units and the final integration remain pending. `ExportSchedule` passed on attempt 5 after jsdom Blob-reading failures; its final `test_oracle` correction used a Blob-size check rather than reading content. Size equality is not proof of exact decoded content, so that limitation is recorded. Final Vite build/startup and normal Testing are unverified.
+
+## Frontend dependency-startup checkpoint (2026-09-28 02:34 KST)
+
+- The same implementation command remains `e4d4d7a1-fbb6-49c1-924a-ee81bbb8ad93` / job `bdada8c575f340f6887dfadd1f206829` / run `run_036381fa0834`. The latest standalone workflow file (`reports/workflow-state.json`, updated `2026-09-27 17:33:49 UTC`) is READY with 30 tasks succeeded and 5 pending; the next runnable tasks include `RegisterForCourse` and three other frontend unit suites. The Workspace command is still RUNNING with no terminal error.
+- `RegisterForCourse` unit attempts 1, 2, and 3 all failed before Vitest test cases could execute because the Linux workspace lacks `@esbuild/linux-x64` required by esbuild while loading `vite.config.ts`. Attempt 2's `verificationEvidence` records `npm run test:unit ...` exit 1, `WorkspaceVerificationError`, and an empty test-results field; attempt 3 has the same startup error. This is an infrastructure/dependency startup failure, not evidence of zero tests passing or failing. The prior eight completed suites remain the only verified frontend total: 46/0/0.
+- At the 17:36:13 UTC snapshot, Terra was checking the existing Linux dependency-cache path; the workflow was FAILED with 30 succeeded / 1 failed / 4 pending while the Workspace command still reported RUNNING. This records the infrastructure startup checkpoint, not a terminal implementation result. No host package install, new run, generated-app edit, or manual retry was performed by this monitoring task. Final integration and normal Testing remain unverified. The separately validated `FileReader.readAsText(blob)` OSS review recommendation is prospective only and does not alter the live ExportSchedule test's size-only content caveat above.
+
+## Dependency recovery and unit-test continuation (2026-09-28 02:40 KST)
+
+- Without a new run or host package installation, the same `RegisterForCourse` unit task advanced to attempt 4 after the exact Linux dependency metadata marker was invalidated and the existing verifier ran `npm ci --ignore-scripts --no-audit --no-fund --prefer-offline`. The install restored 158 packages; the canonical focused Vitest command then exited 0 in 18.832s with 7/0/0. Only the assigned test file was changed in that attempt. Attempts 1–3 remain recorded as pre-test startup failures and are not counted as test failures.
+- Canonical frontend unit coverage is now 9 completed suites totaling 53/0/0 (the previous eight suites, 46/0/0, plus RegisterForCourse 7/0/0). Latest standalone workflow projection (`2026-09-27 17:39:41 UTC`) is RUNNING with 31 succeeded, 1 running, 3 pending; `JoinWaitlist` is the active unit task. Final integration build/startup and normal Testing are still pending.
+
+## Frontend unit continuation (2026-09-28 02:43 KST)
+
+- `JoinWaitlist` completed its canonical npm/Vitest check with 5/0/0 in 12.083s. The completed frontend suite total is now 10 suites / 58 passed / 0 failed / 0 skipped; combined with the five backend suites this is 105 executed unit cases.
+- `SwapRegistration` attempt 1 executed 9 tests and failed 1 (8 passed, 0 skipped). The failing empty-state assertion observed the loading paragraph instead of the expected post-load “You have no active registrations to swap.” state. The persisted unit-failure review classifies this as `test_oracle` and scopes the correction to the assigned test file; the implementation source is not assigned for editing. The correction/recheck has not yet been counted as a pass.
+- A separate future runtime review-context fix was committed as `bfa8efb` after this live server/job started. The current run still uses the earlier server process/code baseline and has not exercised that fix; it is not evidence for the current SwapRegistration correction.
+- Final integration and normal Testing remain pending. This checkpoint separates the completed 58/0/0 frontend suites from the historical SwapRegistration attempt-1 failure (8/1/0).
+
+## SwapRegistration correction and final frontend unit (2026-09-28 02:45 KST)
+
+- `SwapRegistration` attempt 2 applied a test-only correction for the asynchronous loading/empty-state assertion and passed the canonical focused Vitest command: 9/0/0, checker duration 4.303s. Its attempt 1 failure (8/1/0) remains historical and is not included in the completed-suite total.
+- Completed frontend unit coverage is now 11 suites / 67/0/0; together with backend 47/0/0 this is 114 executed unit cases. At 17:44:46 UTC the standalone workflow had 33 tasks succeeded, one running, and one pending; `ManageTerm` unit is active. The final integration and normal Testing remain pending.
+
+## ManageTerm unit-test attempt (2026-09-28 02:47 KST)
+
+- `ManageTerm` unit attempt 1 executed six tests and failed four (2 passed, 4 failed, 0 skipped); this is a real Vitest result, not a dependency startup failure. The failures concern async status lookup, multiple alert matches, and a fixture expectation that did not match the current validation response. No test correction or pass is claimed yet; normal attempt 2 is active.
+- Latest standalone workflow projection (`2026-09-27 17:47:20 UTC`) is RUNNING with 33 tasks succeeded, one running, and one pending. `ManageTerm` attempt 2 is active, with final integration pending. The prior 11 completed frontend suites remain 67/0/0; ManageTerm's failed attempt is not included.
+
+## ManageTerm repair-review interruption (2026-09-28 02:50 KST)
+
+- ManageTerm unit attempt 3 executed 8 tests and failed 5 (3 passed, 5 failed, 0 skipped). Its automatic OSS unit-failure review was entered with `openai/gpt-oss-120b`, but the request returned `BadRequestError` HTTP 400; the persisted bounded diagnostics contain no parameter, code, or message detail. The implementation command then became terminal FAILED while the integration task remained pending. No correction/recheck pass is claimed.
+- Latest canonical workflow snapshot (`2026-09-27 17:50:27 UTC`) is FAILED with 33 succeeded / 1 failed / 1 pending. The 11 earlier completed frontend suites remain 67/0/0; ManageTerm's failed attempts are excluded. This checkpoint does not imply any app-wide implementation or Testing completion.
+
+## ManageTerm retry result (2026-09-28 02:48 KST)
+
+- ManageTerm attempt 2 also failed its actual Vitest run: 7 total / 4 failed / 0 skipped. It reported the same four assertion areas as attempt 1 and `changedFiles` is null; no correction or pass is claimed. The latest repair plan had not yet recorded a ManageTerm review entry.
+- The standalone workflow at 17:48:02 UTC was FAILED (33 succeeded / 1 failed / 1 pending), while the Workspace implementation command still reported RUNNING with no terminal error and transient retry metadata. Final integration remains pending; the ManageTerm failure is not included in the 67/0/0 completed frontend aggregate.
+
+## ManageTerm attempt 4 and current pause (2026-09-28 02:54 KST)
+
+- ManageTerm attempt 4 again executed 8 tests with 5 failures and 0 skipped. A test-file replacement was applied, but the canonical result remained failed; the subsequent OSS unit-review request returned `BadRequestError` HTTP 400 with parameter/code/message unavailable. No passing recheck is claimed.
+- The latest Workspace API and canonical workflow snapshots are terminal FAILED with 33 tasks succeeded, one failed, and final integration pending. The current bounded API response exposes no recovery action or user question. No manual retry or user-answer submission occurred. The 67/0/0 frontend aggregate remains limited to the 11 previously completed suites.
+
+## Automatic ManageTerm retry follow-up (2026-09-28 02:57 KST)
+
+- The outer Workspace retry loop ran ManageTerm attempt 5 without a manual command. It again produced 8 tests / 5 failures / 0 skipped, applied one test-file replacement, and the subsequent OSS review again failed with HTTP 400 and unavailable parameter/code/message detail. No passing recheck is claimed.
+- Latest workflow remains FAILED (33 succeeded / 1 failed / 1 pending); the Workspace command is now FAILED with transient retry metadata at attempt 9. No offered action or user question is present. The final integration and normal Testing remain pending, and the verified frontend aggregate remains 67/0/0 before ManageTerm.
+
+## ManageTerm retry attempt 6 (2026-09-28 03:01 KST)
+
+- The same outer Workspace retry loop produced another ManageTerm attempt (attempt 6): 8 tests / 5 failures / 0 skipped, with one test-file replacement applied. The ensuing OSS review again returned BadRequestError 400 with parameter/code/message unavailable; no successful canonical recheck is recorded.
+- The API command and standalone workflow again show FAILED, 33 succeeded / 1 failed / 1 integration pending, while the command payload records transient retry attempt 10. The API response has no offered action or user question. This is still an in-progress checkpoint recovery problem, not overall implementation or Testing completion.
+- A subsequent automatic outer-loop attempt 7 also ended with 8/5/0 and one test-file replacement. The standalone workflow has since requeued the same task (33 succeeded / 2 pending) while the same Workspace command remains RUNNING; no manual action was submitted and the next OSS-review outcome is not yet available.
+
+## ManageTerm review and focused correction (2026-09-28 03:07 KST)
+
+- ManageTerm attempt 8 reduced the actual Vitest failure set to 1: 8 total / 1 failed / 0 skipped, after one test-file edit. The automatic OSS reviewer returned a `test_oracle` classification for a `getByRole('alert')` assertion that assumed only one field alert; it directed a test-only query adjustment and listed the other seven behavioral assertions to preserve. Production source is not in the repair write scope.
+- The workflow has requeued the same ManageTerm unit for canonical recheck (33 tasks succeeded / 2 pending at 18:07:10 UTC). No pass is counted until that check succeeds; final integration and normal Testing remain pending.
+
+## Frontend unit completion (2026-09-28 03:10 KST)
+
+- ManageTerm attempt 9 passed its canonical focused Vitest run: 8/0/0, exit 0, owner duration 37.725s; the assigned test file was the only changed file. This follows the OSS test-oracle review and test-only correction; prior failed attempts remain history only.
+- All 12 frontend unit suites now have canonical success results totaling 75/0/0. Together with five backend suites totaling 47/0/0, the run has 122 executed passing unit cases. The standalone workflow is READY at 18:09:58 UTC with 34 succeeded and the single final integration task pending. The Workspace command remains RUNNING; final production build/startup and normal Testing are not yet verified.
+
+## Final integration startup and targeted repair (2026-09-28 03:14 KST)
+
+- The final integration task executed backend/frontend verification and attempted the production application startup. Startup failed before accepting requests: Spring/CGLIB reported `Cannot subclass final class ...CourseOfferingControlService`; the associated cause was a BeanCreationException while creating that service. This is not a passing application-startup check.
+- The normal repair plan scheduled only the declared backend source owner `implement-backend-com-easydep-app-application-impl-courseofferingcontrolservice` and its linked unit recheck. The failed task is `implement-vertical-integration`; outcome is `scheduled`, and the repair path is limited to that Java source. The canonical workflow returned to backend with 32 tasks succeeded and those two tasks pending; the same Workspace command remains active, with no user question or manual action.
+- The 122 JUnit/Vitest cases recorded before this source repair remain historical test evidence. The linked CourseOffering unit check must pass again after the repair before claiming current verification against the repaired source. Final integration/startup and normal Testing remain incomplete.
+
+## Targeted CourseOffering repair checkpoint (2026-09-28 03:17 KST)
+
+- The scheduled `CourseOfferingControlService` owner repair completed on attempt 2 with one edit to its declared Java file; canonical `compileJava --build-cache` passed (exit 0, 29.211s check duration). No unit result was fabricated or reused as proof for the changed source.
+- The linked CourseOffering unit test is pending canonical recheck; final integration is also pending. Until that 14-case unit check passes after the repair, the 122-case aggregate is historical; the remaining 108 executed JUnit/Vitest cases are still verified against their current owners. Workflow at 18:17:31 UTC is READY with 33 tasks succeeded and those two tasks pending.
+
+## CourseOffering unit recheck complete (2026-09-28 03:20 KST)
+
+- The linked CourseOffering unit recheck passed on attempt 4: canonical Gradle `test --tests ...CourseOfferingControlServiceTest --build-cache` exit 0, 14/0/0; check duration 45.269s. `compileJava` was FROM-CACHE; test compilation and JUnit execution ran after the source repair.
+- All previously counted unit evidence is now current against the repaired source: backend 47/0/0 plus frontend 75/0/0 = 122/0/0. Workflow at 18:20:14 UTC is READY with 34 succeeded and only the final integration attempt pending. The final production build/startup must rerun; normal Testing is still pending.
+
+## Integration startup failure on next backend service (2026-09-28 03:24 KST)
+
+- Integration attempt 2 again failed Spring application startup, this time with CGLIB `Cannot subclass final class ...RegistrationControlService`. The failed app did not pass readiness. The normal repair plan scheduled only the declared `RegistrationControlService` owner and its linked unit-test recheck; Gradle compile tasks were up-to-date in the failed startup evidence.
+- The workflow returned to backend with 32 succeeded and 3 pending: RegistrationControlService source, its linked unit recheck, and final integration. Integration has two failed startup attempts; the CourseOffering source/unit repair and recheck remain successful, but the prior 122/0/0 total is historical again for the now-changed Registration source until its 17-case JUnit recheck passes. The other 105 executed unit cases remain verified.
+
+## RegistrationControlService targeted repair (2026-09-28 03:27 KST)
+
+- The scheduled RegistrationControlService source repair succeeded on attempt 2 with one edit to its declared Java file; canonical `compileJava --build-cache` passed (exit 0, 28.122s). The linked 17-case unit recheck is pending, as is final integration.
+- Until that unit recheck succeeds against the repaired source, 122/0/0 remains historical; 105 previously executed JUnit/Vitest cases remain verified. Workflow at 18:27:12 UTC is READY with 33 succeeded and those two tasks pending.
+- The separate one-line scaffold prevention change is committed as `319b176`, but this live server/run still uses baseline `b57bdf3` because no restart occurred. It is prospective for future generation and is not evidence that the current generated services were corrected by the scaffold change; the current run is using its normal per-owner repair path.
+
+## RegistrationControlService unit recheck complete (2026-09-28 03:30 KST)
+
+- The linked RegistrationControlService unit test passed on attempt 3 after source repair: canonical Gradle `test --tests ...RegistrationControlServiceTest --build-cache` exit 0, 17/0/0; `compileJava` was FROM-CACHE and test compilation/JUnit executed (38.469s check duration).
+- The prior unit evidence is now revalidated against both repaired services: backend 47/0/0 plus frontend 75/0/0 = 122/0/0. Workflow at 18:29:53 UTC is READY with 34 tasks succeeded and only final integration pending. The current server remains at baseline `b57bdf3`; committed scaffold prevention `319b176` was not exercised in this run. Final startup and normal Testing are still pending.
+
+## Final integration succeeded (2026-09-28 03:33 KST)
+
+- Integration attempt 3 completed `SUCCEEDED` with `completionPath=verify-only`: backend Gradle test exit 0 (33.783s), frontend production `npm run build` exit 0 (23.759s; `tsc -b && vite build`, 76 modules), and application startup/readiness succeeded. The recorded runtime was `application-process`, profile `test`, database `h2-mysql-mode`, host port 43361, health path `/healthz`; no cached build alone was used as startup proof.
+- Canonical workflow now has all 35 tasks `SUCCEEDED`. Backend+frontend unit coverage remains 122/0/0 after both linked unit rechecks. The Workspace API still reports the implementation command RUNNING and exposes no `Start Testing` action yet, so Testing has not been started or claimed. Startup/profile evidence does not itself establish a separate `validationSkipped=false` flag; that will be checked from normal Testing results when available.
+
+## Testing started through the offered Workspace action (2026-09-28 03:36 KST)
+
+- A fresh Workspace read showed implementation command `e4d4d7a1-fbb6-49c1-924a-ee81bbb8ad93` `COMPLETED` at 03:35:01 KST. Its saved `Start testing` offer was submitted unchanged with the linked implementation job ID.
+- Testing command `848d3588-eebf-44d4-9219-afdf44ba7032` was created `QUEUED` at 03:36:37 KST. Testing results, profiles, executed checks, and `validationSkipped` are not yet available; no completion is claimed.
+- During the live Testing command, progress events recorded `Step swapRegistration failed` (03:43:06 KST), then `Step joinWaitlist failed` and `Workflow workflow-UC7 did not complete` (03:43:54–03:43:56 KST). The command remained `RUNNING` with no terminal report at the last read; these are observed failures, not a final classification or repair outcome.
+- The first persisted Testing report snapshot is `passed=false` with IAC/static `PASS`, dynamic-functional `FAIL`, and 7 blocking `OpenAPI success response is missing: ...` findings, each routed as `delegate_implementation_repair`. Its repair ledger shows only the initial baseline (`ACTIVE`, attempt 1, accepted 0); it does not reflect later activity. Subsequent command events report backend implementation progress with a passing Gradle check, followed by `Integration verification` (03:47:53–03:47:54 KST). Repair acceptance, recheck, and a fresh Testing report remain unverified.
+- Reconciliation at 03:48 KST: the canonical standalone workflow state (40,084 B, updated 03:47:51 KST) remains `RUNNING`, `currentPhase=backend`, with `implement-backend-com-easydep-app-application-impl-courseofferingcontrolservice` as its only running task (attempts 3). Its referenced result file is older (03:16:38 KST, prior `SUCCEEDED` compileJava exit 0) and is not evidence for the active attempt. The public `Integration verification` progress label is therefore not treated as proof that final integration is currently running or complete.
+- The official Testing command terminated `FAILED` at 03:53:48 KST. The actual `attempt-003.result.json` (2,590 B) records the implementation owner as `INTERRUPTED`, `errorType=APITimeoutError`, `error=Request timed out`, `completionPath=agent`, and `initialVerification=null`; no `verificationEvidence`, command, exit code, or duration was recorded. The Workspace event text said “Agent workspace verification failed: Request timed out,” but the owner result does not establish a canonical checker timeout, so the failure is recorded as an owner/API request timeout instead.
+- The final `/testing-result` remains the initial failed snapshot (IAC/static `PASS`, dynamic-functional `FAIL`, 7 findings, repair ledger `ACTIVE` attempt 1 / accepted 0), not a later retry result. Its saved Testing checkpoint reports `validationSkipped=false` and 11 executed workflows (4 passed, 7 failed) for that initial dynamic-functional snapshot; this proves actual checks ran, not Testing completion. The linked implementation checkpoint is marked retryable and its saved payload contains the `implementation_job_id` expected by the existing retry selector; the shared retry boundary is still under investigation. No retry has been submitted.
+
+## Initial Testing HTTP failure projection (saved report, bounded)
+
+- The Testing-result API response was 131,993 bytes. Its dynamic report contains 11 workflow records: UC1, UC4, UC6, and UC9 passed; the seven failed mutation operations below each recorded contract/semantic `FAIL`, HTTP 500, and a generic Spring body containing only timestamp/status/error/path. The report does not contain a specific exception message or root cause for these seven responses.
+
+| Use case / operation | Request | Expected criterion | Actual HTTP | Body bytes |
+|---|---|---|---:|---:|
+| UC2 `registerForCourse` | POST `/offerings/{courseOfferingId}/registrations` | 201 | 500 | 168 |
+| UC3 `swapRegistration` | POST `/registrations/{currentRegistrationId}/swap/{targetOfferingId}` | 200 | 500 | 200 |
+| UC5 `dropRegistration` | DELETE `/registrations/{registrationId}` | 200 | 500 | 158 |
+| UC7 `joinWaitlist` | POST `/offerings/{offeringId}/waitlist` | 201 | 500 | 139 |
+| UC8 `cancelWaitlistEntry` | DELETE `/waitlist/{waitlistEntryId}` | 204 | 500 | 153 |
+| UC10 `manageTerm` | POST `/terms` | 200 | 500 | 113 |
+| UC11 `manageCourseOffering` | POST `/offerings` | 200 | 500 | 117 |
+
+- The finding-level message classifies each as “OpenAPI success response is missing: <operation>”; that message and generic HTTP 500 bodies do not identify the application exception. No speculative cause or manual source correction is recorded.
+
+## Same-job Testing checkpoint resume submitted (2026-09-28 04:38 KST)
+
+- Commit `208e5d9` added the narrowly tested checkpoint-reuse path; its latest 5 focused parameter cases passed (29.721s) before restart. The existing hidden launcher restarted only the EasyDep server in production-like mode with bootstrap/frontend rebuild skipped and without resetting the database; readiness was confirmed.
+- After restart, failed Testing command `848d3588-eebf-44d4-9219-afdf44ba7032` remained historical (`FAILED`, saved checkpoint, `validationSkipped=false`, no action offers). The completed implementation command's exact saved `Start testing` offer remained valid and was submitted unchanged once.
+- New Testing command `fba43a35-c165-45be-a876-c10b9be5f5f6` was created `QUEUED` and points to the same implementation job `bdada8c575f340f6887dfadd1f206829`; no new implementation job or app was created. Its normal path resumed source/unit/integration work before a new Testing report appeared.
+
+## Same-job retry outcome (2026-09-28 04:45 KST)
+
+- The resumed `CourseOfferingControlService` backend owner produced a fresh 2,590-byte attempt result at 04:45:33 KST: `INTERRUPTED`, effective model `openai/@cf/zai-org/glm-5.3-flash`, duration 305,665 ms, `APITimeoutError` / `Request timed out.`, termination reason `PROVIDER_TIMEOUT`. It contains no `initialVerification`, `verification`, or `verificationEvidence`; `changedFiles` is null, so this result alone does not establish whether source bytes changed.
+- Canonical workflow `run_036381fa0834` is now `INTERRUPTED` (28 succeeded, 0 failed, 6 pending, 0 running). The outer Testing command `fba43a35-c165-45be-a876-c10b9be5f5f6` still reports `RUNNING`, while its `/testing-result` has no report. The former failed Testing command remains historical; no successful same-job recovery or new dynamic HTTP outcome is established yet.
+- After the repeated 302.897s and 305.665s provider timeouts, only this Testing command was stopped through the existing Workspace stop endpoint; it reached `CANCELLED` at 04:48:19 KST with `_stop_requested=true`. The linked implementation job/run and its interrupted owner checkpoint were not manually edited or replaced. No new Testing report or successful owner verification was produced by stopping it.
