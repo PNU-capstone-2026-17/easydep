@@ -1000,7 +1000,10 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
     job_path = job_root / "job.json"
     for path in (run_root, job_path.parent):
         path.mkdir(parents=True, exist_ok=True)
-    job_path.write_text("{}", encoding="utf-8")
+    job_path.write_text(
+        json.dumps({"generation": {"basePackage": "com.example.resume"}}),
+        encoding="utf-8",
+    )
     frontend = run_root / "application" / "frontend"
     if frontend_exists:
         frontend.mkdir(parents=True)
@@ -1040,10 +1043,15 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
         encoding="utf-8",
     )
     observed: dict[str, object] = {}
+    runtime_configs: list[tuple[Path, str]] = []
 
     monkeypatch.setattr(
         "app.implementation.application.prototype.configured_runner_image",
         lambda: "runner:test",
+    )
+    monkeypatch.setattr(
+        "app.implementation.application.prototype.write_jackson_runtime_configuration",
+        lambda application, base_package: runtime_configs.append((application, base_package)),
     )
 
     def fake_call(
@@ -1067,6 +1075,7 @@ def test_run_phase_uses_linux_runner_when_image_is_configured(
     ]
     assert observed["operation_id"] == "job"
     assert result == {"status": "RUNNING"}
+    assert runtime_configs == [(run_root / "application", "com.example.resume")]
     if frontend_exists:
         assert (run_root / "application/frontend/src/pages").is_dir()
         assert (run_root / "application/frontend/src/components").is_dir()

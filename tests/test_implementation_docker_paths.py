@@ -126,6 +126,12 @@ def test_runtime_configuration_omits_datasource_for_stateless_deployment(
     )
     assert "datasource:" not in config
     assert "SPRING_DATASOURCE_" not in config
+    jackson = (
+        application
+        / "src/main/java/com/example/orders/config/JacksonConfiguration.java"
+    ).read_text(encoding="utf-8")
+    assert "new JsonNullableModule()" in jackson
+    assert "public Module jsonNullableModule()" in jackson
 
 
 def test_runtime_configuration_keeps_datasource_for_persistent_deployment(

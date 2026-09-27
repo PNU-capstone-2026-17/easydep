@@ -23,6 +23,8 @@ from app.design.schemas.class_model import BCEModel
 from app.llm_connection import llm_subprocess_environment
 
 from ..generation.frontend_scaffold import write_frontend_typescript_config
+from ..generation.orchestrator import load_job
+from ..generation.runtime_scaffold import write_jackson_runtime_configuration
 from ..config import ImplementationSettings
 from ..runtime.linux_runner_transport import (
     cleanup_runner_containers,
@@ -352,6 +354,9 @@ class PrototypeClient:
         self, run_root: Path, job_path: Path, retry_failed: bool
     ) -> dict[str, Any]:
         """workflow에서 현재 실행 가능한 phase를 수행한다."""
+        write_jackson_runtime_configuration(
+            run_root / "application", load_job(job_path).base_package
+        )
         write_frontend_typescript_config(run_root / "application" / "frontend")
         args = ["run-workflow", str(run_root), str(job_path)]
         if retry_failed:

@@ -44,6 +44,7 @@ from ..planning.design_context import (
 )
 from ..planning.method_projection import project_method_calls
 from ..workflows.conformance import capture_generated_contracts
+from .runtime_scaffold import write_jackson_runtime_configuration
 from .frontend import generate_frontend_project
 from .frontend_scaffold import installed_openapi_generator
 from .java_scaffold import (
@@ -996,6 +997,7 @@ tasks.withType(Test).configureEach {{ useJUnitPlatform() }}
             application_config,
             encoding="utf-8",
         )
+        write_jackson_runtime_configuration(application, self.spec.base_package)
         test_resources = application / "src" / "test" / "resources"
         test_resources.mkdir(parents=True, exist_ok=True)
         test_security = (
