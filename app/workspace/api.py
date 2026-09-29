@@ -257,15 +257,7 @@ class ApplyDeploymentSizingRequest(BaseModel):
 @router.get("/apps")
 def list_apps(limit: int = Query(default=50, ge=1, le=100)) -> dict[str, Any]:
     """최근 생성한 앱을 최신순으로 조회한다."""
-    apps = repository.list_workspace_apps(limit)
-    for item in apps:
-        command = workspace_service.present_command(
-            str(item.get("app_id") or ""), item.get("command")
-        )
-        item["command"] = command
-        if command is not None:
-            item["current_stage"] = command["stage"]
-    return {"apps": apps}
+    return {"apps": repository.list_workspace_apps(limit)}
 
 
 @router.get("/cloud-options")

@@ -857,7 +857,17 @@ def list_workspace_apps(limit: int = 50) -> list[dict[str, Any]]:
             .scalar_subquery()
         )
         rows = session.execute(
-            select(App, WorkspaceCommand)
+            select(
+                App.app_id,
+                App.requirements_text,
+                App.current_stage,
+                App.created_at,
+                WorkspaceCommand.command_id,
+                WorkspaceCommand.action,
+                WorkspaceCommand.stage,
+                WorkspaceCommand.status,
+                WorkspaceCommand.created_at,
+            )
             .outerjoin(
                 WorkspaceCommand,
                 WorkspaceCommand.command_id == latest_command_id,
@@ -866,24 +876,44 @@ def list_workspace_apps(limit: int = 50) -> list[dict[str, Any]]:
             .limit(limit)
         ).all()
         result: list[dict[str, Any]] = []
-        for app, command in rows:
+        for (
+            app_id,
+            requirements_text,
+            current_stage,
+            created_at,
+            command_id,
+            command_action,
+            command_stage,
+            command_status,
+            command_created_at,
+        ) in rows:
             first_line = next(
                 (
                     line.strip()
-                    for line in (app.requirements_text or "").splitlines()
+                    for line in (requirements_text or "").splitlines()
                     if line.strip()
                 ),
                 "",
             )
             result.append(
                 {
-                    "app_id": app.app_id,
-                    "title": first_line[:72] or f"EasyDep app {app.app_id[:8]}",
+                    "app_id": app_id,
+                    "title": first_line[:72] or f"EasyDep app {app_id[:8]}",
                     "current_stage": (
-                        command.stage if command is not None else workflow_stage(app.current_stage)
+                        command_stage if command_id is not None else workflow_stage(current_stage)
                     ),
-                    "created_at": app.created_at.isoformat() if app.created_at else None,
-                    "command": command_dict(command) if command is not None else None,
+                    "created_at": created_at.isoformat() if created_at else None,
+                    "command": (
+                        {
+                            "command_id": command_id,
+                            "action": command_action,
+                            "stage": command_stage,
+                            "status": command_status,
+                            "created_at": _timestamp_in_kst(command_created_at),
+                        }
+                        if command_id is not None
+                        else None
+                    ),
                 }
             )
         return result
