@@ -1602,7 +1602,8 @@ def test_editor_owner_repairs_once_after_failed_check(
     repair_prompt = prompts[1]
     assert "Implement the order use case." in repair_prompt
     assert source_path in repair_prompt
-    assert "Use replace_source now" in repair_prompt
+    assert "exact edit_source contexts" in repair_prompt
+    assert "replace_source for a broad rewrite" in repair_prompt
     assert "BROKEN_CURRENT" in repair_prompt
     assert "Exact diagnosis" in repair_prompt
     assert "generated TypeScript SDK declaration" in repair_prompt

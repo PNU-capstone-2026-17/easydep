@@ -492,39 +492,7 @@ def test_terminal_technical_failure_exposes_no_manual_recovery_offer() -> None:
 
 
 @pytest.mark.parametrize(
-    "findings",
-    [
-        (
-            [{"repairable": True}],
-            [{"requiresUserInput": True}],
-        ),
-        (
-            [{"repairable": True}, {"repairable": True}],
-            [{"requiresUserInput": False}, {"requiresUserInput": True}],
-        ),
-        ([{"repairable": False}], [{"requiresUserInput": False}]),
-    ],
-)
-def test_design_stall_with_user_input_or_no_repairable_finding_has_no_auto_retry(
-    findings: tuple[list[dict], list[dict]],
-) -> None:
-    blocking_findings, finding_details = findings
-    shaped = result_with_contract(
-        command(status="AWAITING_INPUT", stage="design"),
-        {
-            "requires_revision": True,
-            "repair_state": {"status": "STALLED", "attempt_count": 0},
-            "blocking_findings": blocking_findings,
-            "finding_details": finding_details,
-        },
-    )
-
-    assert [item["action"] for item in shaped["actions"]] == ["message"]
-    assert shaped["actions"][0]["auto_selectable"] is False
-
-
-@pytest.mark.parametrize(
-    ("finding", "wait_reason", "label", "action"),
+    ("finding", "wait_reason"),
     [
         (
             {
@@ -533,8 +501,6 @@ def test_design_stall_with_user_input_or_no_repairable_finding_has_no_auto_retry
                 "repair_owner": "environment",
             },
             "external_wait",
-            "Retry after environment recovery",
-            "retry_implementation",
         ),
         (
             {
@@ -543,8 +509,6 @@ def test_design_stall_with_user_input_or_no_repairable_finding_has_no_auto_retry
                 "repair_owner": "platform",
             },
             "external_wait",
-            "Ask about this EasyDep platform issue",
-            "message",
         ),
         (
             {
@@ -553,16 +517,20 @@ def test_design_stall_with_user_input_or_no_repairable_finding_has_no_auto_retry
                 "repair_owner": "platform-or-design",
             },
             "repair",
-            "Review deployment design or platform issue",
-            "message",
+        ),
+        (
+            {
+                "repairable": True,
+                "defect_class": "TEST_DEFECT",
+                "repair_owner": "testing",
+            },
+            "external_wait",
         ),
     ],
 )
-def test_unrepairable_testing_findings_use_explicit_owner_route(
+def test_classified_testing_findings_wait_without_manual_actions(
     finding: dict,
     wait_reason: str,
-    label: str,
-    action: str,
 ) -> None:
     shaped = result_with_contract(
         command(status="AWAITING_INPUT", stage="testing"),
@@ -574,48 +542,7 @@ def test_unrepairable_testing_findings_use_explicit_owner_route(
     )
 
     assert shaped["wait_reason"] == wait_reason
-    assert shaped["actions"] == [
-        {
-            "action": action,
-            "label": label,
-            "payload": {
-                "action_id": "command-1",
-                **({"job_id": "testing-1"} if action == "retry_implementation" else {}),
-            },
-            "auto_selectable": False,
-        }
-    ]
-
-
-def test_testing_environment_retry_reuses_the_implementation_job() -> None:
-    shaped = result_with_contract(
-        command(status="AWAITING_INPUT", stage="testing"),
-        {
-            "requires_revision": True,
-            "job_id": "testing-1",
-            "job": {"implementation_job_id": "implementation-1"},
-            "blocking_findings": [
-                {
-                    "repairable": False,
-                    "defect_class": "ENVIRONMENT_DEFECT",
-                    "repair_owner": "environment",
-                }
-            ],
-        },
-    )
-
-    assert shaped["wait_reason"] == "external_wait"
-    assert shaped["actions"] == [
-        {
-            "action": "start_testing",
-            "label": "Retry testing after environment recovery",
-            "payload": {
-                "action_id": "command-1",
-                "implementation_job_id": "implementation-1",
-            },
-            "auto_selectable": False,
-        }
-    ]
+    assert shaped["actions"] == []
 
 
 def test_unclassified_unrepairable_finding_is_not_treated_as_environment() -> None:
@@ -629,68 +556,7 @@ def test_unclassified_unrepairable_finding_is_not_treated_as_environment() -> No
     )
 
     assert shaped["wait_reason"] == "repair"
-    assert [item["action"] for item in shaped["actions"]] == ["message"]
-    assert shaped["actions"][0]["label"] == "Send revision feedback"
-
-
-def test_upstream_testing_ambiguity_offers_review_without_automatic_repair() -> None:
-    shaped = result_with_contract(
-        command(status="AWAITING_INPUT", stage="testing"),
-        {
-            "requires_revision": True,
-            "job": {"implementation_job_id": "implementation-1"},
-            "blocking_findings": [
-                {
-                    "repairable": True,
-                    "defect_class": "UPSTREAM_AMBIGUITY",
-                    "repair_owner": "requirements-or-design",
-                }
-            ],
-        },
-    )
-
-    assert shaped["wait_reason"] == "repair"
-    assert [item["action"] for item in shaped["actions"]] == ["message", "start_testing"]
-    assert shaped["actions"][0]["label"] == "Send design revision feedback"
-    assert shaped["actions"][1] == {
-        "action": "start_testing",
-        "label": "Retry testing with current artifacts",
-        "payload": {
-            "action_id": "command-1",
-            "implementation_job_id": "implementation-1",
-        },
-        "auto_selectable": False,
-    }
-
-
-def test_exhausted_testing_plan_defect_is_an_easydep_platform_issue() -> None:
-    shaped = result_with_contract(
-        command(status="AWAITING_INPUT", stage="testing"),
-        {
-            "requires_revision": True,
-            "job": {"implementation_job_id": "implementation-1"},
-            "blocking_findings": [
-                {
-                    "repairable": True,
-                    "defect_class": "TEST_DEFECT",
-                    "repair_owner": "testing",
-                }
-            ],
-        },
-    )
-
-    assert shaped["wait_reason"] == "external_wait"
-    assert [item["action"] for item in shaped["actions"]] == ["message", "start_testing"]
-    assert shaped["actions"][0]["label"] == "Ask about this EasyDep platform issue"
-    assert shaped["actions"][1] == {
-        "action": "start_testing",
-        "label": "Retry testing after EasyDep update",
-        "payload": {
-            "action_id": "command-1",
-            "implementation_job_id": "implementation-1",
-        },
-        "auto_selectable": False,
-    }
+    assert shaped["actions"] == []
 
 
 def test_clarification_keeps_a_preserved_testing_retry_available() -> None:

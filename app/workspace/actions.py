@@ -548,6 +548,20 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
     common = {"action_id": command_id}
     if result.get("feedback_question_answered_by"):
         return [_offer(WorkspaceAction.MESSAGE, "Continue conversation", common)]
+    if (
+        status in {"FAILED", "INTERRUPTED"}
+        and command.get("action") == "confirm_change"
+    ):
+        source_action_id = str((command.get("payload") or {}).get("action_id") or "")
+        return [
+            _offer(WorkspaceAction.MESSAGE, "Ask about this error", common),
+            _offer(
+                WorkspaceAction.CONFIRM_CHANGE,
+                "Retry approved change",
+                {"action_id": source_action_id},
+                auto=True,
+            ),
+        ]
     # The service adds this marker only after it has re-read the linked job and
     # confirmed that its current terminal checkpoint is still safe to resume.
     if status in {"FAILED", "CANCELLED"}:
@@ -576,84 +590,6 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
         # Non-question technical failures are resumed by the common durable
         # loop; exposing another retry/rerun action can create duplicate work.
         return []
-        discuss = _offer(WorkspaceAction.MESSAGE, "Ask about this error", common)
-        if command.get("action") == "confirm_change":
-            source_action_id = str((command.get("payload") or {}).get("action_id") or "")
-            return [
-                discuss,
-                _offer(
-                    WorkspaceAction.CONFIRM_CHANGE,
-                    "Retry approved change",
-                    {"action_id": source_action_id},
-                    auto=True,
-                ),
-            ]
-        if stage == "requirements":
-            return [
-                discuss,
-                _offer(
-                    WorkspaceAction.RETRY_REQUIREMENTS,
-                    "Retry requirements",
-                    common,
-                    auto=True,
-                ),
-            ]
-        if stage == "design":
-            return [
-                discuss,
-                _offer(
-                    WorkspaceAction.RETRY_DESIGN,
-                    "Retry design",
-                    common,
-                    auto=True,
-                ),
-            ]
-        if stage == "implementation":
-            job_id = str(
-                (command.get("payload") or {}).get("job_id")
-                or result.get("job_id")
-                or ""
-            )
-            if job_id and result.get("checkpoint_retryable") is True:
-                return [
-                    discuss,
-                    _offer(
-                        WorkspaceAction.RETRY_IMPLEMENTATION,
-                        "Retry implementation checkpoint",
-                        {**common, "job_id": job_id},
-                    )
-                ]
-            return [
-                discuss,
-                _offer(
-                    WorkspaceAction.RERUN_IMPLEMENTATION,
-                    "Rerun implementation",
-                    common,
-                ),
-            ]
-        if stage == "testing":
-            implementation_job_id = str(
-                (command.get("payload") or {}).get("implementation_job_id") or ""
-            )
-            if implementation_job_id:
-                if result.get("_linked_implementation_checkpoint_retryable") is True:
-                    return [
-                        discuss,
-                        _offer(
-                            WorkspaceAction.RETRY_IMPLEMENTATION,
-                            "Retry implementation checkpoint",
-                            {**common, "job_id": implementation_job_id},
-                        ),
-                    ]
-                return [
-                    discuss,
-                    _offer(
-                        WorkspaceAction.START_TESTING,
-                        "Rerun tests",
-                        {**common, "implementation_job_id": implementation_job_id},
-                    )
-                ]
-        return [discuss]
     if status != "COMPLETED":
         return []
     discuss = _offer(WorkspaceAction.MESSAGE, "Continue conversation", common)
