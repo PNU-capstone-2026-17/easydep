@@ -26,6 +26,35 @@ _IGNORED_WORKSPACE_PARTS = {
     "node_modules",
     "dist",
 }
+_SHARED_OWNER_TASK_MARKER = ".easydep-shared-owner-task"
+
+
+def _is_ignored_workspace_path(relative: Path) -> bool:
+    """Return whether a generated/cache path must survive a source refresh."""
+
+    return relative.name.endswith(".tsbuildinfo") or any(
+        part in _IGNORED_WORKSPACE_PARTS for part in relative.parts
+    )
+
+
+def _iter_workspace_source_files(root: Path):
+    """Yield source files without descending into retained build/cache trees."""
+
+    for directory, children, files in os.walk(root, followlinks=False):
+        children[:] = [
+            child for child in children if child not in _IGNORED_WORKSPACE_PARTS
+        ]
+        current = Path(directory)
+        for name in files:
+            path = current / name
+            if path.is_file():
+                yield path
+
+
+def _shared_owner_task_marker(sandbox: Path) -> Path:
+    """Return coordinator metadata deliberately kept outside the owner tree."""
+
+    return sandbox.parent / f".{sandbox.name}{_SHARED_OWNER_TASK_MARKER}"
 
 
 def missing_required_outputs(sandbox: Path, relative_paths: list[str]) -> list[str]:
@@ -172,6 +201,7 @@ def prepare_agent_workspace(
     *,
     preserve_failed_edits: bool = True,
     persistent: bool = False,
+    shared_owner_workspace: bool = False,
     requires_owner_terminal: bool = True,
 ) -> Path:
     """작업별 임시 공간을 만들고 현재 run source와 맞춘다.
@@ -184,7 +214,18 @@ def prepare_agent_workspace(
     # short directory name such as ``run``. Include the absolute root in the key so two
     # unrelated runs never inherit one another's failed candidate workspace.
     run_key = hashlib.sha256(str(run_root.resolve()).encode("utf-8")).hexdigest()[:12]
-    task_key = f"{run_key}-{str(task['task_id']).removeprefix('implement-')}"
+    # Serial owners normally work from one candidate for the whole run.  This
+    # keeps toolchain output warm and lets a retry continue its unpromoted
+    # candidate, while the per-task refresh below still restores every path
+    # outside the current owner scope from the canonical run source.
+    #
+    # Prechecks and frozen/replay checks intentionally keep the default
+    # task-keyed workspace so their candidate cannot leak into an owner run.
+    task_key = (
+        f"{run_key}-shared-owner"
+        if shared_owner_workspace
+        else f"{run_key}-{str(task['task_id']).removeprefix('implement-')}"
+    )
     # 작업 ID는 보고서에서 읽기 쉬운 전체 이름을 유지한다. 다만 Windows 임시 경로에 같은
     # 이름을 그대로 붙이면 persistence처럼 여러 Entity를 묶은 작업이 260자 제한에 닿는다.
     # 임시 폴더만 앞부분과 해시로 줄이면 충돌을 피하면서 어떤 작업인지도 알아볼 수 있다.
@@ -211,7 +252,11 @@ def prepare_agent_workspace(
     available_task_length = 240 - len(str(sandbox_parent.resolve())) - longest_output - 6
     if available_task_length < 8:
         raise ValueError("Agent workspace root leaves no safe Windows path budget")
-    if len(task_key) > available_task_length:
+    if shared_owner_workspace and len(task_key) > available_task_length:
+        # A shared candidate must resolve to the identical directory for every
+        # serial task. Never shorten it from task-specific output lengths.
+        raise ValueError("Shared owner workspace root leaves no safe Windows path budget")
+    if not shared_owner_workspace and len(task_key) > available_task_length:
         digest = hashlib.sha256(task_key.encode("utf-8")).hexdigest()[:10]
         prefix_length = available_task_length - len(digest) - 1
         task_key = (
@@ -223,6 +268,7 @@ def prepare_agent_workspace(
     sandbox = sandbox_base
     source_application = run_root / "application"
     sandbox_application = sandbox / "application"
+    current_task_id = str(task["task_id"])
     editable = {
         str(path).replace("\\", "/")
         for path in task.get("allowed_write_paths", [])
@@ -238,6 +284,20 @@ def prepare_agent_workspace(
     if sandbox_application.is_dir():
         if requires_owner_terminal:
             _restore_coordinator_access(sandbox)
+        # A failed candidate is resumable only by its own task.  Before a
+        # different serial owner starts, restore all source from canonical so
+        # an unaccepted edit cannot cross the task boundary. Generated caches
+        # remain untouched by _refresh_agent_workspace.
+        previous_task_id = ""
+        # The owner terminal can write its entire candidate tree, so task
+        # identity must live beside (not inside) that tree. Fixed-runner
+        # permission hardening makes this sidecar coordinator-owned.
+        marker = _shared_owner_task_marker(sandbox)
+        if shared_owner_workspace and marker.is_file():
+            try:
+                previous_task_id = marker.read_text(encoding="utf-8").strip()
+            except OSError:
+                previous_task_id = ""
         _refresh_agent_workspace(
             run_root,
             source_application,
@@ -246,14 +306,25 @@ def prepare_agent_workspace(
             editable,
             editable_roots,
             immutable,
-            preserve_failed_edits=preserve_failed_edits,
+            preserve_failed_edits=(
+                preserve_failed_edits
+                and (not shared_owner_workspace or previous_task_id == current_task_id)
+            ),
+            verify_content_if_discarding_candidate=(
+                shared_owner_workspace
+                and previous_task_id != current_task_id
+            ),
         )
     else:
         sandbox.mkdir(parents=True, exist_ok=True)
         shutil.copytree(
             source_application,
             sandbox_application,
-            ignore=shutil.ignore_patterns(*_IGNORED_WORKSPACE_PARTS),
+            ignore=shutil.ignore_patterns(*_IGNORED_WORKSPACE_PARTS, "*.tsbuildinfo"),
+        )
+    if shared_owner_workspace:
+        _shared_owner_task_marker(sandbox).write_text(
+            current_task_id + "\n", encoding="utf-8"
         )
     for relative in task["allowed_write_paths"]:
         target = sandbox / relative
@@ -657,8 +728,13 @@ def _copy_read_sources(
         _copy_file_if_changed(source, target)
 
 
-def _copy_file_if_changed(source: Path, target: Path) -> None:
-    """Copy a source file only when copy2 metadata says the target is stale."""
+def _copy_file_if_changed(
+    source: Path,
+    target: Path,
+    *,
+    verify_content_if_metadata_equal: bool = False,
+) -> None:
+    """Copy a source file only when metadata (and, when required, bytes) differ."""
 
     if (
         source.is_file()
@@ -672,7 +748,14 @@ def _copy_file_if_changed(source: Path, target: Path) -> None:
             source_stat.st_size == target_stat.st_size
             and source_stat.st_mtime_ns == target_stat.st_mtime_ns
         ):
-            return
+            # A stopped owner can deliberately or accidentally preserve the
+            # canonical timestamp after changing equal-sized source. At a
+            # different-task handoff, bytes are the trust boundary.
+            if (
+                not verify_content_if_metadata_equal
+                or source.read_bytes() == target.read_bytes()
+            ):
+                return
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
 
@@ -687,14 +770,13 @@ def _refresh_agent_workspace(
     immutable: set[str],
     *,
     preserve_failed_edits: bool,
+    verify_content_if_discarding_candidate: bool = False,
 ) -> None:
     """선택에 따라 미완성 편집을 보존하거나 승인된 run source로 되돌린다."""
     source_files: set[str] = set()
-    for source in source_application.rglob("*"):
-        if not source.is_file():
-            continue
+    for source in _iter_workspace_source_files(source_application):
         relative_application = source.relative_to(source_application)
-        if any(part in _IGNORED_WORKSPACE_PARTS for part in relative_application.parts):
+        if _is_ignored_workspace_path(relative_application):
             continue
         relative_run = (Path("application") / relative_application).as_posix()
         source_files.add(relative_run)
@@ -710,20 +792,20 @@ def _refresh_agent_workspace(
             and target.is_file()
         ):
             continue
-        _copy_file_if_changed(source, target)
+        _copy_file_if_changed(
+            source,
+            target,
+            verify_content_if_metadata_equal=verify_content_if_discarding_candidate,
+        )
 
-    for target in sandbox_application.rglob("*"):
-        if not target.is_file():
-            continue
+    for target in _iter_workspace_source_files(sandbox_application):
         relative_application = target.relative_to(sandbox_application)
         # Gradle/npm 산출물과 package cache는 source 동기화 대상이 아니다. 이전 검증이
         # 만든 파일을 여기서 지우면 증분 build 이점을 잃을 뿐 아니라, Windows에서는
         # 종료 중인 test worker가 output.bin을 잠시 잡고 있어 WinError 32가 발생한다.
-        # 성공 뒤 cleanup_agent_workspace가 sandbox 전체를 별도로 정리한다.
-        if any(
-            part in _IGNORED_WORKSPACE_PARTS
-            for part in relative_application.parts
-        ):
+        # Disposable workspaces are cleaned after success; the shared owner
+        # candidate intentionally retains these outputs for the next task.
+        if _is_ignored_workspace_path(relative_application):
             continue
         relative_run = target.relative_to(sandbox).as_posix()
         editable_extra = path_is_editable(
@@ -778,6 +860,7 @@ def cleanup_agent_workspace(sandbox: Path, *, run_root: Path | None = None) -> N
     if resolved.exists():
         try:
             shutil.rmtree(resolved, onerror=remove_readonly)
+            _shared_owner_task_marker(resolved).unlink(missing_ok=True)
         except OSError:
             # OpenHands가 닫힌 직후 Windows가 파일 handle을 잠깐 유지할 수 있다. 이 경우
             # 구현 성공을 실패로 바꾸지 않고 다음 정리 때 다시 제거한다.
@@ -786,19 +869,13 @@ def cleanup_agent_workspace(sandbox: Path, *, run_root: Path | None = None) -> N
 
 def snapshot_files(root: Path) -> dict[str, str]:
     result: dict[str, str] = {}
-    for path in root.rglob("*"):
-        if path.is_file():
-            relative = path.relative_to(root)
-            if path.name.endswith(".tsbuildinfo"):
-                continue
-            if any(
-                part in {"build", ".gradle", "node_modules", "dist"}
-                for part in relative.parts
-            ):
-                continue
-            result[str(relative).replace("\\", "/")] = hashlib.sha256(
-                path.read_bytes()
-            ).hexdigest()
+    for path in _iter_workspace_source_files(root):
+        relative = path.relative_to(root)
+        if path.name.endswith(".tsbuildinfo"):
+            continue
+        result[str(relative).replace("\\", "/")] = hashlib.sha256(
+            path.read_bytes()
+        ).hexdigest()
     return result
 
 

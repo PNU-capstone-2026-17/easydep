@@ -733,6 +733,145 @@ def test_restricted_persistent_owner_refreshes_system_files_and_preserves_candid
     )
 
 
+def test_shared_owner_workspace_reuses_caches_but_restores_unaccepted_source(
+    tmp_path: Path,
+) -> None:
+    """A stopped owner cannot pass an unpromoted edit to the next owner."""
+
+    run = tmp_path / "generated" / "runs" / "run_abcdef1234567890"
+    accepted = run / "application" / "src" / "Accepted.java"
+    rejected = run / "application" / "src" / "Rejected.java"
+    for path in (accepted, rejected):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"class {path.stem} {{}}", encoding="utf-8")
+    rejected.write_text("class Rejected { int aa; }", encoding="utf-8")
+    first_task = {
+        "task_id": "implement-first",
+        "allowed_write_paths": [
+            "application/src/Accepted.java",
+            "application/src/Rejected.java",
+        ],
+    }
+    second_task = {
+        "task_id": "implement-second",
+        # Deliberately overlap the failed owner's writable file: task identity,
+        # not just path scope, prevents the unaccepted body from leaking.
+        "allowed_write_paths": ["application/src/Rejected.java"],
+    }
+
+    with patch(
+        "app.implementation.agents.workspace.tempfile.gettempdir",
+        return_value=str(tmp_path / "temp"),
+    ):
+        sandbox = prepare_agent_workspace(
+            run,
+            first_task,
+            persistent=True,
+            shared_owner_workspace=True,
+            requires_owner_terminal=False,
+        )
+        assert not (sandbox / ".easydep-shared-owner-task").exists()
+        assert workspace_module._shared_owner_task_marker(sandbox).is_file()
+        # These outputs are intentionally retained to warm the next serial owner.
+        cache_paths = {
+            "application/build/test-results/test/binary/output.bin": b"build",
+            "application/.gradle/local.bin": b"gradle",
+            "application/node_modules/pkg/index.js": b"node",
+            "application/frontend/tsconfig.tsbuildinfo": b"typescript",
+        }
+        for relative, content in cache_paths.items():
+            target = sandbox / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+
+        # This simulates a verified first-owner promotion, while the rejected
+        # file represents an edit left behind by a stopped/failed owner.
+        (sandbox / "application/src/Accepted.java").write_text(
+            "class Accepted { int promoted; }", encoding="utf-8"
+        )
+        accepted.write_text("class Accepted { int promoted; }", encoding="utf-8")
+        rejected_candidate = sandbox / "application/src/Rejected.java"
+        rejected_candidate.write_text(
+            "class Rejected { int bb; }", encoding="utf-8"
+        )
+        # Equal size and canonical mtime must not let an unaccepted body pass
+        # the next-task refresh fast path.
+        canonical_stat = rejected.stat()
+        workspace_module.os.utime(
+            rejected_candidate,
+            ns=(canonical_stat.st_atime_ns, canonical_stat.st_mtime_ns),
+        )
+        retried = prepare_agent_workspace(
+            run,
+            first_task,
+            persistent=True,
+            shared_owner_workspace=True,
+            requires_owner_terminal=False,
+        )
+        assert retried == sandbox
+        assert rejected_candidate.read_text(encoding="utf-8") == "class Rejected { int bb; }"
+
+        refreshed = prepare_agent_workspace(
+            run,
+            second_task,
+            persistent=True,
+            shared_owner_workspace=True,
+            requires_owner_terminal=False,
+        )
+
+    assert refreshed == sandbox
+    assert (sandbox / "application/src/Accepted.java").read_text(encoding="utf-8") == (
+        "class Accepted { int promoted; }"
+    )
+    assert (sandbox / "application/src/Rejected.java").read_text(encoding="utf-8") == (
+        "class Rejected { int aa; }"
+    )
+    for relative, content in cache_paths.items():
+        assert (sandbox / relative).read_bytes() == content
+
+
+def test_workspace_refresh_and_snapshot_prune_ignored_directories(
+    tmp_path: Path,
+) -> None:
+    """Retained dependency/build trees must not trigger recursive Path scans."""
+
+    run = tmp_path / "generated" / "runs" / "run_abcdef1234567890"
+    source = run / "application" / "src" / "Main.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class Main {}", encoding="utf-8")
+    task = {"task_id": "owner", "allowed_write_paths": []}
+
+    with patch(
+        "app.implementation.agents.workspace.tempfile.gettempdir",
+        return_value=str(tmp_path / "temp"),
+    ):
+        sandbox = prepare_agent_workspace(
+            run, task, requires_owner_terminal=False
+        )
+        for relative in (
+            "application/build/trap.bin",
+            "application/.gradle/trap.bin",
+            "application/node_modules/pkg/trap.js",
+            "application/dist/trap.js",
+        ):
+            target = sandbox / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(b"ignored")
+
+        with patch.object(
+            Path,
+            "rglob",
+            side_effect=AssertionError("workspace scans must prune before recursion"),
+        ):
+            refreshed = prepare_agent_workspace(
+                run, task, requires_owner_terminal=False
+            )
+            hashes = workspace_module.snapshot_files(refreshed)
+
+    assert refreshed == sandbox
+    assert hashes == {"application/src/Main.java": hashlib.sha256(b"class Main {}").hexdigest()}
+
+
 def test_fixed_runner_hands_the_whole_disposable_sandbox_to_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

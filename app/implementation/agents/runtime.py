@@ -23,6 +23,7 @@ from app.demo_validation import demo_skip_validation_enabled
 from app.llm_connection import LlmConnection
 from app.llm_profiles import profile_for
 from app.metrics import langsmith as langsmith_metrics
+from app.implementation.config import npm_command_environment
 
 from ..runtime.linux_runner_transport import (
     LLM_CREDENTIAL_ENVIRONMENT,
@@ -2175,11 +2176,17 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             raise RuntimeError("OpenHands live mode prerequisites are missing: " + ", ".join(missing))
 
     requires_owner_terminal = owner_task and owner_tool_mode == "terminal"
+    # A normal owner sequence shares one run-local candidate.  The integration
+    # precheck is deliberately excluded: its failed candidate is diagnostic
+    # input to that task only and must not become the next owner's workspace.
+    # Frozen rechecks return above through their own hash-locked workspace.
+    shared_owner_workspace = owner_task and precheck_sandbox is None
     sandbox = precheck_sandbox or prepare_agent_workspace(
         run_root,
         task,
         preserve_failed_edits=True,
         persistent=owner_task,
+        shared_owner_workspace=shared_owner_workspace,
         requires_owner_terminal=requires_owner_terminal,
     )
     if frozen_repair_candidate is not None:
@@ -2950,7 +2957,11 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     shutil.copyfile(journal.path, execution_dir / f"{task_id}.events.jsonl")
     if owner_task:
         release_owner_workspace_alias(sandbox, logical_workspace)
-    cleanup_agent_workspace(sandbox, run_root=run_root if owner_task else None)
+    # Keep the accepted run-local candidate warm for the next serial owner.
+    # Isolated prechecks, frozen rechecks, and non-owner tasks retain their
+    # disposable cleanup lifecycle.
+    if not shared_owner_workspace:
+        cleanup_agent_workspace(sandbox, run_root=run_root if owner_task else None)
     return result
 
 
@@ -3836,6 +3847,7 @@ def create_openhands_conversation(
                 f"Unsupported OpenHands owner tool mode: {effective_owner_tool_mode}"
             )
         if enable_native_terminal and effective_owner_tool_mode == "terminal":
+            npm_environment = npm_command_environment(os.environ)
             tools.append(
                 Tool(
                     name=TerminalTool.name,
@@ -3845,6 +3857,12 @@ def create_openhands_conversation(
                         "env": {
                             "HOME": OWNER_TERMINAL_HOME,
                             "npm_config_cache": OWNER_NPM_CACHE,
+                            "npm_config_registry": npm_environment[
+                                "npm_config_registry"
+                            ],
+                            "npm_config_replace_registry_host": npm_environment[
+                                "npm_config_replace_registry_host"
+                            ],
                         },
                     },
                 )
