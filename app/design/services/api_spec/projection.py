@@ -106,6 +106,25 @@ def _control_binding(endpoint: dict[str, Any]) -> dict[str, Any] | None:
         and str(item.get("name", "")).strip()
         and str(item.get("source", "")).strip()
     }
+    argument_provenance = {
+        str(item.get("name", "")).strip(): {
+            key: value
+            for key, value in {
+                "stableRef": item.get("stable_ref") or item.get("stableRef"),
+                "requiredValueRef": item.get("required_value_ref") or item.get("requiredValueRef"),
+            }.items()
+            if value
+        }
+        for item in raw.get("arguments", [])
+        if isinstance(item, dict)
+        and str(item.get("name", "")).strip()
+        and (
+            item.get("stable_ref")
+            or item.get("stableRef")
+            or item.get("required_value_ref")
+            or item.get("requiredValueRef")
+        )
+    }
     outcomes = {
         str(item.get("status")): str(item.get("outcome", "")).strip()
         for item in raw.get("outcomes", [])
@@ -117,6 +136,7 @@ def _control_binding(endpoint: dict[str, Any]) -> dict[str, Any] | None:
         "control": control,
         "method": method,
         "arguments": arguments,
+        **({"argumentProvenance": argument_provenance} if argument_provenance else {}),
         "outcomes": outcomes,
     }
 

@@ -47,6 +47,8 @@ class ApiControlArgument(ApiSpecRecord):
 
     name: str
     source: str
+    stable_ref: str = Field(default_factory=str, exclude_if=lambda value: not value)
+    required_value_ref: str = Field(default_factory=str, exclude_if=lambda value: not value)
 
 
 class ApiControlOutcome(ApiSpecRecord):

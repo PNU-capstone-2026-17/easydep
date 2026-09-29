@@ -120,6 +120,8 @@ def _sequence_model(*, include_control_call: bool = True) -> SequenceCollection:
             "use_case_ids": ["UC1"],
             "step_ids": ["UC1:main:1"],
             "call_id": "UC1:main:1::call:1",
+            "call_ref": "call_catalog_boundary",
+            "operation_ref": "operation_browse_catalog",
             "arguments": [
                 {
                     "parameter": "filter",
@@ -140,6 +142,8 @@ def _sequence_model(*, include_control_call: bool = True) -> SequenceCollection:
                 "use_case_ids": ["UC1"],
                 "step_ids": ["UC1:main:1", "UC1:main:2"],
                 "call_id": "UC1:main:1::call:2",
+                "call_ref": "call_catalog_control",
+                "operation_ref": "operation_search_catalog",
                 "arguments": [
                     {
                         "parameter": "filter",
@@ -161,18 +165,21 @@ def _sequence_model(*, include_control_call: bool = True) -> SequenceCollection:
                             "name": "Student",
                             "alias": "Student",
                             "kind": "actor",
+                            "participant_ref": "ACT1",
                         },
                         {
                             "name": "CatalogBoundary",
                             "alias": "CatalogBoundary",
                             "kind": "boundary",
                             "source_class": "CatalogBoundary",
+                            "participant_ref": "class_catalog_boundary",
                         },
                         {
                             "name": "CatalogControl",
                             "alias": "CatalogControl",
                             "kind": "control",
                             "source_class": "CatalogControl",
+                            "participant_ref": "class_catalog_control",
                         },
                     ],
                     "Messages": messages,
@@ -520,6 +527,37 @@ def test_control_arguments_resolve_opaque_dto_field_refs_to_api_names() -> None:
     ) == []
 
 
+def test_control_argument_preserves_exact_stable_value_provenance() -> None:
+    payload = _bce_model().model_dump(by_alias=True)
+    parameter = payload["Classes"][1]["operations"][0]["parameters"][0]
+    parameter["stableRef"] = "param_6a4e43b0"
+    parameter["requiredValueRef"] = "val_75e43b0"
+
+    endpoint = normalize_api_spec_model(
+        _proposal(), BCEModel.model_validate(payload)
+    ).Endpoints[0]
+
+    assert endpoint.control_binding is not None
+    assert endpoint.control_binding.arguments[0].model_dump() == {
+        "name": "filter",
+        "source": "$query.filter",
+        "stable_ref": "param_6a4e43b0",
+        "required_value_ref": "val_75e43b0",
+    }
+
+    openapi = build_openapi_from_model(
+        normalize_api_spec_model(_proposal(), BCEModel.model_validate(payload))
+    )
+    assert openapi["paths"]["/courses"]["get"]["x-easydep-control"][
+        "argumentProvenance"
+    ] == {
+        "filter": {
+            "stableRef": "param_6a4e43b0",
+            "requiredValueRef": "val_75e43b0",
+        }
+    }
+
+
 def test_nested_opaque_dto_field_refs_resolve_one_segment_at_a_time() -> None:
     bce_model = BCEModel.model_validate(
         {
@@ -601,7 +639,11 @@ def test_accepted_trusted_context_stays_internal_to_the_control() -> None:
     assert endpoint.control_binding is not None
     assert [item.model_dump() for item in endpoint.control_binding.arguments] == [
         {"name": "filter", "source": "$query.filter"},
-        {"name": "authenticatedPrincipal", "source": "$context.authenticatedPrincipal"},
+        {
+            "name": "authenticatedPrincipal",
+            "source": "$context.authenticatedPrincipal",
+            "required_value_ref": "val-principal",
+        },
     ]
 
 

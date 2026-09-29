@@ -41,7 +41,7 @@ def _normalization_inventory() -> AcceptedInventory:
     )
 
 
-def test_known_concatenated_collection_types_are_canonicalized(monkeypatch):
+def test_operation_proposal_does_not_silently_canonicalize_llm_type_text(monkeypatch):
     index = build_scenario_index(single_use_case())
     proposal = operation_fragment()
     operation = proposal["Classes"][0]["operations"][0]
@@ -60,26 +60,14 @@ def test_known_concatenated_collection_types_are_canonicalized(monkeypatch):
     )
     normalized = candidate["Classes"][0]["operations"][0]
 
-    assert normalized["parameters"][0]["type"] == "List<RequestData>"
-    assert normalized["returnType"] == "List<RequestResult>"
+    assert normalized["parameters"][0]["type"] == "listRequestData"
+    assert normalized["returnType"] == "arrayRequestResult"
 
 
-def test_concatenated_container_and_scalar_types_are_canonicalized():
-    candidate = {
-        "Classes": [{
-            "operations": [{
-                "parameters": [{"name": "count", "type": "ListInt"}],
-                "returnType": "optionaluuid",
-            }],
-        }],
-    }
+def test_loose_collection_type_canonicalizer_is_not_a_production_rewrite_hook():
+    """Invalid generated type syntax is rejected by the contract review, not guessed."""
 
-    normalized = operations._canonicalize_loose_collection_types(
-        candidate, {"Classes": [], "DataTypes": []}, None, None,
-    )["Classes"][0]["operations"][0]
-
-    assert normalized["parameters"][0]["type"] == "List<int>"
-    assert normalized["returnType"] == "Optional<UUID>"
+    assert not hasattr(operations, "_canonicalize_loose_collection_types")
 
 
 def test_operation_payload_exposes_structured_data_type_fields_to_llm():
@@ -134,6 +122,49 @@ def test_operation_payload_uses_short_required_value_handles():
     assert payload["requiredValueSources"][0]["valueRef"] == "RV1"
     assert payload["requiredValueSources"][0]["sourceRef"] == "value#RV1"
     assert "val-long-opaque-identifier-001" not in str(payload)
+
+
+def test_required_system_result_is_non_optional_on_success():
+    prompt = operations.operation_prompt()
+
+    assert "system_result" in prompt
+    assert "non-Optional field in the successful Control return DataType" in prompt
+    assert "A failed outcome does not make a" in prompt
+    assert "failure outcomes do not make a required system_result optional" in prompt
+
+
+def test_allowed_values_catalog_is_projected_and_requires_an_exact_enum():
+    value = single_use_case()
+    value["use_case_specs"][0]["public_contract"] = {
+        "required_values": [{
+            "value_ref": "mode-ref", "name": "mode", "source": "caller_input",
+            "value_type": "string", "usage": "control",
+            "allowed_values": ["draft", "published"],
+        }],
+    }
+    index = build_scenario_index(value)
+    use_case = index.use_case("UC1")
+    inventory = _normalization_inventory().as_payload()
+    payload = operations._operation_payload(index, inventory, use_case)
+    assert payload["requiredValueSources"][0]["allowedValues"] == ["draft", "published"]
+
+    fragment = {
+        "DataTypes": [],
+        "Classes": [{"className": "RequestControl", "operations": [{
+            "name": "process",
+            "parameters": [{"name": "mode", "type": "String", "requiredValueRef": "mode-ref"}],
+            "returnType": "void", "stepRefs": ["UC1:main:2"],
+        }]}],
+    }
+    finding = operations._allowed_value_findings(fragment, inventory, use_case)
+    assert finding and finding[0].rule_id == "class.operation.allowed-values"
+
+    fragment["DataTypes"] = [{
+        "name": "RequestMode", "kind": "enumeration", "fields": [],
+        "values": ["draft", "published"],
+    }]
+    fragment["Classes"][0]["operations"][0]["parameters"][0]["type"] = "RequestMode"
+    assert operations._allowed_value_findings(fragment, inventory, use_case) == []
 
 
 def test_operation_normalization_expands_only_exact_short_handle():

@@ -270,6 +270,11 @@ def valid_parse_response(_messages, schema, **_kwargs):
         return operation_fragment()
     if issubclass(schema, CallPlanProposal):
         return call_plan()
+    if schema.__name__ == "BindingChoices":
+        return {
+            name: field.annotation.__args__[0]
+            for name, field in schema.model_fields.items()
+        }
     raise AssertionError(schema)
 
 

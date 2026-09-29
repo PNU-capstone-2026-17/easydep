@@ -35,6 +35,7 @@ class InteractionContract:
     control_class: str
     control_method: str
     control_parameters: tuple[tuple[str, str], ...]
+    control_parameter_provenance: tuple[tuple[str, str, str], ...]
     control_argument_sources: tuple[tuple[str, str], ...]
     return_type: str
     use_case_ids: tuple[str, ...]
@@ -125,6 +126,10 @@ def interaction_contracts(bce_model: BCEModel) -> tuple[InteractionContract, ...
                 control_method=control_operation.name,
                 control_parameters=tuple(
                     (parameter.name, parameter.type)
+                    for parameter in control_operation.parameters
+                ),
+                control_parameter_provenance=tuple(
+                    (parameter.name, parameter.stable_ref or "", parameter.required_value_ref or "")
                     for parameter in control_operation.parameters
                 ),
                 control_argument_sources=tuple(
@@ -564,6 +569,10 @@ def _control_arguments(
     boundary_sources = _boundary_http_sources(endpoint, request_schema, contract)
     arguments: list[dict[str, str]] = []
     expected_parameters = {name for name, _type in contract.control_parameters}
+    control_provenance = {
+        name: (stable_ref, required_value_ref)
+        for name, stable_ref, required_value_ref in contract.control_parameter_provenance
+    }
     accepted_boundary_call_ids = {contract.boundary_call_id}
     if contract.boundary_call_stable_id:
         accepted_boundary_call_ids.add(contract.boundary_call_stable_id)
@@ -601,7 +610,14 @@ def _control_arguments(
             else:
                 continue
         arguments.append({"name": parameter, "source": source})
-    return arguments
+    return [
+        {
+            **argument,
+            "stable_ref": control_provenance.get(argument["name"], ("", ""))[0],
+            "required_value_ref": control_provenance.get(argument["name"], ("", ""))[1],
+        }
+        for argument in arguments
+    ]
 
 
 def _resolve_stable_field_path(

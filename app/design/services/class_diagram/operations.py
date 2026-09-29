@@ -130,6 +130,10 @@ from an entry input, an earlier operation result, an explicit precondition, or a
 supported runtime value. Declare a result type when later work needs several
 values produced earlier. Do not invent caller input merely to satisfy a signature.
 Honor `useCase.specification.public_contract.required_values` according to each entry's `usage`.
+When a required value declares non-empty `allowed_values`, preserve that finite catalog as
+a local or reusable DataType with kind=enumeration and the exact values, and use that enum
+as the compatible Control parameter type carrying its requiredValueRef. Do not widen it to
+String or another primitive.
 For `control` or `both`, cite its exact short `valueRef` from `requiredValueSources` in `requiredValueRef` on the compatible
 Control parameter that receives the value, and bind that parameter in the call. A `result`-only
 value is evidenced by a concrete non-void Control return; do not attach its ref to an input parameter
@@ -138,6 +142,9 @@ parameter only when the flow shows an earlier operation producing that same valu
 type is compatible. For a `control` or `both` value that enters at a Boundary, a Boundary annotation
 alone is insufficient: also put the same exact ref on the compatible receiving Control parameter and
 bind it from that Boundary input. Never change a parameter type merely to make a ref compatible.
+Every declared `system_result` with usage `result` or `both` must be represented by a compatible
+non-Optional field in the successful Control return DataType. A failed outcome does not make a
+required success result optional.
 These declarations are evidence, not runtime values: caller_input values must come from actor-facing steps, and
 system_result inputs must come from prior call results. Only a catalog entry marked server_context
 is directly available for a Boundary-to-Control handoff. Do not create a wrapper class or DTO solely to relay a catalog value; a
@@ -156,6 +163,8 @@ kind=valueObject with non-empty fields and no values, or kind=enumeration with
 non-empty values and no fields. When a valueObject represents more than one
 valid outcome, declare every field that is absent in any outcome as Optional<T>;
 never represent that absence by returning null for a non-Optional field.
+Use Optional<T> only for a field that may genuinely be absent in a valid successful outcome;
+failure outcomes do not make a required system_result optional.
 """.strip()
     + "\n\n"
     + structure_type_contract()
@@ -213,6 +222,72 @@ def _required_value_handles(use_case: UseCase) -> tuple[dict[str, str], dict[str
     handle_to_ref = {f"{prefix}{index}": text(item["valueRef"])
                      for index, item in enumerate(catalog, 1)}
     return handle_to_ref, {value_ref: handle for handle, value_ref in handle_to_ref.items()}
+
+
+def _allowed_value_findings(
+    fragment: dict[str, Any], inventory: dict[str, Any], use_case: UseCase,
+) -> list[Finding]:
+    """Require finite required-value catalogs to stay enum-typed on Control inputs."""
+    contract = use_case.specification.get("public_contract")
+    required_values = contract.get("required_values") if isinstance(contract, dict) else []
+    catalogs = {
+        text(item.get("value_ref")): item
+        for item in required_values or []
+        if isinstance(item, dict)
+        and text(item.get("value_ref"))
+        and isinstance(item.get("allowed_values"), list)
+        and item.get("allowed_values")
+    }
+    if not catalogs:
+        return []
+    type_index = {
+        text(item.get("name")): item
+        for item in [*(inventory.get("DataTypes") or []), *(fragment.get("DataTypes") or [])]
+        if isinstance(item, dict)
+    }
+    stereotypes = {
+        class_name(item): text(item.get("stereotype"))
+        for item in inventory.get("Classes") or [] if isinstance(item, dict)
+    }
+    findings: list[Finding] = []
+    referenced: set[str] = set()
+    for owner in fragment.get("Classes") or []:
+        if not isinstance(owner, dict) or stereotypes.get(text(owner.get("className")), "").casefold() != "control":
+            continue
+        for operation in owner.get("operations") or []:
+            if not isinstance(operation, dict):
+                continue
+            for parameter in operation.get("parameters") or []:
+                if not isinstance(parameter, dict):
+                    continue
+                value_ref = text(parameter.get("requiredValueRef"))
+                catalog = catalogs.get(value_ref)
+                if catalog is None:
+                    continue
+                referenced.add(value_ref)
+                allowed = catalog["allowed_values"]
+                parameter_type = text(parameter.get("type"))
+                declaration = type_index.get(parameter_type)
+                if not (
+                    isinstance(declaration, dict)
+                    and text(declaration.get("kind")).casefold() == "enumeration"
+                    and list(declaration.get("values") or []) == allowed
+                ):
+                    findings.append(Finding(
+                        "class.operation.allowed-values",
+                        f"requiredValueRef '{value_ref}' has a finite allowed_values catalog; "
+                        "the Control parameter must use an enumeration DataType with the exact values.",
+                        f"{use_case.id}:{owner.get('className')}.{operation.get('name')}#{parameter.get('name')}",
+                    ))
+    for value_ref, catalog in catalogs.items():
+        if catalog.get("usage") in {"control", "both"} and value_ref not in referenced:
+            findings.append(Finding(
+                "class.operation.allowed-values",
+                f"required value '{value_ref}' has a finite allowed_values catalog and must be "
+                "preserved by a Control parameter with the same requiredValueRef.",
+                use_case.id,
+            ))
+    return findings
 
 
 def _expand_required_value_handles(candidate: dict[str, Any], use_case: UseCase) -> dict[str, Any]:
@@ -329,6 +404,16 @@ def _operation_payload(
         if text(item.get("className")) in scoped_names
     ]
     allowed = set(allowed_step_ids) or {step.id for step in use_case.steps}
+    contract = use_case.specification.get("public_contract")
+    raw_required_values = contract.get("required_values") if isinstance(contract, dict) else []
+    allowed_values = {
+        text(item.get("value_ref")): list(item["allowed_values"])
+        for item in raw_required_values or []
+        if isinstance(item, dict)
+        and text(item.get("value_ref"))
+        and isinstance(item.get("allowed_values"), list)
+        and item.get("allowed_values")
+    }
     payload: dict[str, Any] = {
         "useCase": summary,
         "executionSlice": {
@@ -350,8 +435,12 @@ def _operation_payload(
         "reservedOperations": scoped_reserved,
         "reservedDataTypes": [structured_data_type(item) for item in (reserved_types or [])],
         "requiredValueSources": [
-            {**item, "valueRef": ref_to_handle[item["valueRef"]],
-             "sourceRef": f"value#{ref_to_handle[item['valueRef']]}"}
+            {
+                **item,
+                **({"allowedValues": allowed_values[item["valueRef"]]}
+                   if item["valueRef"] in allowed_values else {}),
+                "valueRef": ref_to_handle[item["valueRef"]],
+                "sourceRef": f"value#{ref_to_handle[item['valueRef']]}"}
             for item in required_value_evidence(use_case)
         ],
         "valueSourcePolicy": {
@@ -842,12 +931,15 @@ def _checked_fragment_uncached(
         )
         candidate = repaired.get("fragment", candidate)
         report = run_checks(OPERATION_CHECKS, candidate, context)
+        allowed_value_findings = _allowed_value_findings(candidate, validation_inventory, use_case)
         if report.errors:
             raise RuntimeError("; ".join(report.errors))
-        if not report.findings:
+        if not report.findings and not allowed_value_findings:
             return candidate
 
-        current_findings = tuple(sorted(set(finding_text(report.findings))))
+        current_findings = tuple(sorted(set([
+            *finding_text(report.findings), *finding_text(allowed_value_findings),
+        ])))
         candidate_digest = stable_digest(candidate)
         repeated = ledger.candidate_seen(
             input_digest=input_digest,
@@ -1028,11 +1120,15 @@ def _validate_accepted_fragment(
             allowed_step_ids,
         ),
     )
-    if report.errors or report.findings:
+    allowed_value_findings = _allowed_value_findings(normalized, validation_inventory, use_case)
+    if report.errors or report.findings or allowed_value_findings:
         raise OperationValidationError(
             f"cached operation fragment {use_case.id} is invalid: "
-            + "; ".join([*report.errors, *finding_text(report.findings)]),
-            tuple(report.findings),
+            + "; ".join([
+                *report.errors, *finding_text(report.findings),
+                *finding_text(allowed_value_findings),
+            ]),
+            tuple([*report.findings, *allowed_value_findings]),
             tuple(report.errors),
         )
     return normalized

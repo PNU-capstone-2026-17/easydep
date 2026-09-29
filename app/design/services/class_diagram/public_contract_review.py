@@ -25,6 +25,7 @@ from app.design.services.class_diagram.trusted_context import (
     required_value_catalog,
     required_value_evidence,
 )
+from app.design.contracts.type_system import DesignTypeError, parse_type_expression
 from app.design.services.class_diagram.type_system import referenced_type_names
 from app.design.services.class_diagram.validation.model import operation_catalog
 from app.design.services.common.structured import parse_structured
@@ -32,7 +33,7 @@ from app.llm_connection import build_llm_connection
 from app.llm_profiles import effective_temperature
 from app.validation import Finding, stable_digest
 
-_EVIDENCE_VERSION = "class-public-contract-review/v7"
+_EVIDENCE_VERSION = "class-public-contract-review/v8"
 _PROMPT = """You independently review whether an accepted class-model use-case
 slice closes every public-contract obligation owned by the class stage.  The
 requirements/API/implementation stages own the authentication policy expressed
@@ -46,9 +47,10 @@ concrete return or input parameter type cited by that mapping.
 For required_values with usage control or both, cite the Control call that receives
 the value, its exact parameter, and that call's argument binding. For usage result
 or both, cite a Control operation with a concrete non-void return type. For a
-required_value whose source is system_result, that Control return (and, when
-cited, a fieldRef on its concrete return DTO) is sufficient evidence: do not
-require an argument binding or a prior call result.
+required_value whose source is system_result, that Control return is sufficient
+evidence: do not require an argument binding or a prior call result. When a
+required system_result identifier is returned through a declared structured
+type, cite its concrete return DTO fieldRef; the field must not be Optional<T>.
 For identify identity obligations, cite a Control parameter and its exact argument
 binding. An authenticated identity source must link through that parameter's exact
 requiredValueRef to an accepted required-value catalog entry whose identityObligationRef
@@ -120,6 +122,70 @@ def _fields(model: dict[str, Any]) -> dict[str, dict[str, str]]:
         if name and declared:
             result[name] = declared
     return result
+
+
+def _is_optional_type(type_expression: str) -> bool:
+    """Whether a declared field has the design-level optional container."""
+    try:
+        expression = parse_type_expression(type_expression)
+    except DesignTypeError:
+        return False
+    return expression.kind == "container" and expression.name == "optional"
+
+
+def _declared_structured_type_names(model: dict[str, Any]) -> set[str]:
+    return {
+        text(item.get("className") or item.get("name"))
+        for item in [*(model.get("Classes") or []), *(model.get("DataTypes") or [])]
+        if isinstance(item, Mapping) and text(item.get("className") or item.get("name"))
+    }
+
+
+def _result_identifier_error(
+    model: dict[str, Any], obligation: dict[str, Any], mapping: _ReviewMapping,
+    operation: dict[str, Any],
+    fields: dict[str, dict[str, str]],
+) -> str:
+    """Prove result identifiers are concrete at the public Control boundary."""
+    if (
+        text(obligation.get("source")).casefold() != "system_result"
+        or text(obligation.get("value_type")).casefold() != "identifier"
+        or text(obligation.get("usage")).casefold() not in {"result", "both"}
+    ):
+        return ""
+    return_type = text(operation.get("returnType"))
+    if _is_optional_type(return_type):
+        return (
+            f"Required system-result identifier '{mapping.obligation_id}' must cite a "
+            "non-Optional Control return or fieldRef on its concrete return type."
+        )
+    return_types = referenced_type_names(return_type)
+    structured_types = [
+        name for name in return_types if name in _declared_structured_type_names(model)
+    ]
+    if not structured_types:
+        return ""
+    if not mapping.field_ref:
+        return (
+            f"Required system-result identifier '{mapping.obligation_id}' must cite a "
+            "non-Optional fieldRef on the concrete Control return type."
+        )
+    field_type = next(
+        (fields[type_name][mapping.field_ref] for type_name in structured_types
+         if mapping.field_ref in fields[type_name]),
+        "",
+    )
+    if not field_type:
+        return (
+            f"Required system-result identifier '{mapping.obligation_id}' must cite a "
+            "fieldRef on the concrete Control return type."
+        )
+    if _is_optional_type(field_type):
+        return (
+            f"Required system-result identifier '{mapping.obligation_id}' must cite a "
+            "non-Optional fieldRef on the concrete Control return type."
+        )
+    return ""
 
 
 def _slice(model: dict[str, Any], use_case: UseCase) -> dict[str, Any]:
@@ -408,6 +474,11 @@ def _verify_response(model: dict[str, Any], use_case: UseCase, response: _Review
             or text(operation.get("returnType")).casefold() == "void"
         ):
             return f"Required value '{mapping.obligation_id}' must cite a Control operation with a concrete return."
+        result_identifier_error = _result_identifier_error(
+            model, obligation, mapping, operation, fields,
+        )
+        if result_identifier_error:
+            return result_identifier_error
     return ""
 
 

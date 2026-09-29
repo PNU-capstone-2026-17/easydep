@@ -201,6 +201,88 @@ def test_system_result_value_needs_control_return_not_prior_call_result(monkeypa
     assert findings == []
 
 
+@pytest.mark.parametrize(
+    ("field_ref", "field_type", "expected"),
+    [
+        ("field-receipt-id", "UUID", ""),
+        ("field-receipt-id", "Optional<UUID>", "non-Optional fieldRef"),
+        (None, "UUID", "non-Optional fieldRef"),
+        ("field-unrelated", "UUID", "does not belong to the cited concrete type"),
+    ],
+)
+def test_system_result_identifier_requires_concrete_non_optional_return_field(
+    field_ref: str | None, field_type: str, expected: str,
+) -> None:
+    from app.design.services.class_diagram import public_contract_review as subject
+
+    scenario = _scenario("system_result")
+    scenario["use_case_specs"][0]["public_contract"]["required_values"][0].update({
+        "name": "receipt identifier", "usage": "result", "value_type": "identifier",
+    })
+    model = _model()
+    model["DataTypes"] = [{
+        "name": "Receipt", "kind": "valueObject",
+        "fields": [f"receiptId : {field_type}", "status : String"],
+        "fieldRefs": ["field-receipt-id", "field-receipt-status"],
+    }]
+    response = _pass_response()
+    response["mappings"][0].update({
+        "parameterRef": None, "fieldRef": field_ref,
+        "rationale": "The Control returns the system-produced receipt identifier.",
+    })
+
+    problem = subject._verify_response(
+        model, build_scenario_index(scenario).use_case("UC1"),
+        subject._ReviewResponse.model_validate(response),
+    )
+
+    assert expected in problem
+
+
+def test_system_result_identifier_allows_non_optional_primitive_return() -> None:
+    from app.design.services.class_diagram import public_contract_review as subject
+
+    scenario = _scenario("system_result")
+    scenario["use_case_specs"][0]["public_contract"]["required_values"][0].update({
+        "name": "receipt identifier", "usage": "result", "value_type": "identifier",
+    })
+    model = _model()
+    model["Classes"][1]["operations"][0]["returnType"] = "UUID"
+    response = _pass_response()
+    response["mappings"][0].update({
+        "parameterRef": None, "fieldRef": None,
+        "rationale": "The Control directly returns the system-produced identifier.",
+    })
+
+    assert subject._verify_response(
+        model, build_scenario_index(scenario).use_case("UC1"),
+        subject._ReviewResponse.model_validate(response),
+    ) == ""
+
+
+def test_system_result_identifier_rejects_optional_primitive_control_return() -> None:
+    from app.design.services.class_diagram import public_contract_review as subject
+
+    scenario = _scenario("system_result")
+    scenario["use_case_specs"][0]["public_contract"]["required_values"][0].update({
+        "name": "receipt identifier", "usage": "result", "value_type": "identifier",
+    })
+    model = _model()
+    model["Classes"][1]["operations"][0]["returnType"] = "Optional<UUID>"
+    response = _pass_response()
+    response["mappings"][0].update({
+        "parameterRef": None, "fieldRef": None,
+        "rationale": "The Control directly returns the system-produced identifier.",
+    })
+
+    problem = subject._verify_response(
+        model, build_scenario_index(scenario).use_case("UC1"),
+        subject._ReviewResponse.model_validate(response),
+    )
+
+    assert "non-Optional Control return" in problem
+
+
 def test_authenticated_context_can_flow_through_prior_control_result_field(monkeypatch) -> None:
     from app.design.services.class_diagram import public_contract_review as subject
 
