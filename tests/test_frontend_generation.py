@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -12,6 +13,8 @@ from app.implementation.agents.verification.build import (
     verify_frontend_workspace,
 )
 from app.implementation.agents.verification.frontend import (
+    _frontend_dependency_commands,
+    _frontend_dependency_fingerprint,
     frontend_contract_violations,
     repair_frontend_accessibility_contract,
     repair_responsive_table_styles,
@@ -40,6 +43,10 @@ from app.implementation.planning.frontend_contracts import (
     FrontendContractBudgetExceeded,
     GeneratedClientContracts,
 )
+
+def _npm_executable() -> str:
+    return "npm.cmd" if os.name == "nt" else "npm"
+
 
 OPENAPI = {
     "openapi": "3.0.3",
@@ -822,6 +829,10 @@ def test_frontend_typecheck_runs_tsc_build_without_vite(
     (frontend / "node_modules/.package-lock.json").write_text("{}", encoding="utf-8")
     (frontend / "package.json").write_text("{}", encoding="utf-8")
     (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+    (frontend / "node_modules/.easydep-install.json").write_text(
+        json.dumps({"fingerprint": _frontend_dependency_fingerprint(frontend, _npm_executable())}),
+        encoding="utf-8",
+    )
     (frontend / "src/main.tsx").write_text(
         "import { HashRouter } from 'react-router-dom'; const app=<HashRouter />;",
         encoding="utf-8",
@@ -874,6 +885,10 @@ def test_frontend_repair_reuses_installed_dependencies(tmp_path: Path) -> None:
     (frontend / "package.json").write_text("{}", encoding="utf-8")
     (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
     (frontend / "node_modules/.package-lock.json").write_text("{}", encoding="utf-8")
+    (frontend / "node_modules/.easydep-install.json").write_text(
+        json.dumps({"fingerprint": _frontend_dependency_fingerprint(frontend, _npm_executable())}),
+        encoding="utf-8",
+    )
     (frontend / "src/main.tsx").write_text(
         "import { HashRouter } from 'react-router-dom'; const app=<HashRouter />;",
         encoding="utf-8",
@@ -888,6 +903,43 @@ def test_frontend_repair_reuses_installed_dependencies(tmp_path: Path) -> None:
 
     assert result["exitCode"] == 0
     assert [command[1:] for command in commands] == [["run", "build"]]
+
+
+def test_frontend_dependency_reuse_invalidates_stale_fingerprint(tmp_path: Path) -> None:
+    frontend = tmp_path / "application/frontend"
+    (frontend / "node_modules").mkdir(parents=True)
+    (frontend / "node_modules/.package-lock.json").write_text("{}", encoding="utf-8")
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+    (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+    (frontend / "node_modules/.easydep-install.json").write_text(
+        json.dumps({"fingerprint": "stale"}), encoding="utf-8"
+    )
+
+    assert _frontend_dependency_commands(frontend, _npm_executable())[0][1] == "ci"
+    assert not (frontend / "node_modules/.easydep-install.json").exists()
+
+
+def test_frontend_failed_install_does_not_leave_reusable_marker(tmp_path: Path) -> None:
+    frontend = tmp_path / "application/frontend"
+    (frontend / "src").mkdir(parents=True)
+    (frontend / "node_modules").mkdir()
+    (frontend / "package.json").write_text("{}", encoding="utf-8")
+    (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+    (frontend / "node_modules/.easydep-install.json").write_text(
+        '{"fingerprint":"old"}', encoding="utf-8"
+    )
+    (frontend / "src/main.tsx").write_text(
+        "import { HashRouter } from 'react-router-dom'; const app=<HashRouter />;",
+        encoding="utf-8",
+    )
+
+    def failed_install(command: list[str], **_kwargs: object) -> subprocess.CompletedProcess:
+        assert command[1] == "ci"
+        return subprocess.CompletedProcess(command, 1, "", "install failed")
+
+    result = run_frontend_verification(tmp_path, failed_install)
+    assert result["exitCode"] == 1
+    assert not (frontend / "node_modules/.easydep-install.json").exists()
 
 
 def test_verified_frontend_bundle_is_reused_only_for_the_same_source(

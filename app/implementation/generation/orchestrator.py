@@ -26,6 +26,7 @@ from app.design.contracts.application_runtime import (
 from app.design.schemas.class_model import BCEModel
 from app.design.schemas.sequence_model import SequenceCollection
 from app.llm_connection import build_openhands_llm_connection
+from app.implementation.config import npm_command_environment
 
 from ..agents.runtime import write_execution_plan
 from ..domain.implementation_ir import (
@@ -1172,6 +1173,11 @@ public class AuthenticatedActorIdProvider {{
         result = subprocess.run(
             command,
             cwd=cwd,
+            env=(
+                npm_command_environment()
+                if command and Path(command[0]).name.lower() in {"npm", "npm.cmd"}
+                else None
+            ),
             capture_output=True,
             text=True,
             encoding="utf-8",

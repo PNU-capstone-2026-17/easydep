@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 
 from app.config import settings
 from app.demo_validation import DEMO_SKIP_VALIDATION_ENV
+from app.implementation.config import NPM_REGISTRY_ENV
 
 CONTAINER_WORKSPACE = PurePosixPath("/easydep-workspace")
 RUNNER_IMAGE_ENV = "EASYDEP_TOOLCHAIN_IMAGE"
@@ -291,6 +292,10 @@ def runner_command(
         f"{OWNER_TERMINAL_SHELL_ENV}={OWNER_TERMINAL_SHELL}",
         "-e",
         f"npm_config_cache={OWNER_NPM_CACHE}",
+        "-e",
+        f"npm_config_registry={environment.get('npm_config_registry') or environment.get('NPM_CONFIG_REGISTRY') or environment.get(NPM_REGISTRY_ENV) or settings.easydep_npm_registry}",
+        "-e",
+        "npm_config_replace_registry_host=always",
     ]
     if job_mount is not None:
         job_root, container_job_root = job_mount

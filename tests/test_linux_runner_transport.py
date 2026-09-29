@@ -29,6 +29,7 @@ from app.implementation.runtime.member_linux_runner import (
     _clear_llm_credentials_from_environment,
     _cli,
 )
+from app.implementation.config import npm_command_environment
 
 
 def _runner_job(tmp_path: Path) -> tuple[Path, str]:
@@ -114,6 +115,26 @@ def test_runner_command_transmits_only_named_environment(tmp_path: Path):
     assert f"{OWNER_CONTROL_ROOT_ENV}={container_job_root}" in command
     assert command[command.index("--entrypoint") + 1] == "python"
     assert "app.implementation.runtime.member_linux_runner" in command
+    assert "npm_config_registry=https://registry.npmmirror.com" in command
+    assert "npm_config_replace_registry_host=always" in command
+
+
+def test_npm_registry_override_is_used_by_commands_and_runner(tmp_path: Path):
+    configured = npm_command_environment({"EASYDEP_NPM_REGISTRY": "https://npm.example.test"})
+    assert configured["npm_config_registry"] == "https://npm.example.test"
+    assert configured["npm_config_replace_registry_host"] == "always"
+
+    _, container_job = _runner_job(tmp_path)
+    command = runner_command(
+        image="runner:test",
+        repository_root=tmp_path,
+        operation="worker",
+        arguments=[container_job],
+        environment={"EASYDEP_NPM_REGISTRY": "https://npm.example.test"},
+        llm_environment={},
+    )
+    assert "npm_config_registry=https://npm.example.test" in command
+    assert "npm_config_replace_registry_host=always" in command
 
 
 def test_runner_command_transmits_verification_timeout(tmp_path: Path):

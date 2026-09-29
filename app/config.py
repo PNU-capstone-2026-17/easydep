@@ -213,6 +213,9 @@ class Settings(BaseSettings):
     easydep_opentofu_path: str | None = None
     easydep_tofu_plugin_cache: str | None = None
     easydep_toolchain_image: str | None = None
+    # Registry used by generated frontend dependency installs.  Keep the
+    # standard npm registry as an explicit override via EASYDEP_NPM_REGISTRY.
+    easydep_npm_registry: str = "https://registry.npmmirror.com"
 
     # Cloud KB
     cloudkb_cache_dir: str | None = None

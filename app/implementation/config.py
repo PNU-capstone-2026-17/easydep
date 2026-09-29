@@ -1,10 +1,32 @@
 from __future__ import annotations
 
 import sys
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.config import settings
+
+NPM_REGISTRY_ENV = "EASYDEP_NPM_REGISTRY"
+DEFAULT_NPM_REGISTRY = "https://registry.npmmirror.com"
+
+
+def npm_command_environment(
+    environment: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Return npm env with the configured registry and lockfile host rewrite."""
+    result = dict(os.environ if environment is None else environment)
+    registry = (
+        result.get("npm_config_registry")
+        or result.get("NPM_CONFIG_REGISTRY")
+        or result.get(NPM_REGISTRY_ENV)
+        or settings.easydep_npm_registry
+        or DEFAULT_NPM_REGISTRY
+    ).strip()
+    if registry:
+        result["npm_config_registry"] = registry
+    result["npm_config_replace_registry_host"] = "always"
+    return result
 
 
 @dataclass(frozen=True)

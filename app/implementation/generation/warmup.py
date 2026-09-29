@@ -17,6 +17,7 @@ from typing import Any
 
 from ..runtime.linux_runner_transport import RUNNER_GRADLE_CACHE_VOLUME
 from ..runtime.linux_runner_transport import configured_runner_image
+from ..config import npm_command_environment
 from .frontend_scaffold import react_scaffold_files
 
 WARMUP_SCHEMA = "easydep-implementation-warmup/v1alpha1"
@@ -59,7 +60,9 @@ def warmup_implementation_runtime(
     timeout = max(60, min(command_timeout_seconds, 900))
     steps: list[dict[str, Any]] = []
 
-    def run(name: str, command: list[str], cwd: Path) -> bool:
+    def run(
+        name: str, command: list[str], cwd: Path, *, env: dict[str, str] | None = None
+    ) -> bool:
         started = time.monotonic()
         try:
             result = subprocess.run(
@@ -69,6 +72,7 @@ def warmup_implementation_runtime(
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                env=env,
                 timeout=timeout,
                 check=False,
             )
@@ -173,6 +177,7 @@ def warmup_implementation_runtime(
         "warm-npm-cache",
         [npm, "install", "--package-lock-only", "--ignore-scripts", "--no-audit", "--no-fund"],
         npm_project,
+        env=npm_command_environment(),
     )
 
     report = {

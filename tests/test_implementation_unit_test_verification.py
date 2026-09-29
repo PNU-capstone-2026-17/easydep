@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -26,6 +27,7 @@ from app.implementation.agents.verification.build import (
     verify_agent_workspace,
 )
 from app.implementation.agents.verification.frontend import (
+    _frontend_dependency_fingerprint,
     run_frontend_unit_test_verification,
 )
 from app.implementation.workflows.coordinator import phase_for_task
@@ -208,6 +210,16 @@ def test_frontend_unit_verification_requires_fresh_nonempty_vitest_report(
         '{"scripts": {"test:unit": "vitest run"}}', encoding="utf-8"
     )
     (frontend / "package-lock.json").write_text("{}", encoding="utf-8")
+    (frontend / "node_modules/.easydep-install.json").write_text(
+        json.dumps(
+            {
+                "fingerprint": _frontend_dependency_fingerprint(
+                    frontend, "npm.cmd" if os.name == "nt" else "npm"
+                )
+            }
+        ),
+        encoding="utf-8",
+    )
     commands: list[list[str]] = []
     report_path = run_root / "reports/agent-executions/frontend-unit.vitest.json"
 
@@ -641,6 +653,8 @@ def test_unit_failure_review_corrects_one_invalid_json_response(
 
     assert result == valid_review
     assert len(calls) == 3
+    assert calls[0]["reasoning_effort"] == repair_module.settings.design_reasoning_effort
+    assert calls[0]["max_completion_tokens"] == 8192
     second_messages = calls[1]["messages"]
     assert second_messages[-2] == {"role": "assistant", "content": first_response}
     third_messages = calls[2]["messages"]
@@ -649,6 +663,35 @@ def test_unit_failure_review_corrects_one_invalid_json_response(
     correction = third_messages[-1]["content"]
     assert '"loc": ["correction_instruction"]' in correction
     assert "weaken or remove contract-backed assertions" in correction
+
+
+def test_reviewer_error_projection_handles_json_wrappers_and_redacts_secrets() -> None:
+    failed_generation = "start of failed output\n" + ("x" * 15_000) + "\nend of failed output"
+
+    class Error:
+        status_code = 400
+        body = json.dumps(
+            {
+                "error": json.dumps(
+                    {
+                        "message": "Invalid response; api_key=private-value",
+                        "failed_generation": failed_generation,
+                    }
+                )
+            }
+        )
+
+    details = repair_module._reviewer_error_value(Error())
+    assert details["status"] == 400
+    assert details["message"] == "Invalid response; api_key=[REDACTED]"
+    generated = details["failed_generation"]
+    assert "start of failed output" in generated
+    assert "end of failed output" in generated
+    assert len(generated) < 12_500
+    assert "sha256=" in generated
+    typed = repair_module.ReviewerProviderError(details)
+    assert typed.status_code == 400
+    assert typed.failure_kind == "provider_request_validation"
 
 
 def test_frontend_unit_failure_review_includes_declared_jsdom_blob_runtime_facts(

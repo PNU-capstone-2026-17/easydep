@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -11,6 +12,8 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
+
+from app.implementation.config import npm_command_environment
 
 MUTATING_HTTP_METHODS = {"post", "put", "patch", "delete"}
 FRONTEND_BUILD_REPORT = Path("reports/frontend-build.json")
@@ -268,19 +271,75 @@ def _timeout_output(value: object) -> str:
 
 def _frontend_command_environment() -> dict[str, str]:
     """Reuse a system cache instead of re-downloading each clean sandbox."""
-    environment = os.environ.copy()
-    environment.setdefault(
-        "NPM_CONFIG_CACHE",
-        str(Path(tempfile.gettempdir()) / "easydep-npm-cache"),
-    )
+    environment = npm_command_environment(os.environ)
+    # npm configuration keys are case-sensitive in a Linux process.  The
+    # fixed runner injects the lowercase key for its named shared cache; do
+    # not add an uppercase fallback alongside it because npm may prefer that
+    # second value and bypass the volume.
+    if not environment.get("npm_config_cache") and not environment.get(
+        "NPM_CONFIG_CACHE"
+    ):
+        environment["NPM_CONFIG_CACHE"] = str(
+            Path(tempfile.gettempdir()) / "easydep-npm-cache"
+        )
     return environment
 
 
-def _frontend_dependency_commands(frontend: Path, executable: str) -> list[list[str]]:
-    """Install once per workspace; build and focused Vitest share this preparation."""
+def _frontend_dependency_fingerprint(frontend: Path, executable: str) -> str | None:
+    """Identify the manifests and local toolchain that produced node_modules."""
+    package = frontend / "package.json"
+    lock = frontend / "package-lock.json"
+    if not package.is_file() or not lock.is_file():
+        return None
+    digest = hashlib.sha256()
+    for path in (package, lock):
+        digest.update(path.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    environment = _frontend_command_environment()
+    identity = {
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "node": shutil.which("node", path=environment.get("PATH")),
+        "npm": shutil.which(executable, path=environment.get("PATH")) or executable,
+        "path": environment.get("PATH", ""),
+        "nodeOptions": environment.get("NODE_OPTIONS", ""),
+        "npmPlatform": environment.get("npm_config_platform", ""),
+        "npmArch": environment.get("npm_config_arch", ""),
+    }
+    digest.update(json.dumps(identity, sort_keys=True).encode("utf-8"))
+    return digest.hexdigest()
 
-    if (frontend / "node_modules" / ".package-lock.json").is_file():
-        return []
+
+def _frontend_install_marker(frontend: Path) -> Path:
+    return frontend / "node_modules" / ".easydep-install.json"
+
+
+def _record_frontend_install(frontend: Path, executable: str, success: bool) -> None:
+    marker = _frontend_install_marker(frontend)
+    if not success:
+        marker.unlink(missing_ok=True)
+        return
+    fingerprint = _frontend_dependency_fingerprint(frontend, executable)
+    if fingerprint:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({"fingerprint": fingerprint}), encoding="utf-8")
+
+
+def _frontend_dependency_commands(frontend: Path, executable: str) -> list[list[str]]:
+    """Reuse only dependencies installed successfully for these exact inputs."""
+
+    marker = _frontend_install_marker(frontend)
+    expected = _frontend_dependency_fingerprint(frontend, executable)
+    if expected and (frontend / "node_modules" / ".package-lock.json").is_file():
+        try:
+            recorded = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            recorded = None
+        if isinstance(recorded, dict) and recorded.get("fingerprint") == expected:
+            return []
+    marker.unlink(missing_ok=True)
     return [
         [
             executable,
@@ -474,6 +533,8 @@ def run_frontend_verification(
         outputs.append(result.stdout[-12000:])
         errors.append(result.stderr[-12000:])
         exit_code = result.returncode
+        if command[1:2] == ["ci"]:
+            _record_frontend_install(frontend, executable, exit_code == 0)
         if exit_code != 0:
             break
     return {
@@ -637,6 +698,8 @@ def run_frontend_unit_test_verification(
         outputs.append(result.stdout[-12000:])
         errors.append(result.stderr[-12000:])
         exit_code = result.returncode
+        if command[1:2] == ["ci"]:
+            _record_frontend_install(frontend, executable, exit_code == 0)
         if exit_code != 0:
             break
 
