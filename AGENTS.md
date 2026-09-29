@@ -53,6 +53,7 @@
 - 로그나 대형 JSON을 조사하기 전에는 먼저 파일 크기를 확인한다.
 - `Get-Content` 전체 결과를 파이프해 `Select-Object -Last` 또는 `ConvertTo-Json`으로 넘기지 않는다. 반드시 `-Tail`·`-TotalCount`, DB projection, 또는 streaming parser를 사용한다.
 - 조사 명령에는 유한한 timeout과 출력 제한을 두고, 명령 종료 후 자신이 만든 프로세스가 남지 않았는지 확인한다.
+- Workspace API 상태 폴링은 시작 요청이 성공해 명령 ID를 받은 뒤에만 수행한다. `AWAITING_INPUT`을 포함한 종료·대기 상태에서 멈추고, 실행 세션 ID를 보존해 종료 후 폴링 프로세스가 남지 않았는지 확인한다.
 - 자원 이상 징후가 보이면 새 조사를 시작하기 전에 먼저 자신이 시작한 조사 프로세스를 중단한다.
 
 ## 임시 파일과 브라우저 프로필
