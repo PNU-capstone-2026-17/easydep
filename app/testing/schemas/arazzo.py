@@ -106,7 +106,15 @@ def _json_copy(value: Any, path: str = "document") -> Any:
 
 
 def _validate_jsonschema(document: dict[str, Any]) -> None:
-    schema = _official_schema()
+    schema = copy.deepcopy(_official_schema())
+    # The Arazzo 1.1 Parameter Object describes `value` as Any, but the pinned
+    # official JSON Schema's first branch omits objects. EasyDep's executable
+    # OpenAPI profile validates literal values against the frozen parameter
+    # schema below, so allow ordinary JSON objects here without changing the
+    # vendored schema. Keep Selector Objects exclusive to their own branch.
+    parameter_value = schema["$defs"]["parameter-object"]["properties"]["value"]["oneOf"][0]
+    parameter_value["type"].append("object")
+    parameter_value["not"] = {"$ref": "#/$defs/selector-object"}
     try:
         validator = jsonschema.Draft202012Validator(schema)
         error = next(

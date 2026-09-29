@@ -14,6 +14,7 @@ from app.testing.utils.arazzo_planner import (
     build_deterministic_workflow,
     build_execution_candidates,
     build_workflow_candidates,
+    _setup_use_case_evidence,
 )
 
 
@@ -131,6 +132,8 @@ def _use_cases() -> dict[str, Any]:
                 "trigger": "The customer submits an item name.",
                 "main_scenario": ["Create the item.", "Retrieve the created item."],
                 "acceptance_criteria": ["The returned identifier is stable."],
+                "public_contract": {"required_values": [{"field": "name", "value": "sample item"}]},
+                "extensions": {"operationAlternatives": ["createItem"]},
             },
             {
                 "use_case_id": "UC-2",
@@ -233,6 +236,150 @@ def test_execution_candidates_expose_finite_typed_connection_choices() -> None:
     )
 
 
+def test_uuid_source_format_can_flow_to_unformatted_string_target() -> None:
+    openapi = _openapi()
+    create_schema = openapi["paths"]["/items"]["post"]["responses"]["201"]["content"][
+        "application/json"
+    ]["schema"]
+    create_schema["properties"]["id"]["format"] = "uuid"
+    create_schema["properties"]["name"]["format"] = "date"
+    openapi["paths"]["/items/{id}"]["get"]["parameters"][0]["schema"] = {
+        "type": "string",
+        "format": "",
+    }
+    selected = [_candidate_for(build_workflow_candidates(_requirements(), _use_cases(), openapi), "UC-1")]
+
+    get_item = next(
+        step for step in build_execution_candidates(selected, openapi)
+        if step["operationId"] == "getItem"
+    )
+    connections = get_item["inputs"][0]["connections"]
+
+    assert [(item["sourceStepId"], item["sourceSlot"]) for item in connections] == [
+        ("createItem", "body.id"),
+        ("createItem", "body.name"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("source_type", "source_format", "target_type", "target_format", "source_array", "expected"),
+    [
+        ("string", None, "string", "email", False, True),
+        ("string", "uuid", "string", None, False, True),
+        ("string", "email", "string", None, False, True),
+        ("string", "date", "string", "uuid", False, False),
+        ("string", "date", "string", None, False, True),
+        ("integer", None, "integer", "int32", False, False),
+        ("integer", "int32", "integer", None, False, True),
+        ("integer", "int32", "integer", "int64", False, False),
+        ("integer", "int32", "integer", "int32", False, True),
+        ("integer", None, "integer", None, True, False),
+    ],
+)
+def test_format_compatibility_requires_source_evidence_for_target_format(
+    source_type: str,
+    source_format: str | None,
+    target_type: str,
+    target_format: str | None,
+    source_array: bool,
+    expected: bool,
+) -> None:
+    openapi = _openapi()
+    source_schema: dict[str, Any] = {"type": source_type}
+    target_schema: dict[str, Any] = {"type": target_type}
+    if source_format:
+        source_schema["format"] = source_format
+    if target_format:
+        target_schema["format"] = target_format
+    if source_array:
+        source_schema = {"type": "array", "items": source_schema}
+    response_schema = openapi["paths"]["/items"]["post"]["responses"]["201"]["content"][
+        "application/json"
+    ]["schema"]
+    response_schema["properties"]["id"] = source_schema
+    openapi["paths"]["/items/{id}"]["get"]["parameters"][0]["schema"] = target_schema
+    selected = [_candidate_for(build_workflow_candidates(_requirements(), _use_cases(), openapi), "UC-1")]
+
+    get_item = next(
+        step for step in build_execution_candidates(selected, openapi)
+        if step["operationId"] == "getItem"
+    )
+    candidates = [
+        item for item in get_item["inputs"][0]["connections"]
+        if item["sourceStepId"] == "createItem" and item["sourceSlot"] == "body.id"
+    ]
+
+    assert bool(candidates) is expected
+
+
+def test_object_query_parameter_keeps_openapi_name_and_serialization() -> None:
+    openapi = _openapi()
+    openapi["paths"]["/search"] = {
+        "get": {
+            "operationId": "searchItems",
+            "x-easydep-use-case-ids": ["UC-2"],
+            "parameters": [{
+                "name": "searchCriteria",
+                "in": "query",
+                "required": True,
+                "style": "deepObject",
+                "explode": True,
+                "schema": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                        "name": {"type": "string"},
+                        "active": {"type": "boolean"},
+                    },
+                },
+            }],
+            "responses": {"200": {"description": "ok"}},
+        }
+    }
+    selected = [_candidate_for(build_workflow_candidates(_requirements(), _use_cases(), openapi), "UC-2")]
+
+    search = next(
+        step for step in build_execution_candidates(selected, openapi)
+        if step["operationId"] == "searchItems"
+    )
+
+    assert [slot["inputSlot"] for slot in search["inputs"]] == ["query:searchCriteria"]
+    assert search["inputs"][0]["type"] == "object"
+    assert search["inputs"][0]["parameterName"] == "searchCriteria"
+    assert search["inputs"][0]["parameterStyle"] == "deepObject"
+    assert search["inputs"][0]["parameterExplode"] is True
+    assert search["inputs"][0]["valueSchema"]["required"] == ["name"]
+
+
+@pytest.mark.parametrize(
+    ("style", "explode", "reason"),
+    [
+        ("pipeDelimited", False, "object query parameter style"),
+        ("deepObject", False, "object query parameter style"),
+    ],
+)
+def test_object_query_parameter_rejects_unsupported_serialization_precisely(
+    style: str, explode: bool, reason: str,
+) -> None:
+    openapi = _openapi()
+    openapi["paths"]["/search"] = {
+        "get": {
+            "operationId": "searchItems",
+            "x-easydep-use-case-ids": ["UC-2"],
+            "parameters": [{
+                "name": "searchCriteria", "in": "query", "required": True,
+                "style": style, "explode": explode,
+                "schema": {"type": "object", "properties": {"name": {"type": "string"}}},
+            }],
+            "responses": {"200": {"description": "ok"}},
+        }
+    }
+    selected = [_candidate_for(build_workflow_candidates(_requirements(), _use_cases(), openapi), "UC-2")]
+
+    with pytest.raises(ArazzoPlanningError, match=reason):
+        build_execution_candidates(selected, openapi)
+
+
 def test_execution_candidates_offer_untraced_setup_with_typed_connection() -> None:
     openapi = _openapi()
     openapi["paths"]["/audit"]["get"]["parameters"] = [
@@ -256,6 +403,20 @@ def test_execution_candidates_offer_untraced_setup_with_typed_connection() -> No
         "getItem",
         "health",
     }
+    linked_setup = next(
+        operation for operation in candidate["setupOperations"]
+        if operation["operationId"] == "createItem"
+    )
+    assert linked_setup["linkedUseCaseEvidence"] == [{
+        "useCaseId": "UC-1",
+        "name": "Create and inspect item",
+        "required_values": [{"field": "name", "value": "sample item"}],
+        "preconditions": ["The inventory service is available."],
+        "trigger": "The customer submits an item name.",
+        "main_scenario": ["Create the item.", "Retrieve the created item."],
+        "acceptance_criteria": ["The returned identifier is stable."],
+        "extensions": {"operationAlternatives": ["createItem"]},
+    }]
     assert audit["inputs"][0]["connections"] == [
         {
             "connectionId": "createItem.bodyId->auditItem.query:itemId",
@@ -298,6 +459,79 @@ def test_execution_candidates_offer_untraced_setup_with_typed_connection() -> No
             "value": "$steps.getItem.outputs.bodyName",
         },
     ]
+
+
+def test_setup_use_case_evidence_preserves_required_values_and_operation_branches() -> None:
+    branches = [
+        {"condition": f"action is {action}", "handling_steps": [{"sentence": f"Apply {action}."}]}
+        for action in ("create", "update", "publish", "cancel")
+    ]
+    evidence = _setup_use_case_evidence(
+        {"traceHints": {"useCaseIds": ["case-1"]}},
+        {"case-1": {
+            "use_case_id": "case-1",
+            "name": "Manage a resource",
+            "public_contract": {"required_values": [{"name": "action"}]},
+            "preconditions": ["The resource exists."],
+            "trigger": "The user requests an update.",
+            "main_scenario": ["Update the resource."],
+            "alternative_scenarios": ["Reject an invalid update."],
+            "success_guarantee": "The resource is updated.",
+            "minimal_guarantee": "The resource remains available.",
+            "acceptance_criteria": ["The updated value is returned."],
+            "extensions": branches,
+        }},
+    )
+
+    assert evidence == [{
+        "useCaseId": "case-1",
+        "name": "Manage a resource",
+        "required_values": [{"name": "action"}],
+        "preconditions": ["The resource exists."],
+        "trigger": "The user requests an update.",
+        "main_scenario": ["Update the resource."],
+        "alternative_scenarios": ["Reject an invalid update."],
+        "success_guarantee": "The resource is updated.",
+        "minimal_guarantee": "The resource remains available.",
+        "acceptance_criteria": ["The updated value is returned."],
+        "extensions": branches,
+    }]
+
+
+def test_execution_candidates_include_read_only_setup_outputs_for_path_inputs() -> None:
+    openapi = _openapi()
+    item_schema = openapi["paths"]["/items"]["post"]["responses"]["201"]["content"][
+        "application/json"
+    ]["schema"]
+    openapi["paths"]["/audit/{itemId}"] = openapi["paths"].pop("/audit")
+    openapi["paths"]["/audit/{itemId}"]["get"]["parameters"] = [
+        {"name": "itemId", "in": "path", "required": True, "schema": {"type": "string"}}
+    ]
+    openapi["paths"]["/lookup"] = {
+        "get": {
+            "operationId": "lookupExistingItem",
+            "responses": {"200": {"description": "ok", "content": {"application/json": {"schema": item_schema}}}},
+        }
+    }
+    openapi["paths"]["/seed"] = {
+        "post": {
+            "operationId": "seedItem",
+            "responses": {"201": {"description": "ok", "content": {"application/json": {"schema": item_schema}}}},
+        }
+    }
+    selected = [_candidate_for(build_workflow_candidates(_requirements(), _use_cases(), openapi), "UC-2")]
+
+    audit = next(
+        step for step in build_execution_candidates(selected, openapi)
+        if step["operationId"] == "auditItem"
+    )
+    sources = {
+        connection["sourceStepId"]
+        for connection in audit["inputs"][0]["connections"]
+    }
+
+    assert audit["method"] == "GET"
+    assert {"createItem", "seedItem", "lookupExistingItem", "getItem"} <= sources
 
 
 def test_execution_candidates_escape_json_pointer_tokens_and_ground_statuses() -> None:

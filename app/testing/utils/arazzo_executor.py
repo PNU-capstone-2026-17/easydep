@@ -176,6 +176,27 @@ def _criterion_results(criteria: Any, context: Mapping[str, Any]) -> list[dict[s
     ]
 
 
+def _explicit_non_success_status_expected(
+    criterion_results: list[dict[str, Any]], status_code: int
+) -> bool:
+    """Allow a documented negative test only when it explicitly asserts the status.
+
+    Ordinary workflow success always requires a 2xx response.  A negative test
+    may instead assert an expected non-2xx response (for example, ``$statusCode
+    == 400``).  Other criteria, including output comparisons, must never turn a
+    server error into a successful workflow by themselves.
+    """
+
+    if 200 <= status_code < 300:
+        return False
+    return any(
+        item["passed"]
+        and isinstance(item.get("criterion"), dict)
+        and "$statusCode" in str(item["criterion"].get("condition") or "")
+        for item in criterion_results
+    )
+
+
 def _split_top_level(value: str, token: str) -> list[str]:
     """Split a simple condition at top-level operators, without parsing code."""
     parts: list[str] = []
@@ -325,11 +346,17 @@ def _schema_value(
     operation_id: str,
     proposer: InputValueProposer | None,
     schema_document: dict[str, Any] | None = None,
+    require_explicit_values: bool = False,
 ) -> Any:
     if schema_document is not None:
         schema = resolve_schema(schema_document, schema)
     if has_supplied:
         return supplied
+    if require_explicit_values:
+        raise _ExecutionError(
+            "INPUT_VALUE_UNAVAILABLE",
+            f"No explicit value was provided for {location}.",
+        )
     for key in ("const", "default", "example"):
         if key in schema:
             return copy.deepcopy(schema[key])
@@ -438,6 +465,7 @@ def _workflow_inputs(
     supplied: Mapping[str, Any] | None,
     proposer: InputValueProposer | None,
     document: dict[str, Any],
+    require_explicit_values: bool = False,
 ) -> dict[str, Any]:
     if supplied is not None and not isinstance(supplied, Mapping):
         raise _ExecutionError("WORKFLOW_INPUT_INVALID", "workflow_inputs must be a mapping.")
@@ -459,7 +487,10 @@ def _workflow_inputs(
             continue
         if name in values:
             continue
-        if name in required or any(key in child for key in ("const", "default", "example", "enum")):
+        if name in required or (
+            not require_explicit_values
+            and any(key in child for key in ("const", "default", "example", "enum"))
+        ):
             values[name] = _schema_value(
                 child,
                 None,
@@ -467,6 +498,7 @@ def _workflow_inputs(
                 location=f"inputs.{name}",
                 operation_id=f"workflow:{workflow.get('workflowId', '')}",
                 proposer=proposer,
+                require_explicit_values=require_explicit_values,
             )
     errors = sorted(jsonschema.Draft202012Validator(schema).iter_errors(values), key=str)
     if errors:
@@ -480,6 +512,7 @@ def _parameters(
     context: Mapping[str, Any],
     openapi: dict[str, Any],
     proposer: InputValueProposer | None,
+    require_explicit_values: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], Any]:
     declared: dict[tuple[str, str], Any] = {}
     for item in step.get("parameters") or []:
@@ -521,6 +554,7 @@ def _parameters(
                 operation_id=operation.operation_id,
                 proposer=proposer,
                 schema_document=openapi,
+                require_explicit_values=require_explicit_values,
             )
             value = _validated_schema_value(
                 schema, value, location=f"{where}.{name}", openapi=openapi
@@ -565,6 +599,7 @@ def _parameters(
             operation_id=operation.operation_id,
             proposer=proposer,
             schema_document=openapi,
+            require_explicit_values=require_explicit_values,
         )
     else:
         body = None
@@ -611,6 +646,7 @@ def execute_arazzo_workflow(
     workflow_inputs: Mapping[str, Any] | None = None,
     workflow_inputs_by_id: Mapping[str, Mapping[str, Any]] | None = None,
     propose_input: InputValueProposer | None = None,
+    require_explicit_values: bool = False,
     timeout_seconds: float = 30.0,
 ) -> dict[str, Any]:
     """Execute one validated local Arazzo workflow without dynamic code evaluation."""
@@ -808,6 +844,7 @@ def execute_arazzo_workflow(
             combined_supplied,
             scoped_propose if propose_input is not None else None,
             frozen,
+            require_explicit_values=require_explicit_values,
         )
         resolved_inputs_by_id[current_id] = dict(inputs)
         step_values: dict[str, dict[str, Any]] = {}
@@ -898,6 +935,7 @@ def execute_arazzo_workflow(
                     context,
                     openapi,
                     scoped_propose if propose_input is not None else None,
+                    require_explicit_values=require_explicit_values,
                 )
                 context["url"] = operation_url(target_url, operation, paths, query)
                 context["method"] = operation.method
@@ -974,10 +1012,15 @@ def execute_arazzo_workflow(
                     context["response"] = {"body": payload, "header": dict(response.headers)}
                     criteria_present = step.get("successCriteria") is not None
                     criterion_results = _criterion_results(step.get("successCriteria"), context)
-                    success = step_error is None and (
-                        all(item["passed"] for item in criterion_results)
-                        if criteria_present
-                        else 200 <= response.status_code < 300
+                    criteria_satisfied = all(item["passed"] for item in criterion_results)
+                    http_success = 200 <= response.status_code < 300
+                    expected_non_success = _explicit_non_success_status_expected(
+                        criterion_results, response.status_code
+                    )
+                    success = (
+                        step_error is None
+                        and criteria_satisfied
+                        and (http_success or expected_non_success)
                     )
                     action = _first_action(
                         step, workflow, "onSuccess" if success else "onFailure", context

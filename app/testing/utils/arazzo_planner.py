@@ -7,6 +7,8 @@ import re
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+import jsonschema
+
 from app.testing.utils.functional_executor import resolve_schema
 
 _METHODS = ("delete", "get", "head", "options", "patch", "post", "put", "trace")
@@ -373,6 +375,123 @@ def _step_id(operation: Mapping[str, Any]) -> str:
     return value
 
 
+def _connection_types_compatible(
+    input_slot: Mapping[str, Any], output: Mapping[str, Any]
+) -> bool:
+    """Keep only format assignments that can be justified by the source type.
+
+    A specifically formatted value can flow to an unformatted target of the
+    same base type. An unformatted source cannot prove a target's narrower
+    format, and two different explicit formats are incompatible.
+    """
+    if input_slot.get("type") != output.get("type") or input_slot.get("cardinality") != output.get("cardinality"):
+        return False
+    source_format = output.get("format")
+    target_format = input_slot.get("format")
+    if source_format == target_format:
+        return True
+    source_specified = isinstance(source_format, str) and bool(source_format.strip())
+    target_specified = isinstance(target_format, str) and bool(target_format.strip())
+    if source_specified and not target_specified:
+        return True
+    # A response schema can omit a string format even though a concrete JSON
+    # Pointer leaf is later checked against the consumer's OpenAPI schema at
+    # runtime.  Do not make the same claim for a whole response body.
+    return (
+        not source_specified
+        and target_specified
+        and target_format in jsonschema.FormatChecker.checkers
+        and str(output.get("outputExpression") or "").startswith("$response.body#/")
+    )
+
+
+def _parameter_input_slots(
+    openapi: Mapping[str, Any], parameter: Mapping[str, Any], slot: str,
+    issues: list[str],
+) -> list[dict[str, Any]]:
+    """Project one parameter without changing its declared identity.
+
+    Parameter objects are values of one OpenAPI parameter, unlike JSON bodies
+    whose leaves can be independently connected. Query object serialization is
+    supported by the functional executor for form and deepObject styles; other
+    object parameter locations/styles are rejected before an invalid workflow
+    can be authored.
+    """
+    schema = parameter.get("schema")
+    try:
+        resolved = resolve_schema(dict(openapi), schema)
+    except ValueError as error:
+        issues.append(f"{slot}: {error}")
+        return []
+    schema_type = resolved.get("type")
+    if isinstance(schema_type, list):
+        non_null = [item for item in schema_type if item != "null"]
+        if len(non_null) == 1:
+            resolved = {**resolved, "type": non_null[0]}
+    if resolved.get("type") != "object":
+        return _schema_slots(openapi, schema, slot, issues)
+
+    location, name = parameter.get("in"), parameter.get("name")
+    if location != "query":
+        issues.append(
+            f"{slot}: object-valued {location or 'unknown'} parameters cannot be serialized safely"
+        )
+        return []
+
+    style = parameter.get("style", "form")
+    explode = parameter.get("explode", style == "form")
+    if not (
+        (style == "form" and isinstance(explode, bool))
+        or (style == "deepObject" and explode is True)
+    ):
+        issues.append(
+            f"{slot}: object query parameter style {style!r} with explode={explode!r} "
+            "is unsupported; supported styles are form and deepObject with explode=true"
+        )
+        return []
+
+    properties = resolved.get("properties")
+    if not isinstance(properties, Mapping) or not properties:
+        issues.append(f"{slot}: object schema has no properties")
+        return []
+
+    def contains_object(value: Any) -> bool:
+        try:
+            child = resolve_schema(dict(openapi), value)
+        except ValueError as error:
+            issues.append(f"{slot}: {error}")
+            return False
+        if child.get("type") == "object":
+            return True
+        if child.get("type") == "array":
+            return contains_object(child.get("items"))
+        return any(
+            contains_object(branch)
+            for key in ("oneOf", "anyOf", "allOf")
+            for branches in [child.get(key)]
+            if isinstance(branches, list)
+            for branch in branches
+        )
+
+    if any(contains_object(child) for child in properties.values()):
+        issues.append(f"{slot}: nested object query properties are unsupported")
+        return []
+
+    value = {
+        "slot": slot,
+        "type": "object",
+        "format": "",
+        "cardinality": "one",
+        "parameterName": name,
+        "parameterStyle": style,
+        "parameterExplode": explode,
+        "valueSchema": copy.deepcopy(resolved),
+    }
+    if isinstance(resolved.get("description"), str) and resolved["description"].strip():
+        value["description"] = resolved["description"].strip()
+    return [value]
+
+
 def _operation_order(operation: Mapping[str, Any]) -> tuple[int, str]:
     hints = operation.get("traceHints")
     refs = hints.get("scenarioRefs") if isinstance(hints, Mapping) else []
@@ -439,6 +558,14 @@ def build_execution_candidates(
     for candidate in candidates:
         if not isinstance(candidate, Mapping):
             raise ArazzoPlanningError("Selected workflow candidate must be an object.")
+        target_operations = candidate.get("operations")
+        if not isinstance(target_operations, list):
+            raise ArazzoPlanningError("Selected workflow candidate has no operations.")
+        target_operation_ids = {
+            _id(operation, "operationId")
+            for operation in target_operations
+            if isinstance(operation, Mapping)
+        }
         workflow_steps: list[dict[str, Any]] = []
         for operation in _candidate_operations(candidate):
             operation_id, step_id = _id(operation, "operationId"), _step_id(operation)
@@ -465,7 +592,17 @@ def build_execution_candidates(
                     raise ArazzoPlanningError("Selected operation parameter must be an object.")
                 if parameter.get("required") is True:
                     slot = f"{parameter.get('in')}:{parameter.get('name')}"
-                    inputs.extend(slots(parameter.get("schema"), slot, f"parameter {slot}"))
+                    local_issues: list[str] = []
+                    inputs.extend(
+                        _parameter_input_slots(
+                            openapi, parameter, slot, local_issues,
+                        )
+                    )
+                    issues.extend(
+                        f"{operation_id} parameter {slot}: "
+                        + issue.removeprefix(f"{slot}: ")
+                        for issue in local_issues
+                    )
             request_body = operation.get("requestBody")
             if isinstance(request_body, Mapping) and request_body.get("required") is True:
                 inputs.extend(slots(request_body.get("schema"), "body", "requestBody", include_pointer=True))
@@ -502,11 +639,42 @@ def build_execution_candidates(
                 pointer_parts = tuple(output.pop("pointerParts", ()))
                 output["outputName"] = _output_name(pointer_parts, used_output_names)
                 output["outputExpression"] = "$response.body" + _json_pointer(pointer_parts)
+                array_index = next((index for index, part in enumerate(pointer_parts) if part.isdigit()), None)
+                if array_index is not None and array_index + 1 < len(pointer_parts):
+                    output["collectionItemRef"] = {
+                        "arrayRootPointer": _json_pointer(pointer_parts[:array_index]),
+                        "itemPointerParts": list(pointer_parts[array_index + 1:]),
+                    }
+            collection_candidates = []
+            item_outputs = [output for output in outputs if isinstance(output.get("collectionItemRef"), dict)]
+            for match in item_outputs:
+                for selected in item_outputs:
+                    if (
+                        match is selected
+                        or match["collectionItemRef"]["arrayRootPointer"]
+                        != selected["collectionItemRef"]["arrayRootPointer"]
+                    ):
+                        continue
+                    collection_candidates.append({
+                        "selectionId": f"{operation_id}:{match['outputName']}=>{selected['outputName']}",
+                        "arrayRootPointer": match["collectionItemRef"]["arrayRootPointer"],
+                        "matchOutputName": match["outputName"],
+                        "matchOutputExpression": match.get("outputExpression"),
+                        "matchType": match.get("type"),
+                        "matchFormat": match.get("format"),
+                        "matchItemPointerParts": copy.deepcopy(match["collectionItemRef"]["itemPointerParts"]),
+                        "selectedOutputName": selected["outputName"],
+                        "selectedOutputExpression": selected.get("outputExpression"),
+                        "selectedType": selected.get("type"),
+                        "selectedFormat": selected.get("format"),
+                        "selectedItemPointerParts": copy.deepcopy(selected["collectionItemRef"]["itemPointerParts"]),
+                    })
             workflow_steps.append(
                 {
                     "workflowId": _id(candidate, "workflowId"),
                     "stepId": step_id,
                     "operationId": operation_id,
+                    "method": str(operation.get("method") or "").upper(),
                     "summary": str(operation.get("summary") or ""),
                     "description": str(operation.get("description") or ""),
                     "successStatuses": [
@@ -515,10 +683,16 @@ def build_execution_candidates(
                     ],
                     "inputs": inputs,
                     "outputs": outputs,
+                    "collectionSelectionCandidates": collection_candidates,
                 }
             )
         all_outputs = [
-            {**output, "stepId": step["stepId"]}
+            {
+                **output,
+                "stepId": step["stepId"],
+                "isSetupOperation": step["operationId"] not in target_operation_ids,
+                "method": step["method"],
+            }
             for step in workflow_steps
             for output in step["outputs"]
         ]
@@ -538,7 +712,7 @@ def build_execution_candidates(
                     }
                     for output in all_outputs
                     if output["stepId"] != step["stepId"]
-                    and all(input_slot[key] == output[key] for key in ("type", "format", "cardinality"))
+                    and _connection_types_compatible(input_slot, output)
                 ]
         result.extend(workflow_steps)
     if issues:
@@ -648,6 +822,53 @@ def _evidence_refs(*records: Mapping[str, Any]) -> list[str]:
     return sorted(values)
 
 
+def _setup_use_case_evidence(
+    operation: Mapping[str, Any], specs: Mapping[str, Mapping[str, Any]]
+) -> list[dict[str, Any]]:
+    """Project exact trace-linked use-case details useful for setup literals."""
+    hints = operation.get("traceHints")
+    linked_ids = _strings(hints.get("useCaseIds")) if isinstance(hints, Mapping) else set()
+    evidence: list[dict[str, Any]] = []
+    for use_case_id in sorted(linked_ids, key=_natural_identifier_key):
+        spec = specs.get(use_case_id)
+        if not isinstance(spec, Mapping):
+            continue
+        item: dict[str, Any] = {"useCaseId": use_case_id}
+        name = next(
+            (spec.get(key) for key in ("name", "useCaseName", "use_case_name", "title")
+             if isinstance(spec.get(key), str) and spec.get(key).strip()),
+            None,
+        )
+        if name:
+            item["name"] = name.strip()
+        public_contract = spec.get("public_contract")
+        if isinstance(public_contract, Mapping) and "required_values" in public_contract:
+            item["required_values"] = copy.deepcopy(public_contract["required_values"])
+        flow_fields = {
+            "preconditions": ("preconditions",),
+            "trigger": ("trigger",),
+            "main_scenario": ("main_scenario", "mainScenario"),
+            "alternative_scenarios": (
+                "alternative_scenarios", "alternativeScenarios", "alternative_flows", "alternativeFlows",
+            ),
+            "success_guarantee": ("success_guarantee", "successGuarantee"),
+            "minimal_guarantee": ("minimal_guarantee", "minimalGuarantee"),
+            "acceptance_criteria": ("acceptance_criteria", "acceptanceCriteria"),
+        }
+        for target, aliases in flow_fields.items():
+            value = next(
+                (spec[key] for key in aliases if key in spec and spec[key] not in (None, "", [], {})),
+                None,
+            )
+            if value is not None:
+                item[target] = copy.deepcopy(value)
+        for key in ("extensions", "branches"):
+            if key in spec:
+                item[key] = copy.deepcopy(spec[key])
+        evidence.append(item)
+    return evidence
+
+
 def build_workflow_candidates(
     requirements: Any, use_cases: Any, openapi: Mapping[str, Any]
 ) -> list[dict[str, Any]]:
@@ -669,6 +890,10 @@ def build_workflow_candidates(
     )
     trace_links = _traceability_links(use_cases)
     setup_catalog = _operation_catalog(openapi, "", set())
+    for setup_operation in setup_catalog:
+        setup_operation["linkedUseCaseEvidence"] = _setup_use_case_evidence(
+            setup_operation, spec_index
+        )
     functional_requirements = {
         identifier: record
         for identifier, record in requirement_index.items()

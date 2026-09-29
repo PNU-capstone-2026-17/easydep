@@ -168,6 +168,66 @@ def test_literal_parameter_must_satisfy_the_openapi_schema() -> None:
         _validate(document)
 
 
+def test_query_object_literal_is_allowed_only_when_it_matches_openapi_schema() -> None:
+    document = _document()
+    document["workflows"][0]["steps"][0]["parameters"] = [
+        {
+            "name": "filter",
+            "in": "query",
+            "value": {"keyword": "course", "term": "systems"},
+        }
+    ]
+    openapi = _openapi()
+    openapi["paths"]["/items"]["get"]["parameters"] = [
+        {
+            "name": "filter",
+            "in": "query",
+            "schema": {
+                "type": "object",
+                "properties": {"keyword": {"type": "string"}, "term": {"type": "string"}},
+                "required": ["keyword", "term"],
+                "additionalProperties": False,
+            },
+        }
+    ]
+
+    validate_arazzo_document(document, openapi=openapi)
+
+    document["workflows"][0]["steps"][0]["parameters"][0]["value"] = {
+        "keyword": "course",
+        "unexpected": True,
+    }
+    with pytest.raises(ArazzoValidationError, match="frozen OpenAPI schema"):
+        validate_arazzo_document(document, openapi=openapi)
+
+
+def test_malformed_selector_shaped_object_is_not_accepted_as_a_query_literal() -> None:
+    document = _document()
+    document["workflows"][0]["steps"][0]["parameters"] = [
+        {
+            "name": "filter",
+            "in": "query",
+            "value": {"context": "$response.body", "selector": "$.items"},
+        }
+    ]
+    openapi = _openapi()
+    openapi["paths"]["/items"]["get"]["parameters"] = [
+        {
+            "name": "filter",
+            "in": "query",
+            "schema": {
+                "type": "object",
+                "properties": {"context": {"type": "string"}, "selector": {"type": "string"}},
+                "required": ["context", "selector"],
+                "additionalProperties": False,
+            },
+        }
+    ]
+
+    with pytest.raises(ArazzoValidationError, match="selector profile"):
+        validate_arazzo_document(document, openapi=openapi)
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [

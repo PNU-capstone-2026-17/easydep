@@ -37,18 +37,19 @@ from app.testing.utils.functional_executor import (
 from app.validation import stable_digest
 
 PLAN_SYSTEM_PROMPT = """Return exactly one workflow decision JSON object.
-Use the supplied workflowId exactly. Select listed target or optional setup `orderedStepIds`, compatible
+Use the supplied workflowId exactly. Select listed trace-linked target or optional setup `orderedStepIds`, compatible
 `connectionIds`, and grounded success status codes from `planningModel.availableSteps`. Include at least
 one target operation; optional setup steps may precede it only when their typed response output prepares
-an input. Do not treat a schema-valid ID example as persisted data: use a supplied fixture or an earlier
+an input. Repeat a base step ID only when distinct resource instances or repeated state changes are needed;
+code assigns stable occurrence IDs afterward. Do not treat a schema-valid ID example as persisted data: use a supplied fixture or an earlier
 selected setup response when the target needs a resource.
 The same UUID or string shape does not prove the same resource: use operation, response, and schema
 descriptions to distinguish a parent resource ID from a newly created child ID (for example, an order-line
 creation can return a line ID rather than the parent order ID). A setup step must produce the target resource;
 a read/query step does not create a missing fixture.
-For each connected input, choose an exact ID from `connectionChoicesByInput`; never synthesize a
-source-to-target connection ID from operation or field names.
-Choose connection IDs by their semantic source/target meaning; code will compile all Arazzo
+When `connectionChoicesByInput` is supplied, choose an exact short alias for each connected input from it; never synthesize a
+source-to-target connection ID from operation or field names. Choose aliases by their semantic source/target
+meaning; code maps them to canonical IDs and compiles all Arazzo
 parameters, request bodies, outputs, and runtime expressions. Do not return Arazzo fields,
 operation IDs, output names, expressions, literals, request bodies, retries, or prose.
 Add successCriteria only when frozen requirements or use-case guarantees directly state an expected
@@ -63,7 +64,7 @@ PLAN_ROLE_PROMPT = (
 # If the provider reports a completion-length failure, retry at low so hidden
 # reasoning consumes less of the completion allowance and leaves room for JSON.
 # Both paths remain behind the same schema and document validation boundaries.
-_FUNCTIONAL_PLAN_REASONING_EFFORT = "low"
+_FUNCTIONAL_PLAN_REASONING_EFFORT = "medium"
 _FUNCTIONAL_PLAN_LENGTH_RETRY_REASONING_EFFORT = "low"
 _FUNCTIONAL_PLAN_MAX_WORKERS = 4
 
@@ -76,13 +77,23 @@ class AuthoredWorkflowError(ArazzoValidationError):
         self.workflow = deepcopy(workflow)
 
 
+class InvalidConnectionChoiceError(ArazzoPlanningError):
+    """A decision used an alias outside the connection catalog."""
+
+    def __init__(self, message: str, decision: dict[str, Any]):
+        super().__init__(message)
+        self.decision = deepcopy(decision)
+
+
 _WORKFLOW_DECISION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
     "properties": {
         "workflowId": {"type": "string"},
         "orderedStepIds": {
-            "type": "array", "minItems": 1, "uniqueItems": True,
+            # A workflow may deliberately invoke one operation more than once.
+            # Occurrences are assigned stable IDs after this shape-only stage.
+            "type": "array", "minItems": 1,
             "items": {"type": "string"},
         },
         "connectionIds": {
@@ -104,14 +115,39 @@ _WORKFLOW_DECISION_SCHEMA: dict[str, Any] = {
 }
 
 
-def _report(status: str, gate_status: str, reason: str, defect_class: str) -> dict[str, Any]:
-    return {
+def _report(
+    status: str,
+    gate_status: str,
+    reason: str,
+    defect_class: str,
+    *,
+    finding: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    report = {
         "status": status,
         "gateStatus": gate_status,
         "reason": reason,
         "defectClass": defect_class,
         "defect": repair_route(defect_class),
     }
+    if finding:
+        report["finding"] = finding
+    return report
+
+
+def _planning_failure_finding(error: Exception) -> dict[str, Any] | None:
+    workflow_id = getattr(error, "workflow_id", None)
+    use_case_id = getattr(error, "use_case_id", None)
+    if not isinstance(workflow_id, str) or not workflow_id:
+        return None
+    finding = {
+        "code": "WORKFLOW_PLAN_GENERATION_FAILED",
+        "stage": "planning",
+        "workflowId": workflow_id,
+    }
+    if isinstance(use_case_id, str) and use_case_id:
+        finding["useCaseId"] = use_case_id
+    return finding
 
 
 def repair_route(defect_class: str) -> dict[str, Any]:
@@ -129,6 +165,46 @@ def repair_route(defect_class: str) -> dict[str, Any]:
         "repairOwner": route,
         "preserveTests": preserve,
         "preserveCandidate": preserve,
+    }
+
+
+def _planning_failure_analysis(
+    candidate: dict[str, Any], error: Exception,
+) -> dict[str, Any]:
+    """Record a non-executed workflow failure without inventing HTTP evidence."""
+
+    if isinstance(error, (ArazzoPlanningError, ArazzoValidationError, TypeError, ValueError, json.JSONDecodeError)):
+        defect_class, repair_action = "TEST_DEFECT", "repair_test_plan"
+    elif isinstance(error, UpstreamAmbiguity):
+        defect_class, repair_action = "UPSTREAM_AMBIGUITY", "request_design_or_test_data"
+    else:
+        # Provider and transport faults are not proof that the generated graph
+        # is invalid, so retain their environment/inconclusive classification.
+        defect_class, repair_action = "ENVIRONMENT_DEFECT", "restore_environment"
+    trace = candidate.get("trace") if isinstance(candidate.get("trace"), dict) else {}
+    workflow_id = str(candidate.get("workflowId") or "")
+    use_case_id = use_case_id_for_candidate(candidate)
+    route = repair_route(defect_class)
+    return {
+        "workflowId": workflow_id,
+        "useCaseId": use_case_id,
+        "useCaseName": use_case_display_name(candidate),
+        "requirementIds": list(trace.get("requirementIds") or []),
+        "useCaseIds": list(trace.get("useCaseIds") or [use_case_id]),
+        "defectClass": defect_class,
+        "repairOwner": route["repairOwner"],
+        "repairAction": repair_action,
+        "reason": str(error)[-4000:],
+        "finding": {
+            "code": "WORKFLOW_PLAN_GENERATION_FAILED",
+            "stage": "planning",
+            "workflowId": workflow_id,
+            "useCaseId": use_case_id,
+        },
+        "executionStatus": "NOT_RUN",
+        "steps": [],
+        "planDigest": "",
+        "requestDigest": "",
     }
 
 
@@ -156,15 +232,9 @@ def _response_format(candidate: dict[str, Any] | None = None) -> dict[str, Any]:
     schema = deepcopy(_WORKFLOW_DECISION_SCHEMA)
     planning_model = candidate.get("planningModel") if isinstance(candidate, dict) else None
     available_steps = planning_model.get("availableSteps") if isinstance(planning_model, dict) else None
-    connection_ids = sorted({
-        str(connection["connectionId"])
-        for step in available_steps or [] if isinstance(step, dict)
-        for input_slot in step.get("inputs") or [] if isinstance(input_slot, dict)
-        for connection in input_slot.get("connections") or []
-        if isinstance(connection, dict) and isinstance(connection.get("connectionId"), str)
-    })
-    if connection_ids:
-        schema["properties"]["connectionIds"]["items"]["enum"] = connection_ids
+    aliases = sorted(_connection_alias_catalog(available_steps)[0])
+    if aliases:
+        schema["properties"]["connectionIds"]["items"]["enum"] = aliases
     else:
         # With no legal edges the empty list remains valid, but no item is.
         schema["properties"]["connectionIds"]["maxItems"] = 0
@@ -201,10 +271,245 @@ def _validate_workflow_decision(
     )
 
 
+def _connection_alias_catalog(
+    available_steps: Any,
+) -> tuple[dict[str, str], dict[str, list[dict[str, str]]]]:
+    """Give each finite edge a short, deterministic model-facing alias."""
+
+    grouped: dict[str, list[dict[str, str]]] = {}
+    canonical_ids: list[tuple[str, dict[str, Any], dict[str, Any]]] = []
+    for step in available_steps or []:
+        if not isinstance(step, dict) or not isinstance(step.get("stepId"), str):
+            continue
+        for input_slot in step.get("inputs") or []:
+            if not isinstance(input_slot, dict) or not isinstance(input_slot.get("inputSlot"), str):
+                continue
+            for connection in input_slot.get("connections") or []:
+                if isinstance(connection, dict) and isinstance(connection.get("connectionId"), str):
+                    canonical_ids.append((str(connection["connectionId"]), step, input_slot))
+    alias_to_id: dict[str, str] = {}
+    for index, (connection_id, step, input_slot) in enumerate(
+        sorted(canonical_ids, key=lambda item: item[0]), start=1
+    ):
+        alias = f"c{index}"
+        alias_to_id[alias] = connection_id
+        key = f"{step['stepId']}.{input_slot['inputSlot']}"
+        connection = next(
+            item for item in input_slot.get("connections") or []
+            if isinstance(item, dict) and item.get("connectionId") == connection_id
+        )
+        grouped.setdefault(key, []).append(
+            {
+                "choice": alias,
+                "sourceStepId": str(connection.get("sourceStepId") or ""),
+                "sourceOutput": str(connection.get("outputName") or ""),
+            }
+        )
+    return alias_to_id, grouped
+
+
+def _resolve_connection_choices(
+    decision: dict[str, Any], candidate: dict[str, Any]
+) -> dict[str, Any]:
+    """Map model aliases to the planner's canonical edge IDs before compilation."""
+
+    planning_model = candidate.get("planningModel")
+    available_steps = planning_model.get("availableSteps") if isinstance(planning_model, dict) else None
+    alias_to_id, _ = _connection_alias_catalog(available_steps)
+    choices = decision.get("connectionIds")
+    if not isinstance(choices, list) or any(not isinstance(choice, str) for choice in choices):
+        return deepcopy(decision)
+    canonical_ids = set(alias_to_id.values())
+    invalid = [
+        choice for choice in choices
+        if choice not in alias_to_id and choice not in canonical_ids
+    ]
+    if invalid:
+        raise InvalidConnectionChoiceError(
+            "Workflow decision selects an unknown connection ID (invalid connection choice): "
+            + ", ".join(invalid),
+            decision,
+        )
+    resolved = deepcopy(decision)
+    resolved["connectionIds"] = [alias_to_id.get(choice, choice) for choice in choices]
+    return resolved
+
+
+def _collection_match_types_compatible(
+    fixed_input: dict[str, Any], match_output: dict[str, Any]
+) -> bool:
+    """Equality compares values of the same JSON scalar type, not format assignments."""
+    if fixed_input.get("type") != match_output.get("type"):
+        return False
+    fixed_format = fixed_input.get("format")
+    match_format = match_output.get("format")
+    return not (fixed_format and match_format and fixed_format != match_format)
+
+
+def _connection_types_compatible(input_slot: dict[str, Any], output: dict[str, Any]) -> bool:
+    """Mirror the frozen planner's deliberately narrow typed-edge rule."""
+
+    if input_slot.get("type") != output.get("type") or input_slot.get("cardinality") != output.get("cardinality"):
+        return False
+    source_format, target_format = output.get("format"), input_slot.get("format")
+    if source_format == target_format:
+        return True
+    source_specified = isinstance(source_format, str) and bool(source_format.strip())
+    target_specified = isinstance(target_format, str) and bool(target_format.strip())
+    # A value with a known narrower format (for example UUID) is safe for an
+    # otherwise unformatted string slot.  The inverse would claim a format the
+    # producer did not establish; two distinct declared formats are likewise
+    # incompatible.  This mirrors the planner's finite edge catalog.
+    if source_specified and not target_specified:
+        return True
+    # An unformatted response value may be used for a narrower string input
+    # only when it is a concrete response JSON-Pointer leaf.  The executor
+    # validates the actual value against the consumer schema before HTTP.
+    return (
+        not source_specified
+        and target_specified
+        and target_format in jsonschema.FormatChecker.checkers
+        and str(output.get("outputExpression") or "").startswith("$response.body#/")
+    )
+
+
+def _instantiate_repeated_steps(
+    authoring_candidate: dict[str, Any], decision: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Materialize selected operation occurrences before connection authoring.
+
+    The model selects base step IDs in stage one.  This compiler pass gives every
+    occurrence a stable ID and rebuilds only forward, typed edges between those
+    occurrences.  A success criterion naming a repeated base step applies to its
+    last occurrence, which is the final observable result of that operation.
+    """
+
+    ordered = decision.get("orderedStepIds")
+    available = authoring_candidate.get("planningModel", {}).get("availableSteps")
+    if not isinstance(ordered, list) or not isinstance(available, list):
+        raise ArazzoPlanningError("Workflow decision selects an unknown step ID.")
+    base_steps = {
+        str(step.get("stepId")): step for step in available
+        if isinstance(step, dict) and isinstance(step.get("stepId"), str)
+    }
+    if any(not isinstance(step_id, str) or step_id not in base_steps for step_id in ordered):
+        raise ArazzoPlanningError("Workflow decision selects an unknown step ID.")
+    if len(set(ordered)) == len(ordered):
+        # Preserve the already-projected planner contracts and edge order exactly
+        # for the overwhelmingly common non-repeating workflow.
+        return authoring_candidate, decision
+
+    counts: dict[str, int] = {}
+    occurrence_ids: list[str] = []
+    for base_id in ordered:
+        counts[base_id] = counts.get(base_id, 0) + 1
+        occurrence_id = base_id if counts[base_id] == 1 else f"{base_id}-{counts[base_id]}"
+        # Do not collide with an independently selectable, pre-suffixed base ID.
+        # Advancing the suffix remains deterministic and has no fixed clone cap.
+        while occurrence_id in occurrence_ids or (
+            occurrence_id in base_steps and occurrence_id != base_id
+        ):
+            counts[base_id] += 1
+            occurrence_id = f"{base_id}-{counts[base_id]}"
+        occurrence_ids.append(occurrence_id)
+
+    selected_steps: list[dict[str, Any]] = []
+    for base_id, occurrence_id in zip(ordered, occurrence_ids):
+        step = deepcopy(base_steps[base_id])
+        step["stepId"] = occurrence_id
+        for slot in step.get("inputs") or []:
+            if isinstance(slot, dict):
+                slot["connections"] = []
+        selected_steps.append(step)
+
+    for target_index, target in enumerate(selected_steps):
+        for input_slot in target.get("inputs") or []:
+            if not isinstance(input_slot, dict):
+                continue
+            edges: list[dict[str, Any]] = []
+            for source in selected_steps[:target_index]:
+                for output in source.get("outputs") or []:
+                    if not isinstance(output, dict) or not _connection_types_compatible(input_slot, output):
+                        continue
+                    output_name = str(output.get("outputName") or "")
+                    target_slot = str(input_slot.get("inputSlot") or "")
+                    source_id, target_id = str(source["stepId"]), str(target["stepId"])
+                    edges.append({
+                        "connectionId": f"{source_id}.{output_name}->{target_id}.{target_slot}",
+                        "sourceStepId": source_id, "sourceSlot": output.get("slot"),
+                        "outputName": output_name, "outputExpression": output.get("outputExpression"),
+                        "targetStepId": target_id, "targetInputSlot": target_slot,
+                        "value": f"$steps.{source_id}.outputs.{output_name}",
+                    })
+            input_slot["connections"] = edges
+
+    instantiated = deepcopy(authoring_candidate)
+    instantiated["planningModel"]["availableSteps"] = selected_steps
+    resolved = deepcopy(decision)
+    resolved["orderedStepIds"] = occurrence_ids
+    last_occurrence = {base_id: occurrence_id for base_id, occurrence_id in zip(ordered, occurrence_ids)}
+    for criterion in resolved.get("successCriteria") or []:
+        if isinstance(criterion, dict) and criterion.get("stepId") in last_occurrence:
+            criterion["stepId"] = last_occurrence[criterion["stepId"]]
+    return instantiated, resolved
+
+
+def _read_only_setup_operation_ids(candidate: dict[str, Any]) -> set[str]:
+    return {
+        str(operation.get("operationId"))
+        for operation in candidate.get("setupOperations") or []
+        if isinstance(operation, dict)
+        and str(operation.get("method") or "").upper() in {"GET", "HEAD", "OPTIONS"}
+        and operation.get("operationId")
+    }
+
+
+def _reject_read_only_setup_path_connection(
+    candidate: dict[str, Any], connection: dict[str, Any], *, positions: dict[str, int] | None = None
+) -> None:
+    """A setup read may consume only state prepared earlier in this workflow."""
+
+    setup_operation_ids = _read_only_setup_operation_ids(candidate)
+    source_step_id = str(connection.get("sourceStepId") or "")
+    planning_model = candidate.get("planningModel")
+    available_steps = planning_model.get("availableSteps") if isinstance(planning_model, dict) else []
+    source_operation_id = next(
+        (
+            str(step.get("operationId") or "")
+            for step in available_steps or []
+            if isinstance(step, dict) and str(step.get("stepId") or "") == source_step_id
+        ),
+        "",
+    )
+    if source_operation_id not in setup_operation_ids or not str(connection.get("targetInputSlot") or "").startswith("path:"):
+        return
+    source_position = positions.get(source_step_id) if positions else None
+    if source_position is not None:
+        target_ids = {
+            str(operation.get("operationId") or "")
+            for operation in candidate.get("operations") or []
+            if isinstance(operation, dict)
+        }
+        state_prepared = any(
+            str(step.get("operationId") or "") not in target_ids
+            and str(step.get("method") or "").upper() not in {"GET", "HEAD", "OPTIONS"}
+            and positions.get(str(step.get("stepId") or ""), source_position) < source_position
+            for step in available_steps or [] if isinstance(step, dict)
+        )
+        if state_prepared:
+            return
+    raise ArazzoValidationError(
+        "A read-only setup operation may produce a required path resource only after "
+        "an earlier state-changing setup occurrence."
+    )
+
+
 def _compile_workflow_decision(
     decision: dict[str, Any], candidate: dict[str, Any]
 ) -> dict[str, Any]:
     """Compile a closed semantic decision into the canonical Arazzo HTTP profile."""
+
+    decision = _resolve_connection_choices(decision, candidate)
 
     planning_model = candidate.get("planningModel")
     available_steps = planning_model.get("availableSteps") if isinstance(planning_model, dict) else None
@@ -248,8 +553,12 @@ def _compile_workflow_decision(
     ):
         raise ArazzoPlanningError("Workflow decision selects an unknown connection ID.")
     selected_connections = [connection_by_id[connection_id] for connection_id in connection_ids]
+    fixed_inputs = decision.get("fixedInputs") or []
+    if not isinstance(fixed_inputs, list) or any(not isinstance(item, dict) for item in fixed_inputs):
+        raise ArazzoPlanningError("Workflow decision fixedInputs must be an array.")
     targets: set[tuple[str, str]] = set()
     for connection in selected_connections:
+        _reject_read_only_setup_path_connection(candidate, connection, positions=positions)
         source = str(connection.get("sourceStepId") or "")
         target = str(connection.get("targetStepId") or "")
         target_input = str(connection.get("targetInputSlot") or "")
@@ -274,6 +583,52 @@ def _compile_workflow_decision(
         for input_slot in step.get("inputs") or []
         if isinstance(input_slot, dict) and isinstance(input_slot.get("inputSlot"), str)
     }
+    fixed_by_target: dict[tuple[str, str], Any] = {}
+    for item in fixed_inputs:
+        step_id, slot = item.get("targetStepId"), item.get("targetInputSlot")
+        key = (str(step_id), str(slot))
+        if not isinstance(step_id, str) or not isinstance(slot, str) or "value" not in item or key in fixed_by_target:
+            raise ArazzoPlanningError("Workflow decision has an invalid or duplicate fixed input.")
+        input_slot = inputs_by_target.get(key)
+        if input_slot is None or not _literal_input_allowed(input_slot):
+            raise ArazzoPlanningError("Workflow decision fixes an input without explicit literal evidence.")
+        schema = {"type": input_slot["type"]} if isinstance(input_slot.get("type"), str) else {}
+        errors = list(jsonschema.Draft202012Validator(schema).iter_errors(item["value"]))
+        if errors:
+            raise ArazzoPlanningError("Workflow decision fixed input violates its frozen schema type.")
+        fixed_by_target[key] = deepcopy(item["value"])
+    fixed_input_reuses = decision.get("fixedInputReuses") or []
+    if not isinstance(fixed_input_reuses, list) or any(
+        not isinstance(item, dict) for item in fixed_input_reuses
+    ):
+        raise ArazzoPlanningError("Workflow decision fixedInputReuses must be an array.")
+    for reuse in fixed_input_reuses:
+        source_key = (
+            str(reuse.get("sourceStepId") or ""),
+            str(reuse.get("sourceInputSlot") or ""),
+        )
+        target_key = (
+            str(reuse.get("targetStepId") or ""),
+            str(reuse.get("targetInputSlot") or ""),
+        )
+        source_slot = inputs_by_target.get(source_key)
+        target_slot = inputs_by_target.get(target_key)
+        if (
+            source_key not in fixed_by_target
+            or target_key in fixed_by_target
+            or source_slot is None
+            or target_slot is None
+            or not _connection_types_compatible(target_slot, source_slot)
+        ):
+            raise ArazzoPlanningError("Workflow decision has an invalid fixed input reuse.")
+        fixed_by_target[target_key] = deepcopy(fixed_by_target[source_key])
+    required_targets = set(inputs_by_target).intersection(
+        {(step_id, str(slot.get("inputSlot"))) for step_id in ordered_step_ids
+         for slot in steps_by_id[step_id].get("inputs") or [] if isinstance(slot, dict)}
+    )
+    connection_targets = {(str(item["targetStepId"]), str(item["targetInputSlot"])) for item in selected_connections}
+    if connection_targets.intersection(fixed_by_target) or connection_targets | set(fixed_by_target) != required_targets:
+        raise ArazzoPlanningError("Every required selected input needs exactly one connection or fixed literal.")
     body_connections: dict[str, list[dict[str, Any]]] = {}
     for connection in selected_connections:
         target_step = str(connection["targetStepId"])
@@ -294,6 +649,16 @@ def _compile_workflow_decision(
         compiled_steps[source_step].setdefault("outputs", {})[connection["outputName"]] = connection[
             "outputExpression"
         ]
+    for (target_step, target_slot), value in fixed_by_target.items():
+        if target_slot.startswith("body"):
+            body_connections.setdefault(target_step, []).append({
+                "targetInputSlot": target_slot, "value": value, "fixed": True,
+            })
+            continue
+        location, name = target_slot.split(":", 1)
+        compiled_steps[target_step].setdefault("parameters", []).append(
+            {"name": name, "in": location, "value": value}
+        )
     for target_step, connections in body_connections.items():
         selected_slots = {str(connection["targetInputSlot"]) for connection in connections}
         required_body_slots = {
@@ -309,19 +674,42 @@ def _compile_workflow_decision(
         for connection in connections:
             input_slot = inputs_by_target[(target_step, str(connection["targetInputSlot"]))]
             parts = input_slot.get("pointerParts")
-            if not isinstance(parts, tuple) or not parts or "[]" in str(input_slot.get("slot")):
+            if not isinstance(parts, tuple) or not parts:
                 raise ArazzoPlanningError("Only concrete object request-body inputs can be compiled.")
-            current = payload
-            for part in parts[:-1]:
-                current = current.setdefault(part, {})
-            current[parts[-1]] = connection["value"]
-            source_step = str(connection["sourceStepId"])
-            compiled_steps[source_step].setdefault("outputs", {})[connection["outputName"]] = connection[
-                "outputExpression"
-            ]
+            _set_payload_value(payload, parts, connection["value"])
+            if not connection.get("fixed"):
+                source_step = str(connection["sourceStepId"])
+                compiled_steps[source_step].setdefault("outputs", {})[connection["outputName"]] = connection[
+                    "outputExpression"
+                ]
         compiled_steps[target_step]["requestBody"] = {
             "contentType": "application/json", "payload": payload,
         }
+    for pair in decision.get("distinctResourcePairs") or []:
+        left_id, right_id = pair["leftOccurrenceId"], pair["rightOccurrenceId"]
+        left_name, right_name = pair["leftOutputName"], pair["rightOutputName"]
+        output_by_ref = {
+            (step_id, str(output.get("outputName"))): output
+            for step_id, step in steps_by_id.items()
+            for output in step.get("outputs") or [] if isinstance(output, dict)
+        }
+        for source_id, output_name in ((left_id, left_name), (right_id, right_name)):
+            output = output_by_ref.get((source_id, output_name))
+            if output is None:
+                raise ArazzoPlanningError("Distinct-resource assertion references an unknown output.")
+            compiled_steps[source_id].setdefault("outputs", {})[output_name] = output["outputExpression"]
+        last_step = ordered_step_ids[-1]
+        left_value = (
+            output_by_ref[(left_id, left_name)]["outputExpression"]
+            if left_id == last_step else f"$steps.{left_id}.outputs.{left_name}"
+        )
+        right_value = (
+            output_by_ref[(right_id, right_name)]["outputExpression"]
+            if right_id == last_step else f"$steps.{right_id}.outputs.{right_name}"
+        )
+        compiled_steps[last_step].setdefault("successCriteria", []).append(
+            {"condition": f"{left_value} != {right_value}"}
+        )
     for criterion in decision.get("successCriteria") or []:
         step_id = criterion.get("stepId") if isinstance(criterion, dict) else None
         status = criterion.get("statusCode") if isinstance(criterion, dict) else None
@@ -330,6 +718,31 @@ def _compile_workflow_decision(
         compiled_steps[str(step_id)].setdefault("successCriteria", []).append(
             {"condition": f"$statusCode == {status}"}
         )
+    for selection in decision.get("collectionSelections") or []:
+        collection_id = str(selection.get("collectionOccurrenceId") or "")
+        output_name = str(selection.get("selectedOutputName") or "")
+        fixed_key = (
+            str(selection.get("fixedInputOccurrenceId") or ""),
+            str(selection.get("fixedInputSlot") or ""),
+        )
+        if collection_id not in compiled_steps or output_name not in (compiled_steps[collection_id].get("outputs") or {}):
+            raise ArazzoPlanningError("Collection selector must replace a connected output declaration.")
+        if fixed_key not in fixed_by_target:
+            raise ArazzoPlanningError("Collection selector has no compiled fixed input value.")
+        match_pointer = list(selection.get("matchItemPointerParts") or [])
+        selected_pointer = list(selection.get("selectedItemPointerParts") or [])
+        array_root_parts = _pointer_parts(str(selection.get("arrayRootPointer") or "#"))
+        if not match_pointer or not selected_pointer or any(part.isdigit() for part in array_root_parts):
+            raise ArazzoPlanningError("Collection selector paths must be finite OpenAPI item paths.")
+        literal = json.dumps(fixed_by_target[fixed_key], ensure_ascii=False, separators=(",", ":"))
+        selector = (
+            "$" + _jsonpath_members(array_root_parts)
+            + "[?@" + _jsonpath_members(match_pointer) + " == " + literal + "]"
+            + _jsonpath_members(selected_pointer)
+        )
+        compiled_steps[collection_id]["outputs"][output_name] = {
+            "type": "jsonpath", "context": "$response.body", "selector": selector,
+        }
     return attach_workflow_trace(
         {
             "workflowId": candidate["workflowId"],
@@ -337,6 +750,60 @@ def _compile_workflow_decision(
         },
         candidate,
     )
+
+
+def _literal_input_allowed(input_slot: dict[str, Any]) -> bool:
+    """Accept schema-grounded literals unless the path denotes a resource identity."""
+    if input_slot.get("literalEvidence") or input_slot.get("sourceKind") == "literal":
+        return True
+    if any(key in input_slot for key in ("const", "default", "example", "examples", "enum")):
+        return True
+    if not str(input_slot.get("inputSlot") or "").startswith("path:"):
+        return True
+    # Numeric and boolean path parameters are ordinary scalar inputs (for
+    # example, calculator operands). String/UUID and integer paths can encode
+    # resource identities, so they still need a producer or explicit evidence.
+    return input_slot.get("type") in {"number", "boolean"}
+
+
+def _set_payload_value(payload: dict[str, Any], parts: tuple[str, ...], value: Any) -> None:
+    """Set a concrete object/array JSON-pointer path (including numeric indices)."""
+    current: Any = payload
+    for index, part in enumerate(parts):
+        final = index == len(parts) - 1
+        numeric = part.isdigit()
+        if isinstance(current, list):
+            if not numeric:
+                raise ArazzoPlanningError("Array request-body pointer must use a numeric index.")
+            position = int(part)
+            while len(current) <= position:
+                current.append(None)
+            if final:
+                current[position] = value
+            else:
+                next_is_array = parts[index + 1].isdigit()
+                if current[position] is None:
+                    current[position] = [] if next_is_array else {}
+                current = current[position]
+        else:
+            if final:
+                current[part] = value
+            else:
+                next_is_array = parts[index + 1].isdigit()
+                current = current.setdefault(part, [] if next_is_array else {})
+
+
+def _jsonpath_members(parts: list[str] | tuple[str, ...]) -> str:
+    return "".join(f"[{json.dumps(str(part), ensure_ascii=False)}]" for part in parts)
+
+
+def _pointer_parts(pointer: str) -> list[str]:
+    if pointer in {"", "#"}:
+        return []
+    raw = pointer.removeprefix("#")
+    if not raw.startswith("/"):
+        raise ArazzoPlanningError("Collection selection has an invalid frozen JSON Pointer.")
+    return [part.replace("~1", "/").replace("~0", "~") for part in raw[1:].split("/")]
 
 
 def _schema_supports_pointer(
@@ -432,6 +899,47 @@ def _schema_guarantees_pointer(
         return False
 
     return walk(schema, parts)
+
+
+def _schema_pointer_uses_array_index(
+    schema: Any, pointer: str, openapi: dict[str, Any]
+) -> bool:
+    """Return whether a schema-valid pointer path traverses an array index."""
+
+    if pointer in {"", "#"}:
+        return False
+    raw = pointer.removeprefix("#")
+    if not raw.startswith("/"):
+        return False
+    parts = raw[1:].split("/")
+
+    def walk(value: Any, remaining: list[str], used_array_index: bool) -> bool:
+        try:
+            resolved = resolve_schema(openapi, value)
+        except (TypeError, ValueError):
+            return False
+        if not remaining:
+            return used_array_index
+        alternatives = [
+            item
+            for key in ("allOf", "anyOf", "oneOf")
+            for item in resolved.get(key) or []
+            if isinstance(item, dict)
+        ]
+        if alternatives:
+            return any(walk(item, remaining, used_array_index) for item in alternatives)
+        part = remaining[0].replace("~1", "/").replace("~0", "~")
+        if (resolved.get("type") == "array" or "items" in resolved) and part.isdigit():
+            return walk(resolved.get("items"), remaining[1:], True)
+        properties = resolved.get("properties")
+        if isinstance(properties, dict) and part in properties:
+            return walk(properties[part], remaining[1:], used_array_index)
+        additional = resolved.get("additionalProperties")
+        if isinstance(additional, dict):
+            return walk(additional, remaining[1:], used_array_index)
+        return False
+
+    return walk(schema, parts, False)
 
 
 def _classify_missing_workflow_data(
@@ -707,19 +1215,7 @@ def _planning_model(
         for operation in candidate.get("operations") or []
         if isinstance(operation, dict) and isinstance(operation.get("operationId"), str)
     )
-    connection_choices = {
-        f"{step['stepId']}.{input_slot['inputSlot']}": [
-            str(connection["connectionId"])
-            for connection in input_slot.get("connections") or []
-            if isinstance(connection, dict) and isinstance(connection.get("connectionId"), str)
-        ]
-        for step in available_steps
-        if isinstance(step, dict) and isinstance(step.get("stepId"), str)
-        for input_slot in step.get("inputs") or []
-        if isinstance(input_slot, dict)
-        and isinstance(input_slot.get("inputSlot"), str)
-        and input_slot.get("connections")
-    }
+    _, connection_choices = _connection_alias_catalog(available_steps)
     return {
         "intent": {"requirements": requirements, "useCase": compact_use_case},
         "targetOperationIds": target_operation_ids,
@@ -739,15 +1235,808 @@ def _authoring_candidate(
     candidate: dict[str, Any], available_steps: list[dict[str, Any]]
 ) -> dict[str, Any]:
     value = deepcopy(candidate)
-    value["planningModel"] = _planning_model(candidate, available_steps)
+    projected_steps = deepcopy(available_steps)
+    value["planningModel"] = _planning_model(candidate, projected_steps)
     return value
+
+
+def _identity_input_requests(
+    candidate: dict[str, Any], steps: list[dict[str, Any]], *, target_only: bool = False,
+    all_scalar: bool = False,
+) -> list[dict[str, Any]]:
+    """Find identity-like path inputs from slot contracts, never field-name guesses."""
+    requests = []
+    linked_by_operation = {
+        str(operation.get("operationId")): operation.get("linkedUseCaseEvidence") or []
+        for operation in candidate.get("setupOperations") or []
+        if isinstance(operation, dict) and operation.get("operationId")
+    }
+    target_ids = set(candidate.get("planningModel", {}).get("targetOperationIds") or [])
+    for step in steps:
+        if target_only and step.get("operationId") not in target_ids:
+            continue
+        for slot in step.get("inputs") or []:
+            name = str(slot.get("inputSlot") or "")
+            if not name.startswith("path:") or slot.get("type") not in {"string", "integer", "number", "boolean"}:
+                continue
+            explicit_identity = bool(
+                slot.get("resourceRole") or slot.get("identityObligationRef")
+                or slot.get("valueRef") and slot.get("evidenceRefs")
+                or str(slot.get("sourceKind") or "").lower() in {"resource", "identity", "system_result"}
+            )
+            if all_scalar or slot.get("format") == "uuid" or explicit_identity:
+                use_case = candidate.get("useCase") if isinstance(candidate.get("useCase"), dict) else {}
+                is_target = step.get("operationId") in {
+                    str(operation.get("operationId")) for operation in candidate.get("operations") or []
+                }
+                if is_target:
+                    contract = use_case.get("public_contract", {})
+                    evidence = {
+                        key: use_case[key] for key in (
+                            "trigger", "main_scenario", "success_guarantee",
+                        ) if key in use_case
+                    }
+                    if isinstance(contract, dict):
+                        evidence["public_contract"] = {
+                            key: contract[key] for key in (
+                                "required_values", "identity_obligations",
+                            ) if key in contract
+                        }
+                else:
+                    evidence = linked_by_operation.get(str(step.get("operationId")), [])
+                if isinstance(evidence, list):
+                    evidence = [
+                        {key: item[key] for key in (
+                            "useCaseId", "name", "preconditions", "trigger", "main_scenario",
+                            "success_guarantee", "required_values",
+                        ) if key in item}
+                        for item in evidence if isinstance(item, dict)
+                    ]
+                requests.append({
+                    "targetOperationId": step["operationId"],
+                    "targetInputSlot": name,
+                    "inputContract": {key: slot.get(key) for key in (
+                        "type", "format", "cardinality", "description", "resourceRole",
+                        "sourceKind", "valueRef", "evidenceRefs",
+                    ) if slot.get(key) is not None} | {"literalAllowed": _literal_input_allowed(slot)},
+                    "useCaseEvidence": evidence,
+                })
+    return requests
+
+
+def _operation_identity_evidence(linked_use_cases: Any) -> list[dict[str, Any]]:
+    """Project operation-level identity declarations without assigning them to outputs."""
+    evidence: list[dict[str, Any]] = []
+    for linked in linked_use_cases if isinstance(linked_use_cases, list) else []:
+        if not isinstance(linked, dict):
+            continue
+        use_case_id = linked.get("useCaseId") or linked.get("use_case_id")
+        values = linked.get("required_values") or linked.get("requiredValues") or []
+        for value in values if isinstance(values, list) else []:
+            if not isinstance(value, dict) or str(value.get("source") or "").lower() != "system_result":
+                continue
+            item = {key: deepcopy(value[key]) for key in (
+                "value_ref", "valueRef", "name", "value_type", "valueType",
+                "identity_obligation_ref", "identityObligationRef", "requirement_ids",
+            ) if key in value}
+            if item:
+                evidence.append({"useCaseId": use_case_id, "scope": "operation", "value": item})
+    return evidence
+
+
+
+def _select_semantic_producers(
+    client: OpenAI, candidate: dict[str, Any], openapi: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Select semantic producers from finite, typed, state-changing choices."""
+    steps = candidate.get("planningModel", {}).get("availableSteps") or []
+    pending = _identity_input_requests(candidate, steps, target_only=True)
+    if not pending:
+        return []
+    steps_by_operation = {str(step.get("operationId")): step for step in steps}
+    setup = {str(item.get("operationId")): item for item in candidate.get("setupOperations") or []}
+    connection = build_arazzo_llm_connection()
+    profile = profile_for(connection.model, fallback_temperature=settings.temperature,
+                          fallback_max_tokens=settings.llm_max_completion_tokens or 4096)
+    selections = []
+    processed: set[tuple[str, str]] = set()
+    while pending:
+        request = pending.pop(0)
+        key = (str(request.get("targetOperationId")), str(request.get("targetInputSlot")))
+        if key in processed:
+            continue
+        processed.add(key)
+        target_step = next(step for step in steps if step.get("operationId") == request["targetOperationId"])
+        slot = next(slot for slot in target_step.get("inputs") or [] if slot.get("inputSlot") == request["targetInputSlot"])
+        options = []
+        collection_choices_by_option: dict[str, list[dict[str, Any]]] = {}
+        evidence_refs = set()
+        for step in steps:
+            operation_id = str(step.get("operationId") or "")
+            method = str(step.get("method") or "").upper()
+            if operation_id == request["targetOperationId"]:
+                continue
+            source = setup.get(operation_id, {})
+            for output in step.get("outputs") or []:
+                if not _connection_types_compatible(slot, output):
+                    continue
+                collection_candidates = [
+                    item for item in step.get("collectionSelectionCandidates") or []
+                    if isinstance(item, dict) and item.get("selectedOutputName") == output.get("outputName")
+                    and _connection_types_compatible(
+                        slot, {"type": item.get("selectedType"), "format": item.get("selectedFormat"),
+                               "cardinality": "one", "outputExpression": item.get("selectedOutputExpression")}
+                    )
+                ]
+                if method not in {"POST", "PUT", "PATCH"} and not (
+                    method == "GET" and collection_candidates
+                ):
+                    continue
+                option_id = f"{operation_id}.{output.get('outputName')}"
+                collection_choices_by_option[option_id] = collection_candidates
+                ref = f"openapi.operation:{operation_id}.output:{output.get('outputName')}"
+                evidence = []
+                for linked in source.get("linkedUseCaseEvidence") or []:
+                    item = {key: linked[key] for key in (
+                        "useCaseId", "name", "trigger", "main_scenario", "success_guarantee",
+                    ) if key in linked}
+                    if item:
+                        evidence.append(item)
+                        if item.get("useCaseId"):
+                            evidence_refs.add(f"use_case:{item['useCaseId']}")
+                evidence_refs.add(ref)
+                options.append({
+                    "optionId": option_id, "operationId": operation_id, "method": step.get("method"),
+                    "summary": step.get("summary"), "outputName": output.get("outputName"),
+                    "outputPath": output.get("slot"), "type": output.get("type"),
+                    "format": output.get("format"), "responseDescription": output.get("responseDescription"),
+                    "linkedUseCaseEvidence": evidence,
+                    # Required values are linked to the operation, not to an exact
+                    # response slot unless the frozen contract supplies that mapping.
+                    "operationIdentityEvidence": _operation_identity_evidence(
+                        source.get("linkedUseCaseEvidence")
+                    ),
+                    "schemaGuaranteesNonNullValue": _output_guarantees_non_null(
+                        source, output, openapi
+                    ),
+                    "collectionLookupAvailable": bool(collection_candidates),
+                })
+        if not options:
+            continue
+        schema = {
+            "type": "object", "additionalProperties": False,
+            "properties": {
+                "decision": {"type": "string", "enum": ["select", "deferred_collection_lookup", "literal", "unsupported"]},
+                "sourceOptionId": {"type": ["string", "null"], "enum": [*(item["optionId"] for item in options), None]},
+                "evidenceRefs": {"type": "array", "items": {"type": "string", "enum": sorted(evidence_refs)}},
+            },
+            "required": ["decision", "sourceOptionId", "evidenceRefs"],
+        }
+        payload = {
+            "target": request,
+            "producerOptions": options,
+            "rules": [
+                "Select only a listed option or unsupported.",
+                "Type compatibility is not resource identity; use response descriptions and linked use-case flow evidence.",
+                "Target resourceRole/valueRef and operationIdentityEvidence can support a semantic role choice, but operation-level evidence does not prove that a particular output is that value unless an explicit output reference mapping is present.",
+                "Do not treat different declared resource roles as interchangeable merely because their schemas have the same type or format.",
+                "Do not infer fixture existence or guaranteed output presence from an optional or nullable schema.",
+                "An array item is not a direct producer. Choose deferred_collection_lookup only when a listed finite collectionSelectionCandidate can match one of its item fields to an earlier fixed input; the graph must complete that relation.",
+                "A caller_input value declares an API input, not an already-persisted test fixture.",
+                "Choose literal only when target.inputContract.literalAllowed is true; otherwise use a grounded producer or unsupported.",
+            ],
+        }
+        request_args: dict[str, Any] = {
+            "model": connection.model, "temperature": profile.temperature,
+            "messages": [
+                {"role": "system", "content": "Choose a semantic producer only from frozen API and linked-flow evidence."},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))},
+            ],
+            "response_format": {"type": "json_schema", "json_schema": {
+                "name": "ArazzoProducerChoice", "strict": True, "schema": schema,
+            }},
+            "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens or 4096),
+        }
+        if profile.top_p is not None:
+            request_args["top_p"] = profile.top_p
+        if effort := profile.resolve_reasoning(_FUNCTIONAL_PLAN_REASONING_EFFORT):
+            request_args["reasoning_effort"] = effort
+        if extra := _structured_output_extra_body(connection, profile):
+            request_args["extra_body"] = extra
+        value = json.loads(_completion_content(
+            client.chat.completions.create(**request_args), operation="Arazzo semantic producer selection"
+        ))
+        jsonschema.Draft202012Validator(schema).validate(value)
+        selected = next((item for item in options if item["optionId"] == value.get("sourceOptionId")), None)
+        if value.get("decision") == "select" and selected:
+            is_collection = bool(selected.get("collectionLookupAvailable"))
+            selections.append({
+                "targetOperationId": request["targetOperationId"],
+                "targetInputSlot": request["targetInputSlot"],
+                **({"decision": "deferred_collection_lookup"} if is_collection else {}),
+                "sourceOperationId": selected["operationId"],
+                "sourceOutputName": selected["outputName"],
+            })
+            producer_step = steps_by_operation.get(str(selected["operationId"]))
+            if producer_step:
+                pending.extend(_identity_input_requests(candidate, [producer_step], all_scalar=True))
+        elif value.get("decision") == "deferred_collection_lookup" and selected:
+            if not collection_choices_by_option.get(str(value.get("sourceOptionId"))):
+                raise ArazzoPlanningError("Deferred collection lookup has no finite schema-derived item paths.")
+            selections.append({
+                "targetOperationId": request["targetOperationId"],
+                "targetInputSlot": request["targetInputSlot"],
+                "decision": "deferred_collection_lookup",
+                "sourceOperationId": selected["operationId"],
+                "sourceOutputName": selected["outputName"],
+            })
+            producer_step = steps_by_operation.get(str(selected["operationId"]))
+            if producer_step:
+                pending.extend(_identity_input_requests(candidate, [producer_step], all_scalar=True))
+        elif value.get("decision") == "literal" and value.get("sourceOptionId") is None:
+            if not _literal_input_allowed(slot):
+                raise ArazzoPlanningError("Producer selection requested a literal for an input without literal evidence.")
+            selections.append({
+                "targetOperationId": request["targetOperationId"],
+                "targetInputSlot": request["targetInputSlot"],
+                "decision": "literal",
+            })
+        elif value.get("decision") == "unsupported" and value.get("sourceOptionId") is None:
+            raise ArazzoPlanningError("No grounded producer was selected for a required resource input.")
+    return selections
+
+
+def _output_guarantees_non_null(
+    operation: dict[str, Any], output: dict[str, Any], openapi: dict[str, Any]
+) -> bool:
+    """Report schema certainty without treating an optional edge as a value guarantee."""
+    expression = str(output.get("outputExpression") or "")
+    pointer = expression.removeprefix("$response.body")
+    schemas = [
+        item.get("schema") for item in operation.get("responses") or []
+        if isinstance(item, dict) and str(item.get("status") or "").startswith("2")
+        and isinstance(item.get("schema"), dict)
+    ]
+    if not schemas:
+        return False
+    if pointer in {"", "#"}:
+        for schema in schemas:
+            try:
+                root_schema = resolve_schema(openapi, schema)
+            except (TypeError, ValueError):
+                return False
+            root_type = root_schema.get("type")
+            if (
+                root_schema.get("nullable") is True
+                or root_type is None
+                or isinstance(root_type, list) and "null" in root_type
+            ):
+                return False
+        return True
+    if not pointer.startswith("#/"):
+        return False
+    for schema in schemas:
+        if not _schema_guarantees_pointer(schema, pointer, openapi):
+            return False
+        current: Any = schema
+        try:
+            for part in pointer.removeprefix("#/").split("/"):
+                current = resolve_schema(openapi, current)
+                if current.get("type") == "array" and part.isdigit():
+                    current = current.get("items")
+                else:
+                    current = current.get("properties", {}).get(part.replace("~1", "/").replace("~0", "~"))
+                if not isinstance(current, dict):
+                    return False
+            current = resolve_schema(openapi, current)
+        except (TypeError, ValueError):
+            return False
+        value_type = current.get("type")
+        if current.get("nullable") is True or isinstance(value_type, list) and "null" in value_type:
+            return False
+    return True
+
+
+_GRAPH_PROMPT = """Return one closed workflow graph JSON object. Select one or more occurrences from the finite operation catalog, including at least one trace-linked target operation. Repeat an operation only when the workflow needs distinct instances or state changes. List occurrences in execution order. For every required input of every selected occurrence, return exactly one requiredInputs item: either literalNeeded=true, bind it to an earlier occurrence output, or reuse an earlier fixed input with sourceInputOccurrenceId and sourceInputSlot. Reuse is allowed only from an earlier state-changing operation's literal input with a compatible type and format. Set sourceOccurrenceId and sourceOutputName only for an output binding. Use the exact slot and output names from the catalog. A GET, HEAD, or OPTIONS setup read may feed a required path input only after an earlier selected state-changing setup occurrence; it cannot establish an existing resource on its own. An unformatted response may fill a narrower string format only when the catalog marks it as a JSON-Pointer leaf; the runtime will validate the actual value. Mark a distinct_resource_identity pair when the workflow requires two outputs to refer to different resources; do not infer distinction from matching UUID/string formats alone. Include successCriteria only when frozen requirements or use-case guarantees state an expected result, and cite a listed occurrence and its grounded success status. Do not return prose, Arazzo fields, URLs, request bodies, expressions, or invented catalog entries."""
+
+_COLLECTION_GRAPH_PROMPT = """ For any array item output marked for deferred collection lookup, add one collectionSelections entry. Choose only its finite selectionId, and link the item match field to an earlier required input marked literalNeeded; do not choose an array index or author a selector. Match and returned fields must belong to the same declared array item."""
+
+
+def _accepted_collection_choices(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    """Project compact graph choices only for producer outputs already accepted semantically."""
+    constraints = [
+        item for item in candidate.get("planningModel", {}).get("producerSelections") or []
+        if isinstance(item, dict) and item.get("decision") == "deferred_collection_lookup"
+    ]
+    result: list[dict[str, Any]] = []
+    for constraint in constraints:
+        for step in candidate.get("planningModel", {}).get("availableSteps") or []:
+            if not isinstance(step, dict) or step.get("operationId") != constraint.get("sourceOperationId"):
+                continue
+            for item in step.get("collectionSelectionCandidates") or []:
+                if not isinstance(item, dict) or item.get("selectedOutputName") != constraint.get("sourceOutputName"):
+                    continue
+                result.append({key: deepcopy(item[key]) for key in (
+                    "selectionId", "matchOutputName", "matchType", "matchFormat",
+                    "selectedOutputName", "selectedType", "selectedFormat",
+                ) if key in item})
+                result[-1]["sourceOperationId"] = str(step.get("operationId") or "")
+    return result
+
+
+def _graph_response_format(candidate: dict[str, Any]) -> dict[str, Any]:
+    steps = candidate.get("planningModel", {}).get("availableSteps") or []
+    operation_ids = sorted({str(step["operationId"]) for step in steps if isinstance(step, dict) and step.get("operationId")})
+    input_slots = sorted({str(slot["inputSlot"]) for step in steps if isinstance(step, dict) for slot in step.get("inputs") or [] if isinstance(slot, dict) and slot.get("inputSlot")})
+    output_names = sorted({str(output["outputName"]) for step in steps if isinstance(step, dict) for output in step.get("outputs") or [] if isinstance(output, dict) and output.get("outputName")})
+    statuses = sorted({int(status) for step in steps if isinstance(step, dict) for status in step.get("successStatuses") or [] if str(status).isdigit()})
+    collection_selection_ids = sorted({
+        choice["selectionId"] for choice in _accepted_collection_choices(candidate)
+    })
+    occurrence_ref = {"type": "string", "pattern": "^o[1-9][0-9]*$"}
+    input_properties: dict[str, Any] = {
+        "targetOccurrenceId": deepcopy(occurrence_ref),
+        "targetInputSlot": {"type": "string", "enum": input_slots},
+        "literalNeeded": {"type": "boolean"},
+        "sourceOccurrenceId": {"type": ["string", "null"], "pattern": "^o[1-9][0-9]*$"},
+        "sourceOutputName": {"type": ["string", "null"], "enum": [*output_names, None]},
+        "sourceInputOccurrenceId": {"type": ["string", "null"], "pattern": "^o[1-9][0-9]*$"},
+        "sourceInputSlot": {"type": ["string", "null"], "enum": [*input_slots, None]},
+    }
+    schema = {
+        "type": "object", "additionalProperties": False,
+        "properties": {
+            "workflowId": {"type": "string", "const": str(candidate.get("workflowId") or "")},
+            "occurrences": {
+                "type": "array", "minItems": 1,
+                "items": {"type": "object", "additionalProperties": False,
+                          "properties": {"occurrenceId": deepcopy(occurrence_ref), "operationId": {"type": "string", "enum": operation_ids}},
+                          "required": ["occurrenceId", "operationId"]},
+            },
+            "requiredInputs": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": False,
+                          "properties": input_properties,
+                          "required": ["targetOccurrenceId", "targetInputSlot", "literalNeeded"]},
+            },
+            "distinctResourcePairs": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": False,
+                          "properties": {
+                              "leftOccurrenceId": deepcopy(occurrence_ref),
+                              "leftOutputName": {"type": "string", "enum": output_names},
+                              "rightOccurrenceId": deepcopy(occurrence_ref),
+                              "rightOutputName": {"type": "string", "enum": output_names},
+                              "relation": {"type": "string", "enum": ["distinct_resource_identity"]},
+                          },
+                          "required": ["leftOccurrenceId", "leftOutputName", "rightOccurrenceId", "rightOutputName", "relation"]},
+            },
+            "collectionSelections": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": False,
+                          "properties": {
+                              "selectionId": {"type": "string", "enum": collection_selection_ids},
+                              "collectionOccurrenceId": deepcopy(occurrence_ref),
+                              "targetOccurrenceId": deepcopy(occurrence_ref),
+                              "targetInputSlot": {"type": "string", "enum": input_slots},
+                              "fixedInputOccurrenceId": deepcopy(occurrence_ref),
+                              "fixedInputSlot": {"type": "string", "enum": input_slots},
+                          },
+                          "required": ["selectionId", "collectionOccurrenceId", "targetOccurrenceId", "targetInputSlot", "fixedInputOccurrenceId", "fixedInputSlot"]},
+            },
+            "successCriteria": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": False,
+                          "properties": {"occurrenceId": deepcopy(occurrence_ref), "statusCode": {"type": "integer", "enum": statuses}},
+                          "required": ["occurrenceId", "statusCode"]},
+            },
+        },
+        "required": ["workflowId", "occurrences", "requiredInputs", "distinctResourcePairs"],
+    }
+    if collection_selection_ids:
+        schema["properties"]["collectionSelections"]["minItems"] = 1
+        schema["required"].append("collectionSelections")
+    else:
+        schema["properties"].pop("collectionSelections", None)
+    return {"type": "json_schema", "json_schema": {"name": "ArazzoWorkflowGraph", "strict": False, "schema": schema}}
+
+
+def _graph_catalog(candidate: dict[str, Any]) -> list[dict[str, Any]]:
+    catalog = []
+    collection_choices_by_operation: dict[str, list[dict[str, Any]]] = {}
+    for choice in _accepted_collection_choices(candidate):
+        collection_choices_by_operation.setdefault(str(choice["sourceOperationId"]), []).append(
+            {key: deepcopy(value) for key, value in choice.items() if key != "sourceOperationId"}
+        )
+    target_ids = set(candidate["planningModel"].get("targetOperationIds") or [])
+    linked_evidence_by_operation = {
+        str(operation.get("operationId")): operation["linkedUseCaseEvidence"]
+        for operation in candidate.get("setupOperations") or []
+        if isinstance(operation, dict)
+        and operation.get("operationId")
+        and isinstance(operation.get("linkedUseCaseEvidence"), list)
+        and operation["linkedUseCaseEvidence"]
+    }
+    for step in candidate["planningModel"].get("availableSteps") or []:
+        if not isinstance(step, dict):
+            continue
+        method = str(step.get("method") or "").upper()
+        role = "read_only_setup" if step.get("operationId") not in target_ids and method in {"GET", "HEAD", "OPTIONS"} else "target" if step.get("operationId") in target_ids else "optional_setup"
+        entry = {
+            "operationId": step.get("operationId"),
+            "role": role,
+            "method": method,
+            "summary": step.get("summary"),
+            "description": step.get("description"),
+            "requiredInputs": [
+                {key: slot.get(key) for key in ("inputSlot", "type", "format", "cardinality", "description") if key in slot}
+                | {"literalAllowed": _literal_input_allowed(slot)}
+                for slot in step.get("inputs") or [] if isinstance(slot, dict)
+            ],
+            "outputs": [
+                {key: output.get(key) for key in ("outputName", "slot", "type", "format", "cardinality", "description", "responseDescription") if key in output}
+                | {"jsonPointerLeaf": str(output.get("outputExpression") or "").startswith("$response.body#/")}
+                for output in step.get("outputs") or [] if isinstance(output, dict)
+            ],
+            "successStatuses": step.get("successStatuses") or [],
+        }
+        if choices := collection_choices_by_operation.get(str(step.get("operationId") or "")):
+            entry["collectionSelectionCandidates"] = choices
+        linked_evidence = linked_evidence_by_operation.get(str(step.get("operationId") or ""))
+        if linked_evidence and step.get("operationId") not in target_ids:
+            entry["linkedUseCaseEvidence"] = deepcopy(linked_evidence)
+        catalog.append(entry)
+    return catalog
+
+
+def _workflow_graph_prompt(
+    candidate: dict[str, Any], correction_context: dict[str, Any] | None = None
+) -> str:
+    producer_selections = candidate["planningModel"].get("producerSelections") or []
+    prompt = (
+        _GRAPH_PROMPT
+        + (_COLLECTION_GRAPH_PROMPT if any(
+            step.get("collectionSelectionCandidates")
+            for step in candidate["planningModel"].get("availableSteps") or []
+            if isinstance(step, dict)
+        ) else "")
+        + "\n\nFrozen workflow intent:\n"
+        + json.dumps(candidate["planningModel"].get("intent") or {}, ensure_ascii=False, separators=(",", ":"))
+        + "\n\nFinite operation, required-input, output, and status catalog:\n"
+        + json.dumps(_graph_catalog(candidate), ensure_ascii=False, separators=(",", ":"))
+        + ("\n\nSelected producer or literal bindings that the graph must include exactly:\n"
+           + json.dumps(producer_selections, ensure_ascii=False, separators=(",", ":"))
+           if producer_selections else "")
+        + "\n\nRequired response fields are workflowId, occurrences, requiredInputs, and distinctResourcePairs. "
+        + "Each requiredInputs record uses targetOccurrenceId, targetInputSlot, literalNeeded, and either sourceOccurrenceId/sourceOutputName for an output binding or sourceInputOccurrenceId/sourceInputSlot to reuse an earlier fixed input. "
+        + "Optional successCriteria records use occurrenceId and statusCode.\n"
+        + "workflowId: " + str(candidate.get("workflowId") or "")
+    )
+    if correction_context:
+        prompt += (
+            "\n\nRebuild the graph using the same frozen intent and catalog. The previous graph failed local "
+            "structural validation. Correct the reported issue while preserving valid intent:\n"
+            + json.dumps(correction_context, ensure_ascii=False, separators=(",", ":"))
+        )
+    return prompt
+
+
+def _generate_workflow_graph(
+    client: OpenAI,
+    candidate: dict[str, Any],
+    correction_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    connection = build_arazzo_llm_connection()
+    profile = profile_for(connection.model, fallback_temperature=settings.temperature,
+                          fallback_max_tokens=settings.llm_max_completion_tokens or 16384)
+    request: dict[str, Any] = {
+        "model": connection.model,
+        "temperature": profile.temperature,
+        "messages": [
+            {"role": "system", "content": PLAN_ROLE_PROMPT},
+            {"role": "user", "content": _workflow_graph_prompt(candidate, correction_context)},
+        ],
+        "response_format": _graph_response_format(candidate),
+        "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens),
+    }
+    if profile.top_p is not None:
+        request["top_p"] = profile.top_p
+    if reasoning_effort := profile.resolve_reasoning(_FUNCTIONAL_PLAN_REASONING_EFFORT):
+        request["reasoning_effort"] = reasoning_effort
+    if extra_body := _structured_output_extra_body(connection, profile):
+        request["extra_body"] = extra_body
+    value = json.loads(_completion_content(client.chat.completions.create(**request), operation="Arazzo workflow graph generation"))
+    jsonschema.Draft202012Validator(_graph_response_format(candidate)["json_schema"]["schema"]).validate(value)
+    return value
+
+
+def _validated_graph_projection(
+    candidate: dict[str, Any], graph: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any], list[tuple[str, str, dict[str, Any]]]]:
+    """Validate all model refs against the finite operation, slot, and output catalog."""
+    steps = candidate["planningModel"].get("availableSteps") or []
+    by_operation = {str(step["operationId"]): step for step in steps if isinstance(step, dict) and step.get("operationId")}
+    occurrences = graph.get("occurrences")
+    if graph.get("workflowId") != candidate.get("workflowId") or not isinstance(occurrences, list) or not occurrences:
+        raise ArazzoPlanningError("Workflow graph does not match the frozen workflow scope.")
+    occurrence_map: dict[str, dict[str, Any]] = {}
+    positions: dict[str, int] = {}
+    selected: list[dict[str, Any]] = []
+    for index, occurrence in enumerate(occurrences):
+        occurrence_id, operation_id = occurrence["occurrenceId"], occurrence["operationId"]
+        if occurrence_id in occurrence_map or operation_id not in by_operation:
+            raise ArazzoPlanningError("Workflow graph contains a duplicate occurrence or unknown operation.")
+        step = deepcopy(by_operation[operation_id])
+        step["stepId"] = occurrence_id
+        for slot in step.get("inputs") or []:
+            slot["connections"] = []
+        occurrence_map[occurrence_id], positions[occurrence_id] = step, index
+        selected.append(step)
+    target_ids = set(candidate["planningModel"].get("targetOperationIds") or [])
+    if not any(step.get("operationId") in target_ids for step in selected):
+        raise ArazzoPlanningError("Workflow graph must include a trace-linked target operation.")
+
+    required: dict[tuple[str, str], dict[str, Any]] = {
+        (step["stepId"], str(slot["inputSlot"])): slot
+        for step in selected for slot in step.get("inputs") or [] if isinstance(slot, dict)
+    }
+    records = graph.get("requiredInputs")
+    if not isinstance(records, list):
+        raise ArazzoPlanningError("Workflow graph requiredInputs must be an array.")
+    literal_records = {
+        (str(item.get("targetOccurrenceId") or ""), str(item.get("targetInputSlot") or "")): item
+        for item in records
+        if isinstance(item, dict) and item.get("literalNeeded") is True
+    }
+    covered: set[tuple[str, str]] = set()
+    required_records: dict[tuple[str, str], dict[str, Any]] = {}
+    connections: list[str] = []
+    literal_slots: list[tuple[str, str, dict[str, Any]]] = []
+    fixed_input_reuses: list[dict[str, str]] = []
+    read_only_ids = _read_only_setup_operation_ids(candidate)
+    for item in records:
+        key = (str(item.get("targetOccurrenceId") or ""), str(item.get("targetInputSlot") or ""))
+        slot = required.get(key)
+        if slot is None or key in covered:
+            raise ArazzoPlanningError("Workflow graph selects an unknown or duplicate required input slot.")
+        covered.add(key)
+        required_records[key] = item
+        source_input_id = item.get("sourceInputOccurrenceId")
+        source_input_slot = item.get("sourceInputSlot")
+        has_input_reuse = source_input_id is not None or source_input_slot is not None
+        if item.get("literalNeeded") is True:
+            if (
+                item.get("sourceOccurrenceId") is not None
+                or item.get("sourceOutputName") is not None
+                or has_input_reuse
+                or not _literal_input_allowed(slot)
+            ):
+                raise ArazzoPlanningError("Workflow graph requests a literal for an input without literal evidence.")
+            literal_slots.append((key[0], key[1], slot))
+            continue
+        if has_input_reuse:
+            source_key = (str(source_input_id or ""), str(source_input_slot or ""))
+            source = occurrence_map.get(source_key[0])
+            source_slot = required.get(source_key)
+            anchor = literal_records.get(source_key)
+            if (
+                item.get("sourceOccurrenceId") is not None
+                or item.get("sourceOutputName") is not None
+                or not isinstance(source_input_id, str)
+                or not isinstance(source_input_slot, str)
+                or source is None
+                or source_slot is None
+                or anchor is None
+                or positions[source_input_id] >= positions[key[0]]
+                or str(source.get("method") or "").upper() in {"GET", "HEAD", "OPTIONS"}
+                or not _literal_input_allowed(source_slot)
+                or not _connection_types_compatible(slot, source_slot)
+            ):
+                raise ArazzoPlanningError("Workflow graph has an invalid fixed input reuse.")
+            # The compiler still uses its fixed-input path for this target, but
+            # its value is anchored once at the earlier state-changing request.
+            slot["literalEvidence"] = True
+            fixed_input_reuses.append({
+                "sourceStepId": source_input_id,
+                "sourceInputSlot": source_input_slot,
+                "targetStepId": key[0],
+                "targetInputSlot": key[1],
+            })
+            continue
+        source_id, output_name = item.get("sourceOccurrenceId"), item.get("sourceOutputName")
+        source = occurrence_map.get(str(source_id))
+        if (
+            source_input_id is not None
+            or source_input_slot is not None
+            or not isinstance(source_id, str)
+            or source is None
+            or not isinstance(output_name, str)
+        ):
+            raise ArazzoPlanningError("Workflow graph has an incomplete producer binding.")
+        if positions[source_id] >= positions[key[0]]:
+            raise ArazzoPlanningError("Workflow graph is not topologically ordered; a producer must precede its consumer.")
+        if source.get("operationId") in read_only_ids and key[1].startswith("path:"):
+            try:
+                _reject_read_only_setup_path_connection(
+                    {**candidate, "planningModel": {"availableSteps": selected}},
+                    {"sourceStepId": source_id, "targetInputSlot": key[1]}, positions=positions,
+                )
+            except ArazzoValidationError as error:
+                raise ArazzoPlanningError(str(error)) from error
+        output = next((value for value in source.get("outputs") or [] if value.get("outputName") == output_name), None)
+        if output is None or not _connection_types_compatible(slot, output):
+            raise ArazzoPlanningError("Workflow graph binds an input to an unknown or incompatible output.")
+        edge_id = f"{source_id}.{output_name}->{key[0]}.{key[1]}"
+        edge = {
+            "connectionId": edge_id, "sourceStepId": source_id, "sourceSlot": output.get("slot"),
+            "outputName": output_name, "outputExpression": output.get("outputExpression"),
+            "targetStepId": key[0], "targetInputSlot": key[1],
+            "value": f"$steps.{source_id}.outputs.{output_name}",
+        }
+        target = occurrence_map[key[0]]
+        next(value for value in target.get("inputs") or [] if value.get("inputSlot") == key[1])["connections"].append(edge)
+        connections.append(edge_id)
+    if covered != set(required):
+        raise ArazzoPlanningError("Workflow graph must cover every required input exactly once.")
+
+    for constraint in candidate["planningModel"].get("producerSelections") or []:
+        target_occurrences = [
+            step for step in selected
+            if step.get("operationId") == constraint.get("targetOperationId")
+        ]
+        if not target_occurrences:
+            raise ArazzoPlanningError("Workflow graph omitted a target with a selected semantic producer.")
+        for target in target_occurrences:
+            item = required_records.get((str(target["stepId"]), str(constraint.get("targetInputSlot"))))
+            if constraint.get("decision") == "literal":
+                target_slot = next((slot for slot in target.get("inputs") or []
+                                    if slot.get("inputSlot") == constraint.get("targetInputSlot")), None)
+                if not item or item.get("literalNeeded") is not True or target_slot is None or not _literal_input_allowed(target_slot):
+                    raise ArazzoPlanningError("Workflow graph did not honor the selected literal input.")
+                continue
+            if constraint.get("decision") == "deferred_collection_lookup":
+                continue
+            source_id = str(item.get("sourceOccurrenceId") or "") if item else ""
+            source = occurrence_map.get(source_id)
+            if (
+                not item or item.get("literalNeeded") is True or source is None
+                or source.get("operationId") != constraint.get("sourceOperationId")
+                or item.get("sourceOutputName") != constraint.get("sourceOutputName")
+                or positions.get(source_id, len(selected)) >= positions[str(target["stepId"])]
+            ):
+                raise ArazzoPlanningError(
+                    "Workflow graph did not honor the selected semantic producer binding."
+                )
+
+    collection_records = graph.get("collectionSelections") or []
+    if not isinstance(collection_records, list):
+        raise ArazzoPlanningError("Workflow graph collectionSelections must be an array.")
+    seen_collection_targets: set[tuple[str, str]] = set()
+    validated_collection_selections: list[dict[str, Any]] = []
+    for item in collection_records:
+        collection_id = str(item.get("collectionOccurrenceId") or "")
+        target_id = str(item.get("targetOccurrenceId") or "")
+        target_slot = str(item.get("targetInputSlot") or "")
+        fixed_id = str(item.get("fixedInputOccurrenceId") or "")
+        fixed_slot = str(item.get("fixedInputSlot") or "")
+        key = (target_id, target_slot)
+        if key in seen_collection_targets:
+            raise ArazzoPlanningError("Workflow graph duplicates a collection selection for one target input.")
+        seen_collection_targets.add(key)
+        collection_step = occurrence_map.get(collection_id)
+        target_step = occurrence_map.get(target_id)
+        fixed_step = occurrence_map.get(fixed_id)
+        if collection_step is None or target_step is None or fixed_step is None:
+            raise ArazzoPlanningError("Collection selection references an unknown occurrence.")
+        if not (positions[fixed_id] < positions[collection_id] < positions[target_id]):
+            raise ArazzoPlanningError("Collection selection requires an earlier fixed input and collection producer.")
+        fixed_record = required_records.get((fixed_id, fixed_slot))
+        fixed_input = next((slot for slot in fixed_step.get("inputs") or [] if slot.get("inputSlot") == fixed_slot), None)
+        if not fixed_record or fixed_record.get("literalNeeded") is not True or fixed_input is None or not _literal_input_allowed(fixed_input):
+            raise ArazzoPlanningError("Collection selection match value must come from an earlier fixed input.")
+        candidates = [
+            candidate_item for candidate_item in collection_step.get("collectionSelectionCandidates") or []
+            if candidate_item.get("selectionId") == item.get("selectionId")
+        ]
+        if len(candidates) != 1:
+            raise ArazzoPlanningError("Collection selection uses an unknown finite OpenAPI item-path candidate.")
+        selected_pair = candidates[0]
+        if not _collection_match_types_compatible(
+            fixed_input,
+            {"type": selected_pair.get("matchType"), "format": selected_pair.get("matchFormat")},
+        ):
+            raise ArazzoPlanningError("Collection match field is incompatible with the fixed input.")
+        target_input = next((slot for slot in target_step.get("inputs") or [] if slot.get("inputSlot") == target_slot), None)
+        selected_output = next((output for output in collection_step.get("outputs") or []
+                                if output.get("outputName") == selected_pair.get("selectedOutputName")), None)
+        if target_input is None or selected_output is None or not _connection_types_compatible(target_input, selected_output):
+            raise ArazzoPlanningError("Collection item output is incompatible with its target input.")
+        record = required_records.get((target_id, target_slot))
+        if not record or record.get("sourceOccurrenceId") != collection_id or record.get("sourceOutputName") != selected_pair.get("selectedOutputName"):
+            raise ArazzoPlanningError("Collection selection does not match its required input binding.")
+        validated_collection_selections.append({
+            **deepcopy(item),
+            "collectionOperationId": collection_step.get("operationId"),
+            "targetOperationId": target_step.get("operationId"),
+            "matchOutputName": selected_pair["matchOutputName"],
+            "matchOutputExpression": selected_pair.get("matchOutputExpression"),
+            "matchType": selected_pair.get("matchType"),
+            "matchFormat": selected_pair.get("matchFormat"),
+            "matchItemPointerParts": deepcopy(selected_pair["matchItemPointerParts"]),
+            "arrayRootPointer": selected_pair["arrayRootPointer"],
+            "selectedOutputName": selected_pair["selectedOutputName"],
+            "selectedItemPointerParts": deepcopy(selected_pair["selectedItemPointerParts"]),
+        })
+    deferred_constraints = [
+        item for item in candidate["planningModel"].get("producerSelections") or []
+        if item.get("decision") == "deferred_collection_lookup"
+    ]
+    for constraint in deferred_constraints:
+        matching_targets = [step for step in selected if step.get("operationId") == constraint.get("targetOperationId")]
+        if not matching_targets:
+            raise ArazzoPlanningError("Graph omitted a target requiring deferred collection lookup.")
+        for target in matching_targets:
+            record = required_records.get((str(target["stepId"]), str(constraint.get("targetInputSlot"))))
+            source_id = str(record.get("sourceOccurrenceId") or "") if record else ""
+            source = occurrence_map.get(source_id)
+            if (
+                record is None or source is None
+                or source.get("operationId") != constraint.get("sourceOperationId")
+                or record.get("sourceOutputName") != constraint.get("sourceOutputName")
+                or not any(
+                    entry.get("collectionOccurrenceId") == source_id
+                    and entry.get("targetOccurrenceId") == target["stepId"]
+                    and entry.get("targetInputSlot") == constraint.get("targetInputSlot")
+                    for entry in validated_collection_selections
+                )
+            ):
+                raise ArazzoPlanningError("Graph did not close its deferred collection producer selection.")
+
+    distinct = graph.get("distinctResourcePairs")
+    if not isinstance(distinct, list):
+        raise ArazzoPlanningError("Workflow graph distinctResourcePairs must be an array.")
+    seen_pairs: set[tuple[str, str, str, str]] = set()
+    for pair in distinct:
+        left_id, right_id = pair.get("leftOccurrenceId"), pair.get("rightOccurrenceId")
+        left_name, right_name = pair.get("leftOutputName"), pair.get("rightOutputName")
+        key = (str(left_id), str(left_name), str(right_id), str(right_name))
+        if pair.get("relation") != "distinct_resource_identity" or key in seen_pairs:
+            raise ArazzoPlanningError("Workflow graph has an unsupported or duplicate resource identity assertion.")
+        seen_pairs.add(key)
+        left_step, right_step = occurrence_map.get(str(left_id)), occurrence_map.get(str(right_id))
+        left = next((item for item in left_step.get("outputs", []) if item.get("outputName") == left_name), None) if left_step else None
+        right = next((item for item in right_step.get("outputs", []) if item.get("outputName") == right_name), None) if right_step else None
+        if left is None or right is None or (left_id, left_name) == (right_id, right_name):
+            raise ArazzoPlanningError("Workflow graph distinct-resource assertion references an unknown output.")
+        if (left.get("type"), left.get("format"), left.get("cardinality")) != (right.get("type"), right.get("format"), right.get("cardinality")):
+            raise ArazzoPlanningError("Workflow graph distinct-resource outputs have incompatible identity types.")
+    for criterion in graph.get("successCriteria") or []:
+        occurrence = occurrence_map.get(str(criterion.get("occurrenceId") or ""))
+        if occurrence is None or str(criterion.get("statusCode")) not in occurrence.get("successStatuses", []):
+            raise ArazzoPlanningError("Workflow graph success criterion is not grounded in the frozen response contract.")
+    selected_candidate = deepcopy(candidate)
+    selected_candidate["planningModel"]["availableSteps"] = selected
+    decision = {
+        "workflowId": candidate["workflowId"],
+        "orderedStepIds": [step["stepId"] for step in selected],
+        "connectionIds": connections,
+        "fixedInputs": [],
+        "fixedInputReuses": fixed_input_reuses,
+        "distinctResourcePairs": deepcopy(distinct),
+        "collectionSelections": validated_collection_selections,
+        "successCriteria": [
+            {"stepId": item["occurrenceId"], "statusCode": item["statusCode"]}
+            for item in graph.get("successCriteria") or []
+        ],
+    }
+    return selected_candidate, decision, literal_slots
 
 
 def _prompt(candidate: dict[str, Any], validation_error: str = "") -> str:
     correction = (
         "\nThe previous decision failed validation. Correct the rejected decision below; "
         "return a complete decision and preserve frozen scope.\n"
-        "Use only listed step IDs, connection IDs, and success statuses.\n"
+        "Use only listed step IDs, short connection-choice aliases, and success statuses.\n"
         + validation_error
         if validation_error
         else ""
@@ -757,9 +2046,18 @@ def _prompt(candidate: dict[str, Any], validation_error: str = "") -> str:
         raise ArazzoPlanningError(
             "Functional workflow candidate is missing the planner-provided planningModel."
         )
+    model_planning = deepcopy(planning_model)
+    for step in model_planning.get("availableSteps") or []:
+        if not isinstance(step, dict):
+            continue
+        for input_slot in step.get("inputs") or []:
+            if isinstance(input_slot, dict):
+                # Canonical IDs are an internal compiler boundary. The model
+                # receives only the short choices grouped by target input.
+                input_slot.pop("connections", None)
     authoring_context = {
         "workflowId": candidate.get("workflowId"),
-        "planningModel": planning_model,
+        "planningModel": model_planning,
         "trace": candidate.get("trace", {}),
     }
     return (
@@ -823,6 +2121,8 @@ def _generate(
     client: OpenAI,
     candidate: dict[str, Any],
     validation_error: str = "",
+    *,
+    compile_decision: bool = True,
 ) -> dict[str, Any]:
     connection = build_arazzo_llm_connection()
     profile = profile_for(
@@ -861,12 +2161,164 @@ def _generate(
     if not isinstance(value, dict):
         raise TypeError("The workflow decision response must be one JSON object.")
     try:
+        if not compile_decision or candidate.get("planningModel", {}).get("decisionStage") == "steps":
+            _validate_workflow_decision(value, candidate)
+            return value
+        # Identify an out-of-catalog alias before the closed response schema
+        # turns it into a generic authoring failure. That enables one narrow
+        # connection-only correction rather than reauthoring the workflow.
+        _resolve_connection_choices(value, candidate)
         _validate_workflow_decision(value, candidate)
-        return _compile_workflow_decision(value, candidate)
+        return _compile_workflow_decision(_resolve_connection_choices(value, candidate), candidate)
+    except InvalidConnectionChoiceError:
+        raise
     except ArazzoValidationError as exc:
         raise AuthoredWorkflowError(str(exc), value) from exc
     except ArazzoPlanningError as exc:
         raise AuthoredWorkflowError(str(exc), value) from exc
+
+
+def _literal_value_response_format(
+    slots: list[tuple[str, str, dict[str, Any]]],
+) -> dict[str, Any]:
+    def projected_leaf_schema(slot: dict[str, Any]) -> dict[str, Any]:
+        """Keep structured literal values within the projected OpenAPI leaf type."""
+
+        schema_type = slot.get("type")
+        value_schema = slot.get("valueSchema")
+        if (
+            schema_type == "object"
+            and isinstance(value_schema, dict)
+            and value_schema.get("type") == "object"
+        ):
+            # Query-object parameters are one OpenAPI value, not independent
+            # leaves.  Keep their resolved schema intact so required fields are
+            # constrained in the model response and again in the compiler.
+            return deepcopy(value_schema)
+        if schema_type not in {"string", "integer", "number", "boolean", "array", "object", "null"}:
+            # The OpenAPI projection ordinarily rejects this earlier.  Retain a
+            # permissive schema only for a legacy/unrecognised projection rather
+            # than fabricating a different type contract here.
+            return {}
+        schema: dict[str, Any] = {"type": schema_type}
+        schema_format = slot.get("format")
+        if schema_type == "string" and isinstance(schema_format, str) and schema_format.strip():
+            schema["format"] = schema_format.strip()
+        return schema
+
+    properties = {
+        f"v{index}": projected_leaf_schema(slot)
+        for index, (_step_id, _slot_id, slot) in enumerate(slots, start=1)
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "ArazzoLiteralInputValues",
+            "strict": False,
+            "schema": {
+                "type": "object", "additionalProperties": False,
+                "properties": properties, "required": list(properties),
+            },
+        },
+    }
+
+
+def _select_literal_values(
+    client: OpenAI, candidate: dict[str, Any], slots: list[tuple[str, str, dict[str, Any]]],
+    decision: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Ask for exactly the uncovered literal values, then map keys in code."""
+
+    if not slots:
+        return []
+    connection = build_arazzo_llm_connection()
+    profile = profile_for(connection.model, fallback_temperature=settings.temperature,
+                          fallback_max_tokens=settings.llm_max_completion_tokens or 16384)
+    descriptors = [
+        {
+            "key": f"v{index}", "targetStepId": step_id, "targetInputSlot": slot_id,
+            "type": slot.get("type"), "format": slot.get("format"),
+            "description": slot.get("description", ""),
+            **(
+                {"valueSchema": deepcopy(slot["valueSchema"])}
+                if slot.get("type") == "object" and isinstance(slot.get("valueSchema"), dict)
+                else {}
+            ),
+        }
+        for index, (step_id, slot_id, slot) in enumerate(slots, start=1)
+    ]
+    selected_steps = [
+        {key: step[key] for key in ("stepId", "operationId", "method", "summary", "description") if key in step}
+        for step in candidate.get("planningModel", {}).get("availableSteps", [])
+        if isinstance(step, dict)
+    ]
+    selected_operation_ids = {
+        str(step.get("operationId") or "")
+        for step in selected_steps
+        if step.get("operationId")
+    }
+    setup_evidence = [
+        {"operationId": str(operation["operationId"]), **deepcopy(evidence)}
+        for operation in candidate.get("setupOperations", [])
+        if isinstance(operation, dict)
+        and operation.get("operationId") in selected_operation_ids
+        and isinstance(operation.get("linkedUseCaseEvidence"), list)
+        for evidence in operation["linkedUseCaseEvidence"]
+        if isinstance(evidence, dict)
+    ]
+    input_bindings = [
+        {
+            "sourceStepId": connection.get("sourceStepId"),
+            "sourceOutputName": connection.get("outputName"),
+            "targetStepId": step.get("stepId"),
+            "targetInputSlot": input_slot.get("inputSlot"),
+        }
+        for step in candidate.get("planningModel", {}).get("availableSteps", [])
+        if isinstance(step, dict)
+        for input_slot in step.get("inputs") or []
+        if isinstance(input_slot, dict)
+        for connection in input_slot.get("connections") or []
+        if isinstance(connection, dict)
+    ]
+    provenance = {
+        "occurrences": [
+            {"stepId": step.get("stepId"), "operationId": step.get("operationId")}
+            for step in selected_steps
+        ],
+        "inputBindings": input_bindings,
+        "distinctResourcePairs": deepcopy(decision.get("distinctResourcePairs") or []),
+        "collectionSelections": deepcopy(decision.get("collectionSelections") or []),
+        "successCriteria": deepcopy(decision.get("successCriteria") or []),
+    }
+    literal_guidance = (
+        "Choose literals that are consistent with the selected workflow graph and linked use-case evidence. "
+        "Preserve each occurrence's role, producer/consumer bindings, distinct-resource assertions, and grounded success criteria. "
+        "An identity literal alone does not prove that a resource already exists. "
+        "The keys v1, v2, etc. are opaque response aliases mapped one-to-one to the key field in requiredLiteralInputs; "
+        "return a value for each alias exactly as listed, without renaming aliases or adding fields."
+    )
+    request: dict[str, Any] = {
+        "model": connection.model, "temperature": profile.temperature,
+        "messages": [
+            {"role": "system", "content": PLAN_ROLE_PROMPT},
+            {"role": "user", "content": literal_guidance + "\nselectedWorkflowIntent:\n" + json.dumps(candidate.get("planningModel", {}).get("intent", {}), ensure_ascii=False, separators=(",", ":")) + "\nselectedSteps:\n" + json.dumps(selected_steps, ensure_ascii=False, separators=(",", ":")) + "\nworkflowInputProvenance:\n" + json.dumps(provenance, ensure_ascii=False, separators=(",", ":")) + "\nselectedSetupUseCaseEvidence:\n" + json.dumps(setup_evidence, ensure_ascii=False, separators=(",", ":")) + "\nrequiredLiteralInputs:\n" + json.dumps(descriptors, ensure_ascii=False, separators=(",", ":"))},
+        ],
+        "response_format": _literal_value_response_format(slots),
+        "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens),
+    }
+    if profile.top_p is not None:
+        request["top_p"] = profile.top_p
+    if reasoning_effort := profile.resolve_reasoning(_FUNCTIONAL_PLAN_REASONING_EFFORT):
+        request["reasoning_effort"] = reasoning_effort
+    if extra_body := _structured_output_extra_body(connection, profile):
+        request["extra_body"] = extra_body
+    value = json.loads(_completion_content(client.chat.completions.create(**request), operation="Arazzo literal input selection"))
+    schema = _literal_value_response_format(slots)["json_schema"]["schema"]
+    jsonschema.Draft202012Validator(schema).validate(value)
+    return [
+        {"targetStepId": step_id, "targetInputSlot": slot_id, "value": value[f"v{index}"]}
+        for index, (step_id, slot_id, _slot) in enumerate(slots, start=1)
+    ]
 
 
 def _trace_catalog(candidates: list[dict[str, Any]]) -> dict[str, set[str]]:
@@ -917,10 +2369,10 @@ def _validate_document(
 
     def runtime_values(value: Any) -> list[str]:
         if isinstance(value, dict):
-            return [item for child in value.values() for item in runtime_values(child)]
+            return [item for key, child in value.items() if key != "successCriteria" for item in runtime_values(child)]
         if isinstance(value, list):
             return [item for child in value for item in runtime_values(child)]
-        return [value] if isinstance(value, str) and value.startswith("$steps.") else []
+        return re.findall(r"\$steps\.[A-Za-z0-9_-]+\.outputs\.[A-Za-z0-9_-]+", value) if isinstance(value, str) else []
 
     for workflow, candidate in zip(frozen["workflows"], candidates, strict=True):
         expected_trace = attach_workflow_trace({"workflowId": candidate["workflowId"]}, candidate)[
@@ -930,6 +2382,41 @@ def _validate_document(
             raise ArazzoValidationError("Generated workflow trace does not match frozen evidence.")
         projected_steps = execution_by_workflow.get(str(candidate["workflowId"]), {})
         if projected_steps:
+            authored_step_list = [
+                step for step in workflow.get("steps") or [] if isinstance(step, dict)
+            ]
+            if any(str(step.get("stepId") or "") not in projected_steps for step in authored_step_list):
+                base_by_operation = {
+                    str(step.get("operationId") or ""): step
+                    for step in projected_steps.values()
+                    if isinstance(step, dict)
+                }
+                if any(str(step.get("operationId") or "") not in base_by_operation for step in authored_step_list):
+                    raise ArazzoValidationError("Workflow occurrence has no execution projection.")
+                ordered_occurrences = []
+                for authored in authored_step_list:
+                    projected = deepcopy(base_by_operation[str(authored["operationId"])])
+                    projected["stepId"] = str(authored["stepId"])
+                    for input_slot in projected.get("inputs") or []:
+                        input_slot["connections"] = []
+                    ordered_occurrences.append(projected)
+                for index, target in enumerate(ordered_occurrences):
+                    for input_slot in target.get("inputs") or []:
+                        for source in ordered_occurrences[:index]:
+                            for output in source.get("outputs") or []:
+                                if not _connection_types_compatible(input_slot, output):
+                                    continue
+                                output_name = str(output.get("outputName") or "")
+                                target_slot = str(input_slot.get("inputSlot") or "")
+                                source_id, target_id = str(source["stepId"]), str(target["stepId"])
+                                input_slot["connections"].append({
+                                    "connectionId": f"{source_id}.{output_name}->{target_id}.{target_slot}",
+                                    "sourceStepId": source_id, "sourceSlot": output.get("slot"),
+                                    "outputName": output_name, "outputExpression": output.get("outputExpression"),
+                                    "targetStepId": target_id, "targetInputSlot": target_slot,
+                                    "value": f"$steps.{source_id}.outputs.{output_name}",
+                                })
+                projected_steps = {str(step["stepId"]): step for step in ordered_occurrences}
             allowed_connections = {
                 connection["value"]: connection
                 for projected in projected_steps.values()
@@ -937,19 +2424,20 @@ def _validate_document(
                 for connection in input_slot.get("connections") or []
                 if isinstance(connection, dict) and isinstance(connection.get("value"), str)
             }
-            authored_steps = {
-                str(step.get("stepId")): step for step in workflow.get("steps") or []
-                if isinstance(step, dict)
-            }
-            for step in workflow.get("steps") or []:
-                if not isinstance(step, dict):
-                    continue
+            guard_candidate = deepcopy(candidate)
+            guard_candidate["planningModel"] = {"availableSteps": list(projected_steps.values())}
+            authored_steps = {str(step.get("stepId")): step for step in authored_step_list}
+            authored_positions = {str(step.get("stepId")): index for index, step in enumerate(authored_step_list)}
+            for step in authored_step_list:
                 for value in runtime_values(step):
                     connection = allowed_connections.get(value)
                     if connection is None:
                         raise ArazzoValidationError(
                             f"Step output reference is not an exact supplied connection: {value}"
                         )
+                    _reject_read_only_setup_path_connection(
+                        guard_candidate, connection, positions=authored_positions
+                    )
                     source_step = authored_steps.get(str(connection["sourceStepId"]))
                     source_outputs = source_step.get("outputs") if isinstance(source_step, dict) else None
                     expected_name = connection["outputName"]
@@ -966,6 +2454,21 @@ def _validate_document(
                             "Selected connection must use its supplied source output declaration: "
                             f"{connection['sourceStepId']}.{expected_name}"
                         )
+                for criterion in step.get("successCriteria") or []:
+                    condition = str(criterion.get("condition") or "") if isinstance(criterion, dict) else ""
+                    for value in re.findall(r"\$steps\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+)", condition):
+                        source_id, output_name = value
+                        source_step = authored_steps.get(source_id)
+                        projected_source = projected_steps.get(source_id)
+                        expected_expression = next((
+                            output.get("outputExpression")
+                            for output in projected_source.get("outputs") or []
+                            if isinstance(output, dict) and output.get("outputName") == output_name
+                        ), None) if isinstance(projected_source, dict) else None
+                        source_outputs = source_step.get("outputs") if isinstance(source_step, dict) else None
+                        if (source_id not in authored_positions or authored_positions[source_id] >= authored_positions[str(step.get("stepId"))]
+                                or not isinstance(source_outputs, dict) or source_outputs.get(output_name) != expected_expression):
+                            raise ArazzoValidationError("Success criterion references an unavailable or non-prior output.")
         operations = {
             str(operation.get("operationId")): operation
             for operation in [
@@ -995,6 +2498,23 @@ def _validate_document(
                 if not any(_schema_supports_pointer(schema, pointer, openapi) for schema in success_schemas):
                     raise ArazzoValidationError(
                         f"Output {output_name!r} references a JSON Pointer absent from the "
+                        f"frozen OpenAPI response schema: {expression}"
+                    )
+                used_as_producer = any(
+                    f"$steps.{step.get('stepId')}.outputs.{output_name}" in runtime_values(value)
+                    for value in (workflow.get("steps") or [])
+                    if isinstance(value, dict)
+                )
+                if (
+                    used_as_producer
+                    and any(
+                        _schema_pointer_uses_array_index(schema, pointer, openapi)
+                        for schema in success_schemas
+                    )
+                    and not any(_schema_guarantees_pointer(schema, pointer, openapi) for schema in success_schemas)
+                ):
+                    raise ArazzoValidationError(
+                        f"Output {output_name!r} uses an indexed array value not guaranteed by the "
                         f"frozen OpenAPI response schema: {expression}"
                     )
     return frozen
@@ -1042,78 +2562,60 @@ def _generate_candidate_workflow(
     total_workflows: int,
     execution_candidates: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    """Generate one workflow without sharing mutable plan state with peers."""
-
+    """Author and validate one complete operation/input graph in a single model call."""
+    _emit_plan_progress(candidate, "RUNNING", total_workflows=total_workflows, attempt=1,
+                        detail="Generating the test plan")
     try:
         if client is None:
             client = _client()
         workflow_id = str(candidate["workflowId"])
-        authoring_candidate = _authoring_candidate(
+        authoring = _authoring_candidate(
             candidate,
             [step for step in execution_candidates if str(step["workflowId"]) == workflow_id],
         )
-    except Exception as exc:
-        _emit_plan_progress(
-            candidate, "FAIL", total_workflows=total_workflows, attempt=1, detail=str(exc)[:2000]
+        authoring["planningModel"]["producerSelections"] = _select_semantic_producers(
+            client, authoring, openapi
         )
-        raise
-
-    error = ""
-    for attempt in range(2):
-        _emit_plan_progress(
-            candidate,
-            "RUNNING",
-            total_workflows=total_workflows,
-            attempt=attempt + 1,
-            detail="Correcting the test plan" if attempt else "Generating the test plan",
-        )
-        workflow = None
+        graph = _generate_workflow_graph(client, authoring)
         try:
-            workflow = _generate(client, authoring_candidate, error)
-            validated = _validate_document(
-                build_arazzo_document([workflow]), [candidate], openapi, execution_candidates
+            selected_candidate, decision, literal_slots = _validated_graph_projection(authoring, graph)
+        except (ArazzoPlanningError, ArazzoValidationError) as validation_error:
+            graph = _generate_workflow_graph(
+                client,
+                authoring,
+                correction_context={"rejectedGraph": graph, "validationError": str(validation_error)},
             )
-            _emit_plan_progress(
-                candidate,
-                "PENDING",
-                total_workflows=total_workflows,
-                attempt=attempt + 1,
-                detail="Test plan is ready for Testing completion",
-            )
-            return validated["workflows"][0]
-        except (ArazzoPlanningError, ArazzoValidationError, TypeError, ValueError) as exc:
-            error = str(exc)
-            if attempt:
-                _emit_plan_progress(
-                    candidate, "FAIL", total_workflows=total_workflows,
-                    attempt=attempt + 1, detail=error[:2000],
-                )
-                workflow_id = str(candidate.get("workflowId") or "unknown")
-                raise ValueError(
-                    f"Arazzo workflow {workflow_id} generation failed validation: {error}"
-                ) from exc
-            rejected = exc.workflow if isinstance(exc, AuthoredWorkflowError) else workflow
-            if rejected is not None:
-                # Trace is assigned by code, not authored by the model.
-                authored = {key: value for key, value in rejected.items() if key != "x-easydep-trace"}
-                error += "\nRejected workflow JSON:\n" + json.dumps(
-                    authored, ensure_ascii=False, separators=(",", ":")
-                )
-        except Exception as exc:
-            _emit_plan_progress(
-                candidate, "FAIL", total_workflows=total_workflows,
-                attempt=attempt + 1, detail=str(exc)[:2000],
-            )
-            raise
-    raise AssertionError("The bounded workflow generation loop did not terminate.")
+            selected_candidate, decision, literal_slots = _validated_graph_projection(authoring, graph)
+        decision["fixedInputs"] = _select_literal_values(client, selected_candidate, literal_slots, decision)
+        workflow = _compile_workflow_decision(decision, selected_candidate)
+        validated = _validate_document(
+            build_arazzo_document([workflow]), [candidate], openapi, execution_candidates
+        )
+    except Exception as exc:
+        _emit_plan_progress(candidate, "FAIL", total_workflows=total_workflows, attempt=1,
+                            detail=str(exc)[:2000])
+        # Preserve candidate identity through concurrent aggregation so a planning
+        # failure remains attributable without parsing the model's error text.
+        exc.workflow_id = str(candidate.get("workflowId") or "")
+        exc.use_case_id = use_case_id_for_candidate(candidate)
+        raise
+    _emit_plan_progress(candidate, "PENDING", total_workflows=total_workflows, attempt=1,
+                        detail="Test plan is ready for Testing completion")
+    return validated["workflows"][0]
 
 
 def _generate_document(
     client: OpenAI | None,
     candidates: list[dict[str, Any]],
     openapi: dict[str, Any],
-) -> dict[str, Any]:
-    """Generate independent workflows concurrently and restore canonical order."""
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+    """Generate independent workflows, retaining valid peers after a local failure.
+
+    A planning failure is evidence about one use case, not evidence that the
+    independently authored workflows are invalid.  The ``None`` document is
+    intentional when every candidate failed: callers must not manufacture an
+    empty Arazzo document merely to make a later executor look successful.
+    """
 
     total_workflows = len(candidates)
     execution_candidates = build_execution_candidates(candidates, openapi)
@@ -1123,9 +2625,16 @@ def _generate_document(
     failures: dict[int, Exception] = {}
     worker_count = min(_FUNCTIONAL_PLAN_MAX_WORKERS, len(candidates))
     if worker_count <= 1:
-        workflows[0] = _generate_candidate_workflow(
-            client, candidates[0], openapi, total_workflows, execution_candidates
-        )
+        # Keep the serial fallback semantically identical to the concurrent
+        # path: a bad candidate must not prevent the remaining candidates from
+        # being authored and executed.
+        for index, candidate in enumerate(candidates):
+            try:
+                workflows[index] = _generate_candidate_workflow(
+                    client, candidate, openapi, total_workflows, execution_candidates
+                )
+            except Exception as exc:
+                failures[index] = exc
     else:
         with ThreadPoolExecutor(
             max_workers=worker_count,
@@ -1149,13 +2658,31 @@ def _generate_document(
                     workflows[index] = future.result()
                 except Exception as exc:
                     failures[index] = exc
-    if failures:
-        raise failures[min(failures)]
-    if any(workflow is None for workflow in workflows):  # pragma: no cover
+    unexpected = [index for index, workflow in enumerate(workflows) if workflow is None and index not in failures]
+    if unexpected:  # pragma: no cover
         raise AssertionError("Parallel workflow planning did not produce every result.")
     ordered = [workflow for workflow in workflows if workflow is not None]
-    return _validate_document(
-        build_arazzo_document(ordered), candidates, openapi, execution_candidates
+    planning_failures = [
+        _planning_failure_analysis(candidates[index], error)
+        for index, error in sorted(failures.items())
+    ]
+    if not ordered:
+        return None, planning_failures
+    successful_candidates = [
+        candidate for index, candidate in enumerate(candidates) if workflows[index] is not None
+    ]
+    successful_ids = {str(candidate["workflowId"]) for candidate in successful_candidates}
+    successful_execution_candidates = [
+        item for item in execution_candidates if str(item.get("workflowId")) in successful_ids
+    ]
+    return (
+        _validate_document(
+            build_arazzo_document(ordered),
+            successful_candidates,
+            openapi,
+            successful_execution_candidates,
+        ),
+        planning_failures,
     )
 
 
@@ -1611,6 +3138,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         status="RUNNING",
         label="Preparing Arazzo functional workflows",
     )
+    planning_failures: list[dict[str, Any]] = []
     try:
         candidates = build_workflow_candidates(
             frozen["requirements"], frozen["use_cases"], frozen["openapi"]
@@ -1646,7 +3174,9 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             # Sharing one HTTP client across worker threads would introduce a
             # transport-level critical section and complicate failure isolation.
             client = None
-            document = _generate_document(client, candidates, frozen["openapi"])
+            document, planning_failures = _generate_document(
+                client, candidates, frozen["openapi"]
+            )
             plan_source = "LLM decisions, deterministically compiled"
     except (ArazzoPlanningError, UpstreamAmbiguity) as error:
         emit_testing_progress(
@@ -1659,7 +3189,11 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             "current_node": "dynamic_functional",
             "errors": [str(error)],
             "dynamic_functional_report": _report(
-                "UNAVAILABLE", "INCONCLUSIVE", str(error), "UPSTREAM_AMBIGUITY"
+                "UNAVAILABLE",
+                "INCONCLUSIVE",
+                str(error),
+                "UPSTREAM_AMBIGUITY",
+                finding=_planning_failure_finding(error),
             ),
         }
     except (ArazzoValidationError, TypeError, ValueError, json.JSONDecodeError) as error:
@@ -1673,7 +3207,11 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             "current_node": "dynamic_functional",
             "errors": [str(error)],
             "dynamic_functional_report": _report(
-                "FAILED", "FAIL", f"Arazzo test plan failed validation: {error}", "TEST_DEFECT"
+                "FAILED",
+                "FAIL",
+                f"Arazzo test plan failed validation: {error}",
+                "TEST_DEFECT",
+                finding=_planning_failure_finding(error),
             ),
         }
     except Exception as error:
@@ -1691,10 +3229,60 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                 "INCONCLUSIVE",
                 f"LLM functional workflow generation failed: {error}",
                 "ENVIRONMENT_DEFECT",
+                finding=_planning_failure_finding(error),
             ),
         }
 
+    if document is None:
+        # There is no Arazzo execution surface when every candidate failed
+        # authoring.  Keep the original candidates for requirement coverage,
+        # but do not pass an invented empty document to the executor.
+        first = planning_failures[0]
+        defect_class = str(first["defectClass"])
+        reason = str(first["reason"])
+        emit_testing_progress(
+            phase="dynamic",
+            scope="phase",
+            status="FAIL" if defect_class == "TEST_DEFECT" else "INCONCLUSIVE",
+            label="No Arazzo workflow could be planned",
+        )
+        report = {
+            "status": "FAILED",
+            "gateStatus": "FAIL",
+            "reason": reason,
+            "defectClass": defect_class,
+            "defect": repair_route(defect_class),
+            "finding": deepcopy(first["finding"]),
+            "failedWorkflowId": first["workflowId"],
+            "failedStepId": "",
+            "failedWorkflowIds": [item["workflowId"] for item in planning_failures],
+            "candidatePlan": None,
+            "candidateDigest": "",
+            "planDigest": "",
+            "workflowInputs": {},
+            "inputValues": {},
+            "workflows": [],
+            "executionOrder": [],
+            "executedWorkflowCount": 0,
+            "requirements": _requirements([], candidates),
+            "planningFailures": planning_failures,
+            "failureAnalyses": planning_failures,
+            "planRepairs": [],
+            "reusedWorkflowIds": [],
+            "pendingWorkflowIds": [],
+            "workflowCounts": {
+                "total": len(candidates), "completed": len(planning_failures),
+                "passed": 0, "failed": len(planning_failures), "running": 0, "pending": 0,
+            },
+            "targetUrl": target_url,
+        }
+        return {"current_node": "dynamic_functional", "errors": [reason], "dynamic_functional_report": report}
+
     workflow_ids = {str(workflow["workflowId"]) for workflow in document["workflows"]}
+    # A partial plan intentionally omits failed candidates from execution, but
+    # a checkpoint can still hold their frozen inputs.  Those entries are
+    # legitimate evidence and must not invalidate the executable peers.
+    candidate_workflow_ids = {str(candidate["workflowId"]) for candidate in candidates}
     candidate_by_workflow_id = {
         str(candidate["workflowId"]): candidate for candidate in candidates
     }
@@ -1708,9 +3296,11 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
     )
     try:
         workflow_inputs = _fixed_mapping(
-            state.get("fixed_workflow_inputs"), workflow_ids, name="workflow inputs"
+            state.get("fixed_workflow_inputs"), candidate_workflow_ids, name="workflow inputs"
         )
-        input_values = _fixed_input_values(state.get("fixed_input_values"), workflow_ids)
+        input_values = _fixed_input_values(
+            state.get("fixed_input_values"), candidate_workflow_ids
+        )
     except (TypeError, ValueError) as error:
         emit_testing_progress(
             phase="dynamic",
@@ -1732,6 +3322,44 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
             _emit_dynamic_workflow_plan(candidate, workflow, total_workflows)
 
     if validation_skipped:
+        if planning_failures:
+            # Demo mode may skip HTTP execution, but it may never turn an
+            # actual graph-authoring failure into a passing testing result.
+            first = planning_failures[0]
+            return {
+                "current_node": "dynamic_functional",
+                "dynamic_functional_report": {
+                    "status": "FAILED",
+                    "gateStatus": "FAIL",
+                    "reason": str(first["reason"]),
+                    "defectClass": str(first["defectClass"]),
+                    "defect": repair_route(str(first["defectClass"])),
+                    "finding": deepcopy(first["finding"]),
+                    "candidatePlan": document,
+                    "candidateDigest": stable_digest({"document": document}),
+                    "planDigest": stable_digest(document),
+                    "workflowInputs": workflow_inputs,
+                    "inputValues": _input_records(input_values),
+                    "workflows": [],
+                    "plannedWorkflowIds": [str(item["workflowId"]) for item in document["workflows"]],
+                    "executionOrder": [],
+                    "executedWorkflowCount": 0,
+                    "workflowCounts": {
+                        "total": len(candidates), "completed": len(planning_failures),
+                        "passed": 0, "failed": len(planning_failures), "running": 0,
+                        # These valid plans were deliberately not executed in
+                        # demo mode; do not count them as passing HTTP tests.
+                        "pending": len(document["workflows"]),
+                    },
+                    "requirements": _requirements([], candidates),
+                    "planningFailures": planning_failures,
+                    "failureAnalyses": planning_failures,
+                    "planRepairs": [],
+                    "reusedWorkflowIds": [],
+                    "pendingWorkflowIds": [],
+                    "targetUrl": "",
+                },
+            }
         # Arazzo generation and validation above are still intentional durable
         # Testing artifacts. Do not synthesize HTTP responses, runtime logs,
         # assertions, or step results: no executor was invoked.
@@ -1832,9 +3460,23 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
     }
     results: list[dict[str, Any]] = []
     plan_repairs: list[dict[str, Any]] = []
-    failure_analyses: list[dict[str, Any]] = []
+    failure_analyses: list[dict[str, Any]] = list(planning_failures)
     reused_workflow_ids: list[str] = []
-    failures: list[tuple[str, dict[str, Any]]] = []
+    failures: list[tuple[str, dict[str, Any]]] = [
+        (
+            str(item["workflowId"]),
+            {
+                "status": "FAILED",
+                "gateStatus": "FAIL",
+                "reason": str(item["reason"]),
+                "defectClass": str(item["defectClass"]),
+                "finding": deepcopy(item["finding"]),
+                "failedWorkflowId": str(item["workflowId"]),
+                "steps": [],
+            },
+        )
+        for item in planning_failures
+    ]
     priority_workflow_id = str(state.get("priority_workflow_id") or "").strip()
     execution_workflows = list(document["workflows"])
     if priority_workflow_id:
@@ -1930,7 +3572,8 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                 target_url=target_url,
                 workflow_inputs=workflow_inputs.get(workflow_id),
                 workflow_inputs_by_id=workflow_inputs,
-                propose_input=propose,
+                propose_input=None,
+                require_explicit_values=True,
             )
         except Exception as error:
             result = _report(
@@ -1979,8 +3622,8 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                     try:
                         result = execute_arazzo_workflow(
                             document, workflow_id, openapi=frozen["openapi"], target_url=target_url,
-                            workflow_inputs=workflow_inputs.get(workflow_id),
-                            workflow_inputs_by_id=workflow_inputs, propose_input=propose,
+                            workflow_inputs=workflow_inputs.get(workflow_id), workflow_inputs_by_id=workflow_inputs,
+                            propose_input=None, require_explicit_values=True,
                         )
                         _classify_missing_workflow_data(result, workflow, candidate, frozen["openapi"])
                     except Exception as error:
@@ -2070,6 +3713,21 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         "executionOrder": [item["workflowId"] for item in results],
         "requirements": _requirements(results, candidates),
         "failureAnalyses": failure_analyses,
+        "planningFailures": planning_failures,
+        "workflowCounts": {
+            "total": len(candidates),
+            "completed": len(results) + len(planning_failures),
+            "passed": sum(
+                1 for item in results
+                if str((item.get("result") or {}).get("gateStatus") or "").upper() == "PASS"
+            ),
+            "failed": len(planning_failures) + sum(
+                1 for item in results
+                if str((item.get("result") or {}).get("gateStatus") or "").upper() != "PASS"
+            ),
+            "running": 0,
+            "pending": 0,
+        },
         "targetUrl": target_url,
     }
     if failures:

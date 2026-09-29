@@ -461,6 +461,40 @@ def test_expected_4xx_can_be_success_when_criterion_matches(
     _assert_result(result, gate="PASS")
 
 
+def test_output_criterion_cannot_turn_http_500_into_workflow_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = _HttpRecorder([_response(500, {"id": "other", "name": "failed"})])
+    step = {
+        "stepId": "unstable",
+        "operationId": "unstable",
+        "successCriteria": [{"condition": '$response.body#/id != "same"'}],
+    }
+
+    result = _run(monkeypatch, _document([_workflow("main", step)]), recorder)
+
+    _assert_result(result, gate="FAIL", defect="SUT_DEFECT")
+    assert result["steps"][0]["criteria"] == [
+        {"criterion": step["successCriteria"][0], "passed": True}
+    ]
+
+
+def test_output_criterion_and_http_2xx_can_complete_workflow(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = _HttpRecorder([_response(200, {"id": "other", "name": "available"})])
+    step = {
+        "stepId": "read",
+        "operationId": "getItem",
+        "parameters": [{"name": "id", "in": "path", "value": "other"}],
+        "successCriteria": [{"condition": '$response.body#/id != "same"'}],
+    }
+
+    result = _run(monkeypatch, _document([_workflow("main", step)]), recorder)
+
+    _assert_result(result, gate="PASS")
+
+
 def test_prior_output_comparison_simple_criterion_is_evaluated(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
