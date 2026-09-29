@@ -210,6 +210,26 @@ def test_same_input_produces_identical_files() -> None:
     assert render_java_scaffold(request) == render_java_scaffold(request)
 
 
+def test_human_readable_enum_values_render_as_java_constants_with_display_values() -> None:
+    payload = _payload()
+    payload["bceModel"]["DataTypes"][2]["values"] = [
+        "Invalid input",
+        "invalid-input",
+        "123",
+    ]
+
+    source = _source(
+        render_java_scaffold(JavaScaffoldInput.model_validate(payload)), "OrderStatus"
+    )
+
+    assert 'INVALID_INPUT("Invalid input")' in source
+    assert 'INVALID_INPUT_2("invalid-input")' in source
+    assert 'VALUE_123("123")' in source
+    assert "@com.fasterxml.jackson.annotation.JsonValue" in source
+    assert "@com.fasterxml.jackson.annotation.JsonCreator" in source
+    assert "public String getDisplayValue()" in source
+
+
 def test_erd_backed_entity_has_value_constructor_and_non_duplicate_getters() -> None:
     payload = _payload()
     payload["erdBceModel"] = {
@@ -1012,11 +1032,26 @@ def test_rendered_sources_compile(tmp_path: Path) -> None:
     source_root = tmp_path / "source"
     class_root = tmp_path / "classes"
     java_files: list[Path] = []
-    rendered = _render()
+    payload = _payload()
+    payload["bceModel"]["DataTypes"][2]["values"] = ["Invalid input"]
+    rendered = render_java_scaffold(JavaScaffoldInput.model_validate(payload))
     for relative, source in rendered.items():
         target = source_root / Path(relative)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source, encoding="utf-8")
+        java_files.append(target)
+
+    # Spring Boot provides these annotations in the generated application.
+    # Supply minimal declarations so this standalone syntax test needs no
+    # external classpath.
+    for name in ("JsonCreator", "JsonValue"):
+        target = source_root / "com/fasterxml/jackson/annotation" / f"{name}.java"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            "package com.fasterxml.jackson.annotation;\n"
+            "public @interface " + name + " {}\n",
+            encoding="utf-8",
+        )
         java_files.append(target)
 
     class_root.mkdir()

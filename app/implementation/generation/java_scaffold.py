@@ -144,8 +144,8 @@ class JavaScaffoldInput(BaseModel):
         for model in models:
             for data_type in model.DataTypes:
                 _require_identifier(data_type.name, "DataType name")
-                for value in data_type.values:
-                    _require_identifier(value, f"enum value in {data_type.name}")
+                if data_type.kind == "enumeration":
+                    _java_enum_members(data_type.values)
                 for field in data_type.fields:
                     _parse_field(field, owner=data_type.name)
             for component in model.Classes:
@@ -927,11 +927,35 @@ def _container_type(value: str) -> tuple[str, str]:
 def _render_data_type(package_name: str, data_type: DataType, declared_types: set[str]) -> str:
     """설계 DataType을 enum 또는 record로 렌더링한다."""
     if data_type.kind == "enumeration":
-        values = []
-        for value in data_type.values:
-            _require_identifier(value, f"enum value in {data_type.name}")
-            values.append(value)
-        body = ",\n".join(f"    {value}" for value in values)
+        members = _java_enum_members(data_type.values)
+        preserves_display_values = any(name != value for name, value in members)
+        if preserves_display_values:
+            body = ",\n".join(
+                f'    {name}("{_java_string_literal(value)}")'
+                for name, value in members
+            )
+            body += (
+                ";\n\n"
+                "    private final String displayValue;\n\n"
+                f"    {data_type.name}(String displayValue) {{\n"
+                "        this.displayValue = displayValue;\n"
+                "    }\n\n"
+                "    @com.fasterxml.jackson.annotation.JsonValue\n"
+                "    public String getDisplayValue() {\n"
+                "        return displayValue;\n"
+                "    }\n\n"
+                "    @com.fasterxml.jackson.annotation.JsonCreator\n"
+                f"    public static {data_type.name} fromDisplayValue(String displayValue) {{\n"
+                f"        for ({data_type.name} value : values()) {{\n"
+                "            if (value.displayValue.equals(displayValue)) {\n"
+                "                return value;\n"
+                "            }\n"
+                "        }\n"
+                f'        throw new IllegalArgumentException("Unknown {data_type.name} value: " + displayValue);\n'
+                "    }\n"
+            )
+        else:
+            body = ",\n".join(f"    {name}" for name, _value in members)
         return (
             f"package {package_name};\n\n"
             "/** Enumeration contract generated from the class design. */\n"
@@ -1104,6 +1128,43 @@ def _render_imports(types: Any) -> str:
 
 def _valid_identifier(value: str) -> bool:
     return bool(_JAVA_IDENTIFIER.fullmatch(value)) and value not in _JAVA_KEYWORDS
+
+
+def _java_enum_members(values: list[str]) -> list[tuple[str, str]]:
+    """Map display values to unique Java enum constants without changing their meaning."""
+
+    used: set[str] = set()
+    members: list[tuple[str, str]] = []
+    for position, value in enumerate(values, start=1):
+        base = _java_enum_identifier(value, position)
+        name = base
+        suffix = 2
+        while name in used:
+            name = f"{base}_{suffix}"
+            suffix += 1
+        used.add(name)
+        members.append((name, value))
+    return members
+
+
+def _java_enum_identifier(value: str, position: int) -> str:
+    """Create a conventional ASCII Java enum constant from an arbitrary display value."""
+
+    words = re.findall(r"[A-Za-z0-9]+", value)
+    identifier = "_".join(word.upper() for word in words).strip("_")
+    if not identifier:
+        identifier = f"VALUE_{position}"
+    if identifier[0].isdigit():
+        identifier = f"VALUE_{identifier}"
+    # The uppercase result cannot be a lowercase Java keyword, but retain this
+    # guard if the naming convention changes later.
+    if identifier in _JAVA_KEYWORDS:
+        identifier = f"{identifier}_VALUE"
+    return identifier
+
+
+def _java_string_literal(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
 
 
 def _require_identifier_syntax(value: str, label: str) -> None:
