@@ -43,7 +43,14 @@ PLANTUML_IMAGE = (
 # 유스케이스의 시퀀스 그림이 함께 들어오므로 너무 작게 두지는 않되, 개발 서버를 오래
 # 켜 두어도 이미지 bytes가 끝없이 쌓이지 않게 제한한다.
 IMAGE_CACHE_CAPACITY = 512
+SYNTAX_CACHE_CAPACITY = 128
 RENDER_TIMEOUT_SECONDS = 30.0
+
+# A process can validate identical source again during retries or rewinds. Keep
+# only successful, self-contained checks; include/preprocessor directives can
+# depend on files or libraries that change independently of the source text.
+_syntax_cache: OrderedDict[tuple[str, str], bool] = OrderedDict()
+_syntax_cache_lock = RLock()
 
 
 class _WindowsJob:
@@ -142,6 +149,63 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
 
     started = time.perf_counter()
     local = shutil.which("puml")
+    jar = _find_plantuml_jar()
+    renderer = "local" if local else "jar" if jar else "docker"
+    if local:
+        identity_path = Path(local).resolve()
+        flags = ("svg",)
+    elif jar:
+        identity_path = Path(jar).resolve()
+        flags = ("-charset", "UTF-8", "-syntax", "-pipe")
+    else:
+        identity_path = None
+        flags = ("-charset", "UTF-8", "-syntax", "-pipe")
+
+    # Any preprocessor directive may pull in mutable local, remote, or bundled
+    # content. Bypass caching for the entire source rather than guessing which
+    # directives affect validation.
+    self_contained = all(
+        not line.lstrip().startswith("!")
+        or " ".join(line.split()).casefold() == "!theme plain"
+        for line in puml_text.splitlines()
+    )
+    backend_identity: str | None
+    try:
+        if identity_path is not None:
+            stat = identity_path.stat()
+            backend_identity = (
+                f"{renderer}:{identity_path}:{stat.st_dev}:{stat.st_ino}:"
+                f"{stat.st_size}:{stat.st_mtime_ns}:{stat.st_ctime_ns}"
+            )
+            if local and jar:
+                jar_path = Path(jar).resolve()
+                jar_stat = jar_path.stat()
+                backend_identity += (
+                    f":jar:{jar_path}:{jar_stat.st_dev}:{jar_stat.st_ino}:"
+                    f"{jar_stat.st_size}:{jar_stat.st_mtime_ns}:{jar_stat.st_ctime_ns}"
+                )
+        else:
+            backend_identity = f"docker:{PLANTUML_IMAGE}"
+    except OSError:
+        backend_identity = None
+    cache_key = None
+    if self_contained and backend_identity is not None:
+        source_digest = hashlib.sha256(puml_text.encode("utf-8")).hexdigest()
+        flags_key = "\0".join(flags)
+        cache_key = (f"{backend_identity}\0{flags_key}", source_digest)
+        with _syntax_cache_lock:
+            if cache_key in _syntax_cache:
+                _syntax_cache.move_to_end(cache_key)
+                log_design_timing(
+                    "plantuml.syntax_check.completed",
+                    elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
+                    source_chars=len(puml_text),
+                    syntax_valid=True,
+                    renderer=renderer,
+                    cache_hit=True,
+                )
+                return []
+
     if local:
         try:
             with tempfile.TemporaryDirectory(prefix="easydep-puml-check-") as directory:
@@ -157,6 +221,7 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
                 )
                 rendered = list(Path(directory).glob("*.svg"))
                 if result.returncode == 0 and rendered:
+                    _remember_valid_syntax(cache_key)
                     log_design_timing(
                         "plantuml.syntax_check.completed",
                         elapsed_ms=round((time.perf_counter() - started) * 1000, 1),
@@ -164,6 +229,7 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
                         source_chars=len(puml_text),
                         syntax_valid=True,
                         renderer="local",
+                        cache_hit=False,
                     )
                     return []
                 detail = "\n".join(
@@ -191,7 +257,6 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
             return ["PlantUML syntax check timed out."]
     # 배포 이미지에는 PlantUML JAR가 이미 들어 있다. Docker를 다시 호출하지 않고 같은
     # JAR를 사용해야 문법 검사와 상시 이미지 렌더러의 버전도 정확히 일치한다.
-    jar = _find_plantuml_jar()
     command = (
         ["java", "-jar", str(jar), "-charset", "UTF-8", "-syntax", "-pipe"]
         if jar
@@ -263,8 +328,20 @@ def check_plantuml_syntax(puml_text: str) -> list[str]:
         source_chars=len(puml_text),
         syntax_valid=True,
         renderer=renderer,
+        cache_hit=False,
     )
+    _remember_valid_syntax(cache_key)
     return []
+
+
+def _remember_valid_syntax(cache_key: tuple[str, str] | None) -> None:
+    if cache_key is None:
+        return
+    with _syntax_cache_lock:
+        _syntax_cache[cache_key] = True
+        _syntax_cache.move_to_end(cache_key)
+        while len(_syntax_cache) > SYNTAX_CACHE_CAPACITY:
+            _syntax_cache.popitem(last=False)
 
 
 def _encode6bit(value: int) -> str:
