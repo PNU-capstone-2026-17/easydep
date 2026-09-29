@@ -30,3 +30,18 @@
 현재 run의 저장 보고서는 implementation 단계 중심이어서 Testing 내부 비용을 실측할 근거가 없다. `fixed_arazzo_document` 재사용 시 계획 LLM은 생략되므로 중복 계획 생성으로 단정하지 않는다. `verification.py`의 graph 진입 전 application startup과 dynamic node의 동일 workflow/input prior-result `REUSED` 경계는 전체 재사용 때 startup 낭비 후보가 될 수 있으나, 이번 실행에서 발생 여부와 시간 비중은 미확인이다. 다음 동일 checkpoint Testing 관찰에서만 측정하며, 지금은 prelaunch cache 분기나 다른 구조 변경을 추가하지 않는다.
 
 UC11의 500은 성능 병목이 아닌 wire-contract 결함이다. 보존 runtime log `681d523…e6184.log`의 `09:00 AM`→`LocalTime` 역직렬화 실패는 OpenAPI의 형식 없는 `string`과 생성 Java `LocalTime`의 불일치에서 발생했으며, 서비스-owner 타임아웃의 근거로 취급하지 않는다.
+
+## 2026-09-28 관측 — command `49a43f03-bc53-46b6-b40d-c78c1aac7e41`
+
+- 첫 pass는 약 16분이었다. progress 이벤트 기준 snapshot 준비 약 6초, 앱 시작/readiness 약 4분 31초, Arazzo 계획 약 3분 49초, 계획 완료부터 첫 HTTP step까지 약 33초였다. dynamic 구간 합계는 약 6분 51초였다. 첫 pass 뒤 자동 복구·재검증이 시작됐으므로 16분은 최종 command 전체 시간이 아니다.
+- 상위 UC 실행 시간은 UC3 약 76.5초, UC5 약 56.0초, UC1 약 55.4초였다. 이 수치는 workflow 경과 시간이지 순수 HTTP 시간으로 분리 측정된 값이 아니다. 입력이 고정값/스키마 기본값으로 결정되지 않을 때 executor가 step 실행 전 또는 parameter 해석 중 `_propose_input`을 호출할 수 있어, UC 시간에는 OSS 입력 제안 대기도 포함될 수 있다.
+- 두 번째 pass에서는 앱 시작/readiness가 약 296초였다. Gradle cache 사용이 관측됐고 Spring/JPA 관련 timestamp 사이에 약 51.9초 및 41.5초의 간격이 있었다. 이 간격은 로그상의 관측이며, 해당 구성요소가 지연의 원인이라고 확정된 것은 아니다. 보존된 계획과 성공한 UC는 재사용됐지만 같은 실패가 남았고 UC8 계획 복구도 실패했다.
+- Workspace GET의 500은 해당 조사에서 PyMySQL `2013` connection loss와 함께 관측됐다. 당시 사용 가능 메모리는 약 1.1GB였다. 메모리 부족이 연결 종료의 원인이라는 인과관계는 입증되지 않았다.
+
+### 개선 후보 우선순위
+
+1. **정적 입력 사전 준비 — 우선 검토, 중간 구현 비용.** 계획 준비 중 execution profile에 응답과 무관한 필수 입력을 한 번 생성·검증해 저장하고 실행에서 재사용한다. 응답에서 얻는 값은 계속 런타임에 해석하며, 리소스 ID를 임의로 만들지 않는다.
+2. **첫 pass 앱 기동과 독립 검사 겹치기 — 잠재 절감 큼, 중간 구현 비용.** 현재 첫 기동 4분 31초가 계획·정적 검사보다 먼저 끝나야 한다. 준비 의존성을 분리해 앱 기동과 계획/정적 검사를 병렬로 진행할 수 있는지 검토한다.
+3. **세부 계측 후 기동 최적화 — 낮은 위험, 낮은~중간 구현 비용.** Gradle, Spring/JPA, readiness, 입력 제안, HTTP, 응답 검증의 시간을 분리해 기록한 뒤 병목을 조정한다. 현재 timestamp 간격만으로 Spring/JPA 기능을 끄거나 임의로 축소하는 것은 근거가 부족하다.
+
+이 실행은 단일 표본이고 첫 pass와 재검증 pass의 조건이 다르다. UC별 세부 입력 제안·요청·검증 시간 및 두 번째 pass의 세부 시작 하위 단계는 확인되지 않아, 위 원인 귀속과 절감 예상에는 불확실성이 있다.
