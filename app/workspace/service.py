@@ -324,8 +324,7 @@ class WorkspaceService:
         repair_requested = (job.get("owner_repair") or {}).get("requested_at")
         started_at = command.get("started_at")
         if (
-            command.get("status") == "RUNNING"
-            and payload.get("action_id")
+            payload.get("action_id")
             and job_status == "COMPLETED"
             and isinstance(repair_requested, str)
             and isinstance(started_at, str)
@@ -338,7 +337,19 @@ class WorkspaceService:
                 if started.tzinfo is None:
                     started = started.replace(tzinfo=UTC)
                 if requested < started:
-                    return command
+                    if command.get("status") == "RUNNING":
+                        return command
+                    stale_result = result_with_contract(
+                        {**command, "status": "FAILED"},
+                        {"message": "The implementation repair did not start before this command stopped."},
+                    )
+                    return self._finish_terminal_command(
+                        str(command["command_id"]),
+                        command,
+                        status="FAILED",
+                        result=stale_result,
+                        error="The implementation repair was not scheduled.",
+                    )
             except ValueError:
                 pass
         # READY workflow의 완료 여부는 구현 작업 서비스가 판정하여 공개 상태를

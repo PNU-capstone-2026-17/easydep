@@ -1347,9 +1347,9 @@ def test_reconcile_does_not_mistake_an_unrequested_repair_for_completion(
         service.shutdown()
 
     assert result["status"] == "FAILED"
-    assert "job_id" not in result["payload"]
+    assert "job_id" not in result["result"]
     assert not any(
-        action["action"] == "delegate_repair"
+        action["action"] == "start_testing"
         for action in result["result"]["actions"]
     )
 
