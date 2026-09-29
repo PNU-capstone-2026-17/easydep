@@ -761,9 +761,16 @@ def _literal_input_allowed(input_slot: dict[str, Any]) -> bool:
     if not str(input_slot.get("inputSlot") or "").startswith("path:"):
         return True
     # Numeric and boolean path parameters are ordinary scalar inputs (for
-    # example, calculator operands). String/UUID and integer paths can encode
-    # resource identities, so they still need a producer or explicit evidence.
-    return input_slot.get("type") in {"number", "boolean"}
+    # example, calculator operands). Integer paths can also encode resource
+    # identities, so require a producer when the slot carries identity metadata.
+    explicit_identity = bool(
+        input_slot.get("resourceRole") or input_slot.get("identityObligationRef")
+        or input_slot.get("valueRef") and input_slot.get("evidenceRefs")
+        or str(input_slot.get("sourceKind") or "").lower() in {"resource", "identity", "system_result"}
+    )
+    return input_slot.get("type") in {"number", "boolean"} or (
+        input_slot.get("type") == "integer" and not explicit_identity
+    )
 
 
 def _set_payload_value(payload: dict[str, Any], parts: tuple[str, ...], value: Any) -> None:

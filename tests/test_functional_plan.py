@@ -1831,6 +1831,13 @@ def test_identity_producer_requests_require_explicit_caller_identifier_contract(
     }]
 
 
+def test_integer_path_literals_allow_operands_but_reject_marked_resource_identity() -> None:
+    assert dynamic._literal_input_allowed({"inputSlot": "path:count", "type": "integer"})
+    assert not dynamic._literal_input_allowed({
+        "inputSlot": "path:resourceId", "type": "integer", "resourceRole": "resource_id",
+    })
+
+
 def test_selected_semantic_producer_must_be_the_actual_graph_binding() -> None:
     candidate = {
         "workflowId": "workflow-resource",
