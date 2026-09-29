@@ -58,3 +58,15 @@ ERD 게이트 스냅샷에서 `render_and_validate`의 `not_applicable` 경로�
 - 원래 시퀀스·ERD 꼬리 지연은 현재 재현되지 않았다. 저장·체크포인터·서버 출력 중 하나를 원인으로 확정하거나 이를 겨냥한 최적화를 적용할 근거가 아직 없다.
 - 원래 측정 앱은 내부 설계 체크포인트와 Workspace 명령 상태가 서로 다른 단계에 있다. 앱 분기 API는 산출물은 복사하지만 Design graph의 게이트·재개 체크포인트는 복사하지 않는다. 따라서 이를 과거와 같은 작업 단위의 전후 비교로 사용하지 않았다.
 - 다음에 일치하는 Workspace 설계 작업이 자연스럽게 실행될 때 `design.stage_subgraph.completed`, `design.persist.save_stages.completed`, `graph_ms`, `payload_ms`, `db_ms`, `image_warm_ms`와 전체 명령 시간을 함께 수집한다. 체크포인터가 의심되는 경우에만 그 경계를 더 잘게 계측한다. 동일 작업의 수정 전후 시간이 있어야 새 최적화 효과를 주장한다. 현재 근거만으로 수강신청 앱 전체 종단검증을 다시 시작하지 않는다.
+
+## 중첩 체크포인트 상속 최적화
+
+설계 단계 생성 및 피드백 서브그래프를 `compile(checkpointer=False)`로 컴파일하도록 변경했다 (`app/design/graphs/subgraphs.py`). LangGraph 1.2.1에서는 기본 컴파일된 서브그래프가 부모 그래프의 checkpointer를 상속해 별도 namespace 체크포인트를 기록한다. 기존 분기의 읽기 전용 집계에서도 이를 확인했다. 중첩 namespace의 checkpoint/blob/write 행은 sequence 5/34/29, ERD 5/44/39, deployment 6/57/51이었다. 변경 전 같은 분기의 루트 namespace에는 16/207/204행이 있었다.
+
+실제 ERD 스냅샷을 고정한 ABBA 측정은 비활성화 조건 0.457930초, 0.368409초와 상속 조건 0.720533초, 0.732470초였다. 대응 행 수는 비활성화 [3, 94, 91], 상속 [8, 153, 145]였다. 두 조건의 의미상 출력은 같았고 생성된 `episode_id`만 달랐다. 합성 thread는 모두 정리되어 잔여 행 0개를 확인했다. 표본은 조건별 2회뿐이며 기존의 약 54초 구간이 해결됐다는 주장은 하지 않는다.
+
+이 변경은 단계 중간의 노드 단위 crash recovery를 없애므로 실패 시 해당 단계 작업을 다시 수행할 수 있다. 루트 feedback gate의 resume probe는 통과했다. Requirements도 같은 상속 구조지만, 중간 복구 손실의 trade-off를 검토하지 않았으므로 변경하지 않았다.
+
+변경 후 실제 Workspace API로 요구사항 체크포인트에서 분기한 소형 앱 `ba63640b-be66-4911-b882-40fcf3177727`의 클래스 단계만 실행했다. `start_design` 명령 `901e9ecb-23ea-4234-8e8b-d3a2ab9f6d4e`는 약 21.086초의 설계 그래프 실행 뒤 클래스 검토 게이트에서 `AWAITING_INPUT`으로 멈췄고, `CLASS` 산출물이 `needs_review`로 저장됐다. 서브그래프 20.746초와 `save_stages` 0.278초가 기록됐다. 이 앱의 설계 체크포인트는 루트 namespace에 checkpoint/blob/write 4/40/37행이 있고, 중첩 namespace에는 세 표 모두 0행이다. 이는 실제 경로의 기능·기록 확인이지 변경 전후의 동일 입력 시간 비교는 아니다.
+
+검증 클라이언트의 첫 `start_design` 요청은 필수 `action_id` 누락으로 409를 받았는데, 해당 스크립트의 이전 폴링 프로세스가 오류 뒤에도 조회를 계속했다. 클라이언트 포트 3902의 PID 21280을 확인해 그 프로세스만 종료했다. 이 추가 `get_tuple` 로그의 누적시간을 생성 단계의 자체 비용이나 과거 지연의 원인으로 계산하지 않는다.

@@ -202,8 +202,8 @@ def _build_plain_graph(saver: BaseCheckpointSaver[str]) -> RequirementsGraph:
         "gate_handoff", route_gate, {"advance": END, "loop": "gate_handoff"}
     )
 
-    # 체크포인터는 상위 그래프에만 둔다 — 서브그래프의 interrupt도 상위로 전파돼 상위
-    # invoke(Command(resume=...))로 재개된다(서브그래프는 무-체크포인터로 컴파일됨).
+    # 상위 게이트의 interrupt/resume는 이 saver가 보존한다. 서브그래프는 별도
+    # saver를 지정하지 않아 실행 중 상위 체크포인터를 상속한다.
     return builder.compile(checkpointer=saver)
 
 

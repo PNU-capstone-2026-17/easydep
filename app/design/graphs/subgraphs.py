@@ -957,7 +957,8 @@ def build_generation_graph(spec: DesignArtifactSpec):
     _add_state_node(builder, entry, _state_node(extract_node(spec)))
     builder.add_edge(START, entry)
     _add_stage_tail(builder, spec, entry)
-    return builder.compile()
+    # Gates and resume live in the parent graph; avoid inheriting its saver here.
+    return builder.compile(checkpointer=False)
 
 
 def build_feedback_graph(spec: DesignArtifactSpec):
@@ -972,7 +973,8 @@ def build_feedback_graph(spec: DesignArtifactSpec):
     _add_state_node(builder, entry, _state_node(revise_node(spec)))
     builder.add_edge(START, entry)
     _add_stage_tail(builder, spec, entry)
-    return builder.compile()
+    # A failed child stage may rerun, but the parent gate remains resumable.
+    return builder.compile(checkpointer=False)
 
 
 def build_design_subgraphs() -> dict[str, dict[str, Any]]:
