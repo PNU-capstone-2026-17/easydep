@@ -548,6 +548,30 @@ def terminal_actions(command: dict[str, Any]) -> list[ActionOffer]:
     common = {"action_id": command_id}
     if result.get("feedback_question_answered_by"):
         return [_offer(WorkspaceAction.MESSAGE, "Continue conversation", common)]
+    # The service adds this marker only after it has re-read the linked job and
+    # confirmed that its current terminal checkpoint is still safe to resume.
+    if status in {"FAILED", "CANCELLED"}:
+        job = result.get("job")
+        job = job if isinstance(job, dict) else {}
+        job_id = str(
+            (command.get("payload") or {}).get("job_id")
+            or result.get("job_id")
+            or job.get("job_id")
+            or ""
+        )
+        if (
+            stage == "implementation"
+            and job_id
+            and result.get("_current_implementation_checkpoint_retryable") is True
+        ):
+            return [
+                _offer(
+                    WorkspaceAction.RETRY_IMPLEMENTATION,
+                    "Retry implementation checkpoint",
+                    {**common, "job_id": job_id},
+                )
+            ]
+        return []
     if status in {"FAILED", "INTERRUPTED"}:
         # Non-question technical failures are resumed by the common durable
         # loop; exposing another retry/rerun action can create duplicate work.
@@ -667,7 +691,10 @@ def offered_actions(command: dict[str, Any]) -> list[ActionOffer]:
     # A terminal implementation command must expose the retry or fresh rerun
     # derived from its current checkpoint state. A copied conversation action
     # from before the terminal result can otherwise hide that recovery path.
-    if command.get("status") in {"FAILED", "INTERRUPTED"} and command.get("stage") == "implementation":
+    if (
+        command.get("status") in {"FAILED", "INTERRUPTED", "CANCELLED"}
+        and command.get("stage") == "implementation"
+    ):
         return terminal_actions(command)
     if isinstance(preserved, list):
         actions = [ActionOffer.model_validate(action) for action in preserved]

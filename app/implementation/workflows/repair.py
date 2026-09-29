@@ -28,6 +28,86 @@ REPAIR_PROMPT_DIR = Path("reports/implementation-tasks")
 REPAIR_PROMPT_HEADING = "## Automatic repair task"
 REPAIR_PROMPT_START = "<!-- easydep:repair-directives:start -->"
 REPAIR_PROMPT_END = "<!-- easydep:repair-directives:end -->"
+
+
+class ReviewerProviderError(RuntimeError):
+    """A reviewer provider request failed and may be handled by the outer retry."""
+
+    def __init__(self, details: dict[str, object]) -> None:
+        super().__init__("unit failure reviewer provider request failed")
+        self.details = details
+        self.status_code = details.get("status")
+        self.failure_kind = (
+            "provider_request_validation"
+            if self.status_code == 400
+            else "provider_request_error"
+        )
+
+
+_REVIEWER_ERROR_TEXT_LIMIT = 12_000
+_REVIEWER_SECRET_PATTERNS = re.compile(
+    r"(?i)(api[_ -]?key|authorization|bearer|credential|secret|access[_ -]?token|refresh[_ -]?token)"
+    r"\s*[:=]?\s*[^\s,;]+"
+)
+
+
+def _reviewer_error_value(error: APIError) -> dict[str, object]:
+    """Project only safe, bounded provider error fields for logs and retry signals."""
+
+    candidates: list[object] = [getattr(error, "body", None)]
+    response = getattr(error, "response", None)
+    if response is not None:
+        try:
+            candidates.append(response.json())
+        except Exception:
+            pass
+
+    fields: dict[str, object] = {}
+    for candidate in candidates:
+        current = candidate
+        # SDK bodies and provider gateways may wrap the same error several times.
+        for _ in range(5):
+            if isinstance(current, str):
+                try:
+                    current = json.loads(current)
+                except (ValueError, TypeError):
+                    break
+            if not isinstance(current, dict):
+                break
+            for key in ("message", "failed_generation"):
+                value = current.get(key)
+                if isinstance(value, str) and key not in fields:
+                    fields[key] = value
+            nested = current.get("error")
+            if isinstance(nested, dict) or isinstance(nested, str):
+                current = nested
+                continue
+            break
+
+    def safe_text(value: object, limit: int) -> str | None:
+        if not isinstance(value, str):
+            return None
+        value = _REVIEWER_SECRET_PATTERNS.sub(r"\1=[REDACTED]", value)
+        if len(value) <= limit:
+            return value
+        edge = limit // 2
+        return (
+            value[:edge]
+            + f"\n...[truncated chars={len(value)} sha256={hashlib.sha256(value.encode('utf-8', errors='replace')).hexdigest()}]...\n"
+            + value[-edge:]
+        )
+
+    output: dict[str, object] = {
+        "status": getattr(error, "status_code", None),
+        "errorType": type(error).__name__,
+    }
+    message = safe_text(fields.get("message"), 1600)
+    generation = safe_text(fields.get("failed_generation"), _REVIEWER_ERROR_TEXT_LIMIT)
+    if message:
+        output["message"] = message
+    if generation:
+        output["failed_generation"] = generation
+    return output
 logger = logging.getLogger(__name__)
 
 
@@ -285,7 +365,7 @@ def _unit_failure_review(
                 model=connection.model,
                 messages=current_messages,
                 temperature=0.1,
-                max_completion_tokens=2048,
+                max_completion_tokens=8192,
                 reasoning_effort=settings.design_reasoning_effort,
                 response_format={"type": "json_object"},
             )
@@ -363,35 +443,14 @@ def _unit_failure_review(
         )
         return None
     except APIError as error:
-        body = getattr(error, "body", None)
-        body_error = body.get("error", body) if isinstance(body, dict) else None
-        body_error = body_error if isinstance(body_error, dict) else {}
-        provider_param = body_error.get("param") or getattr(error, "param", None)
-        provider_code = body_error.get("code") or getattr(error, "code", None)
-        provider_message = body_error.get("message")
-        safe_message = (
-            str(provider_message)[:800]
-            if isinstance(provider_message, str)
-            and not any(
-                marker in provider_message.casefold()
-                for marker in (
-                    "api key", "api_key", "authorization", "bearer", "credential",
-                    "secret", "access_token", "refresh_token", "secret_token",
-                )
-            )
-            else None
-        )
+        details = _reviewer_error_value(error)
         logger.warning(
-            "unit failure review API error task_id=%s model=%s error_type=%s status=%s param=%s code=%s message=%s",
+            "unit failure review API error task_id=%s model=%s details=%s",
             task_id,
             getattr(locals().get("connection"), "model", "unknown"),
-            type(error).__name__,
-            getattr(error, "status_code", None),
-            str(provider_param)[:160] if provider_param is not None else None,
-            str(provider_code)[:160] if provider_code is not None else None,
-            safe_message,
+            json.dumps(details, ensure_ascii=False),
         )
-        return None
+        raise ReviewerProviderError(details) from error
     except (OSError, ValueError) as error:
         logger.warning(
             "unit failure review failed task_id=%s model=%s error_type=%s errno=%s",

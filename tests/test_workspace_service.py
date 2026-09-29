@@ -880,6 +880,76 @@ def test_testing_repair_batches_declared_owners_before_one_monitor(
     assert task_type == "testing-dynamic-functional"
 
 
+def test_testing_owner_repair_does_not_resume_a_terminal_provider_validation_failure(
+    monkeypatch,
+) -> None:
+    service = WorkspaceService()
+    retried: list[str] = []
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "get",
+        lambda _job_id: {
+            "job_id": "implementation-1",
+            "status": "FAILED",
+            "checkpoint_retryable": False,
+            "failure_classification": {
+                "kind": "provider_request_validation",
+                "status_code": 400,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "retry_failed",
+        lambda job_id: retried.append(job_id),
+    )
+    monkeypatch.setattr(
+        service,
+        "_monitor_implementation",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("implementation failed")
+        ),
+    )
+    try:
+        with pytest.raises(RuntimeError, match="implementation failed"):
+            service._monitor_testing_owner_repair(
+                {"command_id": "testing-command"}, {"job_id": "implementation-1"}
+            )
+    finally:
+        service.shutdown()
+
+    assert retried == []
+
+
+def test_terminal_provider_validation_failure_does_not_fall_back_to_a_fresh_rerun(
+    monkeypatch,
+) -> None:
+    command = {
+        "command_id": "implementation-command",
+        "app_id": "app-1",
+        "stage": "implementation",
+        "payload": {"job_id": "implementation-1"},
+    }
+    monkeypatch.setattr(repository, "get_command", lambda _command_id: command)
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "get",
+        lambda _job_id: {
+            "status": "FAILED",
+            "checkpoint_retryable": False,
+            "failure_classification": {
+                "kind": "provider_request_validation",
+                "status_code": 400,
+            },
+        },
+    )
+    service = WorkspaceService()
+    try:
+        assert service._transient_retry_operation(command) is None
+    finally:
+        service.shutdown()
+
+
 def test_testing_owner_repair_discards_the_old_checkpoint_before_recapture(monkeypatch) -> None:
     stale_checkpoint = {"implementation_job_id": "implementation-old"}
     command = {
@@ -4818,6 +4888,57 @@ def test_failed_testing_offer_uses_only_a_linked_retryable_implementation_checkp
         "action_id": "testing-command",
         ("job_id" if checkpoint_retryable else "implementation_job_id"): "implementation-1",
     }
+
+
+@pytest.mark.parametrize(
+    ("job_status", "checkpoint_retryable", "expected_actions"),
+    [
+        ("CANCELLED", True, ["retry_implementation"]),
+        ("FAILED", True, ["retry_implementation"]),
+        ("CANCELLED", False, []),
+    ],
+)
+def test_cancelled_implementation_offer_requires_a_current_failed_retryable_job(
+    monkeypatch, job_status: str, checkpoint_retryable: bool, expected_actions: list[str]
+) -> None:
+    command = {
+        "command_id": "implementation-command",
+        "app_id": "app-1",
+        "action": "start_implementation",
+        "stage": "implementation",
+        "status": "CANCELLED",
+        "payload": {},
+        "result": {"job": {"job_id": "implementation-1", "checkpoint_retryable": True}},
+    }
+    monkeypatch.setattr(
+        workspace_module.implementation_worker,
+        "get",
+        lambda _job_id: {
+            "job_id": "implementation-1",
+            "app_id": "app-1",
+            "status": job_status,
+            "checkpoint_retryable": checkpoint_retryable,
+        },
+    )
+    service = WorkspaceService()
+    try:
+        offers = service._resolved_offered_actions("app-1", command)
+        payload = {
+            "action_id": "implementation-command",
+            "job_id": "implementation-1",
+        }
+        monkeypatch.setattr(repository, "get_command", lambda _command_id: command)
+        if expected_actions:
+            service._validate_action_reference("app-1", "retry_implementation", payload)
+        else:
+            with pytest.raises(ValueError, match="not currently offered"):
+                service._validate_action_reference(
+                    "app-1", "retry_implementation", payload
+                )
+    finally:
+        service.shutdown()
+
+    assert [str(offer.action) for offer in offers] == expected_actions
 
 
 def test_start_testing_after_repair_retry_reuses_the_failed_plan(monkeypatch) -> None:

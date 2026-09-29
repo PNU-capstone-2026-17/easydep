@@ -12,6 +12,7 @@ from ..agents.runtime import OWNER_TASK_TYPES
 from ..agents.workspace import load_strict_task
 from ..generation.orchestrator import PrototypeOrchestrator, load_job
 from ..workflows.coordinator import plan_workflow, run_workflow
+from ..workflows.repair import ReviewerProviderError
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,35 +36,52 @@ def main(argv: list[str] | None = None) -> int:
         parser.add_argument("task_id", nargs="?")
         args = parser.parse_args(arguments)
         spec = load_job(args.job.resolve())
-        if args.command == "plan-workflow":
-            if args.task_id:
-                parser.error("task_id is only valid for run-owner")
-            result = plan_workflow(args.run.resolve(), spec)
-        elif args.command == "run-workflow":
-            if args.task_id:
-                parser.error("task_id is only valid for run-owner")
-            result = run_workflow(
-                args.run.resolve(),
-                spec,
-                retry_failed=args.retry_failed,
-            )
-        else:
-            if args.retry_failed:
-                parser.error("--retry-failed is only valid for run-workflow")
-            if not args.task_id:
-                parser.error("run-owner requires task_id")
-            run_root = args.run.resolve()
-            try:
-                run_root.relative_to(spec.output_root.resolve())
-            except ValueError:
-                parser.error("run must be inside the validated job output root")
-            if not run_root.is_dir():
-                parser.error("run directory does not exist")
-            # Load before execution so an arbitrary task ID can never enter the
-            # owner runtime.  Do not call plan/run_workflow here: diagnostics
-            # replay one explicitly selected owner task only.
-            load_strict_task(run_root, args.task_id, allowed_task_types=OWNER_TASK_TYPES)
-            result = execute_openhands_task(run_root, args.task_id)
+        try:
+            if args.command == "plan-workflow":
+                if args.task_id:
+                    parser.error("task_id is only valid for run-owner")
+                result = plan_workflow(args.run.resolve(), spec)
+            elif args.command == "run-workflow":
+                if args.task_id:
+                    parser.error("task_id is only valid for run-owner")
+                result = run_workflow(
+                    args.run.resolve(),
+                    spec,
+                    retry_failed=args.retry_failed,
+                )
+            else:
+                if args.retry_failed:
+                    parser.error("--retry-failed is only valid for run-workflow")
+                if not args.task_id:
+                    parser.error("run-owner requires task_id")
+                run_root = args.run.resolve()
+                try:
+                    run_root.relative_to(spec.output_root.resolve())
+                except ValueError:
+                    parser.error("run must be inside the validated job output root")
+                if not run_root.is_dir():
+                    parser.error("run directory does not exist")
+                # Load before execution so an arbitrary task ID can never enter the
+                # owner runtime.  Do not call plan/run_workflow here: diagnostics
+                # replay one explicitly selected owner task only.
+                load_strict_task(run_root, args.task_id, allowed_task_types=OWNER_TASK_TYPES)
+                result = execute_openhands_task(run_root, args.task_id)
+        except ReviewerProviderError as error:
+            if error.failure_kind == "provider_request_validation" and error.status_code == 400:
+                # This is deliberately machine-readable and excludes provider
+                # response text, headers, and request payloads.
+                print(
+                    json.dumps(
+                        {
+                            "failure": {
+                                "kind": error.failure_kind,
+                                "status_code": error.status_code,
+                            }
+                        }
+                    )
+                )
+                return 1
+            raise
         print(json.dumps(result, ensure_ascii=False))
         return 0
 

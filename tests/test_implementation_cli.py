@@ -9,7 +9,7 @@ import pytest
 
 from app.implementation.agents.workspace import load_strict_task
 from app.implementation.interfaces import cli
-from app.implementation.workflows.repair import apply_repair_directives
+from app.implementation.workflows.repair import ReviewerProviderError, apply_repair_directives
 
 
 def test_run_owner_validates_one_task_without_running_a_workflow(
@@ -59,6 +59,33 @@ def test_run_owner_validates_one_task_without_running_a_workflow(
     assert json.loads(capsys.readouterr().out) == {
         "task_id": "implement-backend",
         "status": "SUCCEEDED",
+    }
+
+
+def test_run_workflow_emits_only_a_structured_provider_validation_marker(
+    monkeypatch, tmp_path: Path, capsys
+) -> None:
+    job_path = tmp_path / "job.json"
+    run_root = tmp_path / "run"
+    monkeypatch.setattr(
+        cli,
+        "load_job",
+        lambda _path: SimpleNamespace(output_root=tmp_path),
+    )
+    monkeypatch.setattr(
+        cli,
+        "run_workflow",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            ReviewerProviderError({"status": 400, "message": "not emitted"})
+        ),
+    )
+
+    assert cli.main(["run-workflow", str(run_root), str(job_path)]) == 1
+    assert json.loads(capsys.readouterr().out) == {
+        "failure": {
+            "kind": "provider_request_validation",
+            "status_code": 400,
+        }
     }
 
 

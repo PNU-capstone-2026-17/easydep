@@ -763,11 +763,11 @@ def test_failed_change_confirmation_retries_the_confirmation_not_design_graph() 
 
 
 @pytest.mark.parametrize(
-    ("checkpoint_retryable", "expected_action"),
-    [(True, "retry_implementation"), (False, "rerun_implementation")],
+    ("checkpoint_retryable", "expected_actions"),
+    [(True, ["retry_implementation"]), (False, [])],
 )
-def test_failed_implementation_offers_only_a_safe_retry_path(
-    checkpoint_retryable: bool, expected_action: str
+def test_failed_implementation_offers_only_a_current_safe_retry_path(
+    checkpoint_retryable: bool, expected_actions: list[str]
 ) -> None:
     prior = command(
         status="FAILED",
@@ -777,18 +777,67 @@ def test_failed_implementation_offers_only_a_safe_retry_path(
         result={
             "job_id": "implementation-1",
             "checkpoint_retryable": checkpoint_retryable,
+            **(
+                {"_current_implementation_checkpoint_retryable": True}
+                if checkpoint_retryable
+                else {}
+            ),
         },
     )
 
     shaped = result_with_contract(prior, prior["result"])
 
-    assert [item["action"] for item in shaped["actions"]] == [
-        "message",
-        expected_action,
-    ]
-    retry_offer = shaped["actions"][1]
-    assert retry_offer["payload"]["action_id"] == "command-1"
-    assert action_is_offered(expected_action, retry_offer["payload"], prior)
+    assert [item["action"] for item in shaped["actions"]] == expected_actions
+    if expected_actions:
+        retry_offer = shaped["actions"][0]
+        assert retry_offer["payload"]["action_id"] == "command-1"
+        assert action_is_offered("retry_implementation", retry_offer["payload"], prior)
+
+
+def test_cancelled_implementation_offers_no_retry_without_service_confirmation() -> None:
+    prior = command(
+        status="CANCELLED",
+        stage="implementation",
+        action="start_implementation",
+        payload={"job_id": "implementation-1"},
+        result={"job_id": "implementation-1", "checkpoint_retryable": True},
+    )
+
+    assert offered_actions(prior) == []
+
+
+def test_cancelled_implementation_offers_only_confirmed_checkpoint_retry() -> None:
+    prior = command(
+        status="CANCELLED",
+        stage="implementation",
+        action="start_implementation",
+        result={
+            "job": {"job_id": "implementation-1", "checkpoint_retryable": True},
+            "_current_implementation_checkpoint_retryable": True,
+        },
+    )
+
+    offers = offered_actions(prior)
+
+    assert [offer.action for offer in offers] == [WorkspaceAction.RETRY_IMPLEMENTATION]
+    assert offers[0].payload == {"action_id": "command-1", "job_id": "implementation-1"}
+
+
+def test_failed_implementation_offers_only_currently_confirmed_checkpoint_retry() -> None:
+    prior = command(
+        status="FAILED",
+        stage="implementation",
+        action="start_implementation",
+        result={
+            "job": {"job_id": "implementation-1", "checkpoint_retryable": True},
+            "_current_implementation_checkpoint_retryable": True,
+        },
+    )
+
+    offers = offered_actions(prior)
+
+    assert [offer.action for offer in offers] == [WorkspaceAction.RETRY_IMPLEMENTATION]
+    assert offers[0].payload == {"action_id": "command-1", "job_id": "implementation-1"}
 
 
 def test_reference_validation_accepts_only_a_published_payload() -> None:

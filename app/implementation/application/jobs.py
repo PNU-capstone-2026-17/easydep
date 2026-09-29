@@ -674,9 +674,13 @@ class ImplementationWorker:
         """저장된 checkpoint에서 실패했거나 감사에 멈춘 단계만 다시 시작한다."""
         record = self._read(job_id)
         integration_retry = self._integration_checkpoint_retryable(record)
-        if record.get("status") not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER"} and not integration_retry:
+        if (
+            record.get("status")
+            not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER", "CANCELLED"}
+            and not integration_retry
+        ):
             raise InvalidJobState(
-                "Only a failed, interrupted, or audit-blocked implementation job can be retried: "
+                "Only a failed, interrupted, cancelled, or audit-blocked implementation job can be retried: "
                 f"{record.get('status')}"
             )
         if not self._checkpoint_retryable(record):
@@ -688,6 +692,8 @@ class ImplementationWorker:
         if integration_retry:
             self._reset_integration_checkpoint(record)
         record["status"] = "QUEUED"
+        record.pop("stopRequested", None)
+        record.pop("_interrupted_by_user", None)
         record["checkpoint_retry_count"] = int(
             record.get("checkpoint_retry_count", 0)
         ) + 1
@@ -877,9 +883,19 @@ class ImplementationWorker:
     @staticmethod
     def _checkpoint_retryable(record: dict[str, Any]) -> bool:
         """실행 checkpoint를 같은 Job에서 안전하게 재사용할 수 있는지 확인한다."""
+        failure = record.get("failure_classification")
+        if (
+            isinstance(failure, dict)
+            and failure.get("kind") == "provider_request_validation"
+            and failure.get("status_code") == 400
+        ):
+            # Replaying the preserved checkpoint would only repeat a request
+            # that the provider already rejected as invalid.
+            return False
         if record.get("status") not in {
             "FAILED",
             "INTERRUPTED",
+            "CANCELLED",
             "NEEDS_PLANNER",
             "NEEDS_INPUT",
         }:
@@ -1363,6 +1379,16 @@ class ImplementationWorker:
             return
         record["status"] = "FAILED"
         record["error"] = str(error)[-4000:]
+        failure_kind = getattr(error, "failure_kind", None)
+        status_code = getattr(error, "status_code", None)
+        if failure_kind == "provider_request_validation" and status_code == 400:
+            # Workspace reads persisted job state, rather than this exception.
+            record["failure_classification"] = {
+                "kind": failure_kind,
+                "status_code": status_code,
+            }
+        else:
+            record.pop("failure_classification", None)
         record["updated_at"] = _now()
         self._write(record)
 

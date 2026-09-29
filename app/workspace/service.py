@@ -913,8 +913,36 @@ class WorkspaceService:
         anchor = self._conversation_action_anchor(app_id, command)
         result = anchor.get("result")
         shaped_result = dict(result) if isinstance(result, dict) else {}
+        shaped_result.pop("_current_implementation_checkpoint_retryable", None)
         if str(anchor.get("stage") or "") == "design":
             shaped_result = self._with_design_progress_hints(app_id, shaped_result)
+        if (
+            str(anchor.get("stage") or "") == "implementation"
+            and str(anchor.get("status") or "") in {"FAILED", "CANCELLED"}
+        ):
+            result_job = shaped_result.get("job")
+            result_job = result_job if isinstance(result_job, dict) else {}
+            job_id = str(
+                (anchor.get("payload") or {}).get("job_id")
+                or shaped_result.get("job_id")
+                or result_job.get("job_id")
+                or ""
+            )
+            if job_id:
+                try:
+                    job = implementation_worker.get(job_id)
+                except Exception:
+                    job = {}
+                if (
+                    str(job.get("app_id") or "") == app_id
+                    and str(job.get("job_id") or job_id) == job_id
+                    and str(job.get("status") or "")
+                    in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER", "NEEDS_INPUT", "CANCELLED"}
+                    and bool(job.get("checkpoint_retryable"))
+                ):
+                    shaped_result[
+                        "_current_implementation_checkpoint_retryable"
+                    ] = True
         if (
             str(anchor.get("stage") or "") == "testing"
             and str(anchor.get("status") or "")
@@ -1742,14 +1770,20 @@ class WorkspaceService:
             except Exception:
                 return lambda: self._retry_implementation_checkpoint(latest, job_id)
             if (
-                str(job.get("status") or "") in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER", "NEEDS_INPUT"}
+                str(job.get("status") or "") in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER", "NEEDS_INPUT", "CANCELLED"}
                 and bool(job.get("checkpoint_retryable"))
             ):
                 return lambda: self._retry_implementation_checkpoint(latest, job_id)
             if str(job.get("status") or "") in TERMINAL_JOB_STATUSES:
-                return lambda: self._dispatch(
-                    {**latest, "action": "rerun_implementation"}
-                )
+                failure = job.get("failure_classification")
+                if not (
+                    isinstance(failure, dict)
+                    and failure.get("kind") == "provider_request_validation"
+                    and failure.get("status_code") == 400
+                ):
+                    return lambda: self._dispatch(
+                        {**latest, "action": "rerun_implementation"}
+                    )
         return None
 
     def _retry_implementation_checkpoint(
@@ -1759,7 +1793,7 @@ class WorkspaceService:
 
         current = implementation_worker.get(job_id)
         if (
-            str(current.get("status") or "") not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER", "NEEDS_INPUT"}
+            str(current.get("status") or "") not in {"FAILED", "INTERRUPTED", "NEEDS_PLANNER", "NEEDS_INPUT", "CANCELLED"}
             or not bool(current.get("checkpoint_retryable"))
         ):
             raise RuntimeError("The implementation checkpoint is no longer safe to retry.")
@@ -6550,6 +6584,44 @@ class WorkspaceService:
         job_id = str(job.get("job_id") or "")
         if report.get("passed") is False:
             blockers = list(report.get("blocking_findings") or [])
+            # Testing already performs its bounded plan correction/replay.  If
+            # only test-plan authoring defects remain, no generated-app repair
+            # or user decision exists; do not expose a retry as AWAITING_INPUT.
+            test_plan_defect = bool(blockers) and all(
+                isinstance(blocker, dict)
+                and str(blocker.get("defect_class") or "") == "TEST_DEFECT"
+                and str(blocker.get("repair_owner") or "") == "testing"
+                for blocker in blockers
+            )
+            if test_plan_defect:
+                repair_state = dict(report.get("repair_state") or {})
+                repair_state.update(
+                    {
+                        "status": "STALLED",
+                        "stall_reason": (
+                            "Bounded test-plan correction was exhausted; "
+                            "an EasyDep test-plan authoring defect remains."
+                        ),
+                    }
+                )
+                return {
+                    "kind": "platform_diagnostic",
+                    "message": (
+                        "Testing stopped after bounded test-plan correction. "
+                        "EasyDep detected an internal test-plan authoring defect; "
+                        "the generated application was not assigned a failure."
+                    ),
+                    "requires_revision": False,
+                    "internal_diagnostic": {
+                        "category": "TEST_PLAN_AUTHORING_DEFECT",
+                        "owner": "EasyDep",
+                    },
+                    "blocking_findings": blockers,
+                    "repair_state": repair_state,
+                    "blocking_route": "platform",
+                    "job_id": job_id,
+                    "job": job,
+                }
             repairable = any(
                 blocker.get("repairable") is not False
                 for blocker in blockers

@@ -19,6 +19,7 @@ from app.implementation.agents.workspace import (
     prepare_agent_workspace,
 )
 from app.implementation.application import jobs as implementation_jobs
+from app.implementation.application import prototype as prototype_module
 from app.implementation.application.feedback import resolve_feedback_targets
 from app.implementation.application.jobs import ImplementationWorker, InvalidJobState
 from app.implementation.application.prototype import PrototypeClient, PrototypeExecutionError
@@ -1242,7 +1243,7 @@ def test_live_generation_progress_is_exposed_without_host_path(tmp_path: Path) -
 
 
 @pytest.mark.parametrize(
-    "terminal_status", ["FAILED", "INTERRUPTED", "NEEDS_PLANNER"]
+    "terminal_status", ["FAILED", "INTERRUPTED", "NEEDS_PLANNER", "CANCELLED"]
 )
 def test_stopped_job_retries_the_same_checkpoint(
     tmp_path: Path,
@@ -1273,6 +1274,11 @@ def test_stopped_job_retries_the_same_checkpoint(
             "run_root": str(run_root),
             "workflow": {"status": terminal_status},
             "error": "provider failed",
+            **(
+                {"stopRequested": True, "_interrupted_by_user": True}
+                if terminal_status == "CANCELLED"
+                else {}
+            ),
             "updated_at": "before",
         }
     )
@@ -1294,10 +1300,100 @@ def test_stopped_job_retries_the_same_checkpoint(
     assert retried["checkpoint_retryable"] is False
     assert persisted["checkpoint_retry_count"] == 1
     assert "error" not in persisted
+    if terminal_status == "CANCELLED":
+        assert "stopRequested" not in persisted
+        assert "_interrupted_by_user" not in persisted
     assert len(submitted) == 1
     submitted_call, *submitted_args = submitted[0]
     assert getattr(submitted_call, "__wrapped__", None) == implementation_worker._run
     assert submitted_args == [job_id, True]
+
+
+@pytest.mark.parametrize(
+    ("failure_kind", "status_code", "expected_retryable"),
+    [
+        ("provider_request_validation", 400, False),
+        ("provider_request_error", 503, True),
+    ],
+    ids=["provider-400-is-terminal", "transient-provider-error-retries"],
+)
+def test_provider_failure_classification_controls_checkpoint_retry(
+    tmp_path: Path,
+    failure_kind: str,
+    status_code: int,
+    expected_retryable: bool,
+) -> None:
+    class ProviderFailure(RuntimeError):
+        def __init__(self) -> None:
+            super().__init__("provider request failed")
+            self.failure_kind = failure_kind
+            self.status_code = status_code
+
+    implementation_worker = ImplementationWorker(settings(tmp_path))
+    job_id = "provider-failure"
+    job_root = implementation_worker.settings.work_root / job_id
+    job_path = job_root / "job.json"
+    run_root = job_root / "outputs" / "run_checkpoint"
+    reports = run_root / "reports"
+    reports.mkdir(parents=True)
+    job_path.write_text("{}", encoding="utf-8")
+    (reports / "run-manifest.json").write_text("{}", encoding="utf-8")
+    (reports / "workflow-state.json").write_text("{}", encoding="utf-8")
+    record = {
+        "job_id": job_id,
+        "app_id": "app-1",
+        "status": "RUNNING",
+        "job_path": str(job_path),
+        "run_root": str(run_root),
+        "workflow": {"status": "RUNNING"},
+    }
+    implementation_worker._write(record)
+    submitted: list[tuple[object, ...]] = []
+    implementation_worker.executor.submit = (  # type: ignore[method-assign]
+        lambda *args, **_kwargs: submitted.append(args)
+    )
+
+    try:
+        implementation_worker._fail(record, ProviderFailure())
+        failed = implementation_worker.get(job_id)
+        assert failed["checkpoint_retryable"] is expected_retryable
+        if expected_retryable:
+            implementation_worker.retry_failed(job_id)
+            assert len(submitted) == 1
+        else:
+            assert failed["failure_classification"] == {
+                "kind": "provider_request_validation",
+                "status_code": 400,
+            }
+            with pytest.raises(RuntimeError, match="no reusable execution checkpoint"):
+                implementation_worker.retry_failed(job_id)
+    finally:
+        implementation_worker.shutdown()
+
+
+def test_prototype_client_preserves_the_cli_provider_validation_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FailedProcess:
+        pid = 1
+        returncode = 1
+
+        def communicate(self, timeout: object = None) -> tuple[str, str]:
+            return (
+                '{"failure":{"kind":"provider_request_validation","status_code":400}}\n',
+                "",
+            )
+
+    client = PrototypeClient(settings(tmp_path))
+    monkeypatch.setattr(
+        prototype_module.subprocess, "Popen", lambda *_args, **_kwargs: FailedProcess()
+    )
+
+    with pytest.raises(PrototypeExecutionError) as caught:
+        client._call_command(["implementation-cli"], None, {})
+
+    assert caught.value.failure_kind == "provider_request_validation"
+    assert caught.value.status_code == 400
 
 
 def test_failed_job_without_checkpoint_requires_a_fresh_run(

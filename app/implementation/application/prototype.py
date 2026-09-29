@@ -41,7 +41,18 @@ _OPENAPI_OPERATIONS = frozenset(
 
 
 class PrototypeExecutionError(RuntimeError):
-    """구현 CLI를 준비하거나 실행하는 과정에서 발생한 오류."""
+    """Implementation CLI preparation or execution failed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        failure_kind: str | None = None,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.failure_kind = failure_kind
+        self.status_code = status_code
 
 
 def _prepare_runner_output_directories(run_root: Path) -> None:
@@ -598,11 +609,21 @@ class PrototypeClient:
             # 일반 stderr보다 run manifest의 ERROR 진단이 사용자에게 더 구체적이다. CLI가
             # 출력 디렉터리를 JSON으로 남겼다면 manifest를 찾아 마지막 오류를 우선 사용한다.
             evidence = (stderr or stdout)[-4000:]
+            failure_kind: str | None = None
+            status_code: int | None = None
             for line in reversed(stdout.splitlines()):
                 try:
                     failed = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                failure = failed.get("failure") if isinstance(failed, dict) else None
+                if (
+                    isinstance(failure, dict)
+                    and failure.get("kind") == "provider_request_validation"
+                    and failure.get("status_code") == 400
+                ):
+                    failure_kind = "provider_request_validation"
+                    status_code = 400
                 output = failed.get("output") if isinstance(failed, dict) else None
                 manifest = Path(str(output)) / "reports" / "run-manifest.json" if output else None
                 if manifest and manifest.is_file():
@@ -616,7 +637,9 @@ class PrototypeClient:
                         evidence = "; ".join(messages)[-4000:]
                 break
             raise PrototypeExecutionError(
-                f"Implementation prototype exited with {process.returncode}: {evidence}"
+                f"Implementation prototype exited with {process.returncode}: {evidence}",
+                failure_kind=failure_kind,
+                status_code=status_code,
             )
         # 빌드 도구의 일반 로그가 앞에 섞일 수 있으므로 뒤에서부터 유효한 JSON 객체를 찾는다.
         for line in reversed(stdout.splitlines()):
