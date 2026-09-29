@@ -19,6 +19,7 @@ from collections.abc import Callable
 
 from langgraph.types import interrupt
 
+from app.design.observability import log_design_timing
 from app.design.graphs.subgraphs import FEEDBACK_KEYS
 from app.design.schemas.architecture_state import ArchitectureState
 from app.repositories.artifact_repository import STAGE_ARTIFACTS
@@ -62,6 +63,7 @@ def make_gate(stage: str) -> Callable[[ArchitectureState], dict]:
     feedback_key = FEEDBACK_KEYS[stage]
 
     def gate(state: ArchitectureState) -> dict:
+        log_design_timing("design.gate.entered", stage=stage)
         # 규칙 검사 결과. 검사 노드가 없는 스테이지는 빈 dict이고, 그때 `check_status`는
         # None이다 — **"위반 없음"이 아니라 "검사하지 않았다"**이고, 화면은 그 둘을
         # 구별해야 한다. 남은 위반을 게이트에서 숨기면 사용자는 통과했다고 믿는다.

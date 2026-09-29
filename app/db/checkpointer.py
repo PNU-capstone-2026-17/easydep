@@ -6,6 +6,7 @@ LangGraph 규약에 따라 checkpoint 본문, 채널 blob, pending write는 세 
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
+from time import perf_counter
 from typing import Any
 
 from langchain_core.runnables import RunnableConfig
@@ -22,6 +23,7 @@ from langgraph.checkpoint.base import (
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from sqlalchemy import delete, select, tuple_
 
+from app.design.observability import log_design_timing
 from app.db.models import AgentCheckpoint, AgentCheckpointBlob, AgentCheckpointWrite
 from app.db.session import session_scope
 
@@ -29,6 +31,19 @@ _serde = JsonPlusSerializer()
 
 #: `dumps_typed`가 값 없음을 표시하는 타입. `loads_typed`는 이걸 모르므로 걸러내야 한다.
 _EMPTY = "empty"
+
+
+def _log_design_checkpoint_timing(
+    graph_type: str, operation: str, thread_id: str, started_at: float, **values: Any
+) -> None:
+    if graph_type == "design":
+        log_design_timing(
+            f"design.checkpoint.{operation}",
+            app_id=thread_id,
+            thread_id=thread_id,
+            elapsed_ms=round((perf_counter() - started_at) * 1000, 3),
+            **values,
+        )
 
 
 def _dump(value: Any) -> tuple[str, bytes]:
@@ -72,8 +87,9 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
         metadata: CheckpointMetadata,
         new_versions: ChannelVersions,
     ) -> RunnableConfig:
-        skeleton = checkpoint.copy()
         thread_id = config["configurable"]["thread_id"]
+        started_at = perf_counter()
+        skeleton = checkpoint.copy()
         checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
         values: dict[str, Any] = skeleton.pop("channel_values")  # type: ignore[misc]
 
@@ -111,6 +127,9 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
                     checkpoint_metadata=metadata_bytes,
                 )
             )
+        _log_design_checkpoint_timing(
+            self.graph_type, "put", thread_id, started_at, count=len(new_versions)
+        )
         return {
             "configurable": {
                 "thread_id": thread_id,
@@ -129,7 +148,7 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
         thread_id = config["configurable"]["thread_id"]
         checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
         checkpoint_id = config["configurable"]["checkpoint_id"]
-
+        started_at = perf_counter()
         with session_scope() as db:
             for position, (channel, value) in enumerate(writes):
                 idx = WRITES_IDX_MAP.get(channel, position)
@@ -165,6 +184,9 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
                     db.add(row)
                 else:
                     db.merge(row)
+        _log_design_checkpoint_timing(
+            self.graph_type, "put_writes", thread_id, started_at, count=len(writes)
+        )
 
     # -- 읽기 ---------------------------------------------------------------
     def _load_blobs(
@@ -250,7 +272,7 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
         thread_id = config["configurable"]["thread_id"]
         checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
         checkpoint_id = get_checkpoint_id(config)
-
+        started_at = perf_counter()
         with session_scope() as db:
             query = select(self._checkpoint).where(
                 self._checkpoint.graph_type == self.graph_type,
@@ -263,7 +285,15 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
                 # id를 안 주면 최신 체크포인트. id는 단조 증가하는 UUIDv6라 정렬이 곧 시간순이다.
                 query = query.order_by(self._checkpoint.checkpoint_id.desc()).limit(1)
             row = db.scalars(query).first()
-            return None if row is None else self._to_tuple(db, row)
+            result = None if row is None else self._to_tuple(db, row)
+        _log_design_checkpoint_timing(
+            self.graph_type,
+            "get_tuple",
+            thread_id,
+            started_at,
+            count=int(result is not None),
+        )
+        return result
 
     def list(
         self,

@@ -6,6 +6,7 @@ repository는 이 모듈의 `session_scope()`를 사용한다. 업무 코드가 
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections.abc import Iterator
@@ -62,6 +63,9 @@ def get_engine() -> Engine:
     """공용 SQLAlchemy Engine을 처음 요청할 때 한 번만 만든다."""
     global _engine
     if _engine is None:
+        engine_logger = logging.getLogger("sqlalchemy.engine")
+        if engine_logger.level == logging.NOTSET:
+            engine_logger.setLevel(logging.WARNING)
         _engine = create_engine(
             database_url(),
             pool_pre_ping=True,
