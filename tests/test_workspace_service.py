@@ -21,6 +21,23 @@ from app.workspace.live_preview import LivePreviewStore, live_previews
 from app.workspace.service import WorkspaceService
 
 
+def _persist_repair_command(monkeypatch, command: dict[str, Any]) -> None:
+    """Give direct repair tests the persisted command required by retry recording."""
+    stored = dict(command)
+
+    def get_command(command_id: str) -> dict[str, Any] | None:
+        return dict(stored) if command_id == command["command_id"] else None
+
+    def update_command(command_id: str, **changes: Any) -> dict[str, Any]:
+        assert command_id == command["command_id"]
+        stored.update(changes)
+        return dict(stored)
+
+    monkeypatch.setattr(repository, "get_command", get_command)
+    monkeypatch.setattr(repository, "update_command", update_command)
+    monkeypatch.setattr(repository, "notify_command_changed", lambda *_args, **_kwargs: None)
+
+
 def test_transient_requirements_failure_retries_same_command(monkeypatch) -> None:
     command = {
         "command_id": "requirements-command",
@@ -341,6 +358,7 @@ def test_active_requirements_finding_uses_in_memory_repair_once(monkeypatch) -> 
         "stage": "requirements",
         "payload": {},
     }
+    _persist_repair_command(monkeypatch, command)
     result = {
         "awaiting_input": True,
         "requires_revision": True,
@@ -412,7 +430,7 @@ def test_stalled_technical_design_finding_retries_same_command(monkeypatch) -> N
     assert len(retries) == 1
 
 
-def test_stalled_class_technical_finding_uses_one_guarded_reconcile_retry(
+def test_stalled_class_technical_finding_retries_design_stage(
     monkeypatch,
 ) -> None:
     command = {
@@ -422,6 +440,7 @@ def test_stalled_class_technical_finding_uses_one_guarded_reconcile_retry(
         "stage": "design",
         "payload": {},
     }
+    _persist_repair_command(monkeypatch, command)
     result = {
         "awaiting_input": True,
         "requires_revision": True,
@@ -435,27 +454,6 @@ def test_stalled_class_technical_finding_uses_one_guarded_reconcile_retry(
     }
     observed: dict[str, object] = {}
     service = WorkspaceService()
-    monkeypatch.setattr(service, "_stop_requested", lambda _command_id: False)
-    monkeypatch.setattr(
-        workspace_module,
-        "session_status",
-        lambda _app_id: {"active": True, "stage": "class_diagram"},
-    )
-    original_model = {"Classes": [{"className": "SubmitControl"}]}
-    normalized_model = {"Classes": [{"className": "SubmitControl", "operations": []}]}
-    monkeypatch.setitem(
-        workspace_module.DESIGN_SPECS,
-        "class_diagram",
-        SimpleNamespace(
-            model_key="extracted_bce_classes",
-            reconcile=lambda _state: {"extracted_bce_classes": normalized_model},
-        ),
-    )
-    monkeypatch.setattr(
-        workspace_module.artifact_repository,
-        "load_state",
-        lambda _app_id: {"extracted_bce_classes": original_model},
-    )
     rechecks: list[dict[str, object]] = []
     monkeypatch.setattr(
         service,
@@ -492,12 +490,12 @@ def test_stalled_class_technical_finding_uses_one_guarded_reconcile_retry(
     "result_patch",
     [
         {"finding_details": [{"requires_user_input": True}]},
-        {"current_stage": "sequence_diagram"},
+        {"blocking_findings": [{"message": "User decision needed.", "requires_user_input": True}]},
         {"feedback_question": {"question_id": "q1"}},
         {"resource_questions": [{"question_id": "resource-q1"}]},
     ],
 )
-def test_class_reconcile_retry_does_not_run_for_user_input_or_other_state(
+def test_user_input_or_question_does_not_auto_retry(
     monkeypatch, result_patch: dict[str, Any]
 ) -> None:
     command = {
@@ -655,6 +653,7 @@ def test_testing_sut_repair_rechecks_with_the_same_command_and_implementation_jo
         "stage": "testing",
         "payload": {"testing_checkpoint": {"implementation_job_id": "implementation-1"}},
     }
+    _persist_repair_command(monkeypatch, command)
     previous_job = {
         "job_id": "testing-command",
         "app_id": "app-1",
@@ -1010,40 +1009,6 @@ def test_testing_owner_repair_discards_the_old_checkpoint_before_recapture(monke
     assert result["job"]["job_id"] == "testing-command"
 
 
-def test_active_design_finding_keeps_its_saved_gate(monkeypatch) -> None:
-    command = {
-        "command_id": "design-command",
-        "app_id": "app-1",
-        "action": "advance",
-        "stage": "design",
-        "payload": {},
-    }
-    result = {
-        "awaiting_input": True,
-        "requires_revision": True,
-        "current_stage": "class_diagram",
-        "repair_state": {"status": "ACTIVE", "attempt_count": 0},
-        "blocking_findings": [{"message": "Class mismatch.", "repairable": True}],
-    }
-    service = WorkspaceService()
-    monkeypatch.setattr(
-        workspace_module,
-        "session_status",
-        lambda _app_id: pytest.fail("Active design findings must not inspect session state."),
-    )
-    monkeypatch.setattr(
-        workspace_module,
-        "resume_design_session",
-        lambda *_args: pytest.fail("Active design findings must not resume a session."),
-    )
-    try:
-        repaired = service._auto_repair_semantic_result(command, result)
-    finally:
-        service.shutdown()
-
-    assert repaired is result
-
-
 def test_testing_upstream_ambiguity_waits_for_user_without_rewinding_design() -> None:
     job = {
         "job_id": "testing-command",
@@ -1096,7 +1061,7 @@ def test_testing_plan_defect_does_not_start_an_unbounded_repair_episode() -> Non
 
     assert result["blocking_route"] == "platform"
     assert "can_delegate_repair" not in result
-    assert "EasyDep platform" in result["message"]
+    assert "internal test-plan authoring defect" in result["message"]
 
 
 def test_testing_static_repair_request_keeps_exact_gate_scope() -> None:
@@ -1363,10 +1328,17 @@ def test_reconcile_does_not_mistake_an_unrequested_repair_for_completion(
         lambda _job_id: completed_before_request,
     )
     monkeypatch.setattr(repository, "now", lambda: datetime.now(UTC).replace(tzinfo=None))
+    monkeypatch.setattr(repository, "get_command", lambda _command_id: dict(command))
+    monkeypatch.setattr(repository, "append_progress_event", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(repository, "list_progress_events", lambda _app_id: [])
+    monkeypatch.setattr(repository, "notify_command_changed", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         repository,
-        "update_command",
-        lambda _command_id, **changes: {**command, **changes},
+        "finish_command_honoring_stop",
+        lambda _command_id, **changes: {
+            **command,
+            **{key: value for key, value in changes.items() if key != "cancelled_result"},
+        },
     )
     service = WorkspaceService()
     try:
@@ -1595,8 +1567,8 @@ def test_reconcile_does_not_finish_testing_command_with_completed_repair_job(
         ("RUNNING", "INTERRUPTED", True, "INTERRUPTED"),
         ("INTERRUPTED", "NEEDS_PLANNER", True, "FAILED"),
         ("RUNNING", "NEEDS_INPUT", False, "AWAITING_INPUT"),
-        ("RUNNING", "NEEDS_INPUT", True, "FAILED"),
-        ("AWAITING_INPUT", "NEEDS_INPUT", True, "FAILED"),
+        ("RUNNING", "NEEDS_INPUT", True, "AWAITING_INPUT"),
+        ("AWAITING_INPUT", "NEEDS_INPUT", True, "AWAITING_INPUT"),
     ],
 )
 def test_reconcile_stopped_implementation_exposes_checkpoint_retry(

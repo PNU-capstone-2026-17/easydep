@@ -9,6 +9,7 @@ import time
 import uuid
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
 from threading import Lock
 from typing import Any, cast
@@ -320,6 +321,26 @@ class WorkspaceService:
         except Exception:
             return command
         job_status = str(job.get("status") or "")
+        repair_requested = (job.get("owner_repair") or {}).get("requested_at")
+        started_at = command.get("started_at")
+        if (
+            command.get("status") == "RUNNING"
+            and payload.get("action_id")
+            and job_status == "COMPLETED"
+            and isinstance(repair_requested, str)
+            and isinstance(started_at, str)
+        ):
+            try:
+                requested = datetime.fromisoformat(repair_requested)
+                started = datetime.fromisoformat(started_at)
+                if requested.tzinfo is None:
+                    requested = requested.replace(tzinfo=UTC)
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=UTC)
+                if requested < started:
+                    return command
+            except ValueError:
+                pass
         # READY workflow의 완료 여부는 구현 작업 서비스가 판정하여 공개 상태를
         # COMPLETED로 바꾼다. Workspace가 그 내부 규칙을 다시 구현하지 않는다.
         if job_status != "COMPLETED":
@@ -672,6 +693,25 @@ class WorkspaceService:
             raise RuntimeError(
                 f"An active workspace command already exists: {latest['command_id']}"
             )
+        fixed_class_context = self._fixed_class_resource_choice(app_id, payload, latest)
+        if fixed_class_context is not None:
+            offered_context = {
+                key: value
+                for key, value in selected.items()
+                if key not in _DESIGN_DELIVERY_CONTEXT_FIELDS
+            }
+            return (
+                "message",
+                {
+                    **payload,
+                    "_resource_answer_context": {
+                        **offered_context,
+                        "server_pinned_answer": True,
+                    },
+                    "context": {**selected, **fixed_class_context},
+                },
+                "design",
+            )
         pending = repository.get_command(str(payload.get("action_id") or ""))
         if pending is not None and pending.get("status") == "AWAITING_INPUT":
             pending_result = pending.get("result") or {}
@@ -739,25 +779,6 @@ class WorkspaceService:
                     },
                     str(pending.get("stage") or stage or "requirements"),
                 )
-        fixed_class_context = self._fixed_class_resource_choice(app_id, payload, latest)
-        if fixed_class_context is not None:
-            offered_context = {
-                key: value
-                for key, value in selected.items()
-                if key not in _DESIGN_DELIVERY_CONTEXT_FIELDS
-            }
-            return (
-                "message",
-                {
-                    **payload,
-                    "_resource_answer_context": {
-                        **offered_context,
-                        "server_pinned_answer": True,
-                    },
-                    "context": {**selected, **fixed_class_context},
-                },
-                "design",
-            )
         explicit_instructions: dict[str, str] = {}
         element_ref = str(selected.get("element_ref") or "").strip()
         if element_ref and text:
@@ -2796,33 +2817,6 @@ class WorkspaceService:
             current = repaired
 
     @staticmethod
-    def _stalled_class_reconcile_input(
-        command: dict[str, Any], result: dict[str, Any]
-    ) -> bool:
-        """Select only a technical class stall for the guarded reconcile retry."""
-
-        details = result.get("finding_details")
-        repair_state = result.get("repair_state")
-        return bool(
-            command.get("stage") == "design"
-            and result.get("awaiting_input") is True
-            and result.get("current_stage") == "class_diagram"
-            and result.get("requires_revision") is True
-            and isinstance(repair_state, dict)
-            and str(repair_state.get("status") or "").upper() == "STALLED"
-            and isinstance(details, list)
-            and details
-            and all(
-                isinstance(item, dict)
-                and item.get("requires_user_input", item.get("requiresUserInput")) is False
-                for item in details
-            )
-            and result.get("feedback_question") is None
-            and result.get("resource_question") is None
-            and not result.get("resource_questions")
-        )
-
-    @staticmethod
     def _active_semantic_repair_input(
         result: dict[str, Any],
     ) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
@@ -2832,6 +2826,13 @@ class WorkspaceService:
             or result.get("resource_question") is not None
             or bool(result.get("resource_questions"))
             or result.get("requires_revision") is not True
+        ):
+            return None
+        if any(
+            isinstance(item, dict)
+            and item.get("requires_user_input", item.get("requiresUserInput")) is True
+            for key in ("blocking_findings", "finding_details")
+            for item in result.get(key) or []
         ):
             return None
         repair_state = result.get("repair_state")
