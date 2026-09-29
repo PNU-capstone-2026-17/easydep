@@ -27,6 +27,7 @@ add_conditional_edges로 advance(다음 스테이지)/loop(재생성 후 재질�
 """
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any, cast
 
 from langchain_core.runnables import RunnableConfig
@@ -39,6 +40,7 @@ from app.design.nodes.gates import make_gate, route_gate
 from app.design.nodes.persist import ORIGIN_KEY, make_persist
 from app.design.schemas.architecture_state import ArchitectureState
 from app.design.session_store import SqlCheckpointSaver
+from app.design.observability import log_design_timing
 from app.metrics import langsmith as langsmith_metrics
 
 
@@ -141,7 +143,19 @@ def _invoke_traced_design_graph(
         f"easydep.design.{operation}",
         metadata={"agent": "design", "operation": operation, "app_id": app_id},
     ):
-        return _result_payload(dict(invocation()), app_id)
+        started_at = perf_counter()
+        result = dict(invocation())
+        graph_finished_at = perf_counter()
+        payload = _result_payload(result, app_id)
+        finished_at = perf_counter()
+        log_design_timing(
+            "design.graph_operation.completed",
+            operation=operation,
+            graph_ms=round((graph_finished_at - started_at) * 1000, 3),
+            payload_ms=round((finished_at - graph_finished_at) * 1000, 3),
+            total_ms=round((finished_at - started_at) * 1000, 3),
+        )
+        return payload
 
 
 def start_design(app_id: str, state: ArchitectureState) -> dict[str, Any]:

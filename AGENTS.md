@@ -11,6 +11,7 @@
 - LLM API, CSP CLI, 패키지 저장소 등 외부 네트워크 사용이 명백한 작업은 첫 시도부터 네트워크 권한이 필요한 실행으로 요청한다.
 - 기본 샌드박스에서 Docker CLI가 `//./pipe/dockerDesktopLinuxEngine`에 `Access is denied`를 반환할 수 있으며, 표준 실행기가 Docker Desktop이 꺼졌다고 오진할 수 있다. Docker·CSP·네트워크 작업은 첫 시도부터 `require_escalated`로 실행하고, 엔진 중단 여부는 권한 있는 컨텍스트에서 `docker info`와 `docker ps`를 확인한 뒤 판단한다. 엔진에 접근할 수 있으면 `com.docker.service`를 반복해서 시작하지 않는다.
 - `pytest`의 `tmp_path`/`basetemp`가 `WinError 5`로 실패하면 정확한 임시 경로의 ACL과 쓰기 probe를 확인하고, 승인된 접근 가능 컨텍스트를 한 번 시도한다. 반복 실행으로 제품·테스트 실패로 오분류하지 않으며, 테스트 harness 접근이 계속 막히면 동등한 focused assertion으로 동작을 확인한다.
+- PlantUML 임시 검사 디렉터리에서 `WinError 5`가 나면 부모 Temp의 쓰기 가능 여부와 실패한 자식 디렉터리의 접근 권한을 구분해 확인하고, 같은 체크포인트를 권한 있는 컨텍스트에서 재개한다. 실패가 남긴 정확한 임시 디렉터리만 경로를 검증한 뒤 정리하며 새 앱이나 전체 단계를 만들지 않는다.
 - 네트워크가 차단된 기본 샌드박스에서 먼저 실행하여 예측 가능한 연결 실패를 만들지 않는다.
 - `APIConnectionError`를 실제 엔드포인트 장애로 판단하기 전에 샌드박스의 네트워크 차단 여부를 구분한다.
 - 429 응답, 스트림 미종료, 실제 엔드포인트 타임아웃은 샌드박스 차단과 별개의 원인으로 기록한다.

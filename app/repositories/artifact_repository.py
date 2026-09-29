@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 import uuid
 from collections.abc import Mapping
 from typing import Any
@@ -42,6 +43,7 @@ from app.db.models import (
     ArtifactVersion,
 )
 from app.db.session import session_scope
+from app.design.observability import log_design_timing
 from app.design.schemas.architecture_state import ArchitectureState
 from app.design.services.api_spec.openapi import build_openapi_from_model
 from app.design.services.class_diagram.plantuml import generate_plantuml_from_bce_json
@@ -391,6 +393,7 @@ def save_stages(
         return {}
 
     version_ids: dict[str, int] = {}
+    started = time.perf_counter()
     with session_scope() as session:
         app = _lock_app(session, app_id)
         for stage in ordered:
@@ -398,6 +401,7 @@ def save_stages(
             if version_id is not None:
                 version_ids[stage] = version_id
         app.current_stage = ordered[-1]
+    db_completed = time.perf_counter()
 
     for stage in version_ids:
         try:
@@ -408,6 +412,15 @@ def save_stages(
                 app_id,
                 stage,
             )
+    completed = time.perf_counter()
+    log_design_timing(
+        "artifact.save_stages.completed",
+        stages=ordered,
+        stage_count=len(ordered),
+        db_ms=round((db_completed - started) * 1000, 1),
+        image_warm_ms=round((completed - db_completed) * 1000, 1),
+        total_ms=round((completed - started) * 1000, 1),
+    )
     return version_ids
 
 
