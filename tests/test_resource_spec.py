@@ -56,6 +56,15 @@ def test_explicit_required_constraints_produce_vm_resource_spec(monkeypatch):
     }
 
 
+def test_formatted_provider_region_from_resource_extraction_resolves(monkeypatch):
+    result = _run(
+        monkeypatch,
+        _extraction(region_as_written="AWS Seoul Region (ap-northeast-2)"),
+    )
+
+    assert result["resource_spec"]["region"] == "ap-northeast-2"
+
+
 def test_structured_intake_constraints_do_not_depend_on_llm(monkeypatch):
     monkeypatch.setattr(sr.settings, "resource_agent_llm", False)
     result = sr.build_resource_spec(

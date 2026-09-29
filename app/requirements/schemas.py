@@ -10,7 +10,7 @@ LLM 구조화 출력은 graph.py에서 ChatOpenAI.with_structured_output(...) �
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 
 from app.requirements.contracts.request import (
     AnalyzeRequest as AnalyzeRequest,
@@ -546,6 +546,25 @@ class RequiredValue(BaseModel):
         min_length=1,
         description="Functional requirement IDs that explicitly establish this required value.",
     )
+    allowed_values: list[StrictStr] | None = Field(
+        default=None,
+        description=(
+            "Optional finite set of explicitly stated alternatives for this value, supported by "
+            "the cited requirements or their branches. Omit for open-ended/calculator-style "
+            "inputs; never invent examples or derive a list from prose."
+        ),
+    )
+
+    @field_validator("allowed_values")
+    @classmethod
+    def validate_allowed_values(cls, values: list[StrictStr] | None) -> list[StrictStr] | None:
+        if values is None:
+            return None
+        if not values or any(not value.strip() for value in values):
+            raise ValueError("allowed_values must contain nonempty strings")
+        if len({value.strip().casefold() for value in values}) != len(values):
+            raise ValueError("allowed_values must contain unique values")
+        return values
 
 
 class PublicBehaviorContract(BaseModel):

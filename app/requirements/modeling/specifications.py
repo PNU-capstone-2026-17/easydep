@@ -46,6 +46,7 @@ from app.requirements.modeling.contracts import (
     StructuredProposalCall,
 )
 from app.requirements.modeling.feedback import feedback_for
+from app.requirements.modeling.cross_uc_values import reconcile_cross_use_case_values
 from app.requirements.runtime import telemetry
 from app.requirements.runtime.structured_llm import invoke_structured
 from app.requirements.schemas import SemanticAmbiguityReview, UseCaseSpec
@@ -219,6 +220,18 @@ def _public_contract_findings(spec: dict[str, object]) -> list[str]:
         for entry in values:
             if not isinstance(entry, dict):
                 continue
+            allowed_values = entry.get("allowed_values")
+            if allowed_values is not None and (
+                not isinstance(allowed_values, list)
+                or not allowed_values
+                or any(not isinstance(item, str) or not item.strip() for item in allowed_values)
+                or len({item.strip().casefold() for item in allowed_values if isinstance(item, str)})
+                != len(allowed_values)
+            ):
+                findings.append(
+                    "[public-contract-integrity] Required value allowed_values must be a nonempty "
+                    "list of unique nonempty strings."
+                )
             value_ref = entry.get("value_ref")
             if isinstance(value_ref, str) and value_ref in value_refs:
                 findings.append(
@@ -292,7 +305,6 @@ def _public_contract_findings(spec: dict[str, object]) -> list[str]:
             )
     return findings
 
-
 def _accepted_public_contract_proposal(contract: dict[str, object]) -> dict[str, object]:
     """Project accepted contract refs and derived fields back to proposal-local indexes."""
     obligations = contract.get("identity_obligations") or []
@@ -320,7 +332,7 @@ def _accepted_public_contract_proposal(contract: dict[str, object]) -> dict[str,
             continue
         projected = {
             key: item[key]
-            for key in ("name", "source", "value_type", "usage", "requirement_ids")
+            for key in ("name", "source", "value_type", "usage", "requirement_ids", "allowed_values")
             if key in item
         }
         identity_ref = item.get("identity_obligation_ref")
@@ -414,6 +426,9 @@ def _spec_human(
         "operation and does not become a result merely because it is server-provided. Ground the "
         "use in the scenario and observable outcome; do not classify an unmentioned value as a "
         "result. "
+        "For allowed_values, include a list only when the linked requirements explicitly define "
+        "a finite set of alternatives, including branch alternatives; copy those alternatives "
+        "faithfully. Omit it for open-ended inputs and calculator-style values. "
         "The normalizer assigns each accepted required value its stable value_ref; do not invent "
         "or copy value references. "
         + prompts.IDENTITY_SOURCE_INSTRUCTIONS + " "
@@ -496,6 +511,8 @@ def normalize_specification(spec: UseCaseSpec, uc: UseCaseItem) -> UseCaseSpecIt
             "usage": value.usage,
             "requirement_ids": list(value.requirement_ids),
         }
+        if value.allowed_values is not None:
+            normalized_value["allowed_values"] = list(value.allowed_values)
         selected_index = value.identity_obligation_index
         if selected_index is not None and 1 <= selected_index <= len(identity_obligations):
             normalized_value["identity_obligation_ref"] = identity_obligations[selected_index - 1]["obligation_ref"]
@@ -1118,16 +1135,27 @@ def generate_specs(
     return {"use_case_specs": specs, "phase": "specs"}
 
 
-@contract("check_specs", requires=("use_case_specs",), produces=("spec_report",))
+@contract("check_specs", requires=("use_case_specs",), produces=("spec_report", "use_case_specs"))
 def check_specs(
     state: AgentState, *, review_semantic: bool = True,
+    allowed_producer_ids: set[str] | None = None,
 ) -> ModelingStagePatch:
-    """생성된 명세의 검증 결과를 집계한다(결정론 요약 노드).
+    """교차 UC 식별자 결과를 정리한 뒤 생성 명세의 검증 결과를 집계한다.
 
-    generate_specs가 반성 루프로 이미 정적+의미 검증·수리했고, 이 노드는 그 결과(잔여 issues·
-    repair 횟수)를 그래프에서 보이는 별도 단계로 집계·표면화한다(step2의 check_coverage와 대칭).
+    generate_specs가 UC별 정적+의미 검증·수리를 마친 후, 전체 UC의 생산·소비 관계가
+    필요한 경우에만 별도 모델 검토로 결과 식별자를 보완한다. 이후 잔여 issues와 repair
+    횟수를 집계해 표면화한다.
     """
     specs = state.get("use_case_specs") or []
+    if (
+        review_semantic and len(specs) > 1
+        and state.get("use_cases") and state.get("classified")
+    ):
+        specs = reconcile_cross_use_case_values(
+            specs, state["use_cases"], state["classified"],
+            allowed_producer_ids=allowed_producer_ids,
+        )
+    reviewed_state = cast(AgentState, {**state, "use_case_specs": specs})
     report = {
         "n_specs": len(specs),
         "total_issues": sum(len(s.get("issues", [])) for s in specs),
@@ -1157,12 +1185,13 @@ def check_specs(
     # the selective-review result in graph state so an interrupt resume does not
     # issue the same LLM call again merely to redisplay the same question.
     return {
+        "use_case_specs": specs,
         "spec_report": report,
         "semantic_ambiguity_question": (
-            find_source_grounded_semantic_ambiguity(state)
+            find_source_grounded_semantic_ambiguity(reviewed_state)
             if review_semantic else state.get("semantic_ambiguity_question")
         ),
-        "identity_source_question": identity_source_question(state),
+        "identity_source_question": identity_source_question(reviewed_state),
         "phase": "check_specs",
     }
 

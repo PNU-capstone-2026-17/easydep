@@ -286,8 +286,14 @@ def gate_specs(state: AgentState) -> dict[str, object]:
     resolved_ambiguity = bool(ambiguity)
     if resolved_ambiguity:
         st["semantic_ambiguity_questioned"] = True
-    apply_feedback_upto(cast(AgentState, st), answer, up_to="specs")
-    st.update(check_specs(cast(AgentState, st)))  # spec_report 갱신
+    intent, _ = apply_feedback_upto(cast(AgentState, st), answer, up_to="specs")
+    st.update(check_specs(
+        cast(AgentState, st),
+        allowed_producer_ids=(
+            set(intent.target_ids)
+            if intent.scope == "local" and intent.stage == "specs" else None
+        ),
+    ))  # spec_report 갱신
     upd = _pick(st, (
         "actors", "use_cases", "constraint_applicability", "coverage", "traceability",
         "use_case_specs", "spec_report",
@@ -320,7 +326,7 @@ def gate_relationships(state: AgentState) -> dict[str, object]:
     if not isinstance(answer, FeedbackEdit):
         raise TypeError("Relationship feedback requires a validated FeedbackEdit.")
     apply_feedback_upto(cast(AgentState, st), answer, up_to="diagram")
-    st.update(check_specs(cast(AgentState, st)))          # 상위 stage 편집 시 명세도 바뀔 수 있어 갱신
+    st.update(check_specs(cast(AgentState, st), allowed_producer_ids=set()))
     st.update(check_relationships(cast(AgentState, st)))  # relationship_report 갱신
     upd = _pick(st, (
         "actors", "use_cases", "constraint_applicability", "coverage", "traceability",

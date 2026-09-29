@@ -133,7 +133,7 @@ def test_relationship_gate_loops_and_rerenders(monkeypatch):
         return None, []
 
     monkeypatch.setattr(fg, "apply_feedback_upto", fake_apply)
-    monkeypatch.setattr(fg, "check_specs", lambda state: {})
+    monkeypatch.setattr(fg, "check_specs", lambda state, **_kwargs: {})
     monkeypatch.setattr(fg, "check_relationships", lambda state: {"relationship_report": {}})
 
     upd = fg.gate_relationships({"relationships": {}})

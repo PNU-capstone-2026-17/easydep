@@ -86,6 +86,7 @@ class RequiredValueItem(TypedDict):
     ]
     usage: Literal["control", "result", "both"]
     requirement_ids: list[str]
+    allowed_values: NotRequired[list[str]]
     identity_obligation_ref: NotRequired[str]
 
 

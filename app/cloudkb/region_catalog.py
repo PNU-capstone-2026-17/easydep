@@ -287,20 +287,34 @@ def resolve_region(
     if exact_names:
         return [_retag(region, "name") for region in exact_names]
 
-    # UI 선택지는 ``Display Name (canonical-code)`` 형식으로 돌아온다. 괄호 속
-    # 코드만 뽑으면 ``East US (eastus2)``가 East US로 조용히 해석될 수 있으므로,
-    # 표시명과 코드가 **같은** catalog row에 모두 일치할 때만 받아들인다.
-    formatted = re.fullmatch(r"(?P<name>[^()]+?)\s*\(\s*(?P<code>[^()]+?)\s*\)", text)
+    # UI 선택지는 ``Display Name (canonical-code)`` 형식으로 돌아온다. 앞에
+    # provider를 붙이거나 끝에 ``Region``을 붙인 표현도 흔하므로, catalog code가
+    # 존재하는지만 보지 않고 정규화한 표시명이 **유일하게 같은 row**를 가리킬 때만
+    # 받아들인다. 이로써 ``East US (eastus2)``를 East US로 조용히 바꾸지 않는다.
+    # 표시명 자체의 괄호(South Korea (Seoul))는 마지막 괄호 쌍만 code로 읽는다.
+    formatted = re.fullmatch(
+        r"(?P<name>.+?)\s*\(\s*(?P<code>[^()]+?)\s*\)\s*", text
+    )
     if formatted:
-        display_name = " ".join(formatted.group("name").casefold().split())
-        code = " ".join(formatted.group("code").casefold().split())
-        matched = [
-            region
-            for region in regions
-            if " ".join(region.name.casefold().split()) == display_name
-            and region.code.casefold() == code
-        ]
-        return [_retag(region, "name") for region in matched]
+        display_name = _normalized_formatted_display_name(
+            formatted.group("name"), provider=provider
+        )
+        code = formatted.group("code").strip().casefold()
+        code_matches = [region for region in regions if region.code.casefold() == code]
+        if code_matches and display_name:
+            described = resolve_region(
+                display_name, provider=provider, output_dir=output_dir
+            )
+            described_keys = {(region.provider, region.code) for region in described}
+            if len(described_keys) == 1:
+                matched = [
+                    region
+                    for region in code_matches
+                    if (region.provider, region.code) in described_keys
+                ]
+                if matched:
+                    return [_retag(region, "name") for region in matched]
+        return []
 
     by_name = [
         r
@@ -326,6 +340,20 @@ def resolve_region(
                 seen.add(key)
                 found.append(_retag(r, "alias"))
     return found
+
+
+def _normalized_formatted_display_name(value: str, *, provider: str | None) -> str:
+    """Remove only generic UI decoration from a formatted region label."""
+    normalized = " ".join(value.casefold().split())
+    if provider:
+        prefix = provider.strip().casefold()
+        if prefix and normalized.startswith(f"{prefix} "):
+            normalized = normalized[len(prefix) :].strip()
+    for suffix in (" cloud region", " region"):
+        if normalized.endswith(suffix):
+            normalized = normalized[: -len(suffix)].strip(" ,()[]")
+            break
+    return normalized
 
 
 def _retag(region: RegionMatch, how: str) -> RegionMatch:

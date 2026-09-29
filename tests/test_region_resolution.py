@@ -19,6 +19,22 @@ def test_formatted_provider_region_label_requires_matching_display_name_and_code
     assert [match.code for match in matches] == ["eastus"]
 
 
+def test_formatted_provider_prefixed_region_label_resolves_when_description_and_code_agree() -> None:
+    matches = regions.resolve(
+        "AWS Seoul Region (ap-northeast-2)", provider="aws"
+    )
+
+    assert [match.code for match in matches] == ["ap-northeast-2"]
+
+
+def test_formatted_label_preserves_parentheses_in_catalog_display_name() -> None:
+    matches = regions.resolve(
+        "AWS South Korea (Seoul) Cloud Region (ap-northeast-2)", provider="aws"
+    )
+
+    assert [match.code for match in matches] == ["ap-northeast-2"]
+
+
 def test_formatted_provider_region_label_does_not_fall_back_to_partial_name() -> None:
     assert regions.resolve("East US (eastus2)", provider="azure") == ()
     assert regions.resolve("East US (eastus)", provider="aws") == ()

@@ -307,7 +307,7 @@ def test_invalid_keys_and_unknown_requirement_references_are_dropped(monkeypatch
     assert result["deployment_needs"] == {}
 
 
-def test_application_behavior_without_deployment_evidence_is_not_accepted(monkeypatch):
+def test_application_behavior_without_deployment_evidence_does_not_ask_user(monkeypatch):
     classified = [{
         "id": "NFR1",
         "text": "Concurrent order operations shall preserve order uniqueness.",
@@ -319,7 +319,7 @@ def test_application_behavior_without_deployment_evidence_is_not_accepted(monkey
             required=True,
             requirementIds=["NFR1"],
             evidenceSpans=[classified[0]["text"]],
-            origin="explicit",
+            origin="inferred",
         )
     }))
 
@@ -329,6 +329,7 @@ def test_application_behavior_without_deployment_evidence_is_not_accepted(monkey
     capability = result["capability_contract"]["capabilities"][0]
     assert capability["decision"] == "abstained"
     assert capability["decisionReason"] == "not-deployment-boundary"
+    assert result["capability_contract"]["questions"] == []
 
 
 def test_restart_persistence_has_deployment_boundary_evidence(monkeypatch):
@@ -350,6 +351,29 @@ def test_restart_persistence_has_deployment_boundary_evidence(monkeypatch):
     result = step_cloud.derive_deployment_needs({"classified": classified})
 
     assert result["deployment_needs"]["persistent_storage"]["decision"] == "accepted"
+
+
+def test_deployment_boundary_ambiguity_still_produces_a_question(monkeypatch):
+    classified = [{
+        "id": "NFR1",
+        "text": "Deploy the application across multiple availability zones.",
+        "type": "NFR",
+    }]
+    monkeypatch.setattr(step_cloud, "invoke_structured", lambda *_args, **_kwargs: _result({
+        "zone_placement": DeploymentNeed(
+            role="Place the application across multiple availability zones",
+            required=True,
+            requirementIds=["NFR1"],
+            evidenceSpans=[classified[0]["text"]],
+            origin="explicit",
+            metadata={"unresolved": ["availability"]},
+        )
+    }))
+
+    result = step_cloud.derive_deployment_needs({"classified": classified})
+
+    assert result["deployment_needs"]["zone_placement"]["decision"] == "needsQuestion"
+    assert result["capability_contract"]["questions"][0]["capabilityId"] == "zone_placement"
 
 
 def test_duplicate_and_partially_unknown_requirement_ids_are_normalized(monkeypatch):

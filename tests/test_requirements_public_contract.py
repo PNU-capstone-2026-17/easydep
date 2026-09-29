@@ -47,6 +47,42 @@ def test_accepted_contract_projects_to_proposal_fields_for_regeneration() -> Non
     }
 
 
+def test_finite_allowed_values_round_trip_and_open_ended_values_stay_omitted() -> None:
+    uc = UseCaseItem(
+        id="UC1", name="Manage item", primary_actor="User", supporting_actors=[],
+        level="user_goal", goal="Manage an item", requirement_ids=["R1"], nfr_ids=[],
+    )
+    spec = UseCaseSpec.model_validate({
+        "trigger": "User acts",
+        "public_contract": {"required_values": [
+            {"name": "action", "source": "caller_input", "value_type": "string",
+             "usage": "control", "requirement_ids": ["R1"],
+             "allowed_values": ["create", "update", "publish", "cancel"]},
+            {"name": "amount", "source": "caller_input", "value_type": "number",
+             "usage": "control", "requirement_ids": ["R1"]},
+        ]},
+    })
+    normalized = normalize_specification(spec, uc)["public_contract"]
+    action, amount = normalized["required_values"]
+    assert action["allowed_values"] == ["create", "update", "publish", "cancel"]
+    assert "allowed_values" not in amount
+    projected = _accepted_public_contract_proposal(normalized)
+    assert projected["required_values"][0]["allowed_values"] == action["allowed_values"]
+    assert "allowed_values" not in projected["required_values"][1]
+
+
+@pytest.mark.parametrize("allowed", [[], ["create", " "], ["create", "CREATE"], ["create", 3]])
+def test_allowed_values_requires_nonempty_unique_scalar_strings(allowed) -> None:
+    with pytest.raises(ValueError):
+        UseCaseSpec.model_validate({
+            "trigger": "User acts",
+            "public_contract": {"required_values": [{
+                "name": "action", "source": "caller_input", "value_type": "string",
+                "usage": "control", "requirement_ids": ["R1"], "allowed_values": allowed,
+            }]},
+        })
+
+
 def test_orphan_identify_obligation_is_a_deterministic_contract_finding() -> None:
     findings = _public_contract_findings({
         "requirement_ids": ["R1"],

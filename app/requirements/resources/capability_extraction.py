@@ -421,7 +421,7 @@ def derive_deployment_needs(
             ),
             policy=policy,
         )
-        if decision == "accepted" and not _has_deployment_boundary_evidence(
+        if decision != "abstained" and not _has_deployment_boundary_evidence(
             spans, dependency_capability_ids
         ):
             decision = "abstained"
