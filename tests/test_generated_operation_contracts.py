@@ -52,7 +52,14 @@ def test_operation_contracts_keep_typed_source_and_endpoint_facts(tmp_path):
                     "control_binding": {
                         "control": "OrderControl",
                         "method": "place",
-                        "arguments": [{"name": "request", "source": "body"}],
+                        "arguments": [
+                            {
+                                "name": "request",
+                                "source": "body",
+                                "stable_ref": "param-place-request",
+                                "required_value_ref": "value-order-request",
+                            }
+                        ],
                         "outcomes": [{"status": 200, "outcome": "success"}],
                     },
                 }
@@ -76,6 +83,8 @@ def test_operation_contracts_keep_typed_source_and_endpoint_facts(tmp_path):
     assert item.endpoints[0].request_type == "com.example.orders.api.model.OrderRequest"
     assert item.endpoints[0].response_types == ["com.example.orders.api.model.OrderReceipt"]
     assert item.endpoints[0].input_bindings[0].source == "body"
+    assert item.endpoints[0].input_bindings[0].stable_ref == "param-place-request"
+    assert item.endpoints[0].input_bindings[0].required_value_ref == "value-order-request"
     assert item.completion_marker == "EASYDEP-IMPLEMENT: complete order-place-v1"
     assert path == tmp_path / "reports" / "generated-operation-contracts.json"
 

@@ -50,6 +50,8 @@ class EndpointInputBinding(BaseModel):
 
     name: str
     source: str
+    stable_ref: str | None = None
+    required_value_ref: str | None = None
 
 
 class EndpointOutputBinding(BaseModel):
