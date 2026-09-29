@@ -48,7 +48,7 @@ class StageNotReached(Exception):
     """아직 만들지 않은 스테이지로 되감으려 했다 — 그건 되감기가 아니라 전진이다."""
 
 
-def _stage_runner(subgraph, origin: str):
+def _stage_runner(subgraph, origin: str, stage: str):
     """서브그래프를 돌리고 "무엇이 이 상태를 만들었는지"를 한 줄 남긴다.
 
     persist 노드가 origin(생성이냐 피드백 반영이냐)을 알아야 버전 이력이 의미를 갖는다.
@@ -57,7 +57,20 @@ def _stage_runner(subgraph, origin: str):
     """
 
     def run(state: ArchitectureState) -> dict:
-        return {**dict(subgraph.invoke(state)), ORIGIN_KEY: origin}
+        started_at = perf_counter()
+        result = dict(subgraph.invoke(state))
+        invoked_at = perf_counter()
+        wrapped_result = {**result, ORIGIN_KEY: origin}
+        returned_at = perf_counter()
+        log_design_timing(
+            "design.stage_subgraph.completed",
+            app_id=state.get("app_id"),
+            stage=stage,
+            origin=origin,
+            invoke_ms=round((invoked_at - started_at) * 1000, 3),
+            wrapper_ms=round((returned_at - invoked_at) * 1000, 3),
+        )
+        return wrapped_result
 
     return run
 
@@ -72,8 +85,8 @@ def build_design_graph(saver=None):
     builder = StateGraph(ArchitectureState)
 
     for stage in DESIGN_STAGES:
-        builder.add_node(f"gen_{stage}", _stage_runner(subs[stage]["generate"], "generated"))
-        builder.add_node(f"fb_{stage}", _stage_runner(subs[stage]["feedback"], "feedback"))
+        builder.add_node(f"gen_{stage}", _stage_runner(subs[stage]["generate"], "generated", stage))
+        builder.add_node(f"fb_{stage}", _stage_runner(subs[stage]["feedback"], "feedback", stage))
         builder.add_node(f"persist_{stage}", make_persist(stage))
         builder.add_node(f"gate_{stage}", make_gate(stage))
 

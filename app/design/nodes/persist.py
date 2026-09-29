@@ -16,10 +16,12 @@ persist 노드는 생성 쪽과 피드백 쪽 **양쪽에서** 들어온다. 그
 from __future__ import annotations
 
 from collections.abc import Callable
+from time import perf_counter
 
 from app.db.models import ORIGIN_FEEDBACK_REVISED, ORIGIN_GENERATED
 from app.design.schemas.architecture_state import ArchitectureState
 from app.repositories import artifact_repository
+from app.design.observability import log_design_timing
 
 #: 서브그래프 래퍼가 "이 상태를 만든 것이 생성이냐 피드백이냐"를 남기는 상태 키.
 ORIGIN_KEY = "stage_origin"
@@ -48,7 +50,15 @@ def make_persist(stage: str) -> Callable[[ArchitectureState], dict]:
                 if state.get(ORIGIN_KEY) == "feedback"
                 else ORIGIN_GENERATED
             )
+            started_at = perf_counter()
             artifact_repository.save_stages(app_id, [stage], state, origin=origin)
+            log_design_timing(
+                "design.persist.save_stages.completed",
+                app_id=app_id,
+                stage=stage,
+                origin=origin,
+                elapsed_ms=round((perf_counter() - started_at) * 1000, 3),
+            )
 
         return {"artifact_status": mark_implemented(state, stage)}
 
