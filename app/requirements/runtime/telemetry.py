@@ -40,6 +40,7 @@ from app.config import settings
 from app.llm_connection import build_llm_connection
 from app.metrics import langsmith as langsmith_metrics
 from app.metrics.llm_stall_probe import start_stall_probe
+from app.observability.tracing import event as otel_event, span as otel_span
 
 LOGGER_NAME = "easydep.agent"
 
@@ -343,7 +344,13 @@ def record_llm_call(operation: str) -> Iterator[LlmCall]:
             startedAt=started_at.isoformat(),
         )
         try:
-            yield call
+            with otel_span(
+                "requirements.llm.call",
+                operation=operation,
+                model_provider=connection.provider,
+                model_name=connection.model,
+            ):
+                yield call
         except BaseException as exc:
             failed = exc
             raise
@@ -388,6 +395,16 @@ def record_llm_call(operation: str) -> Iterator[LlmCall]:
             trace.set_usage(
                 input_tokens=call.prompt_tokens,
                 output_tokens=call.completion_tokens,
+            )
+            otel_event(
+                "requirements.llm.operation.finished",
+                operation=operation,
+                status="failed" if failed is not None else "completed",
+                error_type=type(failed).__name__ if failed is not None else None,
+                elapsed_seconds=round(elapsed, 6),
+                prompt_tokens=call.prompt_tokens,
+                completion_tokens=call.completion_tokens,
+                structured_fallback=call.fallback_reason is not None,
             )
             record = {
                 "operation": operation,

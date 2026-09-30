@@ -23,6 +23,7 @@ from app.design.observability import log_design_timing
 from app.design.graphs.subgraphs import FEEDBACK_KEYS
 from app.design.schemas.architecture_state import ArchitectureState
 from app.repositories.artifact_repository import STAGE_ARTIFACTS
+from app.observability.tracing import span
 
 
 def route_gate(state: ArchitectureState) -> str:
@@ -51,6 +52,20 @@ def _api_has_no_http_operation(artifact: object) -> bool:
         )
         for path_item in paths.values()
     )
+
+
+def _traced_gate(
+    stage: str, gate: Callable[[ArchitectureState], dict]
+) -> Callable[[ArchitectureState], dict]:
+    """Wrap the unchanged gate body without tracing its payload."""
+
+    def traced(state: ArchitectureState) -> dict:
+        with span(
+            "easydep.design.gate", app_id=str(state.get("app_id") or ""), stage=stage
+        ):
+            return gate(state)
+
+    return traced
 
 
 def make_gate(stage: str) -> Callable[[ArchitectureState], dict]:
@@ -128,4 +143,4 @@ def make_gate(stage: str) -> Callable[[ArchitectureState], dict]:
             return {"gate_route": "advance"}
         return {feedback_key: str(answer), "gate_route": "loop"}
 
-    return gate
+    return _traced_gate(stage, gate)

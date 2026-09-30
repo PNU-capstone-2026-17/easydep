@@ -43,6 +43,7 @@ from app.requirements.contracts.request import (
 from app.requirements.contracts.state import AgentState
 from app.requirements.modeling.relationships import check_relationships
 from app.requirements.modeling.specifications import check_specs
+from app.observability.tracing import span as otel_span
 from app.requirements.modeling.use_cases import review_model
 from app.requirements.orchestration import persistence
 from app.requirements.orchestration.feedback_gates import (
@@ -341,7 +342,13 @@ def _recall_mode(thread_id: str, persistent: bool) -> bool:
 def _invoke(gates: bool, thread_id: str, graph_input, persistent: bool):
     """모드에 맞는 정적 그래프를 골라 실행한다(런타임 라우팅 없음 → 직렬화 불필요)."""
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
-    return _compiled(gates, persistent).invoke(graph_input, config)  # type: ignore[attr-defined]
+    with otel_span(
+        "requirements.graph.invoke",
+        thread_id=thread_id,
+        feedback_gates=gates,
+        persistent=persistent,
+    ):
+        return _compiled(gates, persistent).invoke(graph_input, config)  # type: ignore[attr-defined]
 
 
 def _has_checkpoint(gates: bool, thread_id: str, persistent: bool) -> bool:

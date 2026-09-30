@@ -1,0 +1,1 @@
+"""Shared optional observability helpers."""

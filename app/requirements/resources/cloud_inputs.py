@@ -16,6 +16,7 @@ from app.requirements.contracts.state import AgentState
 from app.requirements.resources.capability_extraction import derive_deployment_needs
 from app.requirements.resources.service import extract_resource_constraints
 from app.requirements.runtime import telemetry
+from app.observability.tracing import span as otel_span
 
 CloudInputPatch = dict[str, object]
 CloudInputCall = Callable[[AgentState], CloudInputPatch]
@@ -24,25 +25,26 @@ CloudInputCall = Callable[[AgentState], CloudInputPatch]
 def _observed_branch(
     name: str, fn: CloudInputCall, state: AgentState
 ) -> CloudInputPatch:
-    started = time.perf_counter()
-    telemetry.emit_progress("analysisStepStarted", step=name)
-    try:
-        result = fn(state)
-    except BaseException as error:
+    with otel_span("requirements.analyze.branch", branch=name):
+        started = time.perf_counter()
+        telemetry.emit_progress("analysisStepStarted", step=name)
+        try:
+            result = fn(state)
+        except BaseException as error:
+            telemetry.emit_progress(
+                "analysisStepFinished",
+                step=name,
+                status="failed",
+                errorType=type(error).__name__,
+                elapsedSeconds=round(time.perf_counter() - started, 6),
+            )
+            raise
         telemetry.emit_progress(
             "analysisStepFinished",
             step=name,
-            status="failed",
-            errorType=type(error).__name__,
+            status="completed",
             elapsedSeconds=round(time.perf_counter() - started, 6),
         )
-        raise
-    telemetry.emit_progress(
-        "analysisStepFinished",
-        step=name,
-        status="completed",
-        elapsedSeconds=round(time.perf_counter() - started, 6),
-    )
     return result
 
 
@@ -82,22 +84,23 @@ def analyze_cloud_inputs(
             constraint_call or extract_resource_constraints,
         ),
     )
-    results: dict[str, CloudInputPatch] = {}
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="requirements-cloud") as pool:
-        futures = {
-            name: pool.submit(
-                telemetry.bind_context(_observed_branch), name, fn, state
-            )
-            for name, fn in jobs
-        }
-        for name, _fn in jobs:
-            results[name] = futures[name].result()
+    with otel_span("requirements.analyze_cloud_inputs"):
+        results: dict[str, CloudInputPatch] = {}
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="requirements-cloud") as pool:
+            futures = {
+                name: pool.submit(
+                    telemetry.bind_context(_observed_branch), name, fn, state
+                )
+                for name, fn in jobs
+            }
+            for name, _fn in jobs:
+                results[name] = futures[name].result()
 
-    merged: CloudInputPatch = {}
-    for name, _fn in jobs:
-        merged.update(results[name])
-    merged["phase"] = "cloud_inputs"
-    return merged
+        merged: CloudInputPatch = {}
+        for name, _fn in jobs:
+            merged.update(results[name])
+        merged["phase"] = "cloud_inputs"
+        return merged
 
 
 analyze_cloud_inputs._easydep_emits_progress = True  # type: ignore[attr-defined]

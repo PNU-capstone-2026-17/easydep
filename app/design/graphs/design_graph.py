@@ -41,6 +41,7 @@ from app.design.nodes.persist import ORIGIN_KEY, make_persist
 from app.design.schemas.architecture_state import ArchitectureState
 from app.design.session_store import SqlCheckpointSaver
 from app.design.observability import log_design_timing
+from app.observability.tracing import span
 from app.metrics import langsmith as langsmith_metrics
 
 
@@ -58,10 +59,19 @@ def _stage_runner(subgraph, origin: str, stage: str):
 
     def run(state: ArchitectureState) -> dict:
         started_at = perf_counter()
-        result = dict(subgraph.invoke(state))
-        invoked_at = perf_counter()
-        wrapped_result = {**result, ORIGIN_KEY: origin}
-        returned_at = perf_counter()
+        # This is the narrow handoff from generation/validation into the
+        # persistence tail.  The span deliberately carries only identifiers
+        # and a stage label, never state or rendered artifact contents.
+        with span(
+            "easydep.design.stage_subgraph",
+            app_id=str(state.get("app_id") or ""),
+            stage=stage,
+            origin=origin,
+        ):
+            result = dict(subgraph.invoke(state))
+            invoked_at = perf_counter()
+            wrapped_result = {**result, ORIGIN_KEY: origin}
+            returned_at = perf_counter()
         log_design_timing(
             "design.stage_subgraph.completed",
             app_id=state.get("app_id"),
@@ -156,11 +166,14 @@ def _invoke_traced_design_graph(
         f"easydep.design.{operation}",
         metadata={"agent": "design", "operation": operation, "app_id": app_id},
     ):
-        started_at = perf_counter()
-        result = dict(invocation())
-        graph_finished_at = perf_counter()
-        payload = _result_payload(result, app_id)
-        finished_at = perf_counter()
+        # Root span covers graph return and response conversion, so its child
+        # stage/persist/gate spans isolate the historical post-validation tail.
+        with span("easydep.design.graph_operation", app_id=app_id, operation=operation):
+            started_at = perf_counter()
+            result = dict(invocation())
+            graph_finished_at = perf_counter()
+            payload = _result_payload(result, app_id)
+            finished_at = perf_counter()
         log_design_timing(
             "design.graph_operation.completed",
             operation=operation,

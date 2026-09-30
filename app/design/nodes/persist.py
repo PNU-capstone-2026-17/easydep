@@ -22,6 +22,7 @@ from app.db.models import ORIGIN_FEEDBACK_REVISED, ORIGIN_GENERATED
 from app.design.schemas.architecture_state import ArchitectureState
 from app.repositories import artifact_repository
 from app.design.observability import log_design_timing
+from app.observability.tracing import span
 
 #: 서브그래프 래퍼가 "이 상태를 만든 것이 생성이냐 피드백이냐"를 남기는 상태 키.
 ORIGIN_KEY = "stage_origin"
@@ -44,12 +45,22 @@ def make_persist(stage: str) -> Callable[[ArchitectureState], dict]:
 
     def persist(state: ArchitectureState) -> dict:
         app_id = state.get("app_id")
-        if app_id:
-            origin = (
-                ORIGIN_FEEDBACK_REVISED
-                if state.get(ORIGIN_KEY) == "feedback"
-                else ORIGIN_GENERATED
-            )
+        origin = (
+            ORIGIN_FEEDBACK_REVISED
+            if state.get(ORIGIN_KEY) == "feedback"
+            else ORIGIN_GENERATED
+        )
+        # Keep the DB/image preparation boundary distinct from graph
+        # checkpoint finalization. Artifact payloads never enter attrs.
+        with span(
+            "easydep.design.persist",
+            app_id=str(app_id or ""),
+            stage=stage,
+            origin=origin,
+            artifact_write=bool(app_id),
+        ):
+            if not app_id:
+                return {"artifact_status": mark_implemented(state, stage)}
             started_at = perf_counter()
             artifact_repository.save_stages(app_id, [stage], state, origin=origin)
             log_design_timing(

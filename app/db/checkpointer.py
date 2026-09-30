@@ -6,6 +6,8 @@ LangGraph 규약에 따라 checkpoint 본문, 채널 blob, pending write는 세 
 from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
+from functools import wraps
+from inspect import signature
 from time import perf_counter
 from typing import Any
 
@@ -26,11 +28,35 @@ from sqlalchemy import delete, select, tuple_
 from app.design.observability import log_design_timing
 from app.db.models import AgentCheckpoint, AgentCheckpointBlob, AgentCheckpointWrite
 from app.db.session import session_scope
+from app.observability.tracing import span as otel_span
 
 _serde = JsonPlusSerializer()
 
 #: `dumps_typed`가 값 없음을 표시하는 타입. `loads_typed`는 이걸 모르므로 걸러내야 한다.
 _EMPTY = "empty"
+
+
+def _trace_checkpoint(operation: str, count_argument: str):
+    """Trace shared saver operations without inspecting checkpoint payloads."""
+    def decorate(method):
+        method_signature = signature(method)
+
+        @wraps(method)
+        def wrapped(self, config, *args, **kwargs):
+            bound = method_signature.bind(self, config, *args, **kwargs)
+            configurable = config.get("configurable", {})
+            with otel_span(
+                f"easydep.checkpoint.{operation}",
+                graph_type=self.graph_type,
+                thread_id=configurable.get("thread_id", ""),
+                namespace=configurable.get("checkpoint_ns", ""),
+                count=len(bound.arguments[count_argument]),
+            ):
+                return method(self, config, *args, **kwargs)
+
+        return wrapped
+
+    return decorate
 
 
 def _log_design_checkpoint_timing(
@@ -80,6 +106,7 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
         self._write = AgentCheckpointWrite
 
     # -- 쓰기 ---------------------------------------------------------------
+    @_trace_checkpoint("put", "new_versions")
     def put(
         self,
         config: RunnableConfig,
@@ -138,6 +165,7 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
             }
         }
 
+    @_trace_checkpoint("put_writes", "writes")
     def put_writes(
         self,
         config: RunnableConfig,
