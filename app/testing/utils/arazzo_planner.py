@@ -709,11 +709,7 @@ def build_execution_candidates(
             item_outputs = [output for output in outputs if isinstance(output.get("collectionItemRef"), dict)]
             for match in item_outputs:
                 for selected in item_outputs:
-                    if (
-                        match is selected
-                        or match["collectionItemRef"]["arrayRootPointer"]
-                        != selected["collectionItemRef"]["arrayRootPointer"]
-                    ):
+                    if match["collectionItemRef"]["arrayRootPointer"] != selected["collectionItemRef"]["arrayRootPointer"]:
                         continue
                     collection_candidates.append({
                         "selectionId": f"{operation_id}:{match['outputName']}=>{selected['outputName']}",

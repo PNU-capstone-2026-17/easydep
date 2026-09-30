@@ -80,7 +80,7 @@ def _candidate_workflow_with_projection_results(
     monkeypatch.setattr(dynamic, "_authoring_candidate", lambda candidate, _steps: authoring)
     monkeypatch.setattr(dynamic, "_select_semantic_producers", lambda *_args: [])
 
-    def generate_graph(_client, _candidate, correction_context=None):
+    def generate_graph(_client, _candidate, correction_context=None, **_kwargs):
         graph_calls.append(correction_context)
         result = next(graphs)
         if isinstance(result, Exception):
@@ -249,6 +249,23 @@ def test_graph_requires_exact_closure_of_every_selected_required_slot() -> None:
     assert workflow["steps"][1]["parameters"] == [
         {"name": "offeringId", "in": "path", "value": "$steps.o1.outputs.offeringId"}
     ]
+
+
+def test_graph_schema_and_prompt_require_explicit_exclusive_input_binding_fields() -> None:
+    candidate = _candidate()
+    item_schema = dynamic._graph_response_format(candidate)["json_schema"]["schema"][
+        "properties"]["requiredInputs"]["items"]
+    assert set(item_schema["required"]) == {
+        "targetOccurrenceId", "targetInputSlot", "literalNeeded",
+        "sourceOccurrenceId", "sourceOutputName",
+        "sourceInputOccurrenceId", "sourceInputSlot",
+    }
+    prompt = dynamic._workflow_graph_prompt(candidate)
+    assert "set unused source fields explicitly to null" in prompt
+    assert "Never combine binding shapes" in prompt
+    assert "for a fixed literal" in prompt
+    assert "for an output binding" in prompt
+    assert "for fixed-input reuse" in prompt
 
 
 @pytest.mark.parametrize(
@@ -567,6 +584,11 @@ def test_graph_prompt_scopes_setup_use_case_flow_to_linked_operation() -> None:
         "planningModel": {
             "intent": {},
             "targetOperationIds": ["target"],
+            "producerSelections": [{
+                "targetOperationId": "target", "targetInputSlot": "path:itemId",
+                "sourceOperationId": "setup-linked", "sourceOutputName": "bodyItemId",
+                "creatorOperationId": "setup-linked",
+            }],
             "availableSteps": [
                 {"operationId": "setup-linked", "method": "POST", "inputs": [], "outputs": []},
                 {"operationId": "setup-unrelated", "method": "POST", "inputs": [], "outputs": []},
@@ -589,6 +611,8 @@ def test_graph_prompt_scopes_setup_use_case_flow_to_linked_operation() -> None:
     assert '"operationId":"setup-unrelated"' in prompt
     assert '"main_scenario":["Delete an unrelated item."]' not in prompt
     assert "UC-unrelated" not in prompt
+    assert '"creatorOperationId":"setup-linked"' in prompt
+    assert "include that exact state-changing operation before its selected read-only resource producer" in prompt
 
 
 def test_plain_response_body_cannot_claim_uuid_but_json_pointer_leaf_uses_runtime_gate() -> None:

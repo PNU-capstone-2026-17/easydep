@@ -722,6 +722,19 @@ def _compile_workflow_decision(
         compiled_steps[last_step].setdefault("successCriteria", []).append(
             {"condition": f"{left_value} != {right_value}"}
         )
+    for assertion in decision.get("identityEqualityAssertions") or []:
+        step_id = str(assertion.get("occurrenceId") or "")
+        response_expression = str(assertion.get("responseExpression") or "")
+        request_expression = str(assertion.get("requestExpression") or "")
+        if (
+            step_id not in positions
+            or not response_expression.startswith("$response.body#/")
+            or not request_expression.startswith("$request.body#/")
+        ):
+            raise ArazzoPlanningError("Identity equality assertion is not grounded in request/response JSON Pointers.")
+        compiled_steps[step_id].setdefault("successCriteria", []).append(
+            {"condition": f"{response_expression} == {request_expression}"}
+        )
     for criterion in decision.get("successCriteria") or []:
         step_id = criterion.get("stepId") if isinstance(criterion, dict) else None
         status = criterion.get("statusCode") if isinstance(criterion, dict) else None
@@ -1358,6 +1371,7 @@ def _select_semantic_producers(
     profile = profile_for(connection.model, fallback_temperature=settings.temperature,
                           fallback_max_tokens=settings.llm_max_completion_tokens or 4096)
     selections = []
+    deferred_collection_choices: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], list[dict[str, Any]]]] = []
     processed: set[tuple[str, str]] = set()
     while pending:
         request = pending.pop(0)
@@ -1370,7 +1384,7 @@ def _select_semantic_producers(
         options = []
         collection_choices_by_option: dict[str, list[dict[str, Any]]] = {}
         collection_catalog_by_root: dict[str, dict[str, Any]] = {}
-        evidence_refs = set()
+        operation_evidence_by_id: dict[str, list[dict[str, Any]]] = {}
         for step in steps:
             operation_id = str(step.get("operationId") or "")
             method = str(step.get("method") or "").upper()
@@ -1440,108 +1454,148 @@ def _select_semantic_producers(
                         root_id = f"{operation_id}:{array_root}"
                         if catalog := step_collection_catalog_by_root.get(array_root):
                             collection_catalog_by_root.setdefault(root_id, catalog)
-                ref = f"openapi.operation:{operation_id}.output:{output.get('outputName')}"
                 evidence = []
-                for linked in source.get("linkedUseCaseEvidence") or []:
+                linked_evidence = source.get("linkedUseCaseEvidence") or []
+                for linked in linked_evidence:
                     item = {key: linked[key] for key in (
-                        "useCaseId", "name", "trigger", "main_scenario", "success_guarantee",
+                        "useCaseId", "name", "trigger",
                     ) if key in linked}
                     if item:
                         evidence.append(item)
-                        if item.get("useCaseId"):
-                            evidence_refs.add(f"use_case:{item['useCaseId']}")
-                evidence_refs.add(ref)
+                identity_evidence = _operation_identity_evidence(source.get("linkedUseCaseEvidence"))
+                if identity_evidence:
+                    operation_evidence_by_id.setdefault(operation_id, identity_evidence)
                 options.append({
                     "optionId": option_id, "operationId": operation_id, "method": step.get("method"),
                     "summary": step.get("summary"), "outputName": output.get("outputName"),
                     "outputPath": output.get("slot"), "type": output.get("type"),
                     "format": output.get("format"), "responseDescription": output.get("responseDescription"),
-                    "linkedUseCaseEvidence": evidence,
-                    # Required values are linked to the operation, not to an exact
-                    # response slot unless the frozen contract supplies that mapping.
-                    "operationIdentityEvidence": _operation_identity_evidence(
-                        source.get("linkedUseCaseEvidence")
-                    ),
+                    "linkedUseCases": evidence,
+                    "linkedUseCaseEvidence": linked_evidence,
                     "schemaGuaranteesNonNullValue": _output_guarantees_non_null(
                         source, output, openapi
                     ),
                     "collectionLookupAvailable": bool(collection_candidates),
                     "collectionArrayRoots": [f"{operation_id}:{root}" for root in collection_array_roots],
                 })
-        if not options:
-            continue
-        schema = {
-            "type": "object", "additionalProperties": False,
-            "properties": {
-                "decision": {"type": "string", "enum": ["select", "deferred_collection_lookup", "literal", "unsupported"]},
-                "sourceOptionId": {"type": ["string", "null"], "enum": [*(item["optionId"] for item in options), None]},
-                "evidenceRefs": {"type": "array", "items": {"type": "string", "enum": sorted(evidence_refs)}},
-            },
-            "required": ["decision", "sourceOptionId", "evidenceRefs"],
+        outline = (candidate.get("planningModel", {}).get("resourceInstanceOutline") or {})
+        outline_operation_ids = {
+            str(item.get("operationId")) for item in outline.get("occurrences") or []
+            if isinstance(item, dict) and item.get("operationId")
         }
-        payload = {
-            "target": request,
-            "producerOptions": options,
-            "finiteCollectionCatalog": list(collection_catalog_by_root.values()),
-            "rules": [
+        outline_is_present = candidate.get("planningModel", {}).get("resourceInstanceOutline") is not None
+        state_changing = [item for item in options
+                          if str(item.get("method") or "").upper() in {"POST", "PUT", "PATCH"}
+                          and (not outline_is_present or item.get("operationId") in outline_operation_ids)]
+        readback_fallback = [item for item in options
+                             if str(item.get("method") or "").upper() == "GET"
+                             and item.get("collectionLookupAvailable")]
+        stages = [items for items in (state_changing, readback_fallback) if items]
+        if not stages:
+            continue
+
+        value: dict[str, Any] | None = None
+        selected: dict[str, Any] | None = None
+        for stage_index, stage_options in enumerate(stages):
+            schema = {
+                "type": "object", "additionalProperties": False,
+                "properties": {
+                    "decision": {"type": "string", "enum": ["select", "deferred_collection_lookup", "literal", "unsupported"]},
+                    "sourceOptionId": {"type": ["string", "null"], "enum": [*(item["optionId"] for item in stage_options), None]},
+                },
+                "required": ["decision", "sourceOptionId"],
+            }
+            stage_operation_ids = {str(item.get("operationId")) for item in stage_options}
+            stage_roots = {str(root)
+                            for item in stage_options for root in item.get("collectionArrayRoots") or []}
+            payload = {
+                "target": request,
+                **({"resourceInstanceOutline": candidate.get("planningModel", {}).get("resourceInstanceOutline")}
+                   if candidate.get("planningModel", {}).get("resourceInstanceOutline") is not None else {}),
+                "producerOptions": [
+                    {key: value for key, value in item.items() if key != "linkedUseCaseEvidence"}
+                    for item in stage_options
+                ],
+                "finiteCollectionCatalog": [item for item in collection_catalog_by_root.values()
+                                            if f"{item.get('operationId')}:{item.get('arrayRootPointer')}" in stage_roots],
+                **({"operationEvidence": [
+                    {"operationId": operation_id, "identityEvidence": evidence}
+                    for operation_id, evidence in sorted(operation_evidence_by_id.items())
+                    if operation_id in stage_operation_ids
+                ]} if any(operation_id in stage_operation_ids for operation_id in operation_evidence_by_id) else {}),
+                "selectionStage": "state_changing_response" if stage_index == 0 and state_changing else "readback_fallback",
+                "rules": [
                 "Select only a listed option or unsupported.",
-                "Type compatibility is not resource identity; use response descriptions and linked use-case flow evidence.",
-                "Target resourceRole/valueRef and operationIdentityEvidence can support a semantic role choice, but operation-level evidence does not prove that a particular output is that value unless an explicit output reference mapping is present.",
+                "Use exact output property path/name, response description, and linked use-case name/trigger as semantic evidence; matching types alone do not establish identity.",
+                "Operation-level identity evidence, when listed once for an operation, may inform its resource role but does not guarantee that every output is that value.",
+                "Occurrence identityRelations compare only resources produced by those occurrences. For a producer edge, compare the source output value with the target input value; a consumer may take the same earlier resource ID while producing a distinct resource. Do not reject that value flow based on the consumer's produced-resource identity.",
+                "A prerequisite resource producer may be linked to a different use case than the target; do not require matching use-case IDs.",
+                "An unspecified string format on a JSON-Pointer leaf does not by itself disqualify it; runtime must validate the selected value against the target input contract.",
                 "Do not treat different declared resource roles as interchangeable merely because their schemas have the same type or format.",
-                "Do not infer fixture existence or guaranteed output presence from an optional or nullable schema.",
-                "An array item is not a direct producer. Choose deferred_collection_lookup only when a producer option references a listed array root with item fields that can match an earlier fixed input; the graph will select the exact finite field pair.",
+                "Do not assume an optional or nullable output exists or is non-null; runtime must verify the selected value.",
+                "When a semantically exact ID from a state-changing operation response is available, prefer it over a readback collection, even if the schema marks it optional or nullable; downstream runtime validation will reject a missing/null value.",
+                "A related resource identifier is not interchangeable with the target resource identifier.",
+                "An array item is not a direct producer. Choose deferred_collection_lookup only when a producer option references listed same-item fields that can match an earlier fixed input; the exact finite field and anchor are selected separately from frozen contracts.",
                 "A finite collection selection describes a schema-derived path relation only; it does not guarantee a matching row, uniqueness, or a non-null runtime value.",
                 "A caller_input value declares an API input, not an already-persisted test fixture.",
+                "Use the planned resource state/creator chain when available; do not assume a GET readback establishes a resource that no earlier operation created.",
                 "Choose literal only when target.inputContract.literalAllowed is true; otherwise use a grounded producer or unsupported.",
-            ],
-        }
-        request_args: dict[str, Any] = {
-            "model": connection.model, "temperature": profile.temperature,
-            "messages": [
-                {"role": "system", "content": "Choose a semantic producer only from frozen API and linked-flow evidence."},
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))},
-            ],
-            "response_format": {"type": "json_schema", "json_schema": {
-                "name": "ArazzoProducerChoice", "strict": True, "schema": schema,
-            }},
-            "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens or 4096),
-        }
-        if profile.top_p is not None:
-            request_args["top_p"] = profile.top_p
-        if effort := profile.resolve_reasoning(_FUNCTIONAL_PLAN_REASONING_EFFORT):
-            request_args["reasoning_effort"] = effort
-        if extra := _structured_output_extra_body(connection, profile):
-            request_args["extra_body"] = extra
-        value = json.loads(_completion_content(
-            client.chat.completions.create(**request_args), operation="Arazzo semantic producer selection"
-        ))
-        jsonschema.Draft202012Validator(schema).validate(value)
-        selected = next((item for item in options if item["optionId"] == value.get("sourceOptionId")), None)
-        if value.get("decision") == "select" and selected:
+                ],
+            }
+            request_args: dict[str, Any] = {
+                "model": connection.model, "temperature": profile.temperature,
+                "messages": [
+                    {"role": "system", "content": "Choose a semantic producer only from frozen API and linked-flow evidence."},
+                    {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))},
+                ],
+                "response_format": {"type": "json_schema", "json_schema": {
+                    "name": "ArazzoProducerChoice", "strict": True, "schema": schema,
+                }},
+                "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens or 4096),
+            }
+            if profile.top_p is not None:
+                request_args["top_p"] = profile.top_p
+            if effort := profile.resolve_reasoning(_FUNCTIONAL_PLAN_REASONING_EFFORT):
+                request_args["reasoning_effort"] = effort
+            if extra := _structured_output_extra_body(connection, profile):
+                request_args["extra_body"] = extra
+            value = json.loads(_completion_content(
+                client.chat.completions.create(**request_args), operation="Arazzo semantic producer selection"
+            ))
+            jsonschema.Draft202012Validator(schema).validate(value)
+            selected = next((item for item in stage_options if item["optionId"] == value.get("sourceOptionId")), None)
+            if value.get("decision") == "unsupported" and value.get("sourceOptionId") is None:
+                if stage_index + 1 < len(stages):
+                    continue
+                break
+            break
+        if value.get("decision") in {"select", "deferred_collection_lookup"} and selected:
             is_collection = bool(selected.get("collectionLookupAvailable"))
-            selections.append({
+            if value.get("decision") == "deferred_collection_lookup" and not is_collection:
+                raise ArazzoPlanningError("Deferred collection lookup has no finite schema-derived item paths.")
+            selection = {
                 "targetOperationId": request["targetOperationId"],
                 "targetInputSlot": request["targetInputSlot"],
                 **({"decision": "deferred_collection_lookup"} if is_collection else {}),
                 "sourceOperationId": selected["operationId"],
                 "sourceOutputName": selected["outputName"],
-            })
+            }
+            if str(selected.get("method") or "").upper() in {"GET", "HEAD", "OPTIONS"} and str(slot.get("inputSlot") or "").startswith("path:"):
+                selection["creatorOperationId"] = _select_read_only_resource_creator(
+                    client, candidate, selected, slot, str(request["targetOperationId"])
+                )
+                creator_step = steps_by_operation.get(selection["creatorOperationId"])
+                if creator_step:
+                    pending.extend(_identity_input_requests(candidate, [creator_step], all_scalar=True))
             producer_step = steps_by_operation.get(str(selected["operationId"]))
             if producer_step:
                 pending.extend(_identity_input_requests(candidate, [producer_step], all_scalar=True))
-        elif value.get("decision") == "deferred_collection_lookup" and selected:
-            if not collection_choices_by_option.get(str(value.get("sourceOptionId"))):
-                raise ArazzoPlanningError("Deferred collection lookup has no finite schema-derived item paths.")
-            selections.append({
-                "targetOperationId": request["targetOperationId"],
-                "targetInputSlot": request["targetInputSlot"],
-                "decision": "deferred_collection_lookup",
-                "sourceOperationId": selected["operationId"],
-                "sourceOutputName": selected["outputName"],
-            })
-            producer_step = steps_by_operation.get(str(selected["operationId"]))
-            if producer_step:
-                pending.extend(_identity_input_requests(candidate, [producer_step], all_scalar=True))
+            selections.append(selection)
+            if is_collection:
+                deferred_collection_choices.append((
+                    selection, selected, slot, request,
+                    collection_choices_by_option[str(value.get("sourceOptionId"))],
+                ))
         elif value.get("decision") == "literal" and value.get("sourceOptionId") is None:
             if not _literal_input_allowed(slot):
                 raise ArazzoPlanningError("Producer selection requested a literal for an input without literal evidence.")
@@ -1552,7 +1606,265 @@ def _select_semantic_producers(
             })
         elif value.get("decision") == "unsupported" and value.get("sourceOptionId") is None:
             raise ArazzoPlanningError("No grounded producer was selected for a required resource input.")
+    # Resolve row identity only after all prerequisite producer inputs have
+    # been selected, so the model sees the exact causal edge into the creator.
+    for selection, producer, target_slot, request, choices in deferred_collection_choices:
+        creator_operation_id = str(selection.get("creatorOperationId") or "")
+        creator_edges = [
+            item for item in selections
+            if item.get("targetOperationId") == creator_operation_id
+            and item.get("sourceOperationId") and item.get("sourceOutputName")
+        ]
+        selection.update(_select_collection_match_and_anchor(
+            client, candidate, producer, target_slot, request, choices,
+            creator_operation_id=creator_operation_id, creator_edges=creator_edges,
+        ))
     return selections
+
+
+def _select_collection_match_and_anchor(
+    client: OpenAI, candidate: dict[str, Any], producer: dict[str, Any],
+    target_slot: dict[str, Any], request: dict[str, Any], choices: list[dict[str, Any]],
+    *, creator_operation_id: str = "", creator_edges: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Jointly select a same-item identity field and compatible literal anchor."""
+    if not choices:
+        raise ArazzoPlanningError("Deferred collection lookup has no finite schema-derived item paths.")
+    compact_choices = [{
+        "selectionId": item.get("selectionId"),
+        "matchField": item.get("matchOutputName"),
+        "matchType": item.get("matchType"),
+        "matchFormat": item.get("matchFormat"),
+        "selectedField": item.get("selectedOutputName"),
+        "selectedType": item.get("selectedType"),
+        "selectedFormat": item.get("selectedFormat"),
+        "matchItemPath": item.get("matchItemPointerParts"),
+        "selectedItemPath": item.get("selectedItemPointerParts"),
+        "sameArrayItem": True,
+    } for item in choices]
+
+    steps = candidate.get("planningModel", {}).get("availableSteps") or []
+    steps_by_operation = {str(step.get("operationId")): step for step in steps}
+    creator_step = steps_by_operation.get(creator_operation_id, {})
+    creator_setup = next((item for item in candidate.get("setupOperations") or []
+                          if str(item.get("operationId")) == creator_operation_id), {})
+    creator_scenarios = []
+    for evidence in creator_setup.get("linkedUseCaseEvidence") or []:
+        if not isinstance(evidence, dict):
+            continue
+        scenario = evidence.get("main_scenario") or evidence.get("mainScenario") or []
+        if isinstance(scenario, list):
+            scenario = [
+                item if isinstance(item, str) else item.get("sentence") or item.get("text")
+                for item in scenario if isinstance(item, (str, dict))
+            ]
+            scenario = [item for item in scenario if item]
+        creator_scenarios.append({key: evidence[key] for key in ("useCaseId", "name", "trigger") if key in evidence} | {
+            "mainScenario": scenario,
+        })
+    creator_input_bindings = []
+    for edge in creator_edges or []:
+        source_step = steps_by_operation.get(str(edge.get("sourceOperationId")), {})
+        target_input = next((item for item in creator_step.get("inputs") or []
+                             if item.get("inputSlot") == edge.get("targetInputSlot")), {})
+        source_output = next((item for item in source_step.get("outputs") or []
+                              if item.get("outputName") == edge.get("sourceOutputName")), {})
+        creator_input_bindings.append({
+            "creatorInputSlot": edge.get("targetInputSlot"),
+            "creatorInputMeaning": target_input.get("description"),
+            "creatorInputType": target_input.get("type"),
+            "creatorInputFormat": target_input.get("format"),
+            "sourceOperationId": edge.get("sourceOperationId"),
+            "sourceOperationSummary": source_step.get("summary"),
+            "sourceOutputName": edge.get("sourceOutputName"),
+            "sourceOutputPath": source_output.get("slot"),
+            "sourceOutputMeaning": source_output.get("responseDescription"),
+        })
+    anchor_by_id: dict[str, dict[str, Any]] = {}
+    for step in steps:
+        operation_id = str(step.get("operationId") or "")
+        if str(step.get("method") or "").upper() not in {"POST", "PUT", "PATCH"}:
+            continue
+        for input_slot in step.get("inputs") or []:
+            if not isinstance(input_slot, dict) or not _literal_input_allowed(input_slot):
+                continue
+            if not any(_collection_match_types_compatible(input_slot, {
+                "type": choice.get("matchType"), "format": choice.get("matchFormat"),
+            }) for choice in choices):
+                continue
+            anchor_id = f"{operation_id}::{input_slot.get('inputSlot')}"
+            anchor_by_id.setdefault(anchor_id, {
+                "anchorId": anchor_id, "operationId": operation_id,
+                "operationSummary": step.get("summary"),
+                "inputSlot": input_slot.get("inputSlot"), "inputMeaning": input_slot.get("description"),
+                "type": input_slot.get("type"), "format": input_slot.get("format"),
+                "resourceRole": input_slot.get("resourceRole"), "valueRef": input_slot.get("valueRef"),
+                "identityObligationRef": input_slot.get("identityObligationRef"),
+            })
+    anchors = list(anchor_by_id.values())
+    if not anchors:
+        raise ArazzoPlanningError("Deferred collection identity has no compatible earlier state-changing literal input anchor.")
+
+    linked_evidence_by_operation = {
+        str(item.get("operationId")): item.get("linkedUseCaseEvidence") or []
+        for item in candidate.get("setupOperations") or []
+        if isinstance(item, dict) and item.get("operationId")
+    }
+    linked_use_case_evidence = []
+    relevant_operation_ids = {str(producer.get("operationId") or ""), creator_operation_id} | {
+        str(item.get("operationId") or "") for item in anchors
+    }
+    for operation_id in sorted(relevant_operation_ids):
+        evidence_items = linked_evidence_by_operation.get(operation_id) or producer.get("linkedUseCaseEvidence", [])
+        compact_evidence = [{key: item[key] for key in ("useCaseId", "name", "trigger") if key in item}
+                            for item in evidence_items if isinstance(item, dict)]
+        if compact_evidence:
+            linked_use_case_evidence.append({"operationId": operation_id, "useCases": compact_evidence})
+
+    connection = build_arazzo_llm_connection()
+    profile = profile_for(connection.model, fallback_temperature=settings.temperature,
+                          fallback_max_tokens=settings.llm_max_completion_tokens or 4096)
+
+    payload = {
+        "frozenIntent": {key: (candidate.get("planningModel", {}).get("intent") or {}).get(key)
+                         for key in ("goal", "trigger")
+                         if (candidate.get("planningModel", {}).get("intent") or {}).get(key)},
+        "target": {
+            "operationId": request.get("targetOperationId"),
+            "inputSlot": request.get("targetInputSlot"),
+            "meaning": {key: target_slot.get(key) for key in (
+                "inputSlot", "description", "resourceRole", "valueRef", "identityObligationRef", "type", "format",
+            ) if target_slot.get(key)},
+            "useCaseEvidence": request.get("useCaseEvidence"),
+        },
+        "collection": {"operationId": producer.get("operationId"), "summary": producer.get("summary"),
+                       "selectedOutput": producer.get("outputName")},
+        "rowCreator": {
+            "operationId": creator_operation_id,
+            "summary": creator_step.get("summary"),
+            "inputBindings": creator_input_bindings,
+            "linkedScenario": creator_scenarios,
+        },
+        "linkedUseCaseEvidence": linked_use_case_evidence,
+        "finiteSameItemChoices": compact_choices,
+        "finiteCompatibleLiteralAnchors": anchors,
+            "instruction": (
+            "Choose a selectionId and anchorId where the matchField and anchor input denote the SAME resource identity, "
+            "and that identity selects the desired row whose selectedField supplies the target child/resource ID. "
+            "When a rowCreator and its inputBindings are provided, the anchor must denote the resource identity "
+            "supplied to that record-creating operation; do not choose an incidental nested association instead. "
+            "Do not equate the selected child ID with the match identity. Prefer a stable resource identifier; "
+            "reject capacity/count/time/date/status/labels and other mutable or non-unique attributes, even when "
+            "their types or values match. Types establish compatibility only, not identity. Return one listed selectionId "
+            "and one listed anchorId, or 'none' for either if no semantically valid choice exists. When the row-creator "
+            "input is bound from a response output of the same anchor operation and a candidate literal request ID is "
+            "available, you MAY select that anchor: the system will assert response-output equals request-input at "
+            "runtime, and a failed equality check fails the workflow; this is not an assumption that the API contract "
+            "guarantees equality."
+        ),
+    }
+    schema = {
+        "type": "object", "additionalProperties": False,
+        "properties": {"selectionId": {"type": "string"}, "anchorId": {"type": "string"}},
+        "required": ["selectionId", "anchorId"],
+    }
+    args: dict[str, Any] = {
+        "model": connection.model, "temperature": profile.temperature,
+        "messages": [
+            {"role": "system", "content": "Choose a semantically valid resource identity pair from the finite catalog."},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))},
+        ],
+        "response_format": {"type": "json_schema", "json_schema": {
+            "name": "ArazzoJointCollectionIdentitySelection", "strict": False, "schema": schema,
+        }},
+        "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens or 4096),
+    }
+    if profile.top_p is not None:
+        args["top_p"] = profile.top_p
+    if effort := profile.resolve_reasoning(_FUNCTIONAL_PLAN_REASONING_EFFORT):
+        args["reasoning_effort"] = effort
+    if extra := _structured_output_extra_body(connection, profile):
+        args["extra_body"] = extra
+    value = json.loads(_completion_content(
+        client.chat.completions.create(**args), operation="Arazzo joint collection identity selection"
+    ))
+    jsonschema.Draft202012Validator(schema).validate(value)
+    selection_id = str(value.get("selectionId") or "")
+    anchor_id = str(value.get("anchorId") or "")
+    if selection_id == "none" or anchor_id == "none":
+        raise ArazzoPlanningError("No semantically valid finite collection identity and anchor pair was selected.")
+    selected_matches = [item for item in choices if item.get("selectionId") == selection_id]
+    selected_anchors = [item for item in anchors if item.get("anchorId") == anchor_id]
+    if len(selected_matches) != 1:
+        raise ArazzoPlanningError("Collection identity selection is not a listed finite same-item choice.")
+    if len(selected_anchors) != 1:
+        raise ArazzoPlanningError("Collection identity anchor is not a listed compatible literal input.")
+    selected_choice = selected_matches[0]
+    anchor = selected_anchors[0]
+    if not _collection_match_types_compatible(
+        {"type": anchor.get("type"), "format": anchor.get("format")},
+        {"type": selected_choice.get("matchType"), "format": selected_choice.get("matchFormat")},
+    ):
+        raise ArazzoPlanningError("Selected collection identity and anchor are not type-compatible.")
+    return {
+        "collectionSelectionId": selection_id,
+        "anchorOperationId": str(anchor["operationId"]),
+        "anchorInputSlot": str(anchor["inputSlot"]),
+    }
+
+
+def _select_read_only_resource_creator(
+    client: OpenAI, candidate: dict[str, Any], reader: dict[str, Any], target_slot: dict[str, Any], target_operation_id: str
+) -> str:
+    """Choose a finite state-changing operation that establishes a resource later inspected by a read."""
+    steps = candidate.get("planningModel", {}).get("availableSteps") or []
+    setup = {str(item.get("operationId")): item for item in [
+        *(candidate.get("operations") or []), *(candidate.get("setupOperations") or [])
+    ]}
+    creators = []
+    for step in steps:
+        if str(step.get("method") or "").upper() not in {"POST", "PUT", "PATCH"}:
+            continue
+        if str(step.get("operationId") or "") == target_operation_id:
+            continue
+        source = setup.get(str(step.get("operationId")), {})
+        creators.append({
+            "operationId": step["operationId"], "method": step.get("method"),
+            "summary": step.get("summary"), "description": step.get("description"),
+            "outputs": [{k: output.get(k) for k in ("outputName", "type", "format", "responseDescription") if output.get(k)}
+                        for output in step.get("outputs") or []],
+            "linkedUseCaseEvidence": [{k: evidence[k] for k in ("useCaseId", "name", "trigger", "main_scenario", "success_guarantee") if k in evidence}
+                                      for evidence in source.get("linkedUseCaseEvidence") or []],
+        })
+    operation_ids = sorted({item["operationId"] for item in creators})
+    if not operation_ids:
+        raise ArazzoPlanningError("A read-only resource producer has no finite state-changing creator candidates.")
+    schema = {"type": "object", "additionalProperties": False, "properties": {
+        "creatorOperationId": {"type": "string", "enum": operation_ids}}, "required": ["creatorOperationId"]}
+    payload = {
+        "target": {"inputSlot": target_slot.get("inputSlot"), "type": target_slot.get("type"), "format": target_slot.get("format")},
+        "readOnlyProducer": {"operationId": reader.get("operationId"), "summary": reader.get("summary"),
+                             "linkedUseCaseEvidence": reader.get("linkedUseCaseEvidence") or []},
+        "finiteStateChangingCreatorOptions": creators,
+        "instruction": "Choose the operation that creates the resource later inspected by the read, based on linked scenario and operation evidence. Choose only a listed operationId; do not require the creator and reader to have the same useCaseId.",
+    }
+    connection = build_arazzo_llm_connection()
+    profile = profile_for(connection.model, fallback_temperature=settings.temperature,
+                          fallback_max_tokens=settings.llm_max_completion_tokens or 4096)
+    args: dict[str, Any] = {"model": connection.model, "temperature": profile.temperature,
+        "messages": [{"role": "system", "content": "Choose a resource creator only from the finite operation and linked-flow evidence."},
+                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))}],
+        "response_format": {"type": "json_schema", "json_schema": {"name": "ArazzoResourceCreator", "strict": True, "schema": schema}},
+        "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens or 4096)}
+    if profile.top_p is not None:
+        args["top_p"] = profile.top_p
+    if effort := profile.resolve_reasoning(_FUNCTIONAL_PLAN_REASONING_EFFORT):
+        args["reasoning_effort"] = effort
+    if extra := _structured_output_extra_body(connection, profile):
+        args["extra_body"] = extra
+    value = json.loads(_completion_content(client.chat.completions.create(**args), operation="Arazzo read-only resource creator selection"))
+    jsonschema.Draft202012Validator(schema).validate(value)
+    return value["creatorOperationId"]
 
 
 def _output_guarantees_non_null(
@@ -1606,9 +1918,9 @@ def _output_guarantees_non_null(
     return True
 
 
-_GRAPH_PROMPT = """Return one closed workflow graph JSON object. Select one or more occurrences from the finite operation catalog, including at least one trace-linked target operation. Repeat an operation only when the workflow needs distinct instances or state changes. List occurrences in execution order. For every required input of every selected occurrence, return exactly one requiredInputs item: either literalNeeded=true, bind it to an earlier occurrence output, or reuse an earlier fixed input with sourceInputOccurrenceId and sourceInputSlot. Reuse is allowed only from an earlier state-changing operation's literal input with a compatible type and format. Set sourceOccurrenceId and sourceOutputName only for an output binding. Use the exact slot and output names from the catalog. A GET, HEAD, or OPTIONS setup read may feed a required path input only after an earlier selected state-changing setup occurrence; it cannot establish an existing resource on its own. An unformatted response may fill a narrower string format only when the catalog marks it as a JSON-Pointer leaf; the runtime will validate the actual value. Mark a distinct_resource_identity pair when the workflow requires two outputs to refer to different resources; do not infer distinction from matching UUID/string formats alone. Include successCriteria only when frozen requirements or use-case guarantees state an expected result, and cite a listed occurrence and its grounded success status. Do not return prose, Arazzo fields, URLs, request bodies, expressions, or invented catalog entries."""
+_GRAPH_PROMPT = """Return one closed workflow graph JSON object. Select one or more occurrences from the finite operation catalog, including at least one trace-linked target operation. Repeat an operation only when the workflow needs distinct instances or state changes. List occurrences in execution order. For every required input of every selected occurrence, return exactly one requiredInputs item. Every item must contain sourceOccurrenceId, sourceOutputName, sourceInputOccurrenceId, and sourceInputSlot; set unused source fields explicitly to null. Use exactly one binding shape: for a fixed literal, set literalNeeded=true and all four source fields to null; for an output binding, set literalNeeded=false, sourceOccurrenceId and sourceOutputName to non-null earlier occurrence/output values, and both sourceInput fields to null; for fixed-input reuse, set literalNeeded=false, sourceInputOccurrenceId and sourceInputSlot to non-null earlier occurrence/input values, and both sourceOccurrence fields to null. Never combine binding shapes. Reuse is allowed only from an earlier state-changing operation's literal input with a compatible type and format. Use the exact slot and output names from the catalog. A GET, HEAD, or OPTIONS setup read may feed a required path input only after an earlier selected state-changing setup occurrence; it cannot establish an existing resource on its own. An unformatted response may fill a narrower string format only when the catalog marks it as a JSON-Pointer leaf; the runtime will validate the actual value. Mark a distinct_resource_identity pair when the workflow requires two outputs to refer to different resources; do not infer distinction from matching UUID/string formats alone. Include successCriteria only when frozen requirements or use-case guarantees state an expected result, and cite a listed occurrence and its grounded success status. Do not return prose, Arazzo fields, URLs, request bodies, expressions, or invented catalog entries."""
 
-_COLLECTION_GRAPH_PROMPT = """ For any array item output marked for deferred collection lookup, add one collectionSelections entry. Choose only its finite selectionId, and link the item match field to an earlier required input marked literalNeeded; do not choose an array index or author a selector. Match and returned fields must belong to the same declared array item."""
+_COLLECTION_GRAPH_PROMPT = """ For any deferred collection lookup, include the selected collection read and its selected anchor operation before that read. Bind the target input to the selected collection output. The exact same-item field and anchor input are frozen in producer selections; do not choose or restate them."""
 
 
 def _accepted_collection_choices(candidate: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1619,11 +1931,15 @@ def _accepted_collection_choices(candidate: dict[str, Any]) -> list[dict[str, An
     ]
     result: list[dict[str, Any]] = []
     for constraint in constraints:
+        selected_id = constraint.get("collectionSelectionId")
+        if not selected_id:
+            continue
         for step in candidate.get("planningModel", {}).get("availableSteps") or []:
             if not isinstance(step, dict) or step.get("operationId") != constraint.get("sourceOperationId"):
                 continue
             for item in step.get("collectionSelectionCandidates") or []:
-                if not isinstance(item, dict) or item.get("selectedOutputName") != constraint.get("sourceOutputName"):
+                if (not isinstance(item, dict) or item.get("selectedOutputName") != constraint.get("sourceOutputName")
+                        or item.get("selectionId") != selected_id):
                     continue
                 result.append({key: deepcopy(item[key]) for key in (
                     "selectionId", "matchOutputName", "matchType", "matchFormat",
@@ -1639,9 +1955,6 @@ def _graph_response_format(candidate: dict[str, Any]) -> dict[str, Any]:
     input_slots = sorted({str(slot["inputSlot"]) for step in steps if isinstance(step, dict) for slot in step.get("inputs") or [] if isinstance(slot, dict) and slot.get("inputSlot")})
     output_names = sorted({str(output["outputName"]) for step in steps if isinstance(step, dict) for output in step.get("outputs") or [] if isinstance(output, dict) and output.get("outputName")})
     statuses = sorted({int(status) for step in steps if isinstance(step, dict) for status in step.get("successStatuses") or [] if str(status).isdigit()})
-    collection_selection_ids = sorted({
-        choice["selectionId"] for choice in _accepted_collection_choices(candidate)
-    })
     occurrence_ref = {"type": "string", "pattern": "^o[1-9][0-9]*$"}
     input_properties: dict[str, Any] = {
         "targetOccurrenceId": deepcopy(occurrence_ref),
@@ -1666,7 +1979,11 @@ def _graph_response_format(candidate: dict[str, Any]) -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "object", "additionalProperties": False,
                           "properties": input_properties,
-                          "required": ["targetOccurrenceId", "targetInputSlot", "literalNeeded"]},
+                          "required": [
+                              "targetOccurrenceId", "targetInputSlot", "literalNeeded",
+                              "sourceOccurrenceId", "sourceOutputName",
+                              "sourceInputOccurrenceId", "sourceInputSlot",
+                          ]},
             },
             "distinctResourcePairs": {
                 "type": "array",
@@ -1680,19 +1997,6 @@ def _graph_response_format(candidate: dict[str, Any]) -> dict[str, Any]:
                           },
                           "required": ["leftOccurrenceId", "leftOutputName", "rightOccurrenceId", "rightOutputName", "relation"]},
             },
-            "collectionSelections": {
-                "type": "array",
-                "items": {"type": "object", "additionalProperties": False,
-                          "properties": {
-                              "selectionId": {"type": "string", "enum": collection_selection_ids},
-                              "collectionOccurrenceId": deepcopy(occurrence_ref),
-                              "targetOccurrenceId": deepcopy(occurrence_ref),
-                              "targetInputSlot": {"type": "string", "enum": input_slots},
-                              "fixedInputOccurrenceId": deepcopy(occurrence_ref),
-                              "fixedInputSlot": {"type": "string", "enum": input_slots},
-                          },
-                          "required": ["selectionId", "collectionOccurrenceId", "targetOccurrenceId", "targetInputSlot", "fixedInputOccurrenceId", "fixedInputSlot"]},
-            },
             "successCriteria": {
                 "type": "array",
                 "items": {"type": "object", "additionalProperties": False,
@@ -1702,11 +2006,6 @@ def _graph_response_format(candidate: dict[str, Any]) -> dict[str, Any]:
         },
         "required": ["workflowId", "occurrences", "requiredInputs", "distinctResourcePairs"],
     }
-    if collection_selection_ids:
-        schema["properties"]["collectionSelections"]["minItems"] = 1
-        schema["required"].append("collectionSelections")
-    else:
-        schema["properties"].pop("collectionSelections", None)
     return {"type": "json_schema", "json_schema": {"name": "ArazzoWorkflowGraph", "strict": False, "schema": schema}}
 
 
@@ -1758,9 +2057,172 @@ def _graph_catalog(candidate: dict[str, Any]) -> list[dict[str, Any]]:
     return catalog
 
 
+def _resource_instance_outline_response_format(candidate: dict[str, Any]) -> dict[str, Any]:
+    operation_ids = sorted(_resource_outline_setup_operations(candidate))
+    schema = {
+        "type": "object", "additionalProperties": False,
+        "properties": {
+            "occurrences": {"type": "array", "items": {
+                "type": "object", "additionalProperties": False,
+                "properties": {
+                    "instanceId": {"type": "string"},
+                    "operationId": ({"type": "string", "enum": operation_ids}
+                                    if operation_ids else {"type": "string"}),
+                    "purpose": {"type": "string"},
+                },
+                "required": ["instanceId", "operationId", "purpose"],
+            }},
+            "identityRelations": {"type": "array", "items": {
+                "type": "object", "additionalProperties": False,
+                "properties": {
+                    "leftInstanceId": {"type": "string"},
+                    "rightInstanceId": {"type": "string"},
+                    "relation": {"type": "string", "enum": ["same", "distinct"]},
+                },
+                "required": ["leftInstanceId", "rightInstanceId", "relation"],
+            }},
+        },
+        "required": ["occurrences", "identityRelations"],
+    }
+    return {"type": "json_schema", "json_schema": {
+        "name": "ArazzoResourceInstanceOutline", "strict": False, "schema": schema,
+    }}
+
+
+def _resource_outline_setup_operations(candidate: dict[str, Any]) -> set[str]:
+    planning = candidate.get("planningModel") or {}
+    targets = {str(item) for item in planning.get("targetOperationIds") or []}
+    return {
+        str(step.get("operationId"))
+        for step in planning.get("availableSteps") or []
+        if isinstance(step, dict)
+        and step.get("operationId")
+        and str(step.get("operationId")) not in targets
+        and str(step.get("method") or "").upper() in {"POST", "PUT", "PATCH"}
+    }
+
+
+def _validate_resource_instance_outline(candidate: dict[str, Any], value: dict[str, Any]) -> dict[str, Any]:
+    schema = _resource_instance_outline_response_format(candidate)["json_schema"]["schema"]
+    jsonschema.Draft202012Validator(schema).validate(value)
+    ids = [str(item.get("instanceId") or "") for item in value.get("occurrences") or []]
+    if any(not item for item in ids) or len(ids) != len(set(ids)):
+        raise ArazzoPlanningError("Resource instance outline has missing or duplicate instance IDs.")
+    if any(
+        item.get("leftInstanceId") not in ids or item.get("rightInstanceId") not in ids
+        for item in value.get("identityRelations") or []
+    ):
+        raise ArazzoPlanningError("Resource instance outline relation references an unknown instance.")
+    return value
+
+
+def _select_resource_instance_outline(client: OpenAI, candidate: dict[str, Any]) -> dict[str, Any]:
+    """Produce a compact advisory outline; the graph validator remains authoritative."""
+    planning = candidate.get("planningModel") or {}
+    setup_operation_ids = _resource_outline_setup_operations(candidate)
+    if not setup_operation_ids:
+        return {"occurrences": [], "identityRelations": []}
+    connection = build_arazzo_llm_connection()
+    profile = profile_for(connection.model, fallback_temperature=settings.temperature,
+                          fallback_max_tokens=settings.llm_max_completion_tokens or 2048)
+    def input_contracts(step: dict[str, Any]) -> list[dict[str, Any]]:
+        fields = (
+            "inputSlot", "type", "format", "cardinality", "description", "resourceRole",
+            "valueRef", "sourceKind", "evidenceRefs", "literalAllowed",
+        )
+        return [
+            {key: slot[key] for key in fields if key in slot and slot[key] is not None}
+            for slot in step.get("inputs") or [] if isinstance(slot, dict)
+        ]
+
+    target_operations = [
+        {
+            "operationId": step.get("operationId"), "method": step.get("method"),
+            "summary": step.get("summary"), "requiredInputs": input_contracts(step),
+        }
+        for step in planning.get("availableSteps") or []
+        if isinstance(step, dict) and str(step.get("operationId") or "") in {
+            str(item) for item in planning.get("targetOperationIds") or []
+        }
+    ]
+    setup_operations = [
+        {
+            "operationId": step.get("operationId"), "method": step.get("method"),
+            "summary": step.get("summary"), "requiredInputs": input_contracts(step),
+            "outputs": [
+                {key: output[key] for key in ("outputName", "slot", "type", "format", "responseDescription")
+                 if key in output and output[key] is not None}
+                for output in step.get("outputs") or [] if isinstance(output, dict)
+            ],
+            "linkedUseCases": [
+                {
+                    **({"name": evidence["name"]} if evidence.get("name") else {}),
+                    **({"preconditions": evidence["preconditions"]} if evidence.get("preconditions") else {}),
+                    **({"trigger": evidence["trigger"]} if evidence.get("trigger") else {}),
+                    **({"scenario": [
+                        row.get("sentence") for row in evidence.get("main_scenario") or []
+                        if isinstance(row, dict) and row.get("sentence")
+                    ]} if evidence.get("main_scenario") else {}),
+                }
+                for evidence in (next((item.get("linkedUseCaseEvidence") or []
+                                      for item in candidate.get("setupOperations") or []
+                                      if isinstance(item, dict) and item.get("operationId") == step.get("operationId")), []))
+                if isinstance(evidence, dict)
+            ],
+        }
+        for step in planning.get("availableSteps") or []
+        if isinstance(step, dict) and str(step.get("operationId") or "") in setup_operation_ids
+    ]
+    intent = planning.get("intent") or {}
+    use_case = intent.get("useCase") or {}
+    compact_intent = {
+        key: use_case[key] for key in (
+            "id", "name", "preconditions", "trigger", "mainScenario", "main_scenario",
+            "successGuarantee", "success_guarantee", "minimalGuarantee", "minimal_guarantee",
+        ) if key in use_case
+    }
+    if intent.get("requirements"):
+        compact_intent["requirements"] = intent["requirements"]
+    payload = {
+        "intent": compact_intent or intent,
+        "targetActions": target_operations,
+        "finiteStateChangingSetupOperations": setup_operations,
+        "instruction": (
+            "Outline the ordered POST/PUT/PATCH setup occurrences needed before the fixed target actions. "
+            "Use only finiteStateChangingSetupOperations; repeat an operation when separate resource instances "
+            "are required. Identify same or distinct resource identities from the exact target input contracts "
+            "and frozen use-case evidence. Setup preconditions in linked use cases may imply prerequisite state "
+            "that must be established. Read-only target actions are fixed for the later graph and cannot establish "
+            "state. Do not invent operation IDs, values, or bindings. "
+            "This is advisory: return only the compact outline, leaving exact graph bindings to the next stage."
+        ),
+    }
+    request: dict[str, Any] = {
+        "model": connection.model, "temperature": profile.temperature,
+        "messages": [
+            {"role": "system", "content": "Plan resource instances only from the frozen testing intent and finite operation catalog."},
+            {"role": "user", "content": json.dumps(payload, ensure_ascii=False, separators=(",", ":"))},
+        ],
+        "response_format": _resource_instance_outline_response_format(candidate),
+        "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens or 2048),
+    }
+    if profile.top_p is not None:
+        request["top_p"] = profile.top_p
+    if effort := profile.resolve_reasoning(_FUNCTIONAL_PLAN_REASONING_EFFORT):
+        request["reasoning_effort"] = effort
+    if extra := _structured_output_extra_body(connection, profile):
+        request["extra_body"] = extra
+    value = json.loads(_completion_content(
+        client.chat.completions.create(**request), operation="Arazzo resource instance outline"
+    ))
+    return _validate_resource_instance_outline(candidate, value)
+
+
 def _workflow_graph_prompt(
-    candidate: dict[str, Any], correction_context: dict[str, Any] | None = None
+    candidate: dict[str, Any], correction_context: dict[str, Any] | None = None,
+    resource_instance_outline: dict[str, Any] | None = None,
 ) -> str:
+    resource_instance_outline = resource_instance_outline or candidate["planningModel"].get("resourceInstanceOutline")
     producer_selections = candidate["planningModel"].get("producerSelections") or []
     prompt = (
         _GRAPH_PROMPT
@@ -1778,9 +2240,16 @@ def _workflow_graph_prompt(
            if producer_selections else "")
         + "\n\nRequired response fields are workflowId, occurrences, requiredInputs, and distinctResourcePairs. "
         + "Each requiredInputs record uses targetOccurrenceId, targetInputSlot, literalNeeded, and either sourceOccurrenceId/sourceOutputName for an output binding or sourceInputOccurrenceId/sourceInputSlot to reuse an earlier fixed input. "
-        + "Optional successCriteria records use occurrenceId and statusCode.\n"
+        + "Optional successCriteria records use occurrenceId and statusCode. Collection identity selections are fixed by producerSelections and are not a graph response field.\n"
+        + "When a selected producer constraint contains creatorOperationId, include that exact state-changing operation before its selected read-only resource producer, and place the reader before the target. The creator may be linked to a different use case if its frozen scenario evidence supports the resource flow.\n"
         + "workflowId: " + str(candidate.get("workflowId") or "")
     )
+    if resource_instance_outline:
+        prompt += (
+            "\n\nAdvisory resource-instance outline (preserve the exact producer bindings above; "
+            "the outline does not replace those bindings or the frozen operation catalog):\n"
+            + json.dumps(resource_instance_outline, ensure_ascii=False, separators=(",", ":"))
+        )
     if correction_context:
         prompt += (
             "\n\nRebuild the graph using the same frozen intent and catalog. Use the prior validation "
@@ -1794,6 +2263,7 @@ def _generate_workflow_graph(
     client: OpenAI,
     candidate: dict[str, Any],
     correction_context: dict[str, Any] | None = None,
+    resource_instance_outline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     connection = build_arazzo_llm_connection()
     profile = profile_for(connection.model, fallback_temperature=settings.temperature,
@@ -1803,7 +2273,9 @@ def _generate_workflow_graph(
         "temperature": profile.temperature,
         "messages": [
             {"role": "system", "content": PLAN_ROLE_PROMPT},
-            {"role": "user", "content": _workflow_graph_prompt(candidate, correction_context)},
+            {"role": "user", "content": _workflow_graph_prompt(
+                candidate, correction_context, resource_instance_outline
+            )},
         ],
         "response_format": _graph_response_format(candidate),
         "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens),
@@ -1817,6 +2289,43 @@ def _generate_workflow_graph(
     value = json.loads(_completion_content(client.chat.completions.create(**request), operation="Arazzo workflow graph generation"))
     jsonschema.Draft202012Validator(_graph_response_format(candidate)["json_schema"]["schema"]).validate(value)
     return value
+
+
+def _complete_preselected_producer_bindings(
+    candidate: dict[str, Any], graph: dict[str, Any]
+) -> dict[str, Any]:
+    """Fill only omitted graph source pairs already fixed by producer selection."""
+    graph = deepcopy(graph)
+    occurrences = graph.get("occurrences") or []
+    positions = {item.get("occurrenceId"): index for index, item in enumerate(occurrences)}
+    required_inputs = graph.get("requiredInputs") or []
+    for selection in candidate.get("planningModel", {}).get("producerSelections") or []:
+        if selection.get("decision") == "literal":
+            continue
+        targets = [item for item in occurrences if item.get("operationId") == selection.get("targetOperationId")]
+        if len(targets) != 1:
+            raise ArazzoPlanningError("Preselected producer binding requires exactly one target occurrence.")
+        target_id = targets[0].get("occurrenceId")
+        records = [item for item in required_inputs
+                   if item.get("targetOccurrenceId") == target_id
+                   and item.get("targetInputSlot") == selection.get("targetInputSlot")]
+        if len(records) != 1:
+            raise ArazzoPlanningError("Preselected producer binding requires exactly one required input record.")
+        record = records[0]
+        if record.get("literalNeeded") is True:
+            continue
+        if any(record.get(key) is not None for key in (
+            "sourceOccurrenceId", "sourceOutputName", "sourceInputOccurrenceId", "sourceInputSlot",
+        )):
+            continue
+        sources = [item for item in occurrences
+                   if item.get("operationId") == selection.get("sourceOperationId")
+                   and positions.get(item.get("occurrenceId"), len(occurrences)) < positions.get(target_id, -1)]
+        if len(sources) != 1 or not selection.get("sourceOutputName"):
+            raise ArazzoPlanningError("Preselected producer binding requires exactly one earlier source occurrence.")
+        record["sourceOccurrenceId"] = sources[0].get("occurrenceId")
+        record["sourceOutputName"] = selection["sourceOutputName"]
+    return graph
 
 
 def _validated_graph_projection(
@@ -1957,6 +2466,29 @@ def _validated_graph_projection(
             raise ArazzoPlanningError("Workflow graph omitted a target with a selected semantic producer.")
         for target in target_occurrences:
             item = required_records.get((str(target["stepId"]), str(constraint.get("targetInputSlot"))))
+            creator_operation_id = constraint.get("creatorOperationId")
+            reader_id = str(item.get("sourceOccurrenceId") or "") if item else ""
+            reader = occurrence_map.get(reader_id)
+            needs_creator = bool(
+                reader is not None
+                and str(reader.get("method") or "").upper() in {"GET", "HEAD", "OPTIONS"}
+                and str(constraint.get("targetInputSlot") or "").startswith("path:")
+            )
+            if needs_creator or creator_operation_id:
+                creators = [step for step in selected if step.get("operationId") == creator_operation_id]
+                if (
+                    not creator_operation_id
+                    or reader is None
+                    or str(reader.get("method") or "").upper() not in {"GET", "HEAD", "OPTIONS"}
+                    or not any(
+                        str(step.get("method") or "").upper() in {"POST", "PUT", "PATCH"}
+                        and positions[step["stepId"]] < positions[reader_id]
+                        for step in creators
+                    )
+                ):
+                    raise ArazzoPlanningError(
+                        "Workflow graph must include the selected state-changing resource creator before its read-only producer."
+                    )
             if constraint.get("decision") == "literal":
                 target_slot = next((slot for slot in target.get("inputs") or []
                                     if slot.get("inputSlot") == constraint.get("targetInputSlot")), None)
@@ -1977,9 +2509,55 @@ def _validated_graph_projection(
                     "Workflow graph did not honor the selected semantic producer binding."
                 )
 
-    collection_records = graph.get("collectionSelections") or []
-    if not isinstance(collection_records, list):
-        raise ArazzoPlanningError("Workflow graph collectionSelections must be an array.")
+    supplied_collection_records = graph.get("collectionSelections")
+    if supplied_collection_records not in (None, []):
+        raise ArazzoPlanningError("Workflow graph must not re-choose frozen collection identity selections.")
+    collection_records = []
+    for constraint in candidate["planningModel"].get("producerSelections") or []:
+        if constraint.get("decision") != "deferred_collection_lookup":
+            continue
+        collection_steps = [step for step in selected if step.get("operationId") == constraint.get("sourceOperationId")]
+        target_steps = [step for step in selected if step.get("operationId") == constraint.get("targetOperationId")]
+        anchor_steps = [step for step in selected if step.get("operationId") == constraint.get("anchorOperationId")]
+        if not constraint.get("collectionSelectionId") or not constraint.get("anchorInputSlot") or any(
+            len(items) != 1 for items in (collection_steps, target_steps)
+        ):
+            raise ArazzoPlanningError("Frozen collection identity requires unique selected read and target occurrences.")
+        anchor_step = anchor_steps[0] if len(anchor_steps) == 1 else None
+        if anchor_step is None and len(anchor_steps) > 1:
+            creator_steps = [step for step in selected
+                             if step.get("operationId") == constraint.get("creatorOperationId")]
+            linked_anchor_ids: set[str] = set()
+            for creator in creator_steps:
+                for creator_input in creator.get("inputs") or []:
+                    creator_slot = str(creator_input.get("inputSlot") or "")
+                    creator_record = required_records.get((str(creator.get("stepId") or ""), creator_slot))
+                    if not creator_record or creator_record.get("literalNeeded") is True:
+                        continue
+                    source_id = creator_record.get("sourceOccurrenceId")
+                    source_input_id = creator_record.get("sourceInputOccurrenceId")
+                    source_ref = source_id if isinstance(source_id, str) else source_input_id
+                    source_step = occurrence_map.get(str(source_ref or ""))
+                    if source_step is None or source_step.get("operationId") != constraint.get("anchorOperationId"):
+                        continue
+                    source_input_slot = creator_record.get("sourceInputSlot")
+                    if source_input_id is not None and source_input_slot != constraint.get("anchorInputSlot"):
+                        continue
+                    linked_anchor_ids.add(str(source_ref))
+            if len(linked_anchor_ids) == 1:
+                anchor_step = occurrence_map.get(next(iter(linked_anchor_ids)))
+        if anchor_step is None:
+            raise ArazzoPlanningError(
+                "Frozen collection identity requires an unambiguous selected read, target, and anchor occurrence."
+            )
+        collection_records.append({
+            "selectionId": constraint["collectionSelectionId"],
+            "collectionOccurrenceId": collection_steps[0]["stepId"],
+            "targetOccurrenceId": target_steps[0]["stepId"],
+            "targetInputSlot": constraint["targetInputSlot"],
+            "fixedInputOccurrenceId": anchor_step["stepId"],
+            "fixedInputSlot": constraint["anchorInputSlot"],
+        })
     seen_collection_targets: set[tuple[str, str]] = set()
     validated_collection_selections: list[dict[str, Any]] = []
     for item in collection_records:
@@ -2003,9 +2581,21 @@ def _validated_graph_projection(
         fixed_input = next((slot for slot in fixed_step.get("inputs") or [] if slot.get("inputSlot") == fixed_slot), None)
         if not fixed_record or fixed_record.get("literalNeeded") is not True or fixed_input is None or not _literal_input_allowed(fixed_input):
             raise ArazzoPlanningError("Collection selection match value must come from an earlier fixed input.")
+        matching_constraint = next((constraint for constraint in candidate["planningModel"].get("producerSelections") or []
+                                    if constraint.get("decision") == "deferred_collection_lookup"
+                                    and constraint.get("targetOperationId") == target_step.get("operationId")
+                                    and constraint.get("targetInputSlot") == target_slot), None)
+        if (
+            matching_constraint is None
+            or fixed_step.get("operationId") != matching_constraint.get("anchorOperationId")
+            or fixed_slot != matching_constraint.get("anchorInputSlot")
+            or str(fixed_step.get("method") or "").upper() not in {"POST", "PUT", "PATCH"}
+        ):
+            raise ArazzoPlanningError("Collection selection did not use its frozen state-changing literal identity anchor.")
         candidates = [
             candidate_item for candidate_item in collection_step.get("collectionSelectionCandidates") or []
             if candidate_item.get("selectionId") == item.get("selectionId")
+            and candidate_item.get("selectedOutputName") == matching_constraint.get("sourceOutputName")
         ]
         if len(candidates) != 1:
             raise ArazzoPlanningError("Collection selection uses an unknown finite OpenAPI item-path candidate.")
@@ -2023,7 +2613,7 @@ def _validated_graph_projection(
         record = required_records.get((target_id, target_slot))
         if not record or record.get("sourceOccurrenceId") != collection_id or record.get("sourceOutputName") != selected_pair.get("selectedOutputName"):
             raise ArazzoPlanningError("Collection selection does not match its required input binding.")
-        validated_collection_selections.append({
+        validated_item = {
             **deepcopy(item),
             "collectionOperationId": collection_step.get("operationId"),
             "targetOperationId": target_step.get("operationId"),
@@ -2035,7 +2625,44 @@ def _validated_graph_projection(
             "arrayRootPointer": selected_pair["arrayRootPointer"],
             "selectedOutputName": selected_pair["selectedOutputName"],
             "selectedItemPointerParts": deepcopy(selected_pair["selectedItemPointerParts"]),
-        })
+        }
+        creator_id = str(matching_constraint.get("creatorOperationId") or "")
+        creator_edges = [edge for edge in candidate["planningModel"].get("producerSelections") or []
+                         if edge.get("targetOperationId") == creator_id]
+        causal_anchor_edges = [edge for edge in creator_edges
+                               if edge.get("sourceOperationId") == fixed_step.get("operationId")]
+        if causal_anchor_edges:
+            creator_steps = [step for step in selected if step.get("operationId") == creator_id]
+            if len(causal_anchor_edges) != 1 or len(creator_steps) != 1:
+                raise ArazzoPlanningError("Identity equality assertion requires one selected creator response edge.")
+            creator_edge = causal_anchor_edges[0]
+            creator_input_slot = str(creator_edge.get("targetInputSlot") or "")
+            creator_record = required_records.get((str(creator_steps[0]["stepId"]), creator_input_slot))
+            if (
+                not creator_record or creator_record.get("literalNeeded") is True
+                or creator_record.get("sourceOccurrenceId") != fixed_id
+                or creator_record.get("sourceOutputName") != creator_edge.get("sourceOutputName")
+            ):
+                raise ArazzoPlanningError("Identity equality assertion is not tied to the creator's selected anchor response.")
+            anchor_pointer_parts = fixed_input.get("pointerParts")
+            source_output = next((output for output in fixed_step.get("outputs") or []
+                                  if output.get("outputName") == creator_edge.get("sourceOutputName")), None)
+            response_expression = str((source_output or {}).get("outputExpression") or "")
+            if (
+                not isinstance(anchor_pointer_parts, tuple) or not anchor_pointer_parts
+                or not response_expression.startswith("$response.body#/")
+                or not _connection_types_compatible(fixed_input, source_output or {})
+            ):
+                raise ArazzoPlanningError("Identity equality assertion lacks compatible frozen JSON Pointer paths.")
+            escaped_anchor = [str(part).replace("~", "~0").replace("/", "~1") for part in anchor_pointer_parts]
+            validated_item["identityEqualityAssertion"] = {
+                "occurrenceId": fixed_id,
+                "responseExpression": response_expression,
+                "requestExpression": "$request.body#/" + "/".join(escaped_anchor),
+                "sourceOutputName": creator_edge.get("sourceOutputName"),
+                "requestInputSlot": fixed_slot,
+            }
+        validated_collection_selections.append(validated_item)
     deferred_constraints = [
         item for item in candidate["planningModel"].get("producerSelections") or []
         if item.get("decision") == "deferred_collection_lookup"
@@ -2093,6 +2720,10 @@ def _validated_graph_projection(
         "fixedInputReuses": fixed_input_reuses,
         "distinctResourcePairs": deepcopy(distinct),
         "collectionSelections": validated_collection_selections,
+        "identityEqualityAssertions": [
+            deepcopy(item["identityEqualityAssertion"])
+            for item in validated_collection_selections if item.get("identityEqualityAssertion")
+        ],
         "successCriteria": [
             {"stepId": item["occurrenceId"], "statusCode": item["statusCode"]}
             for item in graph.get("successCriteria") or []
@@ -2359,9 +2990,12 @@ def _select_literal_values(
         "collectionSelections": deepcopy(decision.get("collectionSelections") or []),
         "successCriteria": deepcopy(decision.get("successCriteria") or []),
     }
+    resource_instance_outline = candidate.get("planningModel", {}).get("resourceInstanceOutline") or {}
     literal_guidance = (
         "Choose literals that are consistent with the selected workflow graph and linked use-case evidence. "
         "Preserve each occurrence's role, producer/consumer bindings, distinct-resource assertions, and grounded success criteria. "
+        "Use the advisory resource-instance outline to choose state-changing action values consistent with each occurrence purpose; "
+        "do not choose an update action for an instance whose purpose is to establish a new resource. "
         "An identity literal alone does not prove that a resource already exists. "
         "The keys v1, v2, etc. are opaque response aliases mapped one-to-one to the key field in requiredLiteralInputs; "
         "return a value for each alias exactly as listed, without renaming aliases or adding fields."
@@ -2370,7 +3004,7 @@ def _select_literal_values(
         "model": connection.model, "temperature": profile.temperature,
         "messages": [
             {"role": "system", "content": PLAN_ROLE_PROMPT},
-            {"role": "user", "content": literal_guidance + "\nselectedWorkflowIntent:\n" + json.dumps(candidate.get("planningModel", {}).get("intent", {}), ensure_ascii=False, separators=(",", ":")) + "\nselectedSteps:\n" + json.dumps(selected_steps, ensure_ascii=False, separators=(",", ":")) + "\nworkflowInputProvenance:\n" + json.dumps(provenance, ensure_ascii=False, separators=(",", ":")) + "\nselectedSetupUseCaseEvidence:\n" + json.dumps(setup_evidence, ensure_ascii=False, separators=(",", ":")) + "\nrequiredLiteralInputs:\n" + json.dumps(descriptors, ensure_ascii=False, separators=(",", ":"))},
+            {"role": "user", "content": literal_guidance + "\nselectedWorkflowIntent:\n" + json.dumps(candidate.get("planningModel", {}).get("intent", {}), ensure_ascii=False, separators=(",", ":")) + "\nresourceInstanceOutline:\n" + json.dumps(resource_instance_outline, ensure_ascii=False, separators=(",", ":")) + "\nselectedSteps:\n" + json.dumps(selected_steps, ensure_ascii=False, separators=(",", ":")) + "\nworkflowInputProvenance:\n" + json.dumps(provenance, ensure_ascii=False, separators=(",", ":")) + "\nselectedSetupUseCaseEvidence:\n" + json.dumps(setup_evidence, ensure_ascii=False, separators=(",", ":")) + "\nrequiredLiteralInputs:\n" + json.dumps(descriptors, ensure_ascii=False, separators=(",", ":"))},
         ],
         "response_format": _literal_value_response_format(slots),
         "max_tokens": profile.completion_limit(settings.llm_max_completion_tokens),
@@ -2731,12 +3365,22 @@ def _generate_candidate_workflow(
             candidate,
             [step for step in execution_candidates if str(step["workflowId"]) == workflow_id],
         )
+        try:
+            resource_instance_outline = _select_resource_instance_outline(client, authoring)
+        except Exception:
+            # This stage is advisory; preserve the existing graph-generation path if the
+            # outline provider or its response is unavailable.
+            resource_instance_outline = None
+        if resource_instance_outline is not None:
+            authoring["planningModel"]["resourceInstanceOutline"] = resource_instance_outline
         authoring["planningModel"]["producerSelections"] = _select_semantic_producers(
             client, authoring, openapi
         )
         correction_used = False
         try:
-            graph = _generate_workflow_graph(client, authoring)
+            graph = _generate_workflow_graph(
+                client, authoring, resource_instance_outline=resource_instance_outline
+            )
         except (jsonschema.ValidationError, PydanticValidationError) as validation_error:
             correction_used = True
             graph = _generate_workflow_graph(
@@ -2745,8 +3389,10 @@ def _generate_candidate_workflow(
                 correction_context={
                     "validationError": _graph_validator_feedback(validation_error),
                 },
+                resource_instance_outline=resource_instance_outline,
             )
         def compile_and_validate(selected_graph: dict[str, Any]) -> dict[str, Any]:
+            selected_graph = _complete_preselected_producer_bindings(authoring, selected_graph)
             selected_candidate, decision, literal_slots = _validated_graph_projection(
                 authoring, selected_graph
             )
@@ -2770,6 +3416,7 @@ def _generate_candidate_workflow(
                     "rejectedGraph": graph,
                     "validationError": _graph_validator_feedback(validation_error),
                 },
+                resource_instance_outline=resource_instance_outline,
             )
             validated = compile_and_validate(graph)
     except Exception as exc:

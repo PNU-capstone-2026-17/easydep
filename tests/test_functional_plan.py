@@ -2111,6 +2111,204 @@ def test_selected_semantic_producer_must_be_the_actual_graph_binding() -> None:
         dynamic._validated_graph_projection(candidate, wrong)
 
 
+def test_preselected_producer_binding_completes_only_unique_missing_source_pair() -> None:
+    candidate = {
+        "workflowId": "workflow-resource",
+        "operations": [{"operationId": "consume"}],
+        "planningModel": {
+            "targetOperationIds": ["consume"],
+            "producerSelections": [{
+                "targetOperationId": "consume", "targetInputSlot": "path:resourceId",
+                "sourceOperationId": "create", "sourceOutputName": "bodyId",
+            }],
+            "availableSteps": [
+                {"operationId": "create", "method": "POST", "inputs": [], "outputs": [
+                    {"outputName": "bodyId", "slot": "body.id", "type": "string", "format": "uuid",
+                     "cardinality": "one", "outputExpression": "$response.body#/id"},
+                ]},
+                {"operationId": "consume", "method": "POST", "outputs": [], "inputs": [
+                    {"inputSlot": "path:resourceId", "type": "string", "format": "uuid",
+                     "cardinality": "one", "connections": []},
+                ]},
+            ],
+        },
+    }
+    graph = {
+        "workflowId": "workflow-resource",
+        "occurrences": [
+            {"occurrenceId": "o1", "operationId": "create"},
+            {"occurrenceId": "o2", "operationId": "consume"},
+        ],
+        "requiredInputs": [{
+            "targetOccurrenceId": "o2", "targetInputSlot": "path:resourceId", "literalNeeded": False,
+            "sourceOccurrenceId": None, "sourceOutputName": None,
+        }],
+        "distinctResourcePairs": [], "successCriteria": [],
+    }
+
+    completed = dynamic._complete_preselected_producer_bindings(candidate, graph)
+    selected, decision, _ = dynamic._validated_graph_projection(candidate, completed)
+
+    assert graph["requiredInputs"][0]["sourceOccurrenceId"] is None
+    assert graph["requiredInputs"][0]["sourceOutputName"] is None
+    assert completed["requiredInputs"][0]["sourceOccurrenceId"] == "o1"
+    assert completed["requiredInputs"][0]["sourceOutputName"] == "bodyId"
+    assert decision["connectionIds"] == ["o1.bodyId->o2.path:resourceId"]
+    assert selected["planningModel"]["availableSteps"][1]["inputs"][0]["connections"][0]["sourceStepId"] == "o1"
+
+
+def test_resource_instance_outline_uses_finite_operations_and_is_advisory(monkeypatch: pytest.MonkeyPatch) -> None:
+    candidate = {
+        "workflowId": "workflow-swap",
+        "planningModel": {
+            "intent": {"main_scenario": ["Swap to a different offering."]},
+            "targetOperationIds": ["swap"],
+            "producerSelections": [{"targetOperationId": "swap", "targetInputSlot": "path:currentId",
+                                    "sourceOperationId": "view", "sourceOutputName": "bodyRegistrationId"}],
+            "availableSteps": [
+                {"operationId": "createOffering", "method": "POST", "summary": "Create offering",
+                 "inputs": [{"inputSlot": "body.offeringId", "type": "string", "format": "uuid",
+                             "resourceRole": "offering_id", "valueRef": "val-offering",
+                             "sourceKind": "caller_input", "evidenceRefs": ["use_case:setup"]}],
+                 "outputs": [{"outputName": "bodyOfferingId", "slot": "body.id", "type": "string",
+                              "format": "uuid", "responseDescription": "Created offering ID"}],
+                 "successStatuses": ["201"]},
+                {"operationId": "swap", "method": "POST", "summary": "Swap registration",
+                 "inputs": [{"inputSlot": "path:currentId", "type": "string", "format": "uuid",
+                             "resourceRole": "registration_id"}], "outputs": [], "successStatuses": ["200"]},
+                {"operationId": "view", "method": "GET", "summary": "View registrations",
+                 "inputs": [], "outputs": [], "successStatuses": ["200"]},
+            ],
+        },
+        "setupOperations": [{"operationId": "createOffering", "linkedUseCaseEvidence": [{
+            "useCaseId": "UC-other", "preconditions": ["Offering is full."],
+            "trigger": "A learner joins a full offering.", "main_scenario": ["Join its waitlist."],
+        }]}],
+    }
+    decision = {
+        "occurrences": [
+            {"instanceId": "current", "operationId": "createOffering", "purpose": "Current offering"},
+            {"instanceId": "target", "operationId": "createOffering", "purpose": "Different target offering"},
+        ],
+        "identityRelations": [{"leftInstanceId": "current", "rightInstanceId": "target", "relation": "distinct"}],
+    }
+    captured: dict[str, Any] = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs: Any) -> Any:
+            captured["payload"] = json.loads(kwargs["messages"][1]["content"])
+            captured["format"] = kwargs["response_format"]
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(decision)))])
+
+    monkeypatch.setattr(dynamic, "build_arazzo_llm_connection", lambda: SimpleNamespace(
+        provider="cloudflare", model="openai/gpt-oss-120b"
+    ))
+    result = dynamic._select_resource_instance_outline(
+        SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())), candidate
+    )
+    graph_prompt = dynamic._workflow_graph_prompt(candidate, resource_instance_outline=result)
+
+    assert result == decision
+    assert [item["operationId"] for item in result["occurrences"]] == ["createOffering", "createOffering"]
+    assert captured["payload"]["finiteStateChangingSetupOperations"][0]["linkedUseCases"][0]["preconditions"] == ["Offering is full."]
+    assert {item["operationId"] for item in captured["payload"]["finiteStateChangingSetupOperations"]} == {
+        "createOffering",
+    }
+    assert captured["payload"]["targetActions"][0]["operationId"] == "swap"
+    assert captured["payload"]["targetActions"][0]["requiredInputs"][0]["resourceRole"] == "registration_id"
+    setup = captured["payload"]["finiteStateChangingSetupOperations"][0]
+    assert setup["requiredInputs"][0]["valueRef"] == "val-offering"
+    assert set(setup) == {"operationId", "method", "summary", "requiredInputs", "outputs", "linkedUseCases"}
+    assert "preserve the exact producer bindings above" in graph_prompt
+    assert json.dumps(result, separators=(",", ":")) in graph_prompt
+
+
+def test_resource_instance_outline_rejects_relations_to_unknown_instances() -> None:
+    candidate = {"planningModel": {"availableSteps": [{"operationId": "create", "inputs": [], "outputs": []}]}}
+    result = {"occurrences": [{"instanceId": "a", "operationId": "create", "purpose": "resource"}],
+              "identityRelations": [{"leftInstanceId": "a", "rightInstanceId": "missing", "relation": "distinct"}]}
+
+    with pytest.raises(dynamic.ArazzoPlanningError, match="unknown instance"):
+        dynamic._validate_resource_instance_outline(candidate, result)
+
+
+def test_literal_selection_receives_resource_instance_outline(monkeypatch: pytest.MonkeyPatch) -> None:
+    candidate = {"planningModel": {
+        "intent": {"goal": "Establish two different resources."},
+        "resourceInstanceOutline": {"occurrences": [{
+            "instanceId": "second", "operationId": "manage", "purpose": "Establish a new resource",
+        }], "identityRelations": []},
+        "availableSteps": [],
+    }}
+    captured: dict[str, Any] = {}
+
+    class FakeCompletions:
+        def create(self, **kwargs: Any) -> Any:
+            captured["prompt"] = kwargs["messages"][1]["content"]
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{"v1":"create"}'))])
+
+    monkeypatch.setattr(dynamic, "build_arazzo_llm_connection", lambda: SimpleNamespace(
+        provider="cloudflare", model="openai/gpt-oss-120b"
+    ))
+    dynamic._select_literal_values(
+        SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())),
+        candidate,
+        [("o1", "body.operationType", {"type": "string", "format": "", "description": "Action"})],
+        {},
+    )
+
+    assert "resourceInstanceOutline" in captured["prompt"]
+    assert "Establish a new resource" in captured["prompt"]
+    assert "do not choose an update action" in captured["prompt"]
+
+
+def test_preselected_producer_binding_does_not_override_fixed_input_reuse() -> None:
+    candidate = {"planningModel": {"producerSelections": [{
+        "targetOperationId": "consume", "targetInputSlot": "path:resourceId",
+        "sourceOperationId": "create", "sourceOutputName": "bodyId",
+    }]}}
+    graph = {
+        "occurrences": [
+            {"occurrenceId": "o1", "operationId": "create"},
+            {"occurrenceId": "o2", "operationId": "consume"},
+        ],
+        "requiredInputs": [{
+            "targetOccurrenceId": "o2", "targetInputSlot": "path:resourceId", "literalNeeded": False,
+            "sourceOccurrenceId": None, "sourceOutputName": None,
+            "sourceInputOccurrenceId": "o0", "sourceInputSlot": "body.existingId",
+        }],
+    }
+
+    completed = dynamic._complete_preselected_producer_bindings(candidate, graph)
+
+    assert completed["requiredInputs"][0]["sourceOccurrenceId"] is None
+    assert completed["requiredInputs"][0]["sourceOutputName"] is None
+    assert completed["requiredInputs"][0]["sourceInputOccurrenceId"] == "o0"
+    assert completed["requiredInputs"][0]["sourceInputSlot"] == "body.existingId"
+
+
+@pytest.mark.parametrize("source_occurrences", [[], ["create", "create"]])
+def test_preselected_producer_binding_rejects_missing_or_ambiguous_source_occurrence(
+    source_occurrences: list[str],
+) -> None:
+    occurrences = [{"occurrenceId": f"o{index}", "operationId": operation}
+                   for index, operation in enumerate([*source_occurrences, "consume"], start=1)]
+    candidate = {"planningModel": {"producerSelections": [{
+        "targetOperationId": "consume", "targetInputSlot": "path:resourceId",
+        "sourceOperationId": "create", "sourceOutputName": "bodyId",
+    }]}}
+    graph = {
+        "occurrences": occurrences,
+        "requiredInputs": [{
+            "targetOccurrenceId": occurrences[-1]["occurrenceId"], "targetInputSlot": "path:resourceId",
+            "literalNeeded": False, "sourceOccurrenceId": None, "sourceOutputName": None,
+        }],
+    }
+
+    with pytest.raises(dynamic.ArazzoPlanningError, match="exactly one earlier source occurrence"):
+        dynamic._complete_preselected_producer_bindings(candidate, graph)
+
+
 def test_collection_selection_is_exposed_only_when_schema_catalog_has_candidates() -> None:
     candidate = {
         "workflowId": "workflow-no-arrays",
@@ -2147,6 +2345,16 @@ def test_openapi_projection_builds_finite_collection_item_paths_without_index_se
 
     assert step["collectionSelectionCandidates"] == [
         {
+            "selectionId": "listEntries:bodyEntries0EntryId=>bodyEntries0EntryId",
+            "arrayRootPointer": "#/entries", "matchOutputName": "bodyEntries0EntryId",
+            "matchOutputExpression": "$response.body#/entries/0/entryId",
+            "matchType": "string", "matchFormat": "uuid",
+            "matchItemPointerParts": ["entryId"], "selectedOutputName": "bodyEntries0EntryId",
+            "selectedOutputExpression": "$response.body#/entries/0/entryId",
+            "selectedType": "string", "selectedFormat": "uuid",
+            "selectedItemPointerParts": ["entryId"],
+        },
+        {
             "selectionId": "listEntries:bodyEntries0EntryId=>bodyEntries0OfferingId",
             "arrayRootPointer": "#/entries", "matchOutputName": "bodyEntries0EntryId",
             "matchOutputExpression": "$response.body#/entries/0/entryId",
@@ -2166,6 +2374,16 @@ def test_openapi_projection_builds_finite_collection_item_paths_without_index_se
             "selectedType": "string", "selectedFormat": "uuid",
             "selectedItemPointerParts": ["entryId"],
         },
+        {
+            "selectionId": "listEntries:bodyEntries0OfferingId=>bodyEntries0OfferingId",
+            "arrayRootPointer": "#/entries", "matchOutputName": "bodyEntries0OfferingId",
+            "matchOutputExpression": "$response.body#/entries/0/offeringId",
+            "matchType": "string", "matchFormat": "",
+            "matchItemPointerParts": ["offeringId"], "selectedOutputName": "bodyEntries0OfferingId",
+            "selectedOutputExpression": "$response.body#/entries/0/offeringId",
+            "selectedType": "string", "selectedFormat": "",
+            "selectedItemPointerParts": ["offeringId"],
+        },
     ]
 
 
@@ -2176,10 +2394,20 @@ def test_get_collection_producer_is_available_only_as_deferred_lookup(monkeypatc
     candidate = {
         "workflowId": "workflow-get-collection",
         "operations": [{"operationId": "consume"}],
-        "setupOperations": [{"operationId": "list", "method": "GET", "linkedUseCaseEvidence": []}],
+        "setupOperations": [
+            {"operationId": "list", "method": "GET", "linkedUseCaseEvidence": [{"useCaseId": "UC4", "main_scenario": []}]},
+            {"operationId": "createEntry", "method": "POST", "linkedUseCaseEvidence": [{"useCaseId": "UC2", "main_scenario": ["Establish the offering identity."]}]},
+            {"operationId": "createOffering", "method": "POST", "linkedUseCaseEvidence": [{"useCaseId": "UC1", "main_scenario": []}]},
+        ],
         "useCase": {"public_contract": {"required_values": []}},
         "planningModel": {
+            "intent": {"goal": "Find the matching resource and consume its identifier."},
             "targetOperationIds": ["consume"],
+            "resourceInstanceOutline": {"occurrences": [
+                {"instanceId": "list", "operationId": "list", "purpose": "read matching entries"},
+                {"instanceId": "entry", "operationId": "createEntry", "purpose": "create entry"},
+                {"instanceId": "offering", "operationId": "createOffering", "purpose": "establish offering"},
+            ], "identityRelations": []},
             "availableSteps": [
                 {"operationId": "consume", "stepId": "consume", "method": "POST", "inputs": [
                     {"inputSlot": "path:resourceId", "type": "string", "format": "uuid", "cardinality": "one"},
@@ -2205,10 +2433,20 @@ def test_get_collection_producer_is_available_only_as_deferred_lookup(monkeypatc
                     "matchItemPointerParts": ["id"], "selectedItemPointerParts": ["parentId"],
                 }],
                 },
+                {"operationId": "createEntry", "stepId": "createEntry", "method": "POST", "summary": "Create entry",
+                 "inputs": [{"inputSlot": "path:offeringId", "type": "string", "format": "uuid", "cardinality": "one",
+                             "description": "course offering identity"}],
+                 "outputs": [{"outputName": "bodyValue", "type": "string", "format": "", "responseDescription": "Entry created"}]},
+                {"operationId": "createOffering", "stepId": "createOffering", "method": "POST", "summary": "Create offering",
+                 "inputs": [{"inputSlot": "body.offeringId", "type": "string", "format": "uuid",
+                             "literalEvidence": "frozen setup identity", "description": "course offering identity"}],
+                 "outputs": [{"outputName": "bodyOfferingId", "slot": "body.offeringId", "type": "string", "format": "uuid", "cardinality": "one",
+                              "responseDescription": "Created offering identifier"}]},
             ],
         },
     }
     list_step = candidate["planningModel"]["availableSteps"][1]
+    assert dynamic._identity_input_requests(candidate, [candidate["planningModel"]["availableSteps"][2]], all_scalar=True)
     for index in range(2, 12):
         output_name = f"bodyExtra{index}Id"
         list_step["outputs"].append({
@@ -2221,40 +2459,102 @@ def test_get_collection_producer_is_available_only_as_deferred_lookup(monkeypatc
             "selectedOutputName": output_name, "selectedType": "string", "selectedFormat": "uuid",
         })
     observed: dict[str, Any] = {}
+    producer_payloads: list[dict[str, Any]] = []
+    call_order: list[str] = []
+    creator_payload: dict[str, Any] = {}
+    collection_identity_payload: dict[str, Any] = {}
+    collection_identity_schema: dict[str, Any] = {}
+    collection_identity_request_names: list[str] = []
 
     class FakeCompletions:
         def create(self, **kwargs: Any) -> Any:
             payload = json.loads(kwargs["messages"][1]["content"])
-            observed.update(payload)
-            decision = {"decision": "select", "sourceOptionId": "list.body0Id",
-                        "evidenceRefs": []}
+            name = kwargs["response_format"]["json_schema"]["name"]
+            call_order.append(name + ":" + str(payload.get("target", {}).get("targetOperationId", "")))
+            if name == "ArazzoResourceCreator":
+                creator_payload.update(payload)
+                decision = {"creatorOperationId": "createEntry"}
+            elif name == "ArazzoJointCollectionIdentitySelection":
+                collection_identity_payload.update(payload)
+                collection_identity_schema.update(kwargs["response_format"]["json_schema"]["schema"])
+                collection_identity_request_names.append(name)
+                decision = {"selectionId": "list:match=>body0Id",
+                            "anchorId": "createOffering::body.offeringId"}
+            else:
+                observed.update(payload)
+                producer_payloads.append(payload)
+                if payload["target"]["targetOperationId"] == "consume":
+                    decision = ({"decision": "unsupported", "sourceOptionId": None}
+                                if payload["selectionStage"] == "state_changing_response"
+                                else {"decision": "deferred_collection_lookup", "sourceOptionId": "list.body0Id"})
+                else:
+                    decision = {"decision": "select", "sourceOptionId": "createOffering.bodyOfferingId"}
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(decision)))])
 
     monkeypatch.setattr(dynamic, "build_arazzo_llm_connection", lambda: SimpleNamespace(
         provider="cloudflare", model="openai/gpt-oss-120b"
     ))
 
-    selections = dynamic._select_semantic_producers(
-        SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())), candidate, {"components": {}}
-    )
+    fake_completions = FakeCompletions()
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=fake_completions))
+    selections = dynamic._select_semantic_producers(fake_client, candidate, {"components": {}})
 
-    assert len(observed["producerOptions"]) == 12
-    assert observed["producerOptions"][0]["collectionLookupAvailable"] is True
-    catalog = observed["finiteCollectionCatalog"]
+    consume_payloads = [item for item in producer_payloads if item["target"]["targetOperationId"] == "consume"]
+    direct_payload = next(item for item in consume_payloads if item["selectionStage"] == "state_changing_response")
+    consume_payload = next(item for item in consume_payloads if item["selectionStage"] == "readback_fallback")
+    assert [item["operationId"] for item in direct_payload["producerOptions"]] == ["createOffering"]
+    assert direct_payload["producerOptions"][0]["method"] == "POST"
+    assert len(consume_payload["producerOptions"]) == 12
+    assert consume_payload["producerOptions"][0]["collectionLookupAvailable"] is True
+    catalog = consume_payload["finiteCollectionCatalog"]
     assert len(catalog) == 1
     item_field_names = [field["outputName"] for field in catalog[0]["itemFields"]]
     assert len(item_field_names) == len(set(item_field_names)) == 12
     assert {
         field["outputName"]: field["outputExpression"] for field in catalog[0]["itemFields"]
     } == {output["outputName"]: output["outputExpression"] for output in list_step["outputs"]}
-    assert all(option["collectionArrayRoots"] == ["list:#"] for option in observed["producerOptions"])
+    assert all(option["collectionArrayRoots"] == (["list:#"] if option["operationId"] == "list" else [])
+               for option in consume_payload["producerOptions"])
     assert "selectionId" not in json.dumps(catalog)
     assert any("matching row, uniqueness" in rule for rule in observed["rules"])
+    # A collection match key scopes a row; its returned value may be a child identity.
+    assert "SAME resource identity" in collection_identity_payload["instruction"]
+    assert "selected child ID with the match identity" in collection_identity_payload["instruction"]
+    assert "capacity/count/time/date/status/labels" in collection_identity_payload["instruction"]
+    assert "system will assert response-output equals request-input at runtime" in collection_identity_payload["instruction"]
+    assert collection_identity_payload["frozenIntent"]["goal"] == "Find the matching resource and consume its identifier."
+    assert collection_identity_payload["rowCreator"]["operationId"] == "createEntry"
+    assert any(item["target"]["targetOperationId"] == "createEntry" for item in producer_payloads), call_order
+    assert collection_identity_payload["rowCreator"]["linkedScenario"][0]["mainScenario"] == ["Establish the offering identity."]
+    assert collection_identity_payload["rowCreator"]["inputBindings"] == [{
+        "creatorInputSlot": "path:offeringId", "creatorInputMeaning": "course offering identity",
+        "creatorInputType": "string", "creatorInputFormat": "uuid",
+        "sourceOperationId": "createOffering", "sourceOperationSummary": "Create offering",
+        "sourceOutputName": "bodyOfferingId", "sourceOutputPath": "body.offeringId",
+        "sourceOutputMeaning": "Created offering identifier",
+    }]
+    assert collection_identity_payload["finiteSameItemChoices"][0]["matchItemPath"] == ["parentId"]
+    assert len(collection_identity_payload["finiteSameItemChoices"]) == len([
+        item for item in list_step["collectionSelectionCandidates"]
+        if item.get("selectedOutputName") == "body0Id"
+    ])
+    assert len(collection_identity_payload["finiteCompatibleLiteralAnchors"]) == 1
+    assert "requiresEqualityAssertion" not in collection_identity_payload
+    assert "requiresEqualityAssertion" not in collection_identity_schema["properties"]
+    assert collection_identity_request_names == ["ArazzoJointCollectionIdentitySelection"]
+    assert call_order.index("ArazzoProducerChoice:createEntry") < call_order.index("ArazzoJointCollectionIdentitySelection:")
     assert selections == [{
         "targetOperationId": "consume", "targetInputSlot": "path:resourceId",
         "decision": "deferred_collection_lookup", "sourceOperationId": "list",
-        "sourceOutputName": "body0Id",
+        "sourceOutputName": "body0Id", "creatorOperationId": "createEntry",
+        "collectionSelectionId": "list:match=>body0Id",
+        "anchorOperationId": "createOffering", "anchorInputSlot": "body.offeringId",
+    }, {
+        "targetOperationId": "createEntry", "targetInputSlot": "path:offeringId",
+        "sourceOperationId": "createOffering", "sourceOutputName": "bodyOfferingId",
     }]
+    assert creator_payload["readOnlyProducer"]["linkedUseCaseEvidence"][0]["useCaseId"] == "UC4"
+    assert creator_payload["finiteStateChangingCreatorOptions"][0]["linkedUseCaseEvidence"][0]["useCaseId"] == "UC2"
     list_step["collectionSelectionCandidates"].extend({
         "selectionId": f"list:match{index}=>body0Id", "arrayRootPointer": "#",
         "matchOutputName": f"body0Parent{index}", "matchType": "string", "matchFormat": "uuid",
@@ -2266,12 +2566,11 @@ def test_get_collection_producer_is_available_only_as_deferred_lookup(monkeypatc
     projected_choices = graph_catalog[1]["collectionSelectionCandidates"]
     full_choices = list_step["collectionSelectionCandidates"]
     graph_schema = dynamic._graph_response_format(candidate)["json_schema"]["schema"]
-    selection_ids = graph_schema["properties"]["collectionSelections"]["items"]["properties"]["selectionId"]["enum"]
     graph_choices = [item for item in full_choices if item["selectedOutputName"] == "body0Id"]
-    assert "collectionSelections" in graph_schema["required"]
-    assert graph_schema["properties"]["collectionSelections"]["minItems"] == 1
-    assert "list:match=>body0Id" in selection_ids
-    assert len(selection_ids) == len(graph_choices)
+    assert "collectionSelections" not in graph_schema["properties"]
+    assert len(projected_choices) == 1
+    assert projected_choices[0]["selectionId"] == "list:match=>body0Id"
+    assert len(graph_choices) > len(projected_choices)
     assert len({field["outputName"] for field in catalog[0]["itemFields"]}) == len(catalog[0]["itemFields"])
     assert len(json.dumps(projected_choices, separators=(",", ":"))) < len(json.dumps(full_choices, separators=(",", ":")))
     assert all(set(choice) == {
@@ -2286,15 +2585,17 @@ def test_deferred_collection_selection_compiles_finite_selector_from_fixed_liter
         "trace": {"useCaseIds": ["UC-collection"]},
         "operations": [{"operationId": "cancel", "method": "POST"}],
         "setupOperations": [
-            {"operationId": "createOffering", "method": "POST"},
-            {"operationId": "listEntries", "method": "GET"},
+            {"operationId": "createOffering", "method": "POST", "linkedUseCaseEvidence": [{"useCaseId": "UC2"}]},
+            {"operationId": "listEntries", "method": "GET", "linkedUseCaseEvidence": [{"useCaseId": "UC4"}]},
         ],
         "planningModel": {
             "targetOperationIds": ["cancel"],
             "producerSelections": [{
                 "targetOperationId": "cancel", "targetInputSlot": "path:entryId",
                 "decision": "deferred_collection_lookup", "sourceOperationId": "listEntries",
-                "sourceOutputName": "body0EntryId",
+                "sourceOutputName": "body0EntryId", "creatorOperationId": "createOffering",
+                "collectionSelectionId": "listEntries:body0OfferingId=>body0EntryId",
+                "anchorOperationId": "createOffering", "anchorInputSlot": "body.offeringId",
             }],
             "availableSteps": [
                 {"stepId": "createOffering", "operationId": "createOffering", "method": "POST",
@@ -2339,11 +2640,6 @@ def test_deferred_collection_selection_compiles_finite_selector_from_fixed_liter
              "sourceOccurrenceId": "o2", "sourceOutputName": "body0EntryId"},
         ],
         "distinctResourcePairs": [],
-        "collectionSelections": [{
-            "selectionId": "listEntries:body0OfferingId=>body0EntryId",
-            "collectionOccurrenceId": "o2", "targetOccurrenceId": "o3", "targetInputSlot": "path:entryId",
-            "fixedInputOccurrenceId": "o1", "fixedInputSlot": "body.offeringId",
-        }],
     }
 
     selected, decision, literals = dynamic._validated_graph_projection(candidate, graph)
@@ -2356,6 +2652,16 @@ def test_deferred_collection_selection_compiles_finite_selector_from_fixed_liter
         "type": "jsonpath", "context": "$response.body",
         "selector": '$["entries"][?@["offeringId"] == "123e4567-e89b-12d3-a456-426614174000"]["entryId"]',
     }
+
+    missing_creator = deepcopy(candidate)
+    missing_creator["planningModel"]["producerSelections"][0].pop("creatorOperationId")
+    with pytest.raises(dynamic.ArazzoPlanningError, match="selected state-changing resource creator"):
+        dynamic._validated_graph_projection(missing_creator, graph)
+
+    late_creator = deepcopy(candidate)
+    late_creator["planningModel"]["producerSelections"][0]["creatorOperationId"] = "cancel"
+    with pytest.raises(dynamic.ArazzoPlanningError, match="selected state-changing resource creator"):
+        dynamic._validated_graph_projection(late_creator, graph)
     assert "[0]" not in workflow["steps"][1]["outputs"]["body0EntryId"]["selector"]
     assert "{$" not in workflow["steps"][1]["outputs"]["body0EntryId"]["selector"]
     openapi = {"openapi": "3.0.3", "info": {"title": "API", "version": "1"}, "paths": {
@@ -2385,6 +2691,19 @@ def test_deferred_collection_selection_compiles_finite_selector_from_fixed_liter
     import jsonpath_rfc9535
 
     jsonpath_rfc9535.compile(workflow["steps"][1]["outputs"]["body0EntryId"]["selector"])
+    contradictory_graph = deepcopy(graph)
+    contradictory_graph["collectionSelections"] = [{
+        "selectionId": "listEntries:body0OfferingId=>body0EntryId",
+        "collectionOccurrenceId": "o2", "targetOccurrenceId": "o3", "targetInputSlot": "path:entryId",
+        "fixedInputOccurrenceId": "o1", "fixedInputSlot": "body.offeringId",
+    }]
+    with pytest.raises(dynamic.ArazzoPlanningError, match="must not re-choose"):
+        dynamic._validated_graph_projection(candidate, contradictory_graph)
+
+    wrong_anchor = deepcopy(candidate)
+    wrong_anchor["planningModel"]["producerSelections"][0]["anchorInputSlot"] = "body.otherOfferingId"
+    with pytest.raises(dynamic.ArazzoPlanningError, match="earlier fixed input"):
+        dynamic._validated_graph_projection(wrong_anchor, graph)
     document = build_arazzo_document([workflow])
     execution_candidates = [
         {"workflowId": selected["workflowId"], **step}
@@ -2409,6 +2728,168 @@ def test_deferred_collection_selection_compiles_finite_selector_from_fixed_liter
             openapi,
             execution_candidates,
         )
+
+
+def test_repeated_collection_anchor_resolves_from_creator_binding_and_rejects_ambiguity() -> None:
+    selection = {
+        "targetOperationId": "swap", "targetInputSlot": "path:currentRegistrationId",
+        "decision": "deferred_collection_lookup", "sourceOperationId": "listRegistrations",
+        "sourceOutputName": "body0RegistrationId", "creatorOperationId": "register",
+        "collectionSelectionId": "listRegistrations:body0OfferingId=>body0RegistrationId",
+        "anchorOperationId": "createOffering", "anchorInputSlot": "body.courseOfferingId",
+    }
+    candidate = {
+        "workflowId": "workflow-repeated-anchor", "trace": {"useCaseIds": ["UC-repeated-anchor"]},
+        "operations": [{"operationId": "swap", "method": "POST"}],
+        "setupOperations": [
+            {"operationId": "createOffering", "method": "POST"},
+            {"operationId": "register", "method": "POST"},
+            {"operationId": "listRegistrations", "method": "GET"},
+        ],
+        "planningModel": {
+            "targetOperationIds": ["swap"],
+            "producerSelections": [
+                selection,
+                {"targetOperationId": "register", "targetInputSlot": "path:courseOfferingId",
+                 "sourceOperationId": "createOffering", "sourceOutputName": "bodyOfferingId"},
+                {"targetOperationId": "swap", "targetInputSlot": "path:targetOfferingId",
+                 "sourceOperationId": "createOffering", "sourceOutputName": "bodyOfferingId"},
+            ],
+            "availableSteps": [
+                {"operationId": "createOffering", "method": "POST", "successStatuses": ["200"],
+                 "inputs": [{"inputSlot": "body.courseOfferingId", "type": "string", "format": "uuid",
+                             "cardinality": "one", "pointerParts": ("courseOfferingId",)}],
+                 "outputs": [{"outputName": "bodyOfferingId", "slot": "body.offeringId", "type": "string",
+                              "format": "uuid", "cardinality": "one", "outputExpression": "$response.body#/offeringId"}]},
+                {"operationId": "register", "method": "POST", "successStatuses": ["201"],
+                 "inputs": [{"inputSlot": "path:courseOfferingId", "type": "string", "format": "uuid",
+                             "cardinality": "one", "connections": []}], "outputs": []},
+                {"operationId": "listRegistrations", "method": "GET", "successStatuses": ["200"],
+                 "inputs": [], "outputs": [
+                     {"outputName": "body0RegistrationId", "slot": "body[].registrationId", "type": "string",
+                      "format": "uuid", "cardinality": "one", "outputExpression": "$response.body#/0/registrationId",
+                      "collectionItemRef": {"arrayRootPointer": "#", "itemPointerParts": ["registrationId"]}},
+                     {"outputName": "body0OfferingId", "slot": "body[].offeringId", "type": "string",
+                      "format": "uuid", "cardinality": "one", "outputExpression": "$response.body#/0/offeringId",
+                      "collectionItemRef": {"arrayRootPointer": "#", "itemPointerParts": ["offeringId"]}},
+                 ],
+                 "collectionSelectionCandidates": [{
+                     "selectionId": selection["collectionSelectionId"], "arrayRootPointer": "#",
+                     "matchOutputName": "body0OfferingId", "matchOutputExpression": "$response.body#/0/offeringId",
+                     "matchType": "string", "matchFormat": "uuid", "matchItemPointerParts": ["offeringId"],
+                     "selectedOutputName": "body0RegistrationId", "selectedOutputExpression": "$response.body#/0/registrationId",
+                     "selectedType": "string", "selectedFormat": "uuid", "selectedItemPointerParts": ["registrationId"],
+                 }]},
+                {"operationId": "swap", "method": "POST", "successStatuses": ["200"],
+                 "inputs": [
+                     {"inputSlot": "path:currentRegistrationId", "type": "string", "format": "uuid",
+                      "cardinality": "one", "connections": []},
+                     {"inputSlot": "path:targetOfferingId", "type": "string", "format": "uuid",
+                      "cardinality": "one", "connections": []},
+                 ], "outputs": []},
+            ],
+        },
+    }
+    graph = {
+        "workflowId": candidate["workflowId"],
+        "occurrences": [
+            {"occurrenceId": "o1", "operationId": "createOffering"},
+            {"occurrenceId": "o2", "operationId": "register"},
+            {"occurrenceId": "o3", "operationId": "listRegistrations"},
+            {"occurrenceId": "o4", "operationId": "createOffering"},
+            {"occurrenceId": "o5", "operationId": "swap"},
+        ],
+        "requiredInputs": [
+            {"targetOccurrenceId": "o1", "targetInputSlot": "body.courseOfferingId", "literalNeeded": True},
+            {"targetOccurrenceId": "o2", "targetInputSlot": "path:courseOfferingId", "literalNeeded": False,
+             "sourceOccurrenceId": "o1", "sourceOutputName": "bodyOfferingId"},
+            {"targetOccurrenceId": "o4", "targetInputSlot": "body.courseOfferingId", "literalNeeded": True},
+            {"targetOccurrenceId": "o5", "targetInputSlot": "path:currentRegistrationId", "literalNeeded": False,
+             "sourceOccurrenceId": "o3", "sourceOutputName": "body0RegistrationId"},
+            {"targetOccurrenceId": "o5", "targetInputSlot": "path:targetOfferingId", "literalNeeded": False,
+             "sourceOccurrenceId": "o4", "sourceOutputName": "bodyOfferingId"},
+        ],
+        "distinctResourcePairs": [{
+            "leftOccurrenceId": "o1", "leftOutputName": "bodyOfferingId",
+            "rightOccurrenceId": "o4", "rightOutputName": "bodyOfferingId",
+            "relation": "distinct_resource_identity",
+        }],
+    }
+    selected, decision, literal_slots = dynamic._validated_graph_projection(candidate, graph)
+    assert [(step_id, slot) for step_id, slot, _ in literal_slots] == [
+        ("o1", "body.courseOfferingId"), ("o4", "body.courseOfferingId"),
+    ]
+    assert decision["collectionSelections"] == [{
+        "selectionId": selection["collectionSelectionId"],
+        "collectionOccurrenceId": "o3", "targetOccurrenceId": "o5",
+        "targetInputSlot": "path:currentRegistrationId",
+        "fixedInputOccurrenceId": "o1", "fixedInputSlot": "body.courseOfferingId",
+        "collectionOperationId": "listRegistrations", "targetOperationId": "swap",
+        "matchOutputName": "body0OfferingId", "matchOutputExpression": "$response.body#/0/offeringId",
+        "matchType": "string", "matchFormat": "uuid", "matchItemPointerParts": ["offeringId"],
+        "arrayRootPointer": "#", "selectedOutputName": "body0RegistrationId",
+        "selectedItemPointerParts": ["registrationId"],
+        "identityEqualityAssertion": {
+            "occurrenceId": "o1",
+            "responseExpression": "$response.body#/offeringId",
+            "requestExpression": "$request.body#/courseOfferingId",
+            "sourceOutputName": "bodyOfferingId",
+            "requestInputSlot": "body.courseOfferingId",
+        },
+    }]
+    equality_criterion = {"condition": "$response.body#/offeringId == $request.body#/courseOfferingId"}
+    assert decision["identityEqualityAssertions"] == [{
+        "occurrenceId": "o1", "responseExpression": "$response.body#/offeringId",
+        "requestExpression": "$request.body#/courseOfferingId", "sourceOutputName": "bodyOfferingId",
+        "requestInputSlot": "body.courseOfferingId",
+    }]
+    assertion_decision = {
+        "workflowId": decision["workflowId"], "orderedStepIds": ["o1"],
+        "connectionIds": [], "fixedInputs": [{
+            "targetStepId": "o1", "targetInputSlot": "body.courseOfferingId", "value": "same-id",
+        }], "fixedInputReuses": [], "distinctResourcePairs": [], "successCriteria": [],
+        "identityEqualityAssertions": decision["identityEqualityAssertions"],
+    }
+    assertion_step = deepcopy(selected["planningModel"]["availableSteps"][0])
+    assertion_step["stepId"] = "o1"
+    assertion_candidate = {"workflowId": decision["workflowId"], "trace": candidate["trace"],
+                           "planningModel": {"availableSteps": [assertion_step]}}
+    compiled = dynamic._compile_workflow_decision(assertion_decision, assertion_candidate)
+    assert equality_criterion in compiled["steps"][0]["successCriteria"]
+    from app.testing.utils.arazzo_executor import _criterion_results
+    assert _criterion_results([equality_criterion], {
+        "response": {"body": {"offeringId": "same-id"}},
+        "request": {"body": {"courseOfferingId": "same-id"}},
+    }) == [{"criterion": equality_criterion, "passed": True}]
+    assert _criterion_results([equality_criterion], {
+        "response": {"body": {"offeringId": "response-id"}},
+        "request": {"body": {"courseOfferingId": "request-id"}},
+    }) == [{"criterion": equality_criterion, "passed": False}]
+
+    ambiguous = deepcopy(candidate)
+    ambiguous["planningModel"]["availableSteps"].insert(2, {
+        "operationId": "register", "method": "POST", "successStatuses": ["201"],
+        "inputs": [{"inputSlot": "path:courseOfferingId", "type": "string", "format": "uuid",
+                    "cardinality": "one", "connections": []}], "outputs": [],
+    })
+    ambiguous_graph = deepcopy(graph)
+    ambiguous_graph["occurrences"].insert(2, {"occurrenceId": "o2b", "operationId": "register"})
+    ambiguous_graph["occurrences"][3] = {"occurrenceId": "o3", "operationId": "listRegistrations"}
+    ambiguous_graph["occurrences"][4] = {"occurrenceId": "o4", "operationId": "createOffering"}
+    ambiguous_graph["occurrences"][5] = {"occurrenceId": "o5", "operationId": "swap"}
+    ambiguous_graph["occurrences"].insert(2, {"occurrenceId": "o2a", "operationId": "createOffering"})
+    ambiguous_graph["requiredInputs"].insert(2, {
+        "targetOccurrenceId": "o2a", "targetInputSlot": "body.courseOfferingId", "literalNeeded": True,
+    })
+    ambiguous_graph["requiredInputs"].insert(3, {
+        "targetOccurrenceId": "o2b", "targetInputSlot": "path:courseOfferingId", "literalNeeded": False,
+        "sourceOccurrenceId": "o2a", "sourceOutputName": "bodyOfferingId",
+    })
+    ambiguous_graph["occurrences"][4] = {"occurrenceId": "o3", "operationId": "listRegistrations"}
+    ambiguous_graph["occurrences"][5] = {"occurrenceId": "o4", "operationId": "createOffering"}
+    ambiguous_graph["occurrences"][6] = {"occurrenceId": "o5", "operationId": "swap"}
+    with pytest.raises(dynamic.ArazzoPlanningError, match="unambiguous selected read, target, and anchor"):
+        dynamic._validated_graph_projection(ambiguous, ambiguous_graph)
 
 
 def test_graph_reuses_earlier_fixed_mutation_input_for_typed_path_input() -> None:
@@ -2572,9 +3053,15 @@ def test_semantic_producer_selection_closes_only_selected_source_path_dependenci
             {"operationId": "join", "method": "POST", "linkedUseCaseEvidence": [], "responses": [
                 {"status": "201", "schema": {"type": "string", "format": "uuid"}},
             ]},
-            {"operationId": "manage", "method": "POST", "linkedUseCaseEvidence": [], "responses": [
+            {"operationId": "manage", "method": "POST", "linkedUseCaseEvidence": [{
+                "useCaseId": "UC11", "name": "Manage course offerings", "trigger": "An administrator creates an offering.",
+                "main_scenario": [{"sentence": "Long scenario text is intentionally excluded from per-option evidence."}],
+                "required_values": [{"value_ref": "offering", "name": "course_offering_id",
+                                     "source": "system_result", "value_type": "identifier"}],
+            }], "responses": [
                 {"status": "201", "schema": {"type": "object", "properties": {
                     "offeringId": {"type": "string", "format": "uuid"},
+                    "alternateId": {"type": "string", "format": "uuid"},
                 }}},
             ]},
         ],
@@ -2584,6 +3071,11 @@ def test_semantic_producer_selection_closes_only_selected_source_path_dependenci
                     "public_contract": {"required_values": []}},
         "planningModel": {
             "targetOperationIds": ["consume"],
+            "resourceInstanceOutline": {"occurrences": [
+                {"instanceId": "manageOffering", "operationId": "manage", "purpose": "create offering"},
+                {"instanceId": "joinRegistration", "operationId": "join", "purpose": "create related record"},
+                {"instanceId": "consume", "operationId": "consume", "purpose": "consume the resource"},
+            ], "identityRelations": []},
             "availableSteps": [
                 {"operationId": "consume", "stepId": "consume", "method": "POST", "inputs": [
                     {"inputSlot": "path:resourceId", "type": "string", "format": "uuid", "cardinality": "one"},
@@ -2600,6 +3092,8 @@ def test_semantic_producer_selection_closes_only_selected_source_path_dependenci
                 ], "outputs": [
                     {"outputName": "bodyOfferingId", "slot": "body.offeringId", "type": "string", "format": "uuid",
                      "cardinality": "one", "outputExpression": "$response.body#/offeringId", "responseDescription": "offering identifier"},
+                    {"outputName": "bodyAlternateId", "slot": "body.alternateId", "type": "string", "format": "uuid",
+                     "cardinality": "one", "outputExpression": "$response.body#/alternateId", "responseDescription": "alternate offering identifier"},
                 ]},
             ],
         },
@@ -2612,19 +3106,42 @@ def test_semantic_producer_selection_closes_only_selected_source_path_dependenci
     raw_decisions: list[dict[str, Any]] = []
     observed_options: list[list[str]] = []
     observed_use_case_evidence: list[dict[str, Any]] = []
+    observed_payloads: list[dict[str, Any]] = []
 
     class FakeCompletions:
         def create(self, **kwargs: Any) -> Any:
             payload = json.loads(kwargs["messages"][1]["content"])
+            observed_payloads.append(payload)
             target = payload["target"]
             key = (target["targetOperationId"], target["targetInputSlot"])
             observed_targets.append(key)
             observed_options.append([item["optionId"] for item in payload["producerOptions"]])
             observed_use_case_evidence.append(target["useCaseEvidence"])
-            assert "not an already-persisted test fixture" in " ".join(payload["rules"])
+            rules = " ".join(payload["rules"])
+            assert "exact output property path/name, response description, and linked use-case name/trigger" in rules
+            assert "Occurrence identityRelations compare only resources produced by those occurrences" in rules
+            assert "compare the source output value with the target input value" in rules
+            assert "consumer may take the same earlier resource ID while producing a distinct resource" in rules
+            assert "prerequisite resource producer may be linked to a different use case" in rules
+            assert "unspecified string format on a JSON-Pointer leaf does not by itself disqualify it" in rules
+            assert "runtime must validate the selected value against the target input contract" in rules
+            assert "Do not assume an optional or nullable output exists or is non-null" in rules
+            assert "runtime must verify the selected value" in rules
+            assert "When a semantically exact ID from a state-changing operation response is available, prefer it over a readback collection" in rules
+            assert "even if the schema marks it optional or nullable" in rules
+            assert "A related resource identifier is not interchangeable with the target resource identifier" in rules
+            assert "not an already-persisted test fixture" in rules
+            assert "planned resource state/creator chain" in rules
+            assert payload["resourceInstanceOutline"] == {
+                "occurrences": [
+                    {"instanceId": "manageOffering", "operationId": "manage", "purpose": "create offering"},
+                    {"instanceId": "joinRegistration", "operationId": "join", "purpose": "create related record"},
+                    {"instanceId": "consume", "operationId": "consume", "purpose": "consume the resource"},
+                ], "identityRelations": [],
+            }
             choice = selected_options[key]
             decision = {
-                "decision": "select", "sourceOptionId": choice, "evidenceRefs": [],
+                "decision": "select", "sourceOptionId": choice,
             }
             raw_decisions.append(deepcopy(decision))
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(decision)))])
@@ -2648,7 +3165,16 @@ def test_semantic_producer_selection_closes_only_selected_source_path_dependenci
         "join.bodyValue", "manage.bodyOfferingId",
     ]
     assert observed_options == [
-        ["join.bodyValue", "manage.bodyOfferingId"], ["manage.bodyOfferingId"],
+        ["join.bodyValue", "manage.bodyOfferingId", "manage.bodyAlternateId"],
+        ["manage.bodyOfferingId", "manage.bodyAlternateId"],
     ]
     assert observed_use_case_evidence[0]["main_scenario"][0]["sentence"] == "The system creates a waitlist entry."
     assert all(item["targetInputSlot"].startswith("path:") for item in selections)
+    for payload in observed_payloads:
+        manage_options = [item for item in payload["producerOptions"] if item["operationId"] == "manage"]
+        assert len(manage_options) == 2
+        assert all(set(item["linkedUseCases"][0]) == {"useCaseId", "name", "trigger"} for item in manage_options)
+        assert all("operationIdentityEvidence" not in item and "main_scenario" not in json.dumps(item)
+                   and "required_values" not in json.dumps(item) for item in manage_options)
+        assert [item["operationId"] for item in payload["operationEvidence"]].count("manage") == 1
+        assert payload["operationEvidence"][0]["identityEvidence"][0]["value"]["name"] == "course_offering_id"
