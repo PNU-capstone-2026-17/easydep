@@ -43,6 +43,7 @@ from app.implementation.application.jobs import (
     worker as implementation_worker,
 )
 from app.metrics import langsmith as langsmith_metrics
+from app.observability.tracing import span as otel_span
 from app.repositories import artifact_repository
 from app.requirements.config import settings as requirements_settings
 from app.requirements.contracts.request import (
@@ -1523,7 +1524,14 @@ class WorkspaceService:
                     "operation": "workspace_command",
                 },
             ):
-                self._execute_command(command_id, command)
+                with otel_span(
+                    "workspace.command",
+                    command_id=command_id,
+                    app_id=app_id,
+                    stage=stage,
+                    action=action,
+                ):
+                    self._execute_command(command_id, command)
         except Exception:
             # ``_execute_command`` has already stored the failure for the UI.
             # Letting the exception leave the trace scope marks the LangSmith
@@ -1552,7 +1560,12 @@ class WorkspaceService:
         )
         try:
             try:
-                result = self._dispatch_with_transient_retry(command)
+                with otel_span(
+                    "workspace.command.dispatch",
+                    command_id=command_id,
+                    stage=stage,
+                ):
+                    result = self._dispatch_with_transient_retry(command)
             except ClassBindingStalled as error:
                 result = self._class_binding_stall_result(command, error)
             if self._stop_requested(command_id):

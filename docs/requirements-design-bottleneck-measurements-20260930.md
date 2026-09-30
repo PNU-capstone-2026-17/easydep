@@ -154,3 +154,9 @@ SELECT 횟수 감소는 같은 입력에서 검증된 직접적인 효과다. cu
 이에 저장된 부분 계획의 ID가 고정 후보의 순서 있는 부분집합인지 검증한 뒤, 빠진 후보만 생성하고 유효한 기존 workflow와 다시 고정 순서로 조립하도록 수정했다. 8개 보존·3개 누락(그중 1개 생성 실패)의 집중 no-LLM 테스트와 완전 보존 계획의 무재생성 테스트가 통과했다. 실패 후보를 진행 카드의 계획 완료 상태로 덮지 않도록 했다. 이는 재시도 오류 수정이지 UC3·UC5·UC8의 원래 계획 생성 실패를 해결한 것은 아니다.
 
 전체 테스팅을 다시 실행하기 전 UC3 하나만 실제 Cloudflare `openai/gpt-oss-120b` 계획 생성 경로로 검사했다. producer 선택 호출 1회에서 모델은 타입상 후보가 존재하는 `path:currentRegistrationId`에 대해 `unsupported`를 반환했고, 그래프·리터럴 생성에는 진입하지 못했다. 이 슬롯은 명시적 `resourceRole`/`valueRef`가 없으며, 제시된 후보 30개는 타입 호환 위주다. 출력 필드의 의미와 연결된 UC 흐름도 판단 근거가 될 수 있다는 일반 규칙 한 문장을 바꾼 단일 반사실 실험에서도 같은 `unsupported`였다. 따라서 프롬프트 표현만으로 연결 문제가 해결됐다고 주장하지 않으며, 이 시점에서 전체 테스팅의 반복 실행을 중단했다.
+
+### 자연 Workspace 명령의 end-to-end span smoke
+
+현재 코드 반영을 위해 8100 서버를 `EASYDEP_OTEL_CONSOLE=1`로 한 번 재시작했다. 처음 시도한 `-SkipFrontendBuild` 조합은 개발 모드에서 지원되지 않아 **서버 시작 전** 인자 검증으로 끝났고, `-SkipBootstrap`만 사용한 다음 한 번의 재시작은 성공했다. 이후 이미 제공된 Requirements review action만 사용했다. 앱 `62e5111b-5f10-4916-af98-e1150dec6b47`의 대기 명령 `25da3de8-7c83-46aa-95d7-b8acff4fd101`에서 `advance`를 정확히 한 번 제출해 새 명령 `617055c3-aced-4712-b8d8-462e25257263`을 만들었다. 생성 11:31:54.673 KST, 시작 11:31:54.698 KST로 대기열 시간은 약 **25ms**였고, Requirements `specs`에서 `relationships` 검토까지 진행한 뒤 `AWAITING_INPUT`으로 멈췄다. 따라서 `completed_at`은 없다. 추가 action이나 사용자 답변은 제출하지 않았다.
+
+trace `d05a7da3ef2738872c5c9cbc15791e23`에서 부모 관계는 `workspace.command` (**7,265.344ms**) → `workspace.command.dispatch` (**7,005.214ms**) → `requirements.graph.invoke` (**6,067.327ms**)였다. graph의 모델 child는 Cloudflare `openai/gpt-oss-120b`의 `RelationshipModel` **2,287.626ms**, `Critique` **1,386.633ms**였다. graph 종료부터 dispatch 종료까지 약 **918ms**, dispatch 종료부터 root 종료까지 약 **232ms**가 관찰됐지만, 이 경계 간격만으로 원인은 귀속하지 않는다. `put`/`put_writes` saver span 17개는 모두 같은 trace와 graph 부모에 연결됐으며 서로 겹쳐 실행되므로 개별 시간을 합산하지 않았다. 시스템 경로가 만든 Requirements 산출물·checkpoint만 기록됐고 직접 산출물 편집은 없었다. 이 한 번의 정상 Workspace 경로에서도 과거 Design의 32–69초 꼬리는 재현되지 않았으며, 이를 과거 지연의 해결 근거로 사용하지 않는다.
