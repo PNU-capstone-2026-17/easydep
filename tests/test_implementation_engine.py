@@ -4528,12 +4528,19 @@ def test_task_batch_persists_executor_timing_for_each_attempt(
 
     failures = _execute_task_batch(Path("unused-run-root"), state, [task], execute)
 
+    # The workflow caller's next existing state write persists timings measured
+    # after dispatch/completion writes without adding a write inside the batch.
+    coordinator_module._write_json_atomic(Path("unused-state"), state)
+
     assert failures == []
     timing = task["executionAttempts"][-1]
     assert timing["attempt"] == 1
     assert timing["dispatchedAt"]
     assert timing["executorReturnedAt"] >= timing["dispatchedAt"]
     assert isinstance(timing["executorDurationMs"], float)
+    assert isinstance(timing["dispatchStateWriteDurationMs"], float)
+    assert isinstance(timing["outputHashDurationMs"], float)
+    assert isinstance(timing["completionStateWriteDurationMs"], float)
     assert persisted_states[-1]["tasks"][0]["executionAttempts"] == task[
         "executionAttempts"
     ]

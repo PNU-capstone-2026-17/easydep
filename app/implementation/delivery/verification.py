@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 import shutil
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,7 @@ def _command_result(
     *,
     environment: dict[str, str] | None = None,
 ) -> dict[str, Any]:
+    started_at = time.monotonic()
     try:
         execution = run_toolchain_command(
             command,
@@ -65,6 +67,7 @@ def _command_result(
             "command": command,
             "error": str(error),
             "environmentError": True,
+            "durationMs": round((time.monotonic() - started_at) * 1000, 3),
         }
     completed = execution.completed
     output = ((completed.stderr or "") + (completed.stdout or ""))[-4000:]
@@ -82,6 +85,7 @@ def _command_result(
         "exitCode": completed.returncode,
         "output": output,
         "environmentError": execution.environment_error,
+        "durationMs": round((time.monotonic() - started_at) * 1000, 3),
     }
 
 

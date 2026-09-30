@@ -645,7 +645,11 @@ def _execute_task_batch(
         }
         attempt_timings.append(attempt_timing)
         state["updatedAt"] = _now()
+        dispatch_write_started = time.monotonic()
         _write_json_atomic(state_path, state)
+        attempt_timing["dispatchStateWriteDurationMs"] = round(
+            (time.monotonic() - dispatch_write_started) * 1000, 3
+        )
         try:
             started = time.perf_counter()
             try:
@@ -668,7 +672,11 @@ def _execute_task_batch(
             task["lastError"] = str(error)
             failures.append((task, error))
             state["updatedAt"] = _now()
+            completion_write_started = time.monotonic()
             _write_json_atomic(state_path, state)
+            attempt_timing["completionStateWriteDurationMs"] = round(
+                (time.monotonic() - completion_write_started) * 1000, 3
+            )
             break
         if result.get("status") == "NEEDS_INPUT":
             task["status"] = "NEEDS_INPUT"
@@ -677,14 +685,26 @@ def _execute_task_batch(
             task["candidateEvidence"] = result.get("candidateEvidence")
             task["lastError"] = None
             state["updatedAt"] = _now()
+            completion_write_started = time.monotonic()
             _write_json_atomic(state_path, state)
+            attempt_timing["completionStateWriteDurationMs"] = round(
+                (time.monotonic() - completion_write_started) * 1000, 3
+            )
             break
         task["status"] = "SUCCEEDED"
         task["resultFile"] = f"reports/agent-executions/{task['task_id']}.result.json"
+        output_hash_started = time.monotonic()
         task["outputHashes"] = _task_output_hashes(run_root, str(task["task_id"]))
+        attempt_timing["outputHashDurationMs"] = round(
+            (time.monotonic() - output_hash_started) * 1000, 3
+        )
         task["lastError"] = None
         state["updatedAt"] = _now()
+        completion_write_started = time.monotonic()
         _write_json_atomic(state_path, state)
+        attempt_timing["completionStateWriteDurationMs"] = round(
+            (time.monotonic() - completion_write_started) * 1000, 3
+        )
 
     blocking_failures = failures
     if blocking_failures:

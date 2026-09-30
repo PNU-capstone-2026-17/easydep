@@ -343,4 +343,25 @@ def test_deployment_check_treats_toolchain_start_failure_as_inconclusive(
     assert result["gateStatus"] == "INCONCLUSIVE"
     assert result["openTofu"]["gateStatus"] == "INCONCLUSIVE"
     assert all(command["status"] == "INCONCLUSIVE" for command in result["commands"])
+    assert all("durationMs" in command for command in result["commands"])
     assert not any("apply" in command["command"] for command in result["commands"])
+
+
+def test_deployment_command_result_records_monotonic_duration(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        verification,
+        "run_toolchain_command",
+        lambda command, **_kwargs: ToolchainExecution(
+            completed=_completed(command),
+            command=tuple(command),
+            toolchain="easydep-toolchain:test",
+            environment_error=False,
+        ),
+    )
+    ticks = iter((10.0, 10.125))
+    monkeypatch.setattr(verification.time, "monotonic", lambda: next(ticks))
+
+    result = verification._command_result(["tofu", "validate"], tmp_path, 30)
+
+    assert result["status"] == "PASS"
+    assert result["durationMs"] == 125.0

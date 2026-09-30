@@ -2944,6 +2944,9 @@ class WorkspaceService:
         """Reuse an existing checkpoint runner for a non-question technical pause."""
 
         if stage == "testing":
+            latest_command = repository.get_command(str(command["command_id"]))
+            if latest_command is None:
+                raise WorkspaceStopRequested()
             job = result.get("job")
             implementation_job_id = (
                 str(job.get("implementation_job_id") or "")
@@ -2951,7 +2954,7 @@ class WorkspaceService:
                 else ""
             )
             if not implementation_job_id:
-                payload = command.get("payload") or {}
+                payload = latest_command.get("payload") or {}
                 checkpoint = payload.get("testing_checkpoint")
                 implementation_job_id = str(
                     (checkpoint.get("implementation_job_id") if isinstance(checkpoint, dict) else "")
@@ -2959,7 +2962,7 @@ class WorkspaceService:
                     or ""
                 )
             if implementation_job_id:
-                return self._run_testing_command(command, implementation_job_id)
+                return self._run_testing_command(latest_command, implementation_job_id)
         if stage == "requirements":
             app_id = str(command["app_id"])
             progress = self._requirements_progress_reporter(app_id, str(command["command_id"]))

@@ -219,6 +219,48 @@ def test_testing_retry_uses_linked_job_before_checkpoint_is_persisted(monkeypatc
     assert observed == {"command_id": "testing-command", "job_id": "implementation-1"}
 
 
+def test_technical_testing_retry_refreshes_latest_checkpoint_command(monkeypatch) -> None:
+    stale_command = {
+        "command_id": "testing-command",
+        "app_id": "app-1",
+        "stage": "testing",
+        "payload": {
+            "testing_checkpoint": {"implementation_job_id": "old-implementation"}
+        },
+    }
+    latest_command = {
+        **stale_command,
+        "payload": {
+            "testing_checkpoint": {
+                "implementation_job_id": "latest-implementation",
+                "profile_checkpoint": {"status": "ready"},
+            }
+        },
+    }
+    observed: dict[str, Any] = {}
+    service = WorkspaceService()
+    monkeypatch.setattr(repository, "get_command", lambda _id: latest_command)
+
+    def run_testing(command_arg, implementation_job_id):
+        observed["command"] = command_arg
+        observed["implementation_job_id"] = implementation_job_id
+        return {"message": "retried"}
+
+    monkeypatch.setattr(service, "_run_testing_command", run_testing)
+    try:
+        result = service._retry_technical_checkpoint(
+            stale_command,
+            {"awaiting_input": True},
+            "testing",
+        )
+    finally:
+        service.shutdown()
+
+    assert result == {"message": "retried"}
+    assert observed["command"] is latest_command
+    assert observed["implementation_job_id"] == "latest-implementation"
+
+
 def test_technical_retry_persists_its_current_awaiting_result(monkeypatch) -> None:
     command = {
         "command_id": "design-command",
