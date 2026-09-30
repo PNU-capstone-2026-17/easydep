@@ -67,9 +67,9 @@ def _graph(*, inputs: list[dict], occurrences: list[dict] | None = None, distinc
     }
 
 
-def _candidate_workflow_with_projection_results(monkeypatch, projection_results, graph_calls=None):
+def _candidate_workflow_with_projection_results(monkeypatch, projection_results, graph_calls=None, graph_results=None):
     graph_calls = graph_calls if graph_calls is not None else []
-    graphs = iter({"graph": index} for index in range(len(projection_results)))
+    graphs = iter(graph_results or ({"graph": index} for index in range(len(projection_results))))
     results = iter(projection_results)
     authoring = {"workflowId": "workflow-UC-1", "planningModel": {}}
 
@@ -79,7 +79,10 @@ def _candidate_workflow_with_projection_results(monkeypatch, projection_results,
 
     def generate_graph(_client, _candidate, correction_context=None):
         graph_calls.append(correction_context)
-        return next(graphs)
+        result = next(graphs)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
     def project_graph(_candidate, graph):
         result = next(results)
@@ -136,6 +139,47 @@ def test_candidate_workflow_stops_after_second_graph_projection_fails(monkeypatc
     assert len(graph_calls) == 2
     assert graph_calls[0] is None
     assert graph_calls[1]["validationError"] == "first invalid"
+
+
+def test_candidate_workflow_corrects_first_graph_response_schema_failure(monkeypatch) -> None:
+    schema_error = dynamic.jsonschema.ValidationError(
+        "'knownAlias' is not one of ['availableAlias']",
+        validator="enum",
+        path=["requiredInputs", 0, "sourceInputSlot"],
+    )
+    result, graph_calls = _candidate_workflow_with_projection_results(
+        monkeypatch,
+        [({}, {}, [])],
+        graph_results=[schema_error, {"graph": "corrected"}],
+    )
+
+    assert result["workflowId"] == "workflow-UC-1"
+    assert len(graph_calls) == 2
+    assert graph_calls[0] is None
+    assert graph_calls[1]["validationError"] == (
+        "requiredInputs.0.sourceInputSlot: enum validation failed "
+        "('knownAlias' is not one of ['availableAlias'])"
+    )
+
+
+def test_candidate_workflow_stops_after_second_graph_response_schema_failure(monkeypatch) -> None:
+    first_error = dynamic.PydanticValidationError.from_exception_data(
+        "WorkflowGraph",
+        [{"type": "missing", "loc": ("occurrences",), "input": {}}],
+    )
+    second_error = dynamic.jsonschema.ValidationError("second schema failure", validator="type")
+    graph_calls = []
+    with pytest.raises(dynamic.jsonschema.ValidationError, match="second schema failure"):
+        _candidate_workflow_with_projection_results(
+            monkeypatch,
+            [({}, {}, [])],
+            graph_calls,
+            graph_results=[first_error, second_error],
+        )
+
+    assert len(graph_calls) == 2
+    assert graph_calls[0] is None
+    assert graph_calls[1]["validationError"] == "occurrences: Field required"
 
 
 def test_graph_requires_exact_closure_of_every_selected_required_slot() -> None:

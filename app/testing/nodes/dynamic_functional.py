@@ -11,6 +11,7 @@ from typing import Any
 
 import jsonschema
 from openai import OpenAI
+from pydantic import ValidationError as PydanticValidationError
 
 from app.config import settings
 from app.llm_connection import build_arazzo_llm_connection, build_llm_connection
@@ -2562,6 +2563,22 @@ def _emit_dynamic_workflow_plan(
     )
 
 
+def _graph_validator_feedback(error: Exception) -> str:
+    """Return concise validator guidance without echoing a full model response."""
+    if isinstance(error, jsonschema.ValidationError):
+        location = ".".join(str(part) for part in error.absolute_path) or "$"
+        feedback = f"{location}: {error.validator} validation failed ({error.message})"
+    elif isinstance(error, PydanticValidationError):
+        details = error.errors(include_url=False, include_context=False)
+        feedback = "; ".join(
+            f"{'.'.join(str(part) for part in item.get('loc', ())) or '$'}: {item.get('msg', 'invalid value')}"
+            for item in details[:4]
+        )
+    else:
+        feedback = str(error)
+    return feedback[:500]
+
+
 def _generate_candidate_workflow(
     client: OpenAI | None,
     candidate: dict[str, Any],
@@ -2583,14 +2600,30 @@ def _generate_candidate_workflow(
         authoring["planningModel"]["producerSelections"] = _select_semantic_producers(
             client, authoring, openapi
         )
-        graph = _generate_workflow_graph(client, authoring)
+        correction_used = False
         try:
-            selected_candidate, decision, literal_slots = _validated_graph_projection(authoring, graph)
-        except (ArazzoPlanningError, ArazzoValidationError) as validation_error:
+            graph = _generate_workflow_graph(client, authoring)
+        except (jsonschema.ValidationError, PydanticValidationError) as validation_error:
+            correction_used = True
             graph = _generate_workflow_graph(
                 client,
                 authoring,
-                correction_context={"rejectedGraph": graph, "validationError": str(validation_error)},
+                correction_context={
+                    "validationError": _graph_validator_feedback(validation_error),
+                },
+            )
+        try:
+            selected_candidate, decision, literal_slots = _validated_graph_projection(authoring, graph)
+        except (ArazzoPlanningError, ArazzoValidationError) as validation_error:
+            if correction_used:
+                raise
+            graph = _generate_workflow_graph(
+                client,
+                authoring,
+                correction_context={
+                    "rejectedGraph": graph,
+                    "validationError": _graph_validator_feedback(validation_error),
+                },
             )
             selected_candidate, decision, literal_slots = _validated_graph_projection(authoring, graph)
         decision["fixedInputs"] = _select_literal_values(client, selected_candidate, literal_slots, decision)
