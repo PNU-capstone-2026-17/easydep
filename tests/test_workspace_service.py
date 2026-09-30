@@ -753,6 +753,227 @@ def test_testing_sut_repair_rechecks_with_the_same_command_and_implementation_jo
     assert observed["reset_checkpoint"] is True
 
 
+def test_testing_mixed_plan_and_sut_retries_plan_before_implementation_repair(
+    monkeypatch,
+) -> None:
+    command = {
+        "command_id": "testing-command",
+        "app_id": "app-1",
+        "action": "start_testing",
+        "stage": "testing",
+        "payload": {"testing_checkpoint": {"implementation_job_id": "implementation-1"}},
+    }
+    initial_job = {
+        "job_id": "testing-command",
+        "app_id": "app-1",
+        "implementation_job_id": "implementation-1",
+        "status": "COMPLETED",
+        "result": {"passed": False},
+    }
+    sut_finding = {
+        "message": "The implementation returned the wrong response.",
+        "repairable": True,
+        "defect_class": "SUT_DEFECT",
+        "repair_owner": "implementation",
+    }
+    result = {
+        "awaiting_input": True,
+        "requires_revision": True,
+        "repair_state": {"status": "ACTIVE", "attempt_count": 1},
+        "blocking_findings": [
+            {
+                "message": "The generated test contradicts its contract.",
+                "repairable": True,
+                "defect_class": "TEST_DEFECT",
+                "repair_owner": "testing",
+                "candidate_plan": {"case_id": "case-1"},
+            },
+            sut_finding,
+        ],
+        "job": initial_job,
+    }
+    service = WorkspaceService()
+    checkpoint_retries: list[dict[str, Any]] = []
+    owner_repairs: list[dict[str, Any]] = []
+    monkeypatch.setattr(service, "_record_technical_retry", lambda *_args: None)
+    monkeypatch.setattr(service, "_sleep_for_retry", lambda *_args: None)
+
+    def retry_checkpoint(_command, previous, _stage):
+        checkpoint_retries.append(previous)
+        return {
+            "awaiting_input": True,
+            "requires_revision": True,
+            "repair_state": {"status": "ACTIVE", "attempt_count": 2},
+            "blocking_findings": [sut_finding],
+            "job": initial_job,
+        }
+
+    def repair_owner(_command, previous):
+        owner_repairs.append(previous)
+        return ({"job": {"status": "COMPLETED"}}, "implementation-1", "testing-dynamic-functional")
+
+    monkeypatch.setattr(service, "_retry_technical_checkpoint", retry_checkpoint)
+    monkeypatch.setattr(service, "_repair_testing_with_owner", repair_owner)
+    monkeypatch.setattr(
+        service,
+        "_run_testing_command",
+        lambda *_args, **_kwargs: {"message": "Testing completed."},
+    )
+    try:
+        completed = service._auto_repair_semantic_result(command, result)
+    finally:
+        service.shutdown()
+
+    assert completed == {"message": "Testing completed."}
+    assert len(checkpoint_retries) == 1
+    assert len(owner_repairs) == 1
+    assert owner_repairs[0]["blocking_findings"] == [sut_finding]
+
+
+def test_testing_mixed_repeated_candidate_still_repairs_remaining_sut_findings(
+    monkeypatch,
+) -> None:
+    command = {
+        "command_id": "testing-command",
+        "app_id": "app-1",
+        "action": "start_testing",
+        "stage": "testing",
+        "payload": {"implementation_job_id": "implementation-1"},
+    }
+    findings = [
+        {
+            "message": "The generated test contradicts its contract.",
+            "repairable": True,
+            "defect_class": "TEST_DEFECT",
+            "repair_owner": "testing",
+            "candidate_plan": {"case_id": "case-1"},
+        },
+        {
+            "message": "The implementation returned the wrong response.",
+            "repairable": True,
+            "defect_class": "SUT_DEFECT",
+            "repair_owner": "implementation",
+        },
+    ]
+    result = {
+        "awaiting_input": True,
+        "requires_revision": True,
+        "repair_state": {"status": "ACTIVE", "attempt_count": 1},
+        "blocking_findings": findings,
+        "job": {
+            "job_id": "testing-command",
+            "implementation_job_id": "implementation-1",
+            "status": "COMPLETED",
+            "result": {"passed": False},
+        },
+    }
+    service = WorkspaceService()
+    monkeypatch.setattr(service, "_record_technical_retry", lambda *_args: None)
+    monkeypatch.setattr(service, "_sleep_for_retry", lambda *_args: None)
+    repeated = {
+        **result,
+        "blocking_findings": [
+            {**findings[1], "message": "The service response still violates the scenario."},
+            {**findings[0], "message": "The test plan still contradicts its contract."},
+        ],
+        "job": {
+            **result["job"],
+            "repair_history": {
+                "attempts": [{"outcome": "repeated_candidate", "candidate_digest": "same-app"}]
+            },
+        },
+    }
+    repaired_sut: list[dict[str, Any]] = []
+    monkeypatch.setattr(service, "_retry_technical_checkpoint", lambda *_args: repeated)
+    monkeypatch.setattr(
+        service,
+        "_repair_testing_with_owner",
+        lambda _command, value: (
+            repaired_sut.append(value)
+            or ({"job": {"status": "COMPLETED"}}, "implementation-1", "testing-dynamic-functional")
+        ),
+    )
+    monkeypatch.setattr(
+        service,
+        "_run_testing_command",
+        lambda *_args, **_kwargs: {"message": "Testing completed."},
+    )
+    try:
+        repaired = service._auto_repair_semantic_result(command, result)
+    finally:
+        service.shutdown()
+
+    assert repaired == {"message": "Testing completed."}
+    assert len(repaired_sut) == 1
+    assert repaired_sut[0]["blocking_findings"] == [repeated["blocking_findings"][0]]
+
+
+def test_testing_mixed_repeated_candidate_propagates_owner_awaiting_input(
+    monkeypatch,
+) -> None:
+    command = {
+        "command_id": "testing-command",
+        "app_id": "app-1",
+        "action": "start_testing",
+        "stage": "testing",
+        "payload": {"implementation_job_id": "implementation-1"},
+    }
+    testing_finding = {
+        "message": "The generated test contradicts its contract.",
+        "repairable": True,
+        "defect_class": "TEST_DEFECT",
+        "repair_owner": "testing",
+    }
+    sut_finding = {
+        "message": "The implementation returned the wrong response.",
+        "repairable": True,
+        "defect_class": "SUT_DEFECT",
+        "repair_owner": "implementation",
+    }
+    result = {
+        "awaiting_input": True,
+        "requires_revision": True,
+        "repair_state": {"status": "ACTIVE", "attempt_count": 1},
+        "blocking_findings": [testing_finding, sut_finding],
+        "job": {
+            "job_id": "testing-command",
+            "implementation_job_id": "implementation-1",
+            "status": "COMPLETED",
+            "result": {"passed": False},
+        },
+    }
+    repeated = {
+        **result,
+        "job": {
+            **result["job"],
+            "repair_history": {"attempts": [{"outcome": "repeated_candidate"}]},
+        },
+    }
+    owner_question = {
+        "kind": "question",
+        "message": "Which response contract should the implementation use?",
+        "awaiting_input": True,
+        "requires_revision": True,
+        "questions": [{"id": "response-contract"}],
+        "job": {"status": "AWAITING_INPUT"},
+    }
+    service = WorkspaceService()
+    monkeypatch.setattr(service, "_record_technical_retry", lambda *_args: None)
+    monkeypatch.setattr(service, "_sleep_for_retry", lambda *_args: None)
+    monkeypatch.setattr(service, "_retry_technical_checkpoint", lambda *_args: repeated)
+    monkeypatch.setattr(
+        service,
+        "_repair_testing_with_owner",
+        lambda *_args: (owner_question, "implementation-1", "testing-dynamic-functional"),
+    )
+    try:
+        repaired = service._auto_repair_semantic_result(command, result)
+    finally:
+        service.shutdown()
+
+    assert repaired is owner_question
+
+
 def test_testing_repair_groups_findings_by_declared_source_task(monkeypatch) -> None:
     service = WorkspaceService()
     blockers = [

@@ -81,6 +81,8 @@ from .task_check import (
 )
 from .upstream_gap_tool import (
     UpstreamGap,
+    UpstreamGapAction,
+    UpstreamGapSession,
     register_upstream_gap_tool,
     reported_upstream_gap,
 )
@@ -847,6 +849,25 @@ class EventJournal:
             f"{SOURCE_EDIT_TOOL_NAME}_applied", 0
         ) + 1
         self.latest_agent_message = "Direct editor applied edit_source."
+
+    def record_direct_upstream_gap(self, gap: UpstreamGap) -> None:
+        """Persist the existing bounded upstream-gap result without source text."""
+
+        payload = {
+            "sequence": self.event_count,
+            "timestamp": time.time(),
+            "type": "DirectEditorAction",
+            "source": "agent",
+            "tool": "report_upstream_gap",
+            "event": gap.as_result(),
+        }
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        self.event_count += 1
+        self.tool_counts["report_upstream_gap"] = self.tool_counts.get(
+            "report_upstream_gap", 0
+        ) + 1
+        self.latest_agent_message = "Direct editor reported an upstream gap."
 
     def record_direct_source_rejection(
         self,
@@ -1822,6 +1843,30 @@ def _direct_editor_edit_tool_schema(allowed_paths: list[str]) -> dict[str, objec
     }
 
 
+def _direct_editor_upstream_gap_tool_schema(source_refs: list[str]) -> dict[str, object]:
+    exact_refs = sorted(set(source_refs))
+    return {
+        "type": "function",
+        "function": {
+            "name": "report_upstream_gap",
+            "description": (
+                "Stop implementation only when required upstream behavior is absent or "
+                "contradictory and implementation would require guessing. Report a concise "
+                "summary and exactly one supplied source reference."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["summary", "source_ref"],
+                "properties": {
+                    "summary": {"type": "string", "minLength": 1, "maxLength": 500},
+                    "source_ref": {"type": "string", "enum": exact_refs},
+                },
+            },
+        },
+    }
+
+
 def _direct_editor_reasoning_effort(llm_config: dict[str, object]) -> str:
     value = llm_config.get("reasoningEffort")
     return value if isinstance(value, str) and value in {"none", "low", "high", "max"} else "low"
@@ -1832,7 +1877,8 @@ def _request_direct_editor_action(
     prompt: str,
     llm_config: dict[str, object],
     allowed_paths: list[str],
-) -> SourceReplaceAction | SourceEditAction:
+    upstream_gap_source_refs: list[str] | None = None,
+) -> SourceReplaceAction | SourceEditAction | UpstreamGapAction:
     """Request one exact source replacement or bounded exact-context edit."""
 
     if not connection.api_key:
@@ -1842,23 +1888,34 @@ def _request_direct_editor_action(
     raw_max_tokens = llm_config.get("maxOutputTokens", 8192)
     if not isinstance(raw_max_tokens, int) or raw_max_tokens < 1:
         raise TypeError("implementation LLM maxOutputTokens must be a positive integer")
+    system_content = (
+        "You are a source editor. Return exactly one edit_source or replace_source tool call. "
+        "Use edit_source for small exact edits to an existing file; use replace_source "
+        "for a new file or broad rewrite. Do not explain, inspect, or call other tools."
+    )
+    if upstream_gap_source_refs:
+        system_content += (
+            " If required upstream behavior is absent or contradictory and implementation "
+            "would require guessing, use report_upstream_gap with one supplied source_ref. "
+            "Do not use it for ordinary implementation choices."
+        )
     request: dict[str, object] = {
         "model": connection.model,
         "messages": [
             {
                 "role": "system",
-                "content": (
-                    "You are a source editor. Return exactly one edit_source or replace_source tool call. "
-                    "Use edit_source for small exact edits to an existing file; use replace_source "
-                    "for a new file or broad rewrite. Do not explain, inspect, or call other tools."
-                ),
+                "content": system_content,
             },
             {"role": "user", "content": prompt},
         ],
         "tools": [
             _direct_editor_tool_schema(allowed_paths),
             _direct_editor_edit_tool_schema(allowed_paths),
-        ],
+        ] + (
+            [_direct_editor_upstream_gap_tool_schema(upstream_gap_source_refs)]
+            if upstream_gap_source_refs
+            else []
+        ),
         "tool_choice": "required",
         "temperature": 0,
         "max_completion_tokens": raw_max_tokens,
@@ -1889,7 +1946,10 @@ def _request_direct_editor_action(
         )
     function = getattr(tool_calls[0], "function", None)
     tool_name = getattr(function, "name", None)
-    if tool_name not in {SOURCE_REPLACE_TOOL_NAME, SOURCE_EDIT_TOOL_NAME}:
+    valid_tool_names = {SOURCE_REPLACE_TOOL_NAME, SOURCE_EDIT_TOOL_NAME}
+    if upstream_gap_source_refs:
+        valid_tool_names.add("report_upstream_gap")
+    if tool_name not in valid_tool_names:
         raise DirectEditorResponseError(
             "Direct editor returned an unexpected tool name.",
             failure_code="UNEXPECTED_TOOL_NAME",
@@ -1910,9 +1970,13 @@ def _request_direct_editor_action(
             failure_code="INVALID_TOOL_JSON",
             retryable=True,
         ) from error
-    action_type = SourceEditAction if tool_name == SOURCE_EDIT_TOOL_NAME else SourceReplaceAction
+    action_type = {
+        SOURCE_EDIT_TOOL_NAME: SourceEditAction,
+        SOURCE_REPLACE_TOOL_NAME: SourceReplaceAction,
+        "report_upstream_gap": UpstreamGapAction,
+    }[tool_name]
     try:
-        return action_type.model_validate(value)
+        action = action_type.model_validate(value)
     except ValidationError as error:
         issues: list[dict[str, str]] = []
         for item in error.errors(include_input=False)[:16]:
@@ -1926,7 +1990,7 @@ def _request_direct_editor_action(
         rejected_path = value.get("path") if isinstance(value, dict) else None
         source = value.get("source") if isinstance(value, dict) else None
         raise DirectEditorResponseError(
-            "Direct editor tool arguments do not match the selected source tool.",
+            "Direct editor tool arguments do not match the selected tool.",
             failure_code="INVALID_TOOL_ARGUMENTS",
             retryable=True,
             rejected_path=rejected_path if isinstance(rejected_path, str) else None,
@@ -1938,6 +2002,17 @@ def _request_direct_editor_action(
             ),
             field_issues=issues,
         ) from error
+    if isinstance(action, UpstreamGapAction) and (
+        upstream_gap_source_refs is None or action.source_ref not in upstream_gap_source_refs
+    ):
+        raise DirectEditorResponseError(
+            "Direct editor upstream-gap reference is not in the supplied allowlist.",
+            failure_code="INVALID_TOOL_ARGUMENTS",
+            retryable=True,
+            tool_name=tool_name,
+            field_issues=[{"field": "source_ref", "type": "not_allowed"}],
+        )
+    return action
 
 
 def _apply_direct_editor_action(
@@ -2570,7 +2645,10 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
                 )
                 run_openhands_conversation(conversation)
                 repair_changes = changed_files(repair_before, snapshot_files(sandbox))
-                if not any(path in editable_paths for path in repair_changes):
+                if (
+                    reported_upstream_gap(agent) is None
+                    and not any(path in editable_paths for path in repair_changes)
+                ):
                     raise OwnerConversationIncomplete(
                         {
                             "command": ["replace_source"],
@@ -3144,12 +3222,18 @@ class _DirectEditorConversation:
         llm_config: dict[str, object],
         editable_files: list[str],
         callbacks: list[object],
+        upstream_gap_source_refs: list[str] | None = None,
     ) -> None:
         self.sandbox = sandbox
         self.connection = connection
         self.llm_config = llm_config
         self.editable_files = editable_files
         self.callbacks = callbacks
+        self.upstream_gap_session = (
+            UpstreamGapSession(upstream_gap_source_refs)
+            if upstream_gap_source_refs
+            else None
+        )
         self.initial_prompt: str | None = None
         self.prompt = ""
         self.state = type("DirectEditorState", (), {"execution_status": None, "events": []})()
@@ -3184,12 +3268,19 @@ class _DirectEditorConversation:
         retry_delay = 1
         while True:
             try:
-                action = _request_direct_editor_action(
+                request_args = (
                     self.connection,
                     self.prompt,
                     self.llm_config,
                     allowed_paths,
                 )
+                if self.upstream_gap_session is not None:
+                    action = _request_direct_editor_action(
+                        *request_args,
+                        sorted(self.upstream_gap_session.source_refs),
+                    )
+                else:
+                    action = _request_direct_editor_action(*request_args)
             except DirectEditorResponseError as error:
                 if not error.retryable:
                     raise
@@ -3210,6 +3301,38 @@ class _DirectEditorConversation:
                         field_issues=error.field_issues,
                     )
             else:
+                if isinstance(action, UpstreamGapAction):
+                    gap = (
+                        self.upstream_gap_session.report(action)
+                        if self.upstream_gap_session is not None
+                        else None
+                    )
+                    if gap is None:
+                        if journal is not None:
+                            journal.record_direct_source_rejection(
+                                failure_code="INVALID_TOOL_ARGUMENTS",
+                                rejected_path=None,
+                                allowed_paths=allowed_paths,
+                                source_sha256=None,
+                                tool_name="report_upstream_gap",
+                                field_issues=[{"field": "summary/source_ref", "type": "invalid"}],
+                            )
+                        failure = {
+                            "failureCode": "INVALID_TOOL_ARGUMENTS",
+                            "fieldIssues": [{"field": "summary/source_ref", "type": "invalid"}],
+                        }
+                        self.prompt = (
+                            base_request_prompt
+                            + "\n\n## Latest source tool argument correction\n\n"
+                            + json.dumps(failure, ensure_ascii=False, sort_keys=True)
+                            + "\nUse a concise non-empty summary and exactly one supplied source_ref."
+                        )
+                        time.sleep(retry_delay)
+                        retry_delay = min(retry_delay * 2, 30)
+                        continue
+                    if journal is not None:
+                        journal.record_direct_upstream_gap(gap)
+                    break
                 observation = _apply_direct_editor_action(
                     self.sandbox, self.editable_files, action, journal
                 )
@@ -3312,11 +3435,35 @@ def create_openhands_conversation(
             llm_config,
             list(editable_files or []),
             list(callbacks or []),
+            list(upstream_gap_source_refs or []),
         )
         return direct, type(
             "DirectEditorAgent",
             (),
-            {"_tools": {"finish": None, "replace_source": None, "edit_source": None}},
+            {
+                "_tools": {
+                    "finish": None,
+                    "replace_source": None,
+                    "edit_source": None,
+                    **(
+                        {
+                            "report_upstream_gap": type(
+                                "DirectGapTool",
+                                (),
+                                {
+                                    "executor": type(
+                                        "DirectGapExecutor",
+                                        (),
+                                        {"session": direct.upstream_gap_session},
+                                    )(),
+                                },
+                            )(),
+                        }
+                        if direct.upstream_gap_session is not None
+                        else {}
+                    ),
+                }
+            },
         )()
 
     from openhands.sdk import LLM, Agent, AgentContext, Conversation, Tool, register_tool

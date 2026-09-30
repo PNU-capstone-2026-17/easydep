@@ -1255,6 +1255,178 @@ def test_backend_owner_keeps_controller_only_marker_without_operation_contract(
     ]
 
 
+def test_backend_owner_projects_only_declared_related_contract_inventories(
+    tmp_path: Path,
+) -> None:
+    spec, run = _spec_and_run(tmp_path)
+    owner_source = (
+        run
+        / "application/src/main/java/com/example/orders/application/impl/OrderControlService.java"
+    )
+    owner_source.parent.mkdir(parents=True, exist_ok=True)
+    owner_source.write_text("public class OrderControlService {}\n", encoding="utf-8")
+    _write_json(
+        spec.inputs["bceModel"],
+        {
+            "Classes": [
+                {
+                    "className": "OrderControl",
+                    "stereotype": "Control",
+                    "fields": ["acceptedAt: String"],
+                    "use_case_ids": ["UC1"],
+                    "operations": [
+                        {
+                            "operationId": "place-order",
+                            "name": "place",
+                            "parameters": [{"name": "id", "type": "String"}],
+                            "returnType": "void",
+                            "stepRefs": ["UC1:main:1"],
+                        }
+                    ],
+                },
+                {
+                    "className": "Order",
+                    "stereotype": "Entity",
+                    "fields": ["orderId: String", "status: String"],
+                    "use_case_ids": ["UC1"],
+                    "operations": [
+                        {
+                            "operationId": "save-order",
+                            "name": "save",
+                            "parameters": [{"name": "id", "type": "String"}],
+                            "returnType": "void",
+                            "stepRefs": ["UC1:main:1"],
+                        }
+                    ],
+                },
+                {
+                    "className": "UnrelatedRecord",
+                    "stereotype": "Entity",
+                    "fields": ["excludedField: String"],
+                    "operations": [],
+                },
+            ],
+            "DataTypes": [],
+            "Relationships": [
+                {"source": "OrderControl", "target": "Order", "type": "Association"}
+            ],
+            "Collaborations": [],
+        },
+    )
+    _write_json(
+        spec.inputs["erdBceModel"] if "erdBceModel" in spec.inputs else tmp_path / "inputs/erd.json",
+        {
+            "Classes": [
+                {
+                    "className": "Order",
+                    "stereotype": "Entity",
+                    "fields": ["orderId: String", "storedAt: String"],
+                    "operations": [],
+                },
+                {
+                    "className": "UnrelatedRecord",
+                    "stereotype": "Entity",
+                    "fields": ["excludedPersistenceField: String"],
+                    "operations": [],
+                },
+            ],
+            "DataTypes": [],
+            "Relationships": [],
+            "Collaborations": [],
+        },
+    )
+    spec.inputs["erdBceModel"] = tmp_path / "inputs/erd.json"
+    _write_json(tmp_path / "inputs/erd-logical.json", {})
+    spec.inputs["erdLogicalModel"] = tmp_path / "inputs/erd-logical.json"
+    _write_json(
+        spec.inputs["sequenceModel"],
+        {
+            "Diagrams": [
+                {
+                    "use_case_id": "UC1",
+                    "Participants": [
+                        {"name": "Actor", "alias": "Actor", "kind": "actor", "participant_ref": "actor"},
+                        {"name": "OrderControl", "alias": "OrderControl", "kind": "control", "source_class": "OrderControl", "participant_ref": "control"},
+                        {"name": "Order", "alias": "Order", "kind": "entity", "source_class": "Order", "participant_ref": "order"},
+                    ],
+                    "Messages": [
+                        {"source": "Actor", "target": "OrderControl", "label": "place(id: String)", "type": "sync", "use_case_ids": ["UC1"], "step_ids": ["UC1:main:1"], "call_id": "place::call:1", "call_ref": "call_place", "operation_ref": "place-order", "arguments": [{"parameter": "id", "type": "String", "source_kind": "input", "source_ref": "UC1:main:1#id"}]},
+                        {"source": "OrderControl", "target": "Order", "label": "save(id: String)", "type": "sync", "use_case_ids": ["UC1"], "step_ids": ["UC1:main:1"], "call_id": "place::call:2", "call_ref": "call_save", "operation_ref": "save-order", "arguments": [{"parameter": "id", "type": "String", "source_kind": "call_parameter", "source_ref": "call_place#id"}]},
+                        {"source": "Order", "target": "OrderControl", "label": "void", "type": "return", "use_case_ids": ["UC1"], "step_ids": ["UC1:main:1"], "reply_to": "place::call:2", "call_ref": "call_save", "operation_ref": "save-order"},
+                        {"source": "OrderControl", "target": "Actor", "label": "void", "type": "return", "use_case_ids": ["UC1"], "step_ids": ["UC1:main:1"], "reply_to": "place::call:1", "call_ref": "call_place", "operation_ref": "place-order"},
+                    ],
+                }
+            ],
+            "MethodProposals": [],
+        },
+    )
+    _write_json(
+        spec.inputs["apiModel"],
+        {
+            "Endpoints": [
+                {
+                    "operation_id": "placeOrder",
+                    "method": "post",
+                    "path": "/orders/{accountId}",
+                    "path_params": [{"name": "accountId", "type": "string", "required": True}],
+                    "request_schema": "PlaceOrderRequest",
+                    "control_binding": {
+                        "control": "OrderControl",
+                        "method": "place",
+                        "arguments": [{"name": "id", "source": "body.id"}],
+                    },
+                }
+            ],
+            "Schemas": [
+                {
+                    "name": "PlaceOrderRequest",
+                    "fields": [{"name": "id", "type": "string", "required": True}],
+                }
+            ],
+        },
+    )
+    bce_model = BCEModel.model_validate_json(spec.inputs["bceModel"].read_text(encoding="utf-8"))
+    for relative_path, source in render_java_scaffold(
+        JavaScaffoldInput(
+            bceModel=bce_model,
+            basePackage=spec.base_package,
+            applicationName="Orders",
+        )
+    ).items():
+        generated_source = run / "application/src/main/java" / relative_path
+        generated_source.parent.mkdir(parents=True, exist_ok=True)
+        generated_source.write_text(source, encoding="utf-8")
+
+    with patch(
+        "app.implementation.planning.design_context.llm_config",
+        return_value={"model": "test-model"},
+    ):
+        tasks = generate_backend_owner_tasks(spec, run)
+
+    task = next(
+        item
+        for item in tasks
+        if any(path.endswith("OrderControlService.java") for path in item.required_output_paths)
+    )
+    context = json.loads((run / task.context_file).read_text(encoding="utf-8"))
+    evidence = context["declaredContractEvidence"]
+    assert evidence["scope"]["ownerOperationIds"] == ["OrderControl::place(id:String)"]
+    assert evidence["scope"]["directSequenceCallTargets"] == ["Order"]
+    assert evidence["sourceRefs"] == ["api:placeOrder", "operation:OrderControl::place(id:String)"]
+    assert {item["className"] for item in evidence["bceClasses"]} == {"OrderControl", "Order"}
+    assert evidence["persistenceClasses"] == [
+        {"className": "Order", "stereotype": "Entity", "fields": ["orderId : String", "storedAt : String"], "fieldRefs": []}
+    ]
+    assert evidence["apiInputBindings"][0]["requestSchema"]["fields"] == [
+        {"name": "id", "type": "string", "required": True, "description": ""}
+    ]
+    prompt = (run / task.prompt_file).read_text(encoding="utf-8")
+    assert "### Declared owner contract evidence" in prompt
+    assert "excludedField" not in prompt
+    assert "excludedPersistenceField" not in prompt
+    assert "undeclaredField" not in prompt
+
+
 def test_controller_task_scope_comes_from_its_owned_endpoint_contracts(tmp_path: Path) -> None:
     spec, run = _spec_and_run(tmp_path)
     spec.inputs["apiModel"].write_text(

@@ -704,6 +704,29 @@ def _build_backend_owner_task(
             if item.get("operationId") in owned_operation_ids
             or item.get("stableId") in owned_stable_ids
         ]
+    owned_operation_ids = {
+        str(item.get("operationId"))
+        for item in owned_method_contexts
+        if isinstance(item.get("operationId"), str) and item.get("operationId")
+    }
+    owner_contract_evidence = _owner_declared_contract_evidence(
+        bce_model=bce_model,
+        persistence_model=(
+            BCEModel.model_validate_json(
+                spec.inputs["erdBceModel"].read_text(encoding="utf-8")
+            )
+            if spec.inputs.get("erdBceModel")
+            else None
+        ),
+        api_model=ApiSpecModel.model_validate_json(
+            spec.inputs["apiModel"].read_text(encoding="utf-8")
+        ),
+        method_projections=[
+            item
+            for item in method_projection.methods
+            if item.method.operation_id in owned_operation_ids
+        ],
+    )
     owned_method_refs = {
         str(ref)
         for item in owned_method_contexts
@@ -819,6 +842,7 @@ def _build_backend_owner_task(
                 "startingSourcePaths": source_paths,
                 "designInputs": design_inputs,
                 "methodContexts": owned_method_contexts,
+                "declaredContractEvidence": owner_contract_evidence,
                 **(
                     {"generatedOperationContractsPath": generated_operation_contracts}
                     if generated_operation_contracts is not None
@@ -853,6 +877,7 @@ def _build_backend_owner_task(
         "sourceIndexPath": _relative(run_root, source_index_path),
         "methodContextRoot": _relative(run_root, output / "method-context"),
         "designInputs": design_inputs,
+        "declaredContractEvidence": owner_contract_evidence,
         **(
             {"generatedOperationContractsPath": generated_operation_contracts}
             if generated_operation_contracts is not None
@@ -872,6 +897,9 @@ def _build_backend_owner_task(
         {"contracts": [_prompt_operation_contract(item) for item in task_operation_contracts]},
         ensure_ascii=False,
         indent=2,
+    )
+    packet_declared_contract_evidence = json.dumps(
+        owner_contract_evidence, ensure_ascii=False, indent=2
     )
     # Method contexts are already projected by stable operation identity and exact
     # writable source path above.  A file owner needs the same compact behavioral
@@ -915,6 +943,10 @@ Complete the generated backend implementation for the writable sources below.
   make behavior unambiguous within the legal writable surface.
 - If required public input, output, or externally visible behavior is absent or contradictory, call
   `report_upstream_gap` with one supplied source reference; do not fabricate product meaning.
+- The declared-contract inventory below is a bounded comparison surface: use only its listed
+  declarations for these owned operations and direct collaborators. A field not declared in any
+  listed inventory is not supplied by another inventory; this is evidence about declarations, not
+  a product-policy decision.
 - Start with one writable source under `Generated source`. Make the first legal `file_editor` edit from its
   local declarations and assigned task behavior. If one concrete dependency signature is needed, inspect only
   that declared read source first; do not spend a turn explaining or broadly exploring.
@@ -938,6 +970,10 @@ the first edit; broader evidence remains available only for a concrete diagnosti
 ### Operation contracts
 ```json
 {packet_contracts}
+```
+### Declared owner contract evidence
+```json
+{packet_declared_contract_evidence}
 ```
 {packet_operation_behavior}
 
@@ -1618,6 +1654,136 @@ def _prompt_operation_contract(contract: dict[str, object]) -> dict[str, object]
         field: contract[field]
         for field in prompt_fields
         if field in contract and contract[field] not in (None, [], {})
+    }
+
+
+def _owner_declared_contract_evidence(
+    *,
+    bce_model: BCEModel,
+    persistence_model: BCEModel | None,
+    api_model: ApiSpecModel,
+    method_projections: list[MethodProjection],
+) -> dict[str, object]:
+    """Project field declarations reachable from one implementation owner.
+
+    This deliberately carries inventories, not inferred mappings or business
+    rules.  The owner method and its direct sequence-call targets form the
+    bounded class surface; matching persistence declarations and exact HTTP
+    bindings provide the remaining declared input evidence.
+    """
+
+    operation_ids = sorted(
+        {
+            item.method.operation_id
+            for item in method_projections
+            if item.method.operation_id
+        }
+    )
+    class_names = {
+        item.method.class_name
+        for item in method_projections
+        if item.method.class_name
+    }
+    direct_call_targets = {
+        call.target.class_name
+        for item in method_projections
+        for method_slice in item.slices
+        for call in method_slice.outgoing
+        if call.target is not None and call.target.class_name
+    }
+    class_names.update(direct_call_targets)
+
+    def class_inventory(model: BCEModel | None) -> list[dict[str, object]]:
+        if model is None:
+            return []
+        return [
+            {
+                "className": item.class_name,
+                "stereotype": item.stereotype,
+                "fields": list(item.fields),
+                "fieldRefs": list(item.field_refs),
+            }
+            for item in model.Classes
+            if item.class_name in class_names
+        ]
+
+    bound_endpoints = []
+    schemas = {item.name: item for item in api_model.Schemas}
+    for endpoint in api_model.Endpoints:
+        binding = endpoint.control_binding
+        if binding is None:
+            continue
+        matching_operation = next(
+            (
+                item
+                for item in method_projections
+                if item.method.class_name == binding.control
+                and item.method.name == binding.method
+            ),
+            None,
+        )
+        if matching_operation is None:
+            continue
+        request_schema = schemas.get(endpoint.request_schema)
+        bound_endpoints.append(
+            {
+                "operationId": endpoint.operation_id,
+                "method": endpoint.method,
+                "path": endpoint.path,
+                "ownerOperationId": matching_operation.method.operation_id,
+                "pathParams": [item.model_dump() for item in endpoint.path_params],
+                "queryParams": [item.model_dump() for item in endpoint.query_params],
+                "requestSchema": (
+                    {
+                        "name": request_schema.name,
+                        "fields": [item.model_dump() for item in request_schema.fields],
+                    }
+                    if request_schema is not None
+                    else None
+                ),
+                "controlBinding": {
+                    "control": binding.control,
+                    "method": binding.method,
+                    "arguments": [item.model_dump() for item in binding.arguments],
+                },
+            }
+        )
+
+    return {
+        "scope": {
+            "ownerOperationIds": operation_ids,
+            "directSequenceCallTargets": sorted(direct_call_targets),
+        },
+        "sourceRefs": sorted(
+            {
+                *(f"operation:{value}" for value in operation_ids),
+                *(
+                    f"api:{item['operationId']}"
+                    for item in bound_endpoints
+                    if isinstance(item.get("operationId"), str)
+                    and item["operationId"]
+                ),
+            }
+        ),
+        "bceClasses": class_inventory(bce_model),
+        "persistenceClasses": class_inventory(persistence_model),
+        "relationships": [
+            {
+                "source": item.source,
+                "target": item.target,
+                "type": item.type,
+                "description": item.description,
+            }
+            for item in bce_model.Relationships
+            if item.source in class_names and item.target in class_names
+        ],
+        "apiInputBindings": sorted(
+            bound_endpoints, key=lambda item: str(item["operationId"])
+        ),
+        "comparisonRule": (
+            "Only the listed BCE, persistence, and API input inventories declare fields "
+            "for this scope; an absent field is not supplied by a different listed inventory."
+        ),
     }
 
 

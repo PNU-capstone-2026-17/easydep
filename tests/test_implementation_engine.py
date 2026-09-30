@@ -1655,6 +1655,58 @@ def test_editor_no_change_repair_retains_initial_check_evidence(
     assert evidence["initialTaskCheckEvidence"] == initial_evidence
 
 
+def test_editor_repair_upstream_gap_survives_without_source_delta(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run, task_id, source_path, _source = _write_minimal_agent_task(tmp_path)
+    _configure_editor_owner_task(run)
+    task_path = run / "reports/implementation-tasks/order.task.json"
+    task = json.loads(task_path.read_text(encoding="utf-8"))
+    task["source_refs"] = ["UC-12"]
+    task_path.write_text(json.dumps(task), encoding="utf-8")
+    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
+    actions = [
+        SourceReplaceAction(path=source_path, source="class OrderService { int candidate; }"),
+        runtime_module.UpstreamGapAction(
+            summary="The required behavior is unspecified.", source_ref="UC-12"
+        ),
+    ]
+    repair_started = False
+
+    def request_action(*_args: object) -> object:
+        nonlocal repair_started
+        if repair_started:
+            return actions[1]
+        repair_started = True
+        return actions[0]
+
+    gap = runtime_module.UpstreamGap(
+        summary="The required behavior is unspecified.", source_ref="UC-12"
+    )
+
+    def reported_gap(_agent: object) -> object:
+        return gap if len(request_calls) >= 2 else None
+
+    request_calls: list[None] = []
+
+    def counted_request(*args: object) -> object:
+        request_calls.append(None)
+        return request_action(*args)
+
+    with ExitStack() as stack:
+        for manager in (
+            patch("app.implementation.agents.runtime.openhands_connection", return_value=LlmConnection("cloudflare", "approved-key", "https://example.invalid/v1", "@cf/zai-org/glm-5.3-flash", "openai")),
+            patch("app.implementation.agents.runtime._request_direct_editor_action", side_effect=counted_request),
+            patch("app.implementation.agents.runtime.run_task_check", return_value=(False, "selected assertion failed")),
+            patch("app.implementation.agents.runtime.reported_upstream_gap", side_effect=reported_gap),
+            patch("app.implementation.agents.runtime.verify_agent_workspace", return_value={"exitCode": 0}),
+        ):
+            stack.enter_context(manager)
+        result = execute_openhands_task(run, task_id)
+
+    assert result["upstreamGap"] == gap.as_result()
+
+
 def test_direct_editor_repair_prompt_keeps_initial_contract_without_history() -> None:
     conversation = runtime_module._DirectEditorConversation(
         Path("."),
@@ -1906,6 +1958,97 @@ def test_direct_editor_can_select_edit_source_with_exact_path_enum(
     edit_schema = captured["tools"][1]["function"]["parameters"]
     assert edit_schema["required"] == ["path", "edits"]
     assert edit_schema["properties"]["path"]["enum"] == ["application/OrderService.java"]
+
+
+def test_direct_editor_exposes_and_routes_a_valid_upstream_gap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "application/OrderService.java"
+    source.parent.mkdir(parents=True)
+    source.write_text("class OrderService {}", encoding="utf-8")
+    conversation, agent = runtime_module.create_openhands_conversation(
+        tmp_path,
+        LlmConnection(
+            "openrouter", "validation-only-key", "https://example.invalid/v1",
+            "openai/gpt-oss-20b", "openrouter",
+        ),
+        {"maxOutputTokens": 1024},
+        editable_files=[str(source)],
+        owner_tool_mode="editor",
+        upstream_gap_source_refs=["UC-12"],
+    )
+    monkeypatch.setattr(
+        "app.implementation.agents.runtime._request_direct_editor_action",
+        lambda *_args: runtime_module.UpstreamGapAction(
+            summary="Required conflict-resolution behavior is undefined.",
+            source_ref="UC-12",
+        ),
+    )
+    try:
+        conversation.send_message("Frozen implementation contract")
+        conversation.run()
+        gap = runtime_module.reported_upstream_gap(agent)
+        assert gap is not None
+        assert gap.as_result() == {
+            "summary": "Required conflict-resolution behavior is undefined.",
+            "sourceRef": "UC-12",
+        }
+        assert "report_upstream_gap" in agent._tools
+        assert source.read_text(encoding="utf-8") == "class OrderService {}"
+    finally:
+        conversation.close()
+
+
+def test_direct_editor_gap_tool_schema_and_invalid_payload_use_structured_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Client:
+        def __init__(self, **_kwargs: object) -> None:
+            self.chat = SimpleNamespace(completions=self)
+
+        def create(self, **request: object) -> object:
+            captured.update(request)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            tool_calls=[
+                                SimpleNamespace(
+                                    function=SimpleNamespace(
+                                        name="report_upstream_gap",
+                                        arguments=json.dumps({"summary": "missing behavior"}),
+                                    )
+                                )
+                            ]
+                        )
+                    )
+                ]
+            )
+
+    monkeypatch.setattr("openai.OpenAI", Client)
+    with pytest.raises(runtime_module.DirectEditorResponseError) as raised:
+        runtime_module._request_direct_editor_action(
+            LlmConnection(
+                "openrouter", "validation-only-key", "https://example.invalid/v1",
+                "openai/gpt-oss-20b", "openrouter",
+            ),
+            "Frozen implementation contract",
+            {"maxOutputTokens": 1024},
+            ["application/OrderService.java"],
+            ["UC-12"],
+        )
+
+    assert raised.value.failure_code == "INVALID_TOOL_ARGUMENTS"
+    assert {issue["field"] for issue in raised.value.field_issues} == {"source_ref"}
+    tools = captured["tools"]
+    assert [tool["function"]["name"] for tool in tools] == [
+        "replace_source", "edit_source", "report_upstream_gap"
+    ]
+    gap_schema = tools[2]["function"]["parameters"]
+    assert gap_schema["required"] == ["summary", "source_ref"]
+    assert gap_schema["properties"]["source_ref"]["enum"] == ["UC-12"]
 
 
 def test_direct_editor_edit_dispatch_writes_once_and_journals_hash_only(

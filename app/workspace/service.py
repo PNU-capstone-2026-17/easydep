@@ -2767,13 +2767,116 @@ class WorkspaceService:
                 ]
                 # Only an unambiguous Implementation-owned SUT failure can cross
                 # this boundary. Mixed or separately routed failures remain visible
-                # to the existing action/question handling.
+                # to the Testing checkpoint first, so plan-owned defects can be
+                # corrected before an Implementation repair is considered.
                 if (
                     not implementation_blockers
                     or len(implementation_blockers) != len(repairable_blockers)
                     or blocking_findings_route(blockers)
                 ):
-                    return self._retry_technical_checkpoint(command, current, stage)
+                    repaired = self._retry_technical_checkpoint(command, current, stage)
+                    if self._active_semantic_repair_input(repaired) is None:
+                        return repaired
+                    repaired_job = repaired.get("job")
+                    repair_history = (
+                        repaired_job.get("repair_history")
+                        if isinstance(repaired_job, dict)
+                        else None
+                    )
+                    attempts = (
+                        repair_history.get("attempts")
+                        if isinstance(repair_history, dict)
+                        else None
+                    )
+                    latest_attempt = (
+                        attempts[-1]
+                        if isinstance(attempts, list) and attempts
+                        else None
+                    )
+                    repeated_candidate = (
+                        isinstance(latest_attempt, dict)
+                        and latest_attempt.get("outcome") == "repeated_candidate"
+                    )
+                    if repeated_candidate:
+                        job = repaired.get("job")
+                        report = job.get("result") if isinstance(job, dict) else {}
+                        remaining = list(
+                            (report or {}).get("blocking_findings")
+                            or repaired.get("blocking_findings")
+                            or []
+                        )
+                        remaining_sut = [
+                            blocker
+                            for blocker in remaining
+                            if isinstance(blocker, dict)
+                            and blocker.get("repairable") is not False
+                            and blocker.get("defect_class") == "SUT_DEFECT"
+                            and blocker.get("repair_owner") == "implementation"
+                        ]
+                        if (
+                            remaining_sut
+                            and isinstance(job, dict)
+                            and job.get("status") == "COMPLETED"
+                        ):
+                            sut_only = {**repaired, "blocking_findings": remaining_sut}
+                            repair_result, implementation_job_id, repair_task_type = (
+                                self._repair_testing_with_owner(command, sut_only)
+                            )
+                            if (
+                                repair_result.get("awaiting_input") is True
+                                or (repair_result.get("job") or {}).get("status") != "COMPLETED"
+                            ):
+                                current = repair_result
+                                self._sleep_for_retry(
+                                    str(command["command_id"]), retry_attempt
+                                )
+                                continue
+                            if (
+                                repair_result.get("awaiting_input") is not True
+                                and (repair_result.get("job") or {}).get("status") == "COMPLETED"
+                            ):
+                                current = self._run_with_transient_retry(
+                                    command,
+                                    lambda: self._run_testing_command(
+                                        command,
+                                        implementation_job_id,
+                                        previous_job=job,
+                                        preserve_test=True,
+                                        repair_task_type=repair_task_type,
+                                        reset_checkpoint=True,
+                                    ),
+                                    retry_operation=lambda: self._transient_retry_operation(command),
+                                )
+                                continue
+                        repair_state = dict(repaired.get("repair_state") or {})
+                        repair_state.update(
+                            {
+                                "status": "STALLED",
+                                "stall_reason": (
+                                    "Testing checkpoint repeated the same candidate and findings."
+                                ),
+                            }
+                        )
+                        return {
+                            "kind": "platform_diagnostic",
+                            "message": (
+                                "Testing could not make progress: the same candidate and "
+                                "findings repeated after checkpoint retry."
+                            ),
+                            "requires_revision": False,
+                            "internal_diagnostic": {
+                                "category": "TESTING_CHECKPOINT_NO_PROGRESS",
+                                "owner": "EasyDep",
+                            },
+                            "blocking_findings": remaining,
+                            "repair_state": repair_state,
+                            "blocking_route": "platform",
+                            "job_id": repaired.get("job_id"),
+                            "job": job,
+                        }
+                    current = repaired
+                    self._sleep_for_retry(str(command["command_id"]), retry_attempt)
+                    continue
                 previous_job = current.get("job")
                 if (
                     not isinstance(previous_job, dict)
