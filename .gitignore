@@ -95,6 +95,8 @@ materials/PURE/
 # Local experiment probes and provider request captures; never package these.
 /tmp/
 /.tmp/
+/.tmp-gap-direct-tests-20260930-01/
+/.tmp_enum_compile/
 
 # 코드를 읽으며 정리한 개인 학습 노트. 코드가 바뀌면 같이 낡으므로 저장소의 진실로
 # 삼지 않는다 — 공유할 설명은 각 모듈의 docstring에 둔다.
