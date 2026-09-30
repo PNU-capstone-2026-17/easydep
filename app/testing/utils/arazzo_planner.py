@@ -492,6 +492,63 @@ def _parameter_input_slots(
     return [value]
 
 
+def _project_control_argument_provenance(
+    operation: Mapping[str, Any], inputs: list[dict[str, Any]],
+) -> None:
+    """Attach only provenance whose explicit HTTP source covers an input slot."""
+    control = operation.get("x-easydep-control")
+    if not isinstance(control, Mapping):
+        return
+    arguments = control.get("arguments")
+    provenance = control.get("argumentProvenance")
+    if not isinstance(arguments, Mapping) or not isinstance(provenance, Mapping):
+        return
+
+    matches: dict[int, list[dict[str, Any]]] = {}
+    for argument_name, source in arguments.items():
+        if not isinstance(argument_name, str) or not isinstance(source, str):
+            continue
+        metadata = provenance.get(argument_name)
+        if not isinstance(metadata, Mapping):
+            continue
+        projected = {
+            key: metadata[key]
+            for key in ("stableRef", "requiredValueRef")
+            if isinstance(metadata.get(key), str) and metadata[key].strip()
+        }
+        evidence_refs = metadata.get("evidenceRefs")
+        if isinstance(evidence_refs, list) and all(
+            isinstance(ref, str) and ref.strip() for ref in evidence_refs
+        ):
+            if evidence_refs:
+                projected["evidenceRefs"] = sorted(set(evidence_refs))
+        if not projected:
+            continue
+
+        parts = source.split(".")
+        location = parts[0][1:] if parts else ""
+        if not parts or not parts[0].startswith("$") or location not in {"path", "query", "body"}:
+            continue
+        source_path = parts[1:]
+        for index, input_slot in enumerate(inputs):
+            slot = input_slot.get("slot")
+            if location in {"path", "query"}:
+                matches_slot = len(source_path) == 1 and slot == f"{location}:{source_path[0]}"
+            else:
+                pointer_parts = tuple(input_slot.get("pointerParts") or ())
+                matches_slot = (
+                    str(slot).startswith("body")
+                    and len(source_path) <= len(pointer_parts)
+                    and tuple(source_path) == pointer_parts[:len(source_path)]
+                )
+            if matches_slot:
+                matches.setdefault(index, []).append(projected)
+
+    for index, candidates in matches.items():
+        if all(candidate == candidates[0] for candidate in candidates[1:]):
+            inputs[index].update(candidates[0])
+
+
 def _operation_order(operation: Mapping[str, Any]) -> tuple[int, str]:
     hints = operation.get("traceHints")
     refs = hints.get("scenarioRefs") if isinstance(hints, Mapping) else []
@@ -523,6 +580,8 @@ def _current_operation_contract(
                 "parameters": _effective_parameters(path_item, operation),
                 "requestBody": _request_contract(operation),
                 "responses": _response_contracts(operation),
+                **({"x-easydep-control": copy.deepcopy(operation["x-easydep-control"])}
+                   if isinstance(operation.get("x-easydep-control"), Mapping) else {}),
             }
     return fallback
 
@@ -606,6 +665,7 @@ def build_execution_candidates(
             request_body = operation.get("requestBody")
             if isinstance(request_body, Mapping) and request_body.get("required") is True:
                 inputs.extend(slots(request_body.get("schema"), "body", "requestBody", include_pointer=True))
+            _project_control_argument_provenance(operation, inputs)
             responses = operation.get("responses")
             if not isinstance(responses, list):
                 raise ArazzoPlanningError("Selected operation responses must be a list.")

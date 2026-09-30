@@ -236,6 +236,51 @@ def test_execution_candidates_expose_finite_typed_connection_choices() -> None:
     )
 
 
+def test_execution_candidates_project_only_explicit_control_argument_provenance() -> None:
+    openapi = _openapi()
+    create = openapi["paths"]["/items"]["post"]
+    create["x-easydep-control"] = {
+        "arguments": {"payload": "$body.name", "actor": "$context.actorId"},
+        "argumentProvenance": {
+            "payload": {
+                "stableRef": "stable:name",
+                "requiredValueRef": "required:name",
+                "evidenceRefs": ["UC-1:step-1"],
+            },
+            "actor": {"stableRef": "stable:actor", "requiredValueRef": "required:actor"},
+        },
+    }
+    get = openapi["paths"]["/items/{id}"]["get"]
+    get["parameters"].append(
+        {"name": "filter", "in": "query", "required": True, "schema": {"type": "string"}}
+    )
+    get["x-easydep-control"] = {
+        "arguments": {"queryId": "$query.id", "pathId": "$path.id", "filterArg": "$query.filter"},
+        "argumentProvenance": {
+            "queryId": {"stableRef": "wrong:id", "requiredValueRef": "wrong:id"},
+            "pathId": {"stableRef": "stable:id", "requiredValueRef": "required:id"},
+            "filterArg": {"stableRef": "stable:filter", "requiredValueRef": "required:filter"},
+        },
+    }
+
+    steps = build_execution_candidates([_candidate_for(_candidates(), "UC-1")], openapi)
+    create_input = next(item for item in steps[0]["inputs"] if item["slot"] == "body.name")
+    assert create_input["stableRef"] == "stable:name"
+    assert create_input["requiredValueRef"] == "required:name"
+    assert create_input["evidenceRefs"] == ["UC-1:step-1"]
+    assert "stable:actor" not in {item.get("stableRef") for item in steps[0]["inputs"]}
+
+    get_inputs = {item["slot"]: item for item in steps[1]["inputs"]}
+    assert get_inputs["path:id"]["stableRef"] == "stable:id"
+    assert get_inputs["query:filter"]["stableRef"] == "stable:filter"
+    assert get_inputs["path:id"]["requiredValueRef"] != "wrong:id"
+
+
+def test_execution_candidates_without_control_provenance_preserve_unannotated_inputs() -> None:
+    steps = build_execution_candidates([_candidate_for(_candidates(), "UC-1")], _openapi())
+    assert all("stableRef" not in item and "requiredValueRef" not in item for step in steps for item in step["inputs"])
+
+
 def test_uuid_source_format_can_flow_to_unformatted_string_target() -> None:
     openapi = _openapi()
     create_schema = openapi["paths"]["/items"]["post"]["responses"]["201"]["content"][
