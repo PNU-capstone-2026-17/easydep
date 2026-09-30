@@ -2284,7 +2284,7 @@ def test_deferred_collection_selection_compiles_finite_selector_from_fixed_liter
     candidate = {
         "workflowId": "workflow-collection",
         "trace": {"useCaseIds": ["UC-collection"]},
-        "operations": [{"operationId": "cancel"}],
+        "operations": [{"operationId": "cancel", "method": "POST"}],
         "setupOperations": [
             {"operationId": "createOffering", "method": "POST"},
             {"operationId": "listEntries", "method": "GET"},
@@ -2376,15 +2376,39 @@ def test_deferred_collection_selection_compiles_finite_selector_from_fixed_liter
                     },
                 }}}},
             }}}},
-        }}},
+        }},
         "/entries/{entryId}": {"post": {"operationId": "cancel", "parameters": [
             {"name": "entryId", "in": "path", "required": True,
              "schema": {"type": "string", "format": "uuid"}},
         ], "responses": {"204": {"description": "canceled"}}}},
-    }
+    }}
     import jsonpath_rfc9535
 
     jsonpath_rfc9535.compile(workflow["steps"][1]["outputs"]["body0EntryId"]["selector"])
+    document = build_arazzo_document([workflow])
+    execution_candidates = [
+        {"workflowId": selected["workflowId"], **step}
+        for step in selected["planningModel"]["availableSteps"]
+    ]
+
+    dynamic._validate_document(
+        document,
+        [selected],
+        openapi,
+        execution_candidates,
+    )
+
+    forged = deepcopy(document)
+    forged["workflows"][0]["steps"][1]["outputs"]["body0EntryId"]["selector"] = (
+        '$["entries"][?@["offeringId"] == "forged-offering"]["entryId"]'
+    )
+    with pytest.raises(dynamic.ArazzoValidationError, match="supplied source output declaration"):
+        dynamic._validate_document(
+            forged,
+            [selected],
+            openapi,
+            execution_candidates,
+        )
 
 
 def test_graph_reuses_earlier_fixed_mutation_input_for_typed_path_input() -> None:

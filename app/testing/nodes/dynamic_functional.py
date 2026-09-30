@@ -2436,6 +2436,65 @@ def _validate_document(
             if workflow_id and step_id:
                 execution_by_workflow.setdefault(workflow_id, {})[step_id] = projected
 
+    def fixed_literals_before(steps: list[dict[str, Any]], stop: int) -> list[Any]:
+        """Collect concrete values supplied before a deferred collection read."""
+        values: list[Any] = []
+
+        def collect(value: Any) -> None:
+            if isinstance(value, dict):
+                for child in value.values():
+                    collect(child)
+            elif isinstance(value, list):
+                for child in value:
+                    collect(child)
+            elif not (isinstance(value, str) and value.startswith("$")):
+                values.append(value)
+
+        for prior in steps[:stop]:
+            for parameter in prior.get("parameters") or []:
+                if isinstance(parameter, dict):
+                    collect(parameter.get("value"))
+            request_body = prior.get("requestBody")
+            if isinstance(request_body, dict):
+                collect(request_body.get("payload"))
+        return values
+
+    def is_compiled_collection_selector(
+        expression: Any,
+        projected_source: dict[str, Any],
+        authored_steps: list[dict[str, Any]],
+        source_position: int,
+        output_name: str,
+    ) -> bool:
+        """Match a selector exactly to a finite, literal-grounded collection relation."""
+        if not (
+            isinstance(expression, dict)
+            and expression.get("type") == "jsonpath"
+            and expression.get("context") == "$response.body"
+            and isinstance(expression.get("selector"), str)
+        ):
+            return False
+        literals = fixed_literals_before(authored_steps, source_position)
+        for relation in projected_source.get("collectionSelectionCandidates") or []:
+            if not isinstance(relation, dict) or relation.get("selectedOutputName") != output_name:
+                continue
+            try:
+                array_root = _pointer_parts(str(relation["arrayRootPointer"]))
+                match_parts = list(relation["matchItemPointerParts"])
+                selected_parts = list(relation["selectedItemPointerParts"])
+            except (KeyError, TypeError, ArazzoPlanningError):
+                continue
+            for literal in literals:
+                expected = (
+                    "$" + _jsonpath_members(array_root)
+                    + "[?@" + _jsonpath_members(match_parts) + " == "
+                    + json.dumps(literal, ensure_ascii=False, separators=(",", ":")) + "]"
+                    + _jsonpath_members(selected_parts)
+                )
+                if expression["selector"] == expected:
+                    return True
+        return False
+
     def runtime_values(value: Any) -> list[str]:
         if isinstance(value, dict):
             return [item for key, child in value.items() if key != "successCriteria" for item in runtime_values(child)]
@@ -2518,7 +2577,21 @@ def _validate_document(
                         ),
                         None,
                     )
-                    if not isinstance(source_outputs, dict) or source_outputs.get(expected_name) != expected_expression:
+                    actual_expression = source_outputs.get(expected_name) if isinstance(source_outputs, dict) else None
+                    source_position = authored_positions.get(str(connection["sourceStepId"]), -1)
+                    if (
+                        not isinstance(source_outputs, dict)
+                        or (
+                            actual_expression != expected_expression
+                            and not is_compiled_collection_selector(
+                                actual_expression,
+                                projected_steps.get(str(connection["sourceStepId"]), {}),
+                                authored_step_list,
+                                source_position,
+                                expected_name,
+                            )
+                        )
+                    ):
                         raise ArazzoValidationError(
                             "Selected connection must use its supplied source output declaration: "
                             f"{connection['sourceStepId']}.{expected_name}"
