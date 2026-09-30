@@ -53,6 +53,8 @@
 
 우선 구현 전에 frozen UC3·UC5에서 작은 A/B를 한다. 이미 선택된 producer는 고정하고, OSS의 첫 호출은 occurrence와 순서만 고르게 한다. 코드가 각 occurrence의 실제 required slot과 허용된 direct output·fixed input·collection pair를 유한한 binding ID로 투영한 뒤, 두 번째 호출은 그 ID 및 필요한 distinct 관계만 고르게 한다. 기존 projector·compiler·Arazzo 검증까지 통과하는지, 총 호출 수·지연·토큰이 현 단일 graph+correction보다 나은지 비교한다. 745-token 축약 `oneOf` 호환성 호출은 공급자 형식 지원만 확인했으므로 이 A/B의 대체 증거가 아니다. 실패하면 곧바로 제품 경로를 바꾸지 않는다.
 
+첫 번째 in-memory A/B는 frozen UC5에서 두 OSS 호출만으로 실행했다. Occurrence/order 선택은 10,929 prompt tokens, 5.617초였고, 그 결과로 만든 유효 binding ID 목록에서의 선택은 801 prompt tokens, 0.797초였다. 두 응답 모두 schema-valid였으며 존재하지 않는 입력 슬롯을 만들지 않았다. 비교 대상인 기존 flat graph와 한 번의 correction은 각각 7.530초와 3.430초였다. 그러나 새 실험 역시 최종 성공은 아니다. 모델이 `viewRegistrationsAndSchedule → dropRegistration`만 골라 선행 상태 변경 작업이 없었고, 기존 projector가 `A read-only setup operation may produce a required path resource only after an earlier state-changing setup occurrence`로 거절했다. 따라서 다음 구조적 과제는 occurrence 단계에서 자기완결적인 setup을 고르게 하는 것이다. 이 한 샘플의 6.414초 대 10.960초 차이는 두 실패 경로의 호출 시간 비교일 뿐 제품 성능 향상이나 Arazzo 계획 성공의 증거가 아니다. 제품 코드나 생성 앱·DB 산출물은 이 실험에서 변경하지 않았다.
+
 ## 별도 점검이 필요한 미확인 가설
 
 - `build_execution_candidates`는 모든 candidate의 setup operation을 먼저 펼친 뒤 schema issues를 모아 마지막에 예외를 던진다 (`arazzo_planner.py:551-725`). 선택될지 모르는 setup operation 하나의 문제가 전체 workflow candidate를 막을 수 있는지, 실제 실패 입력으로 확인하지 않았다.
