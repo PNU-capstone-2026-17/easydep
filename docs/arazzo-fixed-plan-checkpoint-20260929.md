@@ -199,3 +199,18 @@ Unlike the 2026-09-29 snapshot described above, the current graph schema has fin
 On the patched UC5 path, three Cloudflare `openai/gpt-oss-120b` calls ran: one producer choice and two graph calls. The first graph schema error was corrected, but the schema-valid second graph then failed projection because a read-only GET setup attempted to provide a required path resource before a state-changing setup occurrence. On patched UC8, three calls ran; its first graph omitted `distinctResourcePairs`, and its one allowed correction still returned a schema-invalid graph. These are planning/validation observations only: neither probe produced a passing workflow, sent HTTP, or submitted a Workspace Testing rerun. UC3's separate unsupported-producer result remains unresolved. This does not demonstrate 11/11 candidate coverage or a performance improvement.
 
 On the same frozen UC5 input, a one-shot high-reasoning A/B verified `reasoning_effort=high` but ended after one **10.321s** producer-choice call with `unsupported`, before graph generation; unlike medium it did not reach projection, so increased reasoning did not establish the missing evidence or improve this sample.
+
+### Compact collection evidence producer probes (2026-09-30)
+
+One-shot Cloudflare `openai/gpt-oss-120b` producer-choice probes compared UC3's frozen input and a generic factorized collection catalog. Each number is one stochastic sample; all probes stopped after producer choice, before graph planning or HTTP execution.
+
+| UC3 payload | Result | Prompt tokens | Call time |
+|---|---:|---:|---:|
+| Existing payload, collection relation omitted | `unsupported` | 12,587 | 8.337 s |
+| Narrow relation-only evidence | `select` | 12,723 | 7.085 s |
+| Naïve projection of all 507 finite field pairs | `select` | 67,432 | 6.427 s |
+| Compact catalog, fields listed once per operation/array root | `select` | 15,077 | 5.590 s |
+
+The compact catalog contained four array roots and 45 unique item fields. A separate UC5 producer-choice call using the same compact shape returned schema-valid `deferred_collection_lookup` for the registration output in 5.990 s (15,776 prompt tokens). These samples show that the relation evidence can change the producer choice while the factorized projection avoids the 507-pair prompt expansion. They do not establish repeatability, a valid workflow graph, or runtime behavior. No database writes or generated-app artifact writes occurred.
+
+The next bounded in-memory probes did **not** complete a workflow. UC3 selected the registration output initially but, after three producer-choice calls (13.946 s total), stopped before graph generation with `No grounded producer was selected for a required resource input`; the later target slots were not retained in the probe summary. UC5 selected the same output and reached graph generation (7.530 s), then one allowed correction (3.430 s), but projection rejected an unknown required input slot: the graph assigned `query:searchCriteria` to `viewRegistrationsAndSchedule`, whose frozen executable catalog has `inputs: []`. Thus producer evidence repair alone does not close the workflow. A separate 745-prompt-token OSS call showed that an operation-specific nested `oneOf` response schema is accepted and can return no inputs for that GET operation, but it was a reduced compatibility probe, not the full frozen graph input. The attempted full-evidence nested-schema probe returned no usable result and was not retried. No generated application artifacts or database state were changed by these probes.

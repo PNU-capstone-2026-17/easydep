@@ -2025,6 +2025,8 @@ def test_get_collection_producer_is_available_only_as_deferred_lookup(monkeypatc
                 {"operationId": "list", "stepId": "list", "method": "GET", "inputs": [], "outputs": [
                     {"outputName": "body0Id", "slot": "body[].id", "type": "string", "format": "uuid",
                      "cardinality": "one", "outputExpression": "$response.body#/0/id"},
+                    {"outputName": "body0ParentId", "slot": "body[].parentId", "type": "string", "format": "uuid",
+                     "cardinality": "one", "outputExpression": "$response.body#/0/parentId"},
                 ], "collectionSelectionCandidates": [{
                     "selectionId": "list:match=>body0Id", "selectedOutputName": "body0Id",
                     "selectedOutputExpression": "$response.body#/0/id", "selectedType": "string",
@@ -2032,11 +2034,30 @@ def test_get_collection_producer_is_available_only_as_deferred_lookup(monkeypatc
                     "matchOutputExpression": "$response.body#/0/parentId", "matchType": "string",
                     "matchFormat": "uuid", "arrayRootPointer": "#",
                     "matchItemPointerParts": ["parentId"], "selectedItemPointerParts": ["id"],
+                }, {
+                    "selectionId": "list:match=>body0ParentId", "selectedOutputName": "body0ParentId",
+                    "selectedOutputExpression": "$response.body#/0/parentId", "selectedType": "string",
+                    "selectedFormat": "uuid", "matchOutputName": "body0Id",
+                    "matchOutputExpression": "$response.body#/0/id", "matchType": "string",
+                    "matchFormat": "uuid", "arrayRootPointer": "#",
+                    "matchItemPointerParts": ["id"], "selectedItemPointerParts": ["parentId"],
                 }],
                 },
             ],
         },
     }
+    list_step = candidate["planningModel"]["availableSteps"][1]
+    for index in range(2, 12):
+        output_name = f"bodyExtra{index}Id"
+        list_step["outputs"].append({
+            "outputName": output_name, "slot": f"body[].extra{index}Id", "type": "string", "format": "uuid",
+            "cardinality": "one", "outputExpression": f"$response.body#/0/extra{index}Id",
+        })
+        list_step["collectionSelectionCandidates"].append({
+            "selectionId": f"list:body0ParentId=>{output_name}", "arrayRootPointer": "#",
+            "matchOutputName": "body0ParentId", "matchType": "string", "matchFormat": "uuid",
+            "selectedOutputName": output_name, "selectedType": "string", "selectedFormat": "uuid",
+        })
     observed: dict[str, Any] = {}
 
     class FakeCompletions:
@@ -2055,15 +2076,23 @@ def test_get_collection_producer_is_available_only_as_deferred_lookup(monkeypatc
         SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())), candidate, {"components": {}}
     )
 
-    assert [item["optionId"] for item in observed["producerOptions"]] == ["list.body0Id"]
+    assert len(observed["producerOptions"]) == 12
     assert observed["producerOptions"][0]["collectionLookupAvailable"] is True
-    assert "collectionSelectionCandidates" not in observed["producerOptions"][0]
+    catalog = observed["finiteCollectionCatalog"]
+    assert len(catalog) == 1
+    item_field_names = [field["outputName"] for field in catalog[0]["itemFields"]]
+    assert len(item_field_names) == len(set(item_field_names)) == 12
+    assert {
+        field["outputName"]: field["outputExpression"] for field in catalog[0]["itemFields"]
+    } == {output["outputName"]: output["outputExpression"] for output in list_step["outputs"]}
+    assert all(option["collectionArrayRoots"] == ["list:#"] for option in observed["producerOptions"])
+    assert "selectionId" not in json.dumps(catalog)
+    assert any("matching row, uniqueness" in rule for rule in observed["rules"])
     assert selections == [{
         "targetOperationId": "consume", "targetInputSlot": "path:resourceId",
         "decision": "deferred_collection_lookup", "sourceOperationId": "list",
         "sourceOutputName": "body0Id",
     }]
-    list_step = candidate["planningModel"]["availableSteps"][1]
     list_step["collectionSelectionCandidates"].extend({
         "selectionId": f"list:match{index}=>body0Id", "arrayRootPointer": "#",
         "matchOutputName": f"body0Parent{index}", "matchType": "string", "matchFormat": "uuid",
@@ -2076,10 +2105,12 @@ def test_get_collection_producer_is_available_only_as_deferred_lookup(monkeypatc
     full_choices = list_step["collectionSelectionCandidates"]
     graph_schema = dynamic._graph_response_format(candidate)["json_schema"]["schema"]
     selection_ids = graph_schema["properties"]["collectionSelections"]["items"]["properties"]["selectionId"]["enum"]
+    graph_choices = [item for item in full_choices if item["selectedOutputName"] == "body0Id"]
     assert "collectionSelections" in graph_schema["required"]
     assert graph_schema["properties"]["collectionSelections"]["minItems"] == 1
     assert "list:match=>body0Id" in selection_ids
-    assert len(selection_ids) == len(full_choices)
+    assert len(selection_ids) == len(graph_choices)
+    assert len({field["outputName"] for field in catalog[0]["itemFields"]}) == len(catalog[0]["itemFields"])
     assert len(json.dumps(projected_choices, separators=(",", ":"))) < len(json.dumps(full_choices, separators=(",", ":")))
     assert all(set(choice) == {
         "selectionId", "matchOutputName", "matchType", "matchFormat",

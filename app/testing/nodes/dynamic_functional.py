@@ -1358,6 +1358,7 @@ def _select_semantic_producers(
         slot = next(slot for slot in target_step.get("inputs") or [] if slot.get("inputSlot") == request["targetInputSlot"])
         options = []
         collection_choices_by_option: dict[str, list[dict[str, Any]]] = {}
+        collection_catalog_by_root: dict[str, dict[str, Any]] = {}
         evidence_refs = set()
         for step in steps:
             operation_id = str(step.get("operationId") or "")
@@ -1365,6 +1366,42 @@ def _select_semantic_producers(
             if operation_id == request["targetOperationId"]:
                 continue
             source = setup.get(operation_id, {})
+            output_by_name = {
+                str(item.get("outputName")): item
+                for item in step.get("outputs") or []
+                if isinstance(item, dict) and item.get("outputName")
+            }
+            step_collection_catalog_by_root: dict[str, dict[str, Any]] = {}
+            step_collection_field_names_by_root: dict[str, set[str]] = {}
+            for relation in step.get("collectionSelectionCandidates") or []:
+                if not isinstance(relation, dict) or relation.get("arrayRootPointer") is None:
+                    continue
+                array_root = str(relation["arrayRootPointer"])
+                catalog = step_collection_catalog_by_root.setdefault(array_root, {
+                    "operationId": operation_id,
+                    "arrayRootPointer": array_root,
+                    "itemFields": [],
+                })
+                existing_names = step_collection_field_names_by_root.setdefault(array_root, set())
+                for field_name, field_type, field_format in (
+                    (relation.get("matchOutputName"), relation.get("matchType"), relation.get("matchFormat")),
+                    (relation.get("selectedOutputName"), relation.get("selectedType"), relation.get("selectedFormat")),
+                ):
+                    if not field_name or field_name in existing_names:
+                        continue
+                    field = {"outputName": field_name}
+                    if field_type is not None:
+                        field["type"] = field_type
+                    if field_format is not None:
+                        field["format"] = field_format
+                    metadata = output_by_name.get(str(field_name), {})
+                    for key in ("description", "responseDescription", "outputExpression"):
+                        if metadata.get(key):
+                            field[key] = metadata[key]
+                    catalog["itemFields"].append(field)
+                    existing_names.add(field_name)
+            for catalog in step_collection_catalog_by_root.values():
+                catalog["itemFields"].sort(key=lambda field: field["outputName"])
             for output in step.get("outputs") or []:
                 if not _connection_types_compatible(slot, output):
                     continue
@@ -1382,6 +1419,16 @@ def _select_semantic_producers(
                     continue
                 option_id = f"{operation_id}.{output.get('outputName')}"
                 collection_choices_by_option[option_id] = collection_candidates
+                collection_array_roots = sorted({
+                    str(item.get("arrayRootPointer"))
+                    for item in collection_candidates
+                    if item.get("arrayRootPointer") is not None
+                })
+                if collection_array_roots:
+                    for array_root in collection_array_roots:
+                        root_id = f"{operation_id}:{array_root}"
+                        if catalog := step_collection_catalog_by_root.get(array_root):
+                            collection_catalog_by_root.setdefault(root_id, catalog)
                 ref = f"openapi.operation:{operation_id}.output:{output.get('outputName')}"
                 evidence = []
                 for linked in source.get("linkedUseCaseEvidence") or []:
@@ -1408,6 +1455,7 @@ def _select_semantic_producers(
                         source, output, openapi
                     ),
                     "collectionLookupAvailable": bool(collection_candidates),
+                    "collectionArrayRoots": [f"{operation_id}:{root}" for root in collection_array_roots],
                 })
         if not options:
             continue
@@ -1423,13 +1471,15 @@ def _select_semantic_producers(
         payload = {
             "target": request,
             "producerOptions": options,
+            "finiteCollectionCatalog": list(collection_catalog_by_root.values()),
             "rules": [
                 "Select only a listed option or unsupported.",
                 "Type compatibility is not resource identity; use response descriptions and linked use-case flow evidence.",
                 "Target resourceRole/valueRef and operationIdentityEvidence can support a semantic role choice, but operation-level evidence does not prove that a particular output is that value unless an explicit output reference mapping is present.",
                 "Do not treat different declared resource roles as interchangeable merely because their schemas have the same type or format.",
                 "Do not infer fixture existence or guaranteed output presence from an optional or nullable schema.",
-                "An array item is not a direct producer. Choose deferred_collection_lookup only when a listed finite collectionSelectionCandidate can match one of its item fields to an earlier fixed input; the graph must complete that relation.",
+                "An array item is not a direct producer. Choose deferred_collection_lookup only when a producer option references a listed array root with item fields that can match an earlier fixed input; the graph will select the exact finite field pair.",
+                "A finite collection selection describes a schema-derived path relation only; it does not guarantee a matching row, uniqueness, or a non-null runtime value.",
                 "A caller_input value declares an API input, not an already-persisted test fixture.",
                 "Choose literal only when target.inputContract.literalAllowed is true; otherwise use a grounded producer or unsupported.",
             ],
