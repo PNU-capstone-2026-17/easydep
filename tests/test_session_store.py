@@ -7,7 +7,7 @@
 import pytest
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event as sqlalchemy_event
 from sqlalchemy.orm import sessionmaker
 from typing_extensions import TypedDict
 
@@ -170,6 +170,74 @@ def test_interrupt_writes_are_replaced_not_appended(sqlite_db):
 
     writes = saver.get_tuple(_config("t")).pending_writes
     assert writes == [("task-1", "__interrupt__", "ask-2")]
+
+
+def test_put_writes_batches_positive_lookup_and_preserves_task_semantics(sqlite_db):
+    saver = store.SqlCheckpointSaver()
+    saver.put(_config("batch"), _checkpoint("c1", {}, {}), {}, {})
+    select_statements: list[str] = []
+
+    def capture_select(_conn, _cursor, statement, _parameters, _context, _many):
+        if (
+            statement.lstrip().upper().startswith("SELECT")
+            and "agent_checkpoint_writes" in statement
+        ):
+            select_statements.append(statement)
+
+    def put_and_count(writes, task_id):
+        select_statements.clear()
+        sqlalchemy_event.listen(sqlite_db, "before_cursor_execute", capture_select)
+        try:
+            saver.put_writes(_config("batch", "c1"), writes, task_id=task_id)
+        finally:
+            sqlalchemy_event.remove(sqlite_db, "before_cursor_execute", capture_select)
+        batch_lookups = [
+            statement for statement in select_statements if " IN (" in statement.upper()
+        ]
+        assert len(batch_lookups) == 1
+        return len(select_statements), len(batch_lookups)
+
+    first_counts = put_and_count(
+        [
+            ("out-a", "task-1-first-a"),
+            ("out-b", "task-1-first-b"),
+            ("out-c", "task-1-first-c"),
+            ("__interrupt__", "task-1-ask-1"),
+        ],
+        "task-1",
+    )
+    retry_counts = put_and_count(
+        [
+            ("out-a", "task-1-retry-a"),
+            ("out-b", "task-1-retry-b"),
+            ("out-c", "task-1-retry-c"),
+            ("__interrupt__", "task-1-ask-2"),
+        ],
+        "task-1",
+    )
+    sibling_counts = put_and_count(
+        [
+            ("out-a", "task-2-a"),
+            ("out-b", "task-2-b"),
+            ("out-c", "task-2-c"),
+            ("__interrupt__", "task-2-ask"),
+        ],
+        "task-2",
+    )
+
+    writes = saver.get_tuple(_config("batch")).pending_writes
+    assert writes == [
+        ("task-1", "__interrupt__", "task-1-ask-2"),
+        ("task-1", "out-a", "task-1-first-a"),
+        ("task-1", "out-b", "task-1-first-b"),
+        ("task-1", "out-c", "task-1-first-c"),
+        ("task-2", "__interrupt__", "task-2-ask"),
+        ("task-2", "out-a", "task-2-a"),
+        ("task-2", "out-b", "task-2-b"),
+        ("task-2", "out-c", "task-2-c"),
+    ]
+    assert first_counts[0] == retry_counts[0] == sibling_counts[0] == 2
+    assert first_counts[1] == retry_counts[1] == sibling_counts[1] == 1
 
 
 def test_list_is_newest_first_and_respects_limit(sqlite_db):

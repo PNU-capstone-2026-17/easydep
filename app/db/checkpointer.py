@@ -177,9 +177,27 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
         checkpoint_ns = config["configurable"].get("checkpoint_ns", "")
         checkpoint_id = config["configurable"]["checkpoint_id"]
         started_at = perf_counter()
+        indexed_writes = [
+            (channel, WRITES_IDX_MAP.get(channel, position), value)
+            for position, (channel, value) in enumerate(writes)
+        ]
+        positive_indices = {idx for _, idx, _ in indexed_writes if idx >= 0}
         with session_scope() as db:
-            for position, (channel, value) in enumerate(writes):
-                idx = WRITES_IDX_MAP.get(channel, position)
+            existing_indices = set()
+            if positive_indices:
+                existing_indices = set(
+                    db.scalars(
+                        select(self._write.idx).where(
+                            self._write.graph_type == self.graph_type,
+                            self._write.thread_id == thread_id,
+                            self._write.checkpoint_ns == checkpoint_ns,
+                            self._write.checkpoint_id == checkpoint_id,
+                            self._write.task_id == task_id,
+                            self._write.idx.in_(positive_indices),
+                        )
+                    ).all()
+                )
+            for channel, idx, value in indexed_writes:
                 write_type, blob = _dump(value)
                 row = self._write(
                     graph_type=self.graph_type,
@@ -196,20 +214,10 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
                 if idx >= 0:
                     # 일반 쓰기는 먼저 쓴 것이 이긴다(같은 태스크의 재시도가 덮지 않게).
                     # 음수 idx(에러·인터럽트 등 특수 채널)는 최신이 이긴다.
-                    existing = db.get(
-                        self._write,
-                        (
-                            self.graph_type,
-                            thread_id,
-                            checkpoint_ns,
-                            checkpoint_id,
-                            task_id,
-                            idx,
-                        ),
-                    )
-                    if existing is not None:
+                    if idx in existing_indices:
                         continue
                     db.add(row)
+                    existing_indices.add(idx)
                 else:
                     db.merge(row)
         _log_design_checkpoint_timing(
