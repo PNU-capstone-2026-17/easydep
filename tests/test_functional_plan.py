@@ -10,6 +10,7 @@ from typing import Any
 
 import jsonschema
 import pytest
+from pydantic import BaseModel
 
 from app.testing.nodes import dynamic_functional as dynamic
 from app.testing.utils.arazzo_planner import (
@@ -1238,6 +1239,38 @@ def _planning_failure(candidate: dict[str, Any], message: str = "Invalid graph")
     return dynamic._planning_failure_analysis(
         candidate, dynamic.ArazzoValidationError(message)
     )
+
+
+class _RequiredFixedInputSlot(BaseModel):
+    fixedInputSlot: str
+
+
+def _pydantic_fixed_input_slot_error() -> dynamic.PydanticValidationError:
+    try:
+        _RequiredFixedInputSlot.model_validate({})
+    except dynamic.PydanticValidationError as error:
+        return error
+    raise AssertionError("Expected fixed-input schema validation to fail")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        jsonschema.ValidationError("'fixedInputOccurrenceId' is a required property"),
+        pytest.param(_pydantic_fixed_input_slot_error(), id="pydantic-validation"),
+    ],
+    ids=["jsonschema-validation", "pydantic-validation"],
+)
+def test_planning_schema_validation_failures_route_to_test_plan_repair(
+    error: Exception,
+) -> None:
+    candidate = build_workflow_candidates(_requirements(), _use_cases(), _openapi())[0]
+
+    failure = dynamic._planning_failure_analysis(candidate, error)
+
+    assert failure["defectClass"] == "TEST_DEFECT"
+    assert failure["repairAction"] == "repair_test_plan"
+    assert failure["repairOwner"] == "testing"
 
 
 def test_planning_failure_isolated_while_valid_workflow_executes(

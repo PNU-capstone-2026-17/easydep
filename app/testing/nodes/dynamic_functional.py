@@ -174,7 +174,18 @@ def _planning_failure_analysis(
 ) -> dict[str, Any]:
     """Record a non-executed workflow failure without inventing HTTP evidence."""
 
-    if isinstance(error, (ArazzoPlanningError, ArazzoValidationError, TypeError, ValueError, json.JSONDecodeError)):
+    if isinstance(
+        error,
+        (
+            ArazzoPlanningError,
+            ArazzoValidationError,
+            jsonschema.ValidationError,
+            PydanticValidationError,
+            TypeError,
+            ValueError,
+            json.JSONDecodeError,
+        ),
+    ):
         defect_class, repair_action = "TEST_DEFECT", "repair_test_plan"
     elif isinstance(error, UpstreamAmbiguity):
         defect_class, repair_action = "UPSTREAM_AMBIGUITY", "request_design_or_test_data"
