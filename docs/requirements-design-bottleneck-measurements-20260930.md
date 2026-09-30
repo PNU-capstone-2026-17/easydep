@@ -142,3 +142,9 @@ SELECT 횟수 감소는 같은 입력에서 검증된 직접적인 효과다. cu
 실제 OSS 호출을 포함한 요구사항 trace 재생도 한 번 시도했으나, 실행 래퍼가 하위 명령의 `output`만 전달했고 빈 문자열만 반환했다. 종료 코드·실행 span·요청 성공 여부는 보존되지 않아 이 시도에서는 사용할 수 있는 시간 근거가 없다. 같은 호출을 재시도하지 않았으며, 후속 읽기 전용 조회에서 일회용 checkpoint/blob/write 및 App 행은 0건이었다. 이 실행을 실모델 검증 성공으로 계산하지 않는다. 다음 계측 명령은 반드시 하위 명령의 종료 코드와 제한된 trace 요약을 함께 보존해야 한다.
 
 수강신청 앱 분기 `bec3aa53-ee83-4705-abc4-bdad2f994ad1`의 현재 상태를 읽기 전용으로 확인했다. 구현 job은 완료됐고 이후 `start_testing` 명령도 종료됐지만, 테스트 checkpoint는 `verification_complete`, `passed=false`, `gateStatus=FAIL`이다. 결과는 생성 앱 실패가 아니라 내부 test-plan authoring 결함을 platform diagnostic으로 기록한다. 활성 작업이나 재개 가능한 checkpoint가 없어 기존 명령의 나머지만 이어갈 수는 없고, 이 결함을 최소 범위로 해결한 뒤 새 시스템 명령으로 테스팅을 재검증해야 한다.
+
+현재 코드로 서버를 재시작한 뒤 같은 구현 job을 재사용해 새 Workspace `start_testing` 명령 `38392a3a-e724-49d0-bf35-bd63cd74e74b`를 실행했다(10:29:41–10:39:32 KST, 9분 52초). Requirements·Design·Implementation은 다시 만들지 않았다. 최종 검사 결과는 FAIL이고, 이전과 같은 workflow ID/order 오류가 발생했다. 그러나 진행 기록에는 11개 계획 중 8개 유효·3개 실패, 8개 workflow 중 3개 PASS·5개 FAIL이 남았다. 누락된 계획 ID는 UC3·UC5·UC8이다. 같은 명령의 technical retry 표식과 구현 경로를 대조하면, 첫 회차의 부분 `candidatePlan`을 재시도에서 전체 11개 후보와 비교해 ID/order 오류로 바꾼 경로가 확인된다. 중간 원문 문서는 종료 시 덮여 직접 복원할 수 없다는 한계가 있다.
+
+이에 저장된 부분 계획의 ID가 고정 후보의 순서 있는 부분집합인지 검증한 뒤, 빠진 후보만 생성하고 유효한 기존 workflow와 다시 고정 순서로 조립하도록 수정했다. 8개 보존·3개 누락(그중 1개 생성 실패)의 집중 no-LLM 테스트와 완전 보존 계획의 무재생성 테스트가 통과했다. 실패 후보를 진행 카드의 계획 완료 상태로 덮지 않도록 했다. 이는 재시도 오류 수정이지 UC3·UC5·UC8의 원래 계획 생성 실패를 해결한 것은 아니다.
+
+전체 테스팅을 다시 실행하기 전 UC3 하나만 실제 Cloudflare `openai/gpt-oss-120b` 계획 생성 경로로 검사했다. producer 선택 호출 1회에서 모델은 타입상 후보가 존재하는 `path:currentRegistrationId`에 대해 `unsupported`를 반환했고, 그래프·리터럴 생성에는 진입하지 못했다. 이 슬롯은 명시적 `resourceRole`/`valueRef`가 없으며, 제시된 후보 30개는 타입 호환 위주다. 출력 필드의 의미와 연결된 UC 흐름도 판단 근거가 될 수 있다는 일반 규칙 한 문장을 바꾼 단일 반사실 실험에서도 같은 `unsupported`였다. 따라서 프롬프트 표현만으로 연결 문제가 해결됐다고 주장하지 않으며, 이 시점에서 전체 테스팅의 반복 실행을 중단했다.

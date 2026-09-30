@@ -1547,6 +1547,11 @@ def test_preserved_candidate_plan_is_pure_arazzo_and_executes(
         return _pass(workflow_id)
 
     monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
+    monkeypatch.setattr(
+        dynamic,
+        "_generate_candidate_workflow",
+        lambda *_args, **_kwargs: pytest.fail("complete preserved plans need no generation"),
+    )
 
     report = dynamic.dynamic_functional_node(_state())["dynamic_functional_report"]
 
@@ -1556,6 +1561,66 @@ def test_preserved_candidate_plan_is_pure_arazzo_and_executes(
     assert "cases" not in report["candidatePlan"]
     assert calls == ["workflow-UC-1"]
     assert report["executionOrder"] == ["workflow-UC-1"]
+
+
+def test_partial_preserved_plan_generates_only_missing_workflows_and_keeps_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _state()
+    state["testing_input"]["contract_artifacts"]["requirements"]["content"] = _requirements(11)
+    state["testing_input"]["contract_artifacts"]["use_cases"]["content"] = _use_cases(11)
+    openapi = deepcopy(state["testing_input"]["contract_artifacts"]["openapi"]["content"])
+    openapi["paths"]["/health"]["get"]["x-easydep-use-case-ids"] = [
+        f"UC-{index}" for index in range(1, 12)
+    ]
+    state["testing_input"]["contract_artifacts"]["openapi"]["content"] = openapi
+    candidates = build_workflow_candidates(_requirements(11), _use_cases(11), openapi)
+    all_workflows = [
+        attach_workflow_trace(
+            {"workflowId": candidate["workflowId"], "steps": [{"stepId": "health", "operationId": "health"}]},
+            candidate,
+        )
+        for candidate in candidates
+    ]
+    preserved_indexes = {0, 1, 3, 5, 6, 8, 9, 10}
+    state["fixed_arazzo_document"] = build_arazzo_document(
+        [workflow for index, workflow in enumerate(all_workflows) if index in preserved_indexes]
+    )
+    generated: list[str] = []
+
+    def generate(_client: Any, candidate: dict[str, Any], *_args: Any) -> dict[str, Any]:
+        workflow_id = str(candidate["workflowId"])
+        generated.append(workflow_id)
+        if workflow_id == "workflow-UC-5":
+            raise dynamic.ArazzoPlanningError("synthetic planning failure")
+        return attach_workflow_trace(
+            {"workflowId": workflow_id, "steps": [{"stepId": "health", "operationId": "health"}]},
+            candidate,
+        )
+
+    monkeypatch.setattr(dynamic, "_generate_candidate_workflow", generate)
+    monkeypatch.setattr(
+        dynamic,
+        "execute_arazzo_workflow",
+        lambda _document, workflow_id, **_kwargs: _pass(workflow_id),
+    )
+
+    report = dynamic.dynamic_functional_node(state)["dynamic_functional_report"]
+
+    assert generated == ["workflow-UC-3", "workflow-UC-5", "workflow-UC-8"]
+    assert [item["workflowId"] for item in report["candidatePlan"]["workflows"]] == [
+        "workflow-UC-1",
+        "workflow-UC-2",
+        "workflow-UC-3",
+        "workflow-UC-4",
+        "workflow-UC-6",
+        "workflow-UC-7",
+        "workflow-UC-8",
+        "workflow-UC-9",
+        "workflow-UC-10",
+        "workflow-UC-11",
+    ]
+    assert [item["workflowId"] for item in report["planningFailures"]] == ["workflow-UC-5"]
 
 
 def test_fixed_leaf_input_is_replayed_from_plan_without_runtime_proposal(

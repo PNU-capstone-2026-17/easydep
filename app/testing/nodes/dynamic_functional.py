@@ -2697,10 +2697,66 @@ def _preserved(
     value: Any,
     candidates: list[dict[str, Any]],
     openapi: dict[str, Any],
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     if not isinstance(value, dict):
         raise TypeError("Preserved Arazzo candidatePlan must be an object.")
-    return _validate_document(value, candidates, openapi)
+    workflows = value.get("workflows")
+    if not isinstance(workflows, list):
+        raise ArazzoValidationError("Preserved Arazzo workflows must be a list.")
+
+    candidate_ids = [str(candidate["workflowId"]) for candidate in candidates]
+    candidate_by_id = {str(candidate["workflowId"]): candidate for candidate in candidates}
+    preserved_ids = [
+        str(workflow.get("workflowId")) if isinstance(workflow, dict) else ""
+        for workflow in workflows
+    ]
+    preserved_id_set = set(preserved_ids)
+    expected_preserved_ids = [
+        workflow_id for workflow_id in candidate_ids if workflow_id in preserved_id_set
+    ]
+    if preserved_ids != expected_preserved_ids:
+        raise ArazzoValidationError(
+            "Preserved workflow IDs or order do not match the frozen candidate scope."
+        )
+
+    preserved_candidates = [candidate_by_id[workflow_id] for workflow_id in preserved_ids]
+    preserved_document = (
+        _validate_document(value, preserved_candidates, openapi)
+        if preserved_ids
+        else build_arazzo_document([])
+    )
+    missing_candidates = [
+        candidate for candidate in candidates
+        if str(candidate["workflowId"]) not in preserved_id_set
+    ]
+    if not missing_candidates:
+        return preserved_document, []
+
+    generated_document, planning_failures = _generate_document(
+        None, missing_candidates, openapi
+    )
+    generated_workflows = (
+        generated_document["workflows"] if generated_document is not None else []
+    )
+    if not preserved_ids and not generated_workflows:
+        return None, planning_failures
+    workflows_by_id = {
+        str(workflow["workflowId"]): workflow
+        for workflow in [*preserved_document["workflows"], *generated_workflows]
+    }
+    ordered_workflows = [
+        workflows_by_id[workflow_id]
+        for workflow_id in candidate_ids
+        if workflow_id in workflows_by_id
+    ]
+    successful_candidates = [
+        candidate for candidate in candidates
+        if str(candidate["workflowId"]) in workflows_by_id
+    ]
+    completed_document = _validate_document(
+        build_arazzo_document(ordered_workflows), successful_candidates, openapi
+    )
+    return completed_document, planning_failures
 
 
 def _repair_execution_plan(
@@ -3166,8 +3222,15 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                 },
             }
         if state.get("fixed_arazzo_document") is not None:
-            document = _preserved(state["fixed_arazzo_document"], candidates, frozen["openapi"])
+            document, planning_failures = _preserved(
+                state["fixed_arazzo_document"], candidates, frozen["openapi"]
+            )
+            preserved_workflow_ids = {
+                str(workflow["workflowId"]) for workflow in document["workflows"]
+            } if document is not None else set()
             for candidate in candidates:
+                if str(candidate["workflowId"]) not in preserved_workflow_ids:
+                    continue
                 _emit_plan_progress(
                     candidate,
                     "PENDING",
@@ -3175,7 +3238,12 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
                     detail="Validated test plan is ready for Testing completion",
                 )
             client: OpenAI | None = None
-            plan_source = "preserved"
+            original_workflows = state["fixed_arazzo_document"].get("workflows")
+            plan_source = (
+                "preserved"
+                if isinstance(original_workflows, list) and len(original_workflows) == len(candidates)
+                else "preserved and completed"
+            )
         else:
             # Each parallel LLM planner creates its own synchronous client.
             # Sharing one HTTP client across worker threads would introduce a
