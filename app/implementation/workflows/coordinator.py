@@ -379,34 +379,35 @@ def _run_workflow(
         return state
     if state.get("status") == "NEEDS_INPUT":
         return state
-    runnable = list(state.get("nextRunnableTasks", []))
-    failed_runnable = [
-        task_id
-        for task_id in runnable
-        if next(task for task in state["tasks"] if task["task_id"] == task_id)["status"] == "FAILED"
-    ]
-    if failed_runnable and not retry_failed:
-        raise RuntimeError(
-            "Workflow has failed tasks; inspect evidence and use --retry-failed: "
-            + ", ".join(failed_runnable)
-        )
-    if not runnable:
-        if state.get("status") == "NEEDS_PLANNER":
-            return state
-        return _finalize_workflow(
-            run_root,
-            spec,
-            state,
-            auditor=auditor,
-        )
-
-    # 구현 단계 진입이 곧 실행 요청이다. 별도의 승인 파일 없이 현재 dependency가
-    # 충족된 작업만 실행하고, 다음 묶음은 갱신된 workflow에서 이어서 고른다.
-    authorized_task_ids = set(runnable)
-    state["status"] = "RUNNING"
-    _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-
     while True:
+        runnable = list(state.get("nextRunnableTasks", []))
+        failed_runnable = [
+            task_id
+            for task_id in runnable
+            if next(task for task in state["tasks"] if task["task_id"] == task_id)["status"] == "FAILED"
+        ]
+        if failed_runnable and not retry_failed:
+            raise RuntimeError(
+                "Workflow has failed tasks; inspect evidence and use --retry-failed: "
+                + ", ".join(failed_runnable)
+            )
+        if not runnable:
+            if state.get("status") == "NEEDS_PLANNER":
+                return state
+            return _finalize_workflow(
+                run_root,
+                spec,
+                state,
+                auditor=auditor,
+            )
+
+        # A member runner owns one workflow invocation.  Reconcile after each
+        # durable owner result and keep executing newly-unblocked work in that
+        # same invocation; returning READY here would tear down the Docker
+        # runner only to start another one for the next dependency layer.
+        runnable_task_ids = set(runnable)
+        state["status"] = "RUNNING"
+        _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
         runnable_phases: list[str] = []
         runnable_tasks: list[dict[str, object]] = []
         for phase_id, _dependencies, _types in PHASES:
@@ -414,7 +415,7 @@ def _run_workflow(
                 task
                 for task in state["tasks"]
                 if task["phase"] == phase_id
-                and task["task_id"] in authorized_task_ids
+                and task["task_id"] in runnable_task_ids
                 and (
                     task["status"] in {"PENDING", "INTERRUPTED"}
                     or (retry_failed and task["status"] == "FAILED")
@@ -424,7 +425,12 @@ def _run_workflow(
                 runnable_phases.append(phase_id)
                 runnable_tasks.extend(phase_tasks)
         if not runnable_tasks:
-            break
+            # Reconciliation uses the same task and phase predicates as this
+            # selection.  Returning READY here would only create an endless
+            # runner lifecycle loop, so surface a corrupt checkpoint instead.
+            raise RuntimeError(
+                "Workflow checkpoint exposes runnable tasks that no phase can execute."
+            )
 
         # The dependency graph makes one owner phase runnable at a time.
         state["currentPhase"] = runnable_phases[0]
@@ -464,33 +470,14 @@ def _run_workflow(
             raise error
         if any(task["status"] == "NEEDS_INPUT" for task in runnable_tasks):
             return plan_workflow(run_root, spec)
-        for phase_id in runnable_phases:
-            next(phase for phase in state["phases"] if phase["phaseId"] == phase_id)["status"] = (
-                "SUCCEEDED"
-            )
-        state["updatedAt"] = _now()
-        _write_json_atomic(run_root / "reports" / "workflow-state.json", state)
-    state.pop("currentPhases", None)
 
-    # Reconcile the completed owner result and any short repair directive.
-    final_state = plan_workflow(run_root, spec)
-    if final_state.get("status") in {"NEEDS_INPUT", "NEEDS_PLANNER"}:
-        return final_state
-    if final_state.get("nextRunnableTasks"):
-        # Every work unit performs its own focused verification.  Do not scan
-        # the incomplete application after each work unit; the final audit and
-        # full workspace build run only when no work unit remains.
-        final_state["status"] = "READY"
-        final_state["blockingReason"] = None
-        final_state.pop("currentActivity", None)
-        _write_json_atomic(run_root / "reports" / "workflow-state.json", final_state)
-        return final_state
-    return _finalize_workflow(
-        run_root,
-        spec,
-        final_state,
-        auditor=auditor,
-    )
+        # Result files and output hashes are the checkpoint boundary.  Unlike
+        # plan_workflow(), reconciliation does not regenerate owner tasks or
+        # execution plans, so a newly unblocked dependency can run immediately
+        # without changing the work the current runner was given.
+        state = reconcile_workflow_state(run_root)
+        if state.get("status") in {"NEEDS_INPUT", "NEEDS_PLANNER"}:
+            return state
 
 
 def _finalize_workflow(

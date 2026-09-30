@@ -179,6 +179,7 @@ def test_trivy_uses_shared_toolchain_and_keeps_exact_findings(monkeypatch, tmp_p
         "[deployment/tofu/main.tf] AVD-AWS-9999: Example finding (HIGH): Example message"
     ]
     assert issues.evidence["toolchain"] == "easydep-toolchain:test"
+    assert issues.evidence["durationMs"] >= 0
     assert issues.evidence["targets"] == ["deployment/tofu/main.tf"]
     assert issues.evidence["findings"] == [
         {
@@ -344,6 +345,13 @@ def test_deployment_check_treats_toolchain_start_failure_as_inconclusive(
     assert result["openTofu"]["gateStatus"] == "INCONCLUSIVE"
     assert all(command["status"] == "INCONCLUSIVE" for command in result["commands"])
     assert all("durationMs" in command for command in result["commands"])
+    assert set(result["timings"]) == {
+        "durationMs",
+        "preflightMs",
+        "tofuWorkspaceCopyMs",
+        "postprocessMs",
+    }
+    assert all(value >= 0 for value in result["timings"].values())
     assert not any("apply" in command["command"] for command in result["commands"])
 
 

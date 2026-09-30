@@ -1,5 +1,6 @@
 import json
 import subprocess
+import time
 from typing import Any
 
 from app.testing.runtime.container_runner import run_toolchain_command
@@ -23,6 +24,7 @@ def run_trivy_scan(target_dir: str) -> list[str]:
     host에 설치된 다른 버전을 사용하지 않고 구현·Testing과 공유하는
     ``easydep-toolchain``의 Trivy를 사용한다. 이미 그 컨테이너 안이면 바로 실행한다.
     """
+    started_at = time.monotonic()
     command = [
         "trivy",
         "config",
@@ -62,6 +64,7 @@ def run_trivy_scan(target_dir: str) -> list[str]:
                     "stderr": result.stderr[-4000:],
                     "targets": [],
                     "environmentError": environment_error,
+                    "durationMs": round((time.monotonic() - started_at) * 1000, 3),
                 },
             )
 
@@ -82,6 +85,7 @@ def run_trivy_scan(target_dir: str) -> list[str]:
                     "stderr": result.stderr[-4000:],
                     "targets": [],
                     "environmentError": environment_error,
+                    "durationMs": round((time.monotonic() - started_at) * 1000, 3),
                 },
             )
 
@@ -127,6 +131,7 @@ def run_trivy_scan(target_dir: str) -> list[str]:
                 "targets": sorted(targets),
                 "findings": findings,
                 "environmentError": False,
+                "durationMs": round((time.monotonic() - started_at) * 1000, 3),
             },
         )
 
@@ -144,5 +149,6 @@ def run_trivy_scan(target_dir: str) -> list[str]:
                 "stderr": str(error),
                 "targets": [],
                 "environmentError": True,
+                "durationMs": round((time.monotonic() - started_at) * 1000, 3),
             },
         )

@@ -5492,6 +5492,129 @@ def test_owner_execution_boundary_preserves_checkpoint_without_source_repair(
     assert not (run / "reports/repair-plan.json").exists()
 
 
+def _continuation_state(
+    rows: list[tuple[str, str, str]],
+    runnable: list[str],
+    *,
+    backend: str = "PENDING",
+    frontend: str = "PENDING",
+    status: str | None = None,
+) -> dict[str, object]:
+    return {
+        "status": status or ("READY" if runnable else "READY_TO_FINALIZE"),
+        "tasks": [
+            {"task_id": task_id, "phase": phase, "status": task_status}
+            for task_id, phase, task_status in rows
+        ],
+        "phases": [
+            {"phaseId": "backend", "status": backend},
+            {"phaseId": "frontend", "status": frontend},
+            {"phaseId": "integration", "status": "UNPLANNED"},
+        ],
+        "nextRunnableTasks": runnable,
+    }
+
+
+def test_workflow_continues_newly_unblocked_tasks_in_one_runner_invocation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One CLI invocation follows owner dependencies without a READY hand-off."""
+    run = tmp_path / "run"
+    (run / "reports").mkdir(parents=True)
+    rows = [
+        ("backend-a", "backend", "PENDING"),
+        ("backend-b", "backend", "PENDING"),
+        ("frontend-c", "frontend", "PENDING"),
+    ]
+    first = _continuation_state(rows, ["backend-a"])
+    reconciled = iter(
+        (
+            _continuation_state(
+                [("backend-a", "backend", "SUCCEEDED"), *rows[1:]], ["backend-b"]
+            ),
+            _continuation_state(
+                [*[(task_id, phase, "SUCCEEDED") for task_id, phase, _ in rows[:2]], rows[2]],
+                ["frontend-c"],
+                backend="SUCCEEDED",
+            ),
+            _continuation_state(
+                [(task_id, phase, "SUCCEEDED") for task_id, phase, _ in rows],
+                [],
+                backend="SUCCEEDED",
+                frontend="SUCCEEDED",
+            ),
+        )
+    )
+    calls: list[str] = []
+    monkeypatch.setattr("app.implementation.workflows.coordinator.plan_workflow", lambda *_: first)
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.reconcile_workflow_state", lambda *_: next(reconciled)
+    )
+
+    def execute_batch(_run, _state, tasks, _executor):
+        calls.extend(str(task["task_id"]) for task in tasks)
+        for task in tasks:
+            task["status"] = "SUCCEEDED"
+        return []
+
+    monkeypatch.setattr("app.implementation.workflows.coordinator._execute_task_batch", execute_batch)
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator._finalize_workflow",
+        lambda _run, _spec, state, **_kwargs: {"status": "COMPLETE", "tasks": state["tasks"]},
+    )
+
+    result = run_workflow(run, SimpleNamespace(app_id="app-1", inputs={}, job_type="INITIAL_IMPLEMENTATION"))
+
+    assert calls == ["backend-a", "backend-b", "frontend-c"]
+    assert result["status"] == "COMPLETE"
+
+
+def test_workflow_continuation_preserves_interrupt_after_an_unblocked_task(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Continuing in one runner still returns at an owner interruption boundary."""
+    run = tmp_path / "run"
+    (run / "reports").mkdir(parents=True)
+    first = _continuation_state(
+        [("backend-a", "backend", "PENDING"), ("backend-b", "backend", "PENDING")],
+        ["backend-a"],
+    )
+    next_owner = _continuation_state(
+        [("backend-a", "backend", "SUCCEEDED"), ("backend-b", "backend", "PENDING")],
+        ["backend-b"],
+    )
+    interrupted = _continuation_state(
+        [("backend-a", "backend", "SUCCEEDED"), ("backend-b", "backend", "INTERRUPTED")],
+        ["backend-b"],
+        status="INTERRUPTED",
+    )
+    planned = iter((first, interrupted))
+    calls: list[str] = []
+    monkeypatch.setattr("app.implementation.workflows.coordinator.plan_workflow", lambda *_: next(planned))
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.reconcile_workflow_state", lambda *_: next_owner
+    )
+
+    def execute_batch(_run, _state, tasks, _executor):
+        task = tasks[0]
+        calls.append(str(task["task_id"]))
+        if task["task_id"] == "backend-b":
+            return [(task, OwnerConversationIncomplete({"stderr": "owner stopped"}))]
+        task["status"] = "SUCCEEDED"
+        return []
+
+    monkeypatch.setattr("app.implementation.workflows.coordinator._execute_task_batch", execute_batch)
+    monkeypatch.setattr(
+        "app.implementation.workflows.coordinator.schedule_cross_phase_repair",
+        lambda *_args, **_kwargs: pytest.fail("interrupt must not schedule repair"),
+    )
+
+    result = run_workflow(run, SimpleNamespace(app_id="app-1", inputs={}, job_type="INITIAL_IMPLEMENTATION"))
+
+    assert calls == ["backend-a", "backend-b"]
+    assert result is interrupted
+
+
 def test_feedback_revision_runs_one_full_backend_test_gate_before_complete(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -235,6 +235,7 @@ def check_deployment_package(
     선택 재검사에서는 ``package`` 또는 ``iac``만 넘겨, 예를 들어 Shell 파일만
     고쳤는데 OpenTofu 초기화까지 되풀이하는 일을 피한다.
     """
+    started_at = time.monotonic()
     selected = frozenset(gate_scope or {"package", "iac"})
     unknown = selected - {"package", "iac"}
     if unknown:
@@ -273,6 +274,12 @@ def check_deployment_package(
                     label="No deployment package is required",
                     gate=gate,
                 )
+            unavailable_result["timings"] = {
+                "durationMs": round((time.monotonic() - started_at) * 1000, 3),
+                "preflightMs": round((time.monotonic() - started_at) * 1000, 3),
+                "tofuWorkspaceCopyMs": 0.0,
+                "postprocessMs": 0.0,
+            }
             return unavailable_result
         message = "A deployment package was expected but no package directory exists."
         unavailable_result = {
@@ -291,6 +298,12 @@ def check_deployment_package(
                 label="Deployment package is unavailable",
                 gate=gate,
             )
+        unavailable_result["timings"] = {
+            "durationMs": round((time.monotonic() - started_at) * 1000, 3),
+            "preflightMs": round((time.monotonic() - started_at) * 1000, 3),
+            "tofuWorkspaceCopyMs": 0.0,
+            "postprocessMs": 0.0,
+        }
         return unavailable_result
 
     if check_package:
@@ -314,12 +327,16 @@ def check_deployment_package(
                 for name in ("main.tf", "variables.tf", "outputs.tf")
                 if not (tofu / name).is_file()
             )
+    preflight_ms = round((time.monotonic() - started_at) * 1000, 3)
+    tofu_workspace_copy_ms = 0.0
     if check_iac and tofu.is_dir():
         # init이 생성 패키지에 .terraform을 남기지 않도록 작은 임시 복사본에서
         # 실행한다. apply와 실제 provider refresh는 하지 않는다.
         with tempfile.TemporaryDirectory(prefix="easydep-tofu-check-") as temporary:
             validation_tofu = Path(temporary) / "tofu"
+            copy_started_at = time.monotonic()
             shutil.copytree(tofu, validation_tofu)
+            tofu_workspace_copy_ms += round((time.monotonic() - copy_started_at) * 1000, 3)
             tofu_checks = [
                 ["tofu", "fmt", "-check", "-recursive"],
                 [
@@ -416,6 +433,7 @@ def check_deployment_package(
             )
         )
 
+    postprocess_started_at = time.monotonic()
     command_issues = [
         str(item.get("output") or item.get("error") or item.get("reason") or "")
         for item in commands
@@ -501,4 +519,10 @@ def check_deployment_package(
             label="Completed infrastructure validation",
             gate="iac",
         )
+    result["timings"] = {
+        "durationMs": round((time.monotonic() - started_at) * 1000, 3),
+        "preflightMs": preflight_ms,
+        "tofuWorkspaceCopyMs": tofu_workspace_copy_ms,
+        "postprocessMs": round((time.monotonic() - postprocess_started_at) * 1000, 3),
+    }
     return result
