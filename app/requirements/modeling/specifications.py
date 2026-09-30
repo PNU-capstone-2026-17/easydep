@@ -24,6 +24,7 @@ import json
 import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from copy import deepcopy
 from typing import NotRequired, TypedDict, cast
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -1151,10 +1152,44 @@ def check_specs(
         review_semantic and len(specs) > 1
         and state.get("use_cases") and state.get("classified")
     ):
+        # Cross-UC reconciliation changes a producer's public contract after its
+        # ordinary per-UC validation. Re-run deterministic validation for changed
+        # values; the pair review already evaluates the new relation, and rerunning
+        # the broad semantic reviewer here would add costly duplicate LLM calls.
+        required_values_before = {
+            str(spec.get("use_case_id")): deepcopy(
+                contract_data.get("required_values")
+                if isinstance((contract_data := spec.get("public_contract")), dict)
+                else None
+            )
+            for spec in specs
+        }
         specs = reconcile_cross_use_case_values(
             specs, state["use_cases"], state["classified"],
             allowed_producer_ids=allowed_producer_ids,
         )
+        use_cases_by_id = {
+            str(use_case.get("id")): use_case for use_case in state["use_cases"]
+        }
+        for spec in specs:
+            uc_id = str(spec.get("use_case_id") or "")
+            contract_data = spec.get("public_contract")
+            required_values_after = (
+                contract_data.get("required_values")
+                if isinstance(contract_data, dict) else None
+            )
+            if required_values_after == required_values_before.get(uc_id):
+                continue
+            use_case = use_cases_by_id.get(uc_id)
+            if use_case is None:
+                continue
+            # Keep existing semantic findings/status, but refresh the static
+            # contract/schema findings against the mutated artifact.
+            static_issues = validate_specification(
+                cast(dict[str, object], spec), _accepted_step_subject_refs(use_case)
+            )
+            prior_issues = spec.get("issues") or []
+            spec["issues"] = list(dict.fromkeys([*prior_issues, *static_issues]))
     reviewed_state = cast(AgentState, {**state, "use_case_specs": specs})
     report = {
         "n_specs": len(specs),

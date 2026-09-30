@@ -156,15 +156,16 @@ def test_allowed_values_catalog_is_projected_and_requires_an_exact_enum():
             "returnType": "void", "stepRefs": ["UC1:main:2"],
         }]}],
     }
-    finding = operations._allowed_value_findings(fragment, inventory, use_case)
-    assert finding and finding[0].rule_id == "class.operation.allowed-values"
+    report = validate_operations(fragment, OperationContext(index, inventory, use_case))
+    assert any(finding.rule_id == "class.operation.allowed-values" for finding in report.findings)
 
     fragment["DataTypes"] = [{
         "name": "RequestMode", "kind": "enumeration", "fields": [],
         "values": ["draft", "published"],
     }]
     fragment["Classes"][0]["operations"][0]["parameters"][0]["type"] = "RequestMode"
-    assert operations._allowed_value_findings(fragment, inventory, use_case) == []
+    report = validate_operations(fragment, OperationContext(index, inventory, use_case))
+    assert not [finding for finding in report.findings if finding.rule_id == "class.operation.allowed-values"]
 
 
 def test_operation_normalization_expands_only_exact_short_handle():

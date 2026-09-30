@@ -42,6 +42,9 @@ def required_value_catalog(use_case: UseCase) -> tuple[dict[str, Any], ...]:
             "availability": _SOURCE_AVAILABILITY[source],
             "valueType": value_type,
             "designType": _DESIGN_TYPES.get(value_type.casefold(), value_type),
+            **({"allowedValues": list(item["allowed_values"])}
+               if isinstance(item.get("allowed_values"), list) and item["allowed_values"]
+               else {}),
             "usage": text(item.get("usage")),
             "identityObligationRef": text(item.get("identity_obligation_ref")) or None,
             "evidenceRefs": list(dict.fromkeys(

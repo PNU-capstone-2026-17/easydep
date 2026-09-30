@@ -148,7 +148,47 @@ def test_error_without_a_checkpoint_is_not_retried(monkeypatch) -> None:
         service.shutdown()
 
 
-def test_checkpointed_nontransient_error_retries_the_same_command(monkeypatch) -> None:
+def test_empty_awaiting_action_set_finishes_as_failure(monkeypatch) -> None:
+    command = {
+        "command_id": "design-command",
+        "app_id": "app-1",
+        "action": "advance",
+        "stage": "design",
+        "payload": {},
+    }
+    finished: dict[str, Any] = {}
+    service = WorkspaceService()
+    try:
+        monkeypatch.setattr(service, "_stop_requested", lambda _command_id: False)
+        monkeypatch.setattr(repository, "now", lambda: datetime.now(UTC).replace(tzinfo=None))
+        monkeypatch.setattr(repository, "update_command", lambda *_args, **_kwargs: command)
+        monkeypatch.setattr(repository, "notify_command_changed", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(
+            service,
+            "_dispatch_with_transient_retry",
+            lambda _command: {"awaiting_input": True, "requires_revision": True},
+        )
+        monkeypatch.setattr(service, "_auto_repair_semantic_result", lambda _command, result: result)
+        monkeypatch.setattr(service, "_with_design_progress_hints", lambda _app_id, result: result)
+        monkeypatch.setattr(
+            service,
+            "_finish_terminal_command",
+            lambda _command_id, _command, *, status, result, error: finished.update(
+                status=status, result=result, error=error
+            )
+            or {"stage": "design"},
+        )
+
+        service._execute_command("design-command", command)
+    finally:
+        service.shutdown()
+
+    assert finished["status"] == "FAILED"
+    assert finished["result"]["actions"] == []
+    assert finished["error"] == "No answerable Workspace action was produced."
+
+
+def test_checkpointed_nontransient_error_is_not_replayed(monkeypatch) -> None:
     command = {
         "command_id": "design-command",
         "app_id": "app-1",
@@ -176,18 +216,12 @@ def test_checkpointed_nontransient_error_retries_the_same_command(monkeypatch) -
         monkeypatch.setattr(service, "_transient_retry_operation", lambda _command: lambda: next(attempts))
         monkeypatch.setattr(service, "_sleep_for_retry", lambda *_args: None)
 
-        assert service._dispatch_with_transient_retry(command) == {"message": "resumed"}
+        with pytest.raises(ValueError, match="technical validation failed"):
+            service._dispatch_with_transient_retry(command)
     finally:
         service.shutdown()
 
-    assert updates == [
-        {
-            "payload": {
-                "_transient_retry": {"attempt": 1, "error_type": "ValueError"}
-            },
-            "error": None,
-        }
-    ]
+    assert updates == []
 
 
 def test_testing_retry_uses_linked_job_before_checkpoint_is_persisted(monkeypatch) -> None:
@@ -598,7 +632,7 @@ def test_stalled_class_result_retries_without_model_reconcile_delta(monkeypatch)
         service.shutdown()
 
 
-def test_no_progress_semantic_repair_waits_with_cancellable_backoff(monkeypatch) -> None:
+def test_no_progress_semantic_repair_stalls_without_replaying(monkeypatch) -> None:
     command = {
         "command_id": "requirements-command",
         "app_id": "app-1",
@@ -616,15 +650,8 @@ def test_no_progress_semantic_repair_waits_with_cancellable_backoff(monkeypatch)
     }
     service = WorkspaceService()
     calls = 0
-    sleeps = 0
     monkeypatch.setattr(service, "_record_technical_retry", lambda *_args: None)
-    def stop(_command_id):
-        return calls >= 2
-    monkeypatch.setattr(service, "_stop_requested", stop)
-    def sleep(*_args):
-        nonlocal sleeps
-        sleeps += 1
-    monkeypatch.setattr(service, "_sleep_for_retry", sleep)
+    monkeypatch.setattr(service, "_stop_requested", lambda _command_id: False)
     def unchanged(*_args, **_kwargs):
         nonlocal calls
         calls += 1
@@ -633,12 +660,11 @@ def test_no_progress_semantic_repair_waits_with_cancellable_backoff(monkeypatch)
         service, "_repair_requirements_result", unchanged
     )
     try:
-        with pytest.raises(workspace_module.WorkspaceStopRequested):
+        with pytest.raises(workspace_module.TechnicalRepairStalled, match="without progress"):
             service._auto_repair_semantic_result(command, result)
     finally:
         service.shutdown()
-    assert calls == 2
-    assert sleeps == 2
+    assert calls == 1
 
 
 def test_semantic_repair_retries_until_stop_not_a_hard_iteration_bound(monkeypatch) -> None:

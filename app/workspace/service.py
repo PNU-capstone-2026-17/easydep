@@ -129,6 +129,10 @@ TERMINAL_JOB_STATUSES = {
     "NEEDS_PLANNER",
 }
 
+
+class TechnicalRepairStalled(RuntimeError):
+    """A Workspace-owned checkpoint or semantic repair made no progress."""
+
 # 예전의 길이 제한 표본은 진단용 내부 값으로만 남긴다. 현재 개발 기본 설정은 실제 JSON
 # 응답과 reasoning을 별도 ``responseContent``·``reasoningContent`` field로 기록하므로,
 # Workspace event에서도 같은 실행의 원문을 확인할 수 있다.
@@ -1590,6 +1594,31 @@ class WorkspaceService:
                 result = result_with_contract(
                     {**command, "status": "AWAITING_INPUT"}, result
                 )
+                # AWAITING_INPUT is reserved for an answerable user decision.
+                # Automatic repair has already consumed technical pauses before
+                # this point, so persisting any empty action set would strand
+                # the command indefinitely after a malformed question or an
+                # exhausted repair budget.
+                if not result.get("actions"):
+                    detail = str(
+                        result.get("message")
+                        or "No answerable Workspace action was produced."
+                    )
+                    terminal = self._finish_terminal_command(
+                        command_id,
+                        command,
+                        status="FAILED",
+                        result=result_with_contract(
+                            {**command, "status": "FAILED"}, result
+                        ),
+                        error=detail,
+                    )
+                    repository.notify_command_changed(
+                        app_id,
+                        command_id=command_id,
+                        stage=str(terminal.get("stage") or stage),
+                    )
+                    return
                 routed_stage = str(result.get("routing_stage") or "")
                 changes: dict[str, Any] = {
                     "status": "AWAITING_INPUT",
@@ -1754,6 +1783,12 @@ class WorkspaceService:
             try:
                 return operation()
             except Exception as error:
+                # A checkpoint makes an operation safe to resume, not safe to
+                # replay a deterministic contract/validation failure.  Those
+                # errors need the owning repair loop (or an explicit failure),
+                # while transport/provider failures may be retried.
+                if not self._is_transient_execution_error(error):
+                    raise
                 next_operation = retry_operation()
                 if next_operation is None:
                     # Never create a replacement job or replay an uncheckpointed
@@ -2738,6 +2773,10 @@ class WorkspaceService:
                 repaired = self._retry_technical_checkpoint(command, current, stage)
                 if repaired is current:
                     return current
+                if self._semantic_repair_fingerprint(repaired) == fingerprint:
+                    raise TechnicalRepairStalled(
+                        f"{stage} checkpoint retry repeated the same technical diagnostic"
+                    )
                 current = repaired
                 self._sleep_for_retry(str(command["command_id"]), retry_attempt)
                 continue
@@ -2938,9 +2977,9 @@ class WorkspaceService:
                 return self._retry_technical_checkpoint(command, current, stage)
 
             if self._semantic_repair_fingerprint(repaired) == fingerprint:
-                current = repaired
-                self._sleep_for_retry(str(command["command_id"]), retry_attempt)
-                continue
+                raise TechnicalRepairStalled(
+                    f"{stage} automatic repair repeated the same diagnostic without progress"
+                )
             current = repaired
 
     @staticmethod

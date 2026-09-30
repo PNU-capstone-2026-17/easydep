@@ -224,72 +224,6 @@ def _required_value_handles(use_case: UseCase) -> tuple[dict[str, str], dict[str
     return handle_to_ref, {value_ref: handle for handle, value_ref in handle_to_ref.items()}
 
 
-def _allowed_value_findings(
-    fragment: dict[str, Any], inventory: dict[str, Any], use_case: UseCase,
-) -> list[Finding]:
-    """Require finite required-value catalogs to stay enum-typed on Control inputs."""
-    contract = use_case.specification.get("public_contract")
-    required_values = contract.get("required_values") if isinstance(contract, dict) else []
-    catalogs = {
-        text(item.get("value_ref")): item
-        for item in required_values or []
-        if isinstance(item, dict)
-        and text(item.get("value_ref"))
-        and isinstance(item.get("allowed_values"), list)
-        and item.get("allowed_values")
-    }
-    if not catalogs:
-        return []
-    type_index = {
-        text(item.get("name")): item
-        for item in [*(inventory.get("DataTypes") or []), *(fragment.get("DataTypes") or [])]
-        if isinstance(item, dict)
-    }
-    stereotypes = {
-        class_name(item): text(item.get("stereotype"))
-        for item in inventory.get("Classes") or [] if isinstance(item, dict)
-    }
-    findings: list[Finding] = []
-    referenced: set[str] = set()
-    for owner in fragment.get("Classes") or []:
-        if not isinstance(owner, dict) or stereotypes.get(text(owner.get("className")), "").casefold() != "control":
-            continue
-        for operation in owner.get("operations") or []:
-            if not isinstance(operation, dict):
-                continue
-            for parameter in operation.get("parameters") or []:
-                if not isinstance(parameter, dict):
-                    continue
-                value_ref = text(parameter.get("requiredValueRef"))
-                catalog = catalogs.get(value_ref)
-                if catalog is None:
-                    continue
-                referenced.add(value_ref)
-                allowed = catalog["allowed_values"]
-                parameter_type = text(parameter.get("type"))
-                declaration = type_index.get(parameter_type)
-                if not (
-                    isinstance(declaration, dict)
-                    and text(declaration.get("kind")).casefold() == "enumeration"
-                    and list(declaration.get("values") or []) == allowed
-                ):
-                    findings.append(Finding(
-                        "class.operation.allowed-values",
-                        f"requiredValueRef '{value_ref}' has a finite allowed_values catalog; "
-                        "the Control parameter must use an enumeration DataType with the exact values.",
-                        f"{use_case.id}:{owner.get('className')}.{operation.get('name')}#{parameter.get('name')}",
-                    ))
-    for value_ref, catalog in catalogs.items():
-        if catalog.get("usage") in {"control", "both"} and value_ref not in referenced:
-            findings.append(Finding(
-                "class.operation.allowed-values",
-                f"required value '{value_ref}' has a finite allowed_values catalog and must be "
-                "preserved by a Control parameter with the same requiredValueRef.",
-                use_case.id,
-            ))
-    return findings
-
-
 def _expand_required_value_handles(candidate: dict[str, Any], use_case: UseCase) -> dict[str, Any]:
     """Expand exact known handles; leave unknown values untouched for rejection."""
     handles, _ = _required_value_handles(use_case)
@@ -931,10 +865,9 @@ def _checked_fragment_uncached(
         )
         candidate = repaired.get("fragment", candidate)
         report = run_checks(OPERATION_CHECKS, candidate, context)
-        allowed_value_findings = _allowed_value_findings(candidate, validation_inventory, use_case)
         if report.errors:
             raise RuntimeError("; ".join(report.errors))
-        if not report.findings and not allowed_value_findings:
+        if not report.findings:
             return candidate
 
         current_findings = tuple(sorted(set([
@@ -1120,15 +1053,13 @@ def _validate_accepted_fragment(
             allowed_step_ids,
         ),
     )
-    allowed_value_findings = _allowed_value_findings(normalized, validation_inventory, use_case)
-    if report.errors or report.findings or allowed_value_findings:
+    if report.errors or report.findings:
         raise OperationValidationError(
             f"cached operation fragment {use_case.id} is invalid: "
             + "; ".join([
                 *report.errors, *finding_text(report.findings),
-                *finding_text(allowed_value_findings),
             ]),
-            tuple([*report.findings, *allowed_value_findings]),
+            tuple(report.findings),
             tuple(report.errors),
         )
     return normalized

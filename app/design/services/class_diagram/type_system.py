@@ -189,6 +189,17 @@ def required_value_type_compatible(
     nonempty local valueObject/dataType declaration.
     """
 
+    allowed_values = required_value.get("allowedValues")
+    if isinstance(allowed_values, list) and allowed_values:
+        target_name = str(target_type or "").strip()
+        return any(
+            isinstance(item, dict)
+            and str(item.get("name") or "").strip() == target_name
+            and str(item.get("kind") or "").casefold() == "enumeration"
+            and list(item.get("values") or []) == allowed_values
+            for item in data_types
+        )
+
     source_type = str(required_value.get("designType") or "").strip()
     if types_compatible(source_type, target_type):
         return True

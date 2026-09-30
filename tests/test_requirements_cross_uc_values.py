@@ -184,6 +184,7 @@ def test_check_specs_persists_reconciled_contract(monkeypatch):
     from app.requirements.modeling import specifications
 
     producer = _spec("UC2", source="caller_input", requirement_id="RR2", value_ref="val_in")
+    producer["semantic_status"] = "ok"
     consumer = _spec("UC3", source="caller_input", requirement_id="RR3", value_ref="val_use")
     state = {
         "use_case_specs": [producer, consumer],
@@ -205,6 +206,13 @@ def test_check_specs_persists_reconciled_contract(monkeypatch):
         }}
         return updated
     monkeypatch.setattr(specifications, "reconcile_cross_use_case_values", reconcile)
+    checked = []
+
+    def validate(spec, allowed_subject_refs=None):
+        checked.append((spec["use_case_id"], spec["public_contract"]["required_values"]))
+        return ["[public-contract-integrity] checked after reconciliation"]
+
+    monkeypatch.setattr(specifications, "validate_specification", validate)
     monkeypatch.setattr(
         specifications, "find_source_grounded_semantic_ambiguity", lambda _state: None
     )
@@ -212,5 +220,10 @@ def test_check_specs_persists_reconciled_contract(monkeypatch):
     patch = specifications.check_specs(state)
 
     assert patch["use_case_specs"][0]["public_contract"]["required_values"][-1]["value_ref"] == "val_new"
+    assert checked == [("UC2", patch["use_case_specs"][0]["public_contract"]["required_values"])]
+    assert patch["use_case_specs"][0]["issues"] == [
+        "[public-contract-integrity] checked after reconciliation"
+    ]
+    assert patch["use_case_specs"][0]["semantic_status"] == "ok"
     assert patch["spec_report"]["n_specs"] == 2
     assert len(producer["public_contract"]["required_values"]) == 1

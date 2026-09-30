@@ -273,6 +273,37 @@ def test_operation_validator_checks_exact_required_value_ref_and_type():
     assert len([f for f in report.findings if f.rule_id == "class.operation.required-value"]) == 1
 
 
+@pytest.mark.parametrize(
+    ("parameter_type", "data_type", "expected_required_findings", "expected_allowed_findings"),
+    [
+        ("ReviewStatus", {"name": "ReviewStatus", "kind": "enumeration", "values": ["open", "closed"]}, 0, 0),
+        ("String", None, 1, 1),
+    ],
+)
+def test_finite_string_required_value_requires_exact_enum_in_combined_validation(
+    parameter_type: str, data_type: dict | None,
+    expected_required_findings: int, expected_allowed_findings: int,
+):
+    index = build_scenario_index(_scenario("UC90", "Reviewer", [], required_values=[{
+        "value_ref": "val-status", "name": "review status", "source": "caller_input",
+        "value_type": "string", "usage": "control", "requirement_ids": ["REQ-90"],
+        "allowed_values": ["open", "closed"],
+    }]))
+    inventory = {"Classes": [{"className": "ReviewControl", "stereotype": "Control"}], "DataTypes": []}
+    fragment = {
+        "DataTypes": [data_type] if data_type else [],
+        "Classes": [{"className": "ReviewControl", "operations": [{
+            "name": "process", "parameters": [{
+                "name": "status", "type": parameter_type, "requiredValueRef": "val-status",
+            }], "returnType": "void", "stepRefs": ["UC90:main:2"],
+        }]}],
+    }
+
+    report = validate_operations(fragment, OperationContext(index, inventory, index.use_case("UC90")))
+    assert len([f for f in report.findings if f.rule_id == "class.operation.required-value"]) == expected_required_findings
+    assert len([f for f in report.findings if f.rule_id == "class.operation.allowed-values"]) == expected_allowed_findings
+
+
 def test_object_required_value_accepts_a_locally_declared_structured_refinement():
     index = build_scenario_index(_scenario("UC88", "Reviewer", [], required_values=[{
         "value_ref": "val-details", "name": "term details", "source": "caller_input",

@@ -195,6 +195,52 @@ def _required_value_parameter_refs(
     return findings
 
 
+def _finite_required_value_catalogs(
+    fragment: dict[str, Any], context: OperationContext,
+) -> list[Finding]:
+    """Require finite required-value catalogs to use their exact enum declaration."""
+    catalog = {item["valueRef"]: item for item in required_value_catalog(context.use_case)
+               if item.get("allowedValues")}
+    if not catalog:
+        return []
+    data_types = _effective_data_types(fragment, context.inventory)
+    stereotypes = {
+        class_name(item): text(item.get("stereotype"))
+        for item in context.inventory.get("Classes") or [] if isinstance(item, dict)
+    }
+    findings: list[Finding] = []
+    referenced: set[str] = set()
+    for owner in fragment.get("Classes") or []:
+        if not isinstance(owner, dict) or stereotypes.get(text(owner.get("className")), "").casefold() != "control":
+            continue
+        for operation in owner.get("operations") or []:
+            if not isinstance(operation, dict):
+                continue
+            for parameter in operation.get("parameters") or []:
+                if not isinstance(parameter, dict):
+                    continue
+                value_ref = text(parameter.get("requiredValueRef"))
+                value = catalog.get(value_ref)
+                if value is None:
+                    continue
+                referenced.add(value_ref)
+                parameter_type = text(parameter.get("type"))
+                if not required_value_type_compatible(value, parameter_type, data_types):
+                    findings.append(Finding(
+                        "class.operation.allowed-values",
+                        f"requiredValueRef '{value_ref}' must use an enumeration DataType with the exact finite allowed_values catalog.",
+                        f"{context.use_case.id}:{owner.get('className')}.{operation.get('name')}#{parameter.get('name')}",
+                    ))
+    for value_ref, value in catalog.items():
+        if value.get("usage") in {"control", "both"} and value_ref not in referenced:
+            findings.append(Finding(
+                "class.operation.allowed-values",
+                f"required value '{value_ref}' has a finite allowed_values catalog and must be preserved by a Control parameter with the same requiredValueRef.",
+                context.use_case.id,
+            ))
+    return findings
+
+
 def _operation_coverage(
     fragment: dict[str, Any], context: OperationContext,
 ) -> list[Finding]:
@@ -220,6 +266,7 @@ OPERATION_CHECKS = (
     CheckSpec("class.operation.data-types", _operation_data_types),
     CheckSpec("class.operation.references", _operation_references),
     CheckSpec("class.operation.required-value", _required_value_parameter_refs),
+    CheckSpec("class.operation.allowed-values", _finite_required_value_catalogs),
     CheckSpec("class.operation.coverage", _operation_coverage),
 )
 
