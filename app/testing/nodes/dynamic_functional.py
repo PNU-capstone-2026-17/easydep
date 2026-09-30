@@ -2746,8 +2746,20 @@ def _generate_candidate_workflow(
                     "validationError": _graph_validator_feedback(validation_error),
                 },
             )
+        def compile_and_validate(selected_graph: dict[str, Any]) -> dict[str, Any]:
+            selected_candidate, decision, literal_slots = _validated_graph_projection(
+                authoring, selected_graph
+            )
+            decision["fixedInputs"] = _select_literal_values(
+                client, selected_candidate, literal_slots, decision
+            )
+            workflow = _compile_workflow_decision(decision, selected_candidate)
+            return _validate_document(
+                build_arazzo_document([workflow]), [candidate], openapi, execution_candidates
+            )
+
         try:
-            selected_candidate, decision, literal_slots = _validated_graph_projection(authoring, graph)
+            validated = compile_and_validate(graph)
         except (ArazzoPlanningError, ArazzoValidationError) as validation_error:
             if correction_used:
                 raise
@@ -2759,12 +2771,7 @@ def _generate_candidate_workflow(
                     "validationError": _graph_validator_feedback(validation_error),
                 },
             )
-            selected_candidate, decision, literal_slots = _validated_graph_projection(authoring, graph)
-        decision["fixedInputs"] = _select_literal_values(client, selected_candidate, literal_slots, decision)
-        workflow = _compile_workflow_decision(decision, selected_candidate)
-        validated = _validate_document(
-            build_arazzo_document([workflow]), [candidate], openapi, execution_candidates
-        )
+            validated = compile_and_validate(graph)
     except Exception as exc:
         _emit_plan_progress(candidate, "FAIL", total_workflows=total_workflows, attempt=1,
                             detail=str(exc)[:2000])

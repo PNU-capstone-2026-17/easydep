@@ -67,10 +67,13 @@ def _graph(*, inputs: list[dict], occurrences: list[dict] | None = None, distinc
     }
 
 
-def _candidate_workflow_with_projection_results(monkeypatch, projection_results, graph_calls=None, graph_results=None):
+def _candidate_workflow_with_projection_results(
+    monkeypatch, projection_results, graph_calls=None, graph_results=None, validation_results=None,
+):
     graph_calls = graph_calls if graph_calls is not None else []
     graphs = iter(graph_results or ({"graph": index} for index in range(len(projection_results))))
     results = iter(projection_results)
+    document_results = iter(validation_results) if validation_results is not None else None
     authoring = {"workflowId": "workflow-UC-1", "planningModel": {}}
 
     monkeypatch.setattr(dynamic, "_emit_plan_progress", lambda *_args, **_kwargs: None)
@@ -94,11 +97,15 @@ def _candidate_workflow_with_projection_results(monkeypatch, projection_results,
     monkeypatch.setattr(dynamic, "_validated_graph_projection", project_graph)
     monkeypatch.setattr(dynamic, "_select_literal_values", lambda *_args: [])
     monkeypatch.setattr(dynamic, "_compile_workflow_decision", lambda *_args: {"workflowId": "workflow-UC-1"})
-    monkeypatch.setattr(
-        dynamic,
-        "_validate_document",
-        lambda *_args: {"workflows": [{"workflowId": "workflow-UC-1"}]},
-    )
+    def validate_document(*_args):
+        if document_results is not None:
+            result = next(document_results)
+            if isinstance(result, Exception):
+                raise result
+            return result
+        return {"workflows": [{"workflowId": "workflow-UC-1"}]}
+
+    monkeypatch.setattr(dynamic, "_validate_document", validate_document)
     result = dynamic._generate_candidate_workflow(object(), {"workflowId": "workflow-UC-1"}, {}, 1, [])
     return result, graph_calls
 
@@ -139,6 +146,43 @@ def test_candidate_workflow_stops_after_second_graph_projection_fails(monkeypatc
     assert len(graph_calls) == 2
     assert graph_calls[0] is None
     assert graph_calls[1]["validationError"] == "first invalid"
+
+
+def test_candidate_workflow_corrects_one_document_validation_failure(monkeypatch) -> None:
+    result, graph_calls = _candidate_workflow_with_projection_results(
+        monkeypatch,
+        [({}, {}, []), ({}, {}, [])],
+        validation_results=[
+            dynamic.ArazzoValidationError("indexed list output is not guaranteed"),
+            {"workflows": [{"workflowId": "workflow-UC-1"}]},
+        ],
+    )
+
+    assert result["workflowId"] == "workflow-UC-1"
+    assert graph_calls == [
+        None,
+        {
+            "rejectedGraph": {"graph": 0},
+            "validationError": "indexed list output is not guaranteed",
+        },
+    ]
+
+
+def test_candidate_workflow_stops_after_second_document_validation_failure(monkeypatch) -> None:
+    graph_calls = []
+    with pytest.raises(dynamic.ArazzoValidationError, match="second invalid document"):
+        _candidate_workflow_with_projection_results(
+            monkeypatch,
+            [({}, {}, []), ({}, {}, [])],
+            graph_calls,
+            validation_results=[
+                dynamic.ArazzoValidationError("first invalid document"),
+                dynamic.ArazzoValidationError("second invalid document"),
+            ],
+        )
+
+    assert len(graph_calls) == 2
+    assert graph_calls[1]["validationError"] == "first invalid document"
 
 
 def test_candidate_workflow_corrects_first_graph_response_schema_failure(monkeypatch) -> None:
