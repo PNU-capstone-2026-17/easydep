@@ -1127,6 +1127,113 @@ def test_plan_generation_failure_keeps_workflow_identity_without_execution(
     assert executions == []
 
 
+def test_execution_repair_replans_setup_graph_and_keeps_target_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = {"workflowId": "workflow-UC-1", "operations": []}
+    original = {
+        "workflowId": "workflow-UC-1",
+        "steps": [{
+            "stepId": "target", "operationId": "getTarget",
+            "successCriteria": [{"condition": "$steps.target.outputs.id == 'expected'"}],
+        }],
+    }
+    document = {"workflows": [original]}
+    authoring = {"planningModel": {"targetOperationIds": ["getTarget"]}}
+    graph_contexts: list[dict[str, Any] | None] = []
+
+    monkeypatch.setattr(dynamic, "build_execution_candidates", lambda *_args: [])
+    monkeypatch.setattr(dynamic, "_authoring_candidate", lambda *_args: deepcopy(authoring))
+    monkeypatch.setattr(dynamic, "_select_semantic_producers", lambda *_args: [])
+    monkeypatch.setattr(
+        dynamic,
+        "_generate_workflow_graph",
+        lambda _client, _candidate, correction_context=None: graph_contexts.append(correction_context) or {"graph": True},
+    )
+    monkeypatch.setattr(dynamic, "_validated_graph_projection", lambda *_args: ({}, {}, []))
+    monkeypatch.setattr(dynamic, "_select_literal_values", lambda *_args: [])
+    monkeypatch.setattr(
+        dynamic,
+        "_compile_workflow_decision",
+        lambda *_args: {
+            "workflowId": "workflow-UC-1",
+            "steps": [
+                {"stepId": "setup", "operationId": "createSetup"},
+                {
+                    **deepcopy(original["steps"][0]),
+                    "stepId": "target-after-setup",
+                    "successCriteria": [{
+                        "condition": "$steps.target-after-setup.outputs.id == 'expected'"
+                    }],
+                },
+            ],
+        },
+    )
+    monkeypatch.setattr(dynamic, "_validate_document", lambda doc, *_args: doc)
+
+    updated, evidence = dynamic._repair_execution_plan(
+        object(), document, original, candidate, [candidate], {},
+        {"reason": "Required path value was invalid", "finding": {"code": "INPUT_VALUE_INVALID"}},
+    )
+
+    assert [step["operationId"] for step in updated["workflows"][0]["steps"]] == [
+        "createSetup", "getTarget"
+    ]
+    assert updated["workflows"][0]["steps"][1]["stepId"] == "target-after-setup"
+    assert graph_contexts == [{"executionFailure": evidence}]
+
+
+def test_execution_repair_does_not_normalize_setup_references_in_target_oracle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = {"workflowId": "workflow-UC-1", "operations": []}
+    original = {
+        "workflowId": "workflow-UC-1",
+        "steps": [
+            {"stepId": "existing-setup", "operationId": "createSetup"},
+            {
+                "stepId": "target",
+                "operationId": "getTarget",
+                "successCriteria": [{
+                    "condition": "$steps.existing-setup.outputs.id == 'expected'"
+                }],
+            },
+        ],
+    }
+    document = {"workflows": [original]}
+    authoring = {"planningModel": {"targetOperationIds": ["getTarget"]}}
+
+    monkeypatch.setattr(dynamic, "build_execution_candidates", lambda *_args: [])
+    monkeypatch.setattr(dynamic, "_authoring_candidate", lambda *_args: deepcopy(authoring))
+    monkeypatch.setattr(dynamic, "_select_semantic_producers", lambda *_args: [])
+    monkeypatch.setattr(dynamic, "_generate_workflow_graph", lambda *_args, **_kwargs: {"graph": True})
+    monkeypatch.setattr(dynamic, "_validated_graph_projection", lambda *_args: ({}, {}, []))
+    monkeypatch.setattr(dynamic, "_select_literal_values", lambda *_args: [])
+    monkeypatch.setattr(
+        dynamic,
+        "_compile_workflow_decision",
+        lambda *_args: {
+            "workflowId": "workflow-UC-1",
+            "steps": [
+                {"stepId": "new-setup", "operationId": "createSetup"},
+                {
+                    "stepId": "target-renamed",
+                    "operationId": "getTarget",
+                    "successCriteria": [{
+                        "condition": "$steps.new-setup.outputs.id == 'expected'"
+                    }],
+                },
+            ],
+        },
+    )
+
+    with pytest.raises(dynamic.ArazzoValidationError, match="success criteria"):
+        dynamic._repair_execution_plan(
+            object(), document, original, candidate, [candidate], {},
+            {"reason": "invalid setup", "finding": {"code": "INPUT_VALUE_INVALID"}},
+        )
+
+
 def _planning_failure(candidate: dict[str, Any], message: str = "Invalid graph") -> dict[str, Any]:
     return dynamic._planning_failure_analysis(
         candidate, dynamic.ArazzoValidationError(message)
@@ -1429,21 +1536,34 @@ def test_execution_error_log_is_used_for_local_plan_repair(monkeypatch, weaken_o
         assert kwargs["workflow_inputs"] == {"kept": "original"}
         return _pass(workflow_id)
 
-    def generate(_client, candidate, error=""):
-        prompts.append(error)
-        revised = deepcopy(_document()["workflows"][0])
-        revised["steps"][0]["outputs"] = {"payload": "$response.body"}
-        if weaken_oracle:
-            revised["steps"][0].pop("successCriteria")
-        return revised
+    revised = deepcopy(_document()["workflows"][0])
+    revised["steps"][0]["outputs"] = {"payload": "$response.body"}
+    if weaken_oracle:
+        revised["steps"][0].pop("successCriteria")
+
+    def generate(_client, _candidate, correction_context=None):
+        prompts.append(json.dumps(correction_context, ensure_ascii=False))
+        return {"graph": True}
+
+    def compile_decision(_decision, _candidate):
+        return deepcopy(revised)
+
+    def project(_candidate, _graph):
+        return _candidate, {}, []
+
+    monkeypatch.setattr(dynamic, "_select_semantic_producers", lambda *_args: [])
+    monkeypatch.setattr(dynamic, "_validated_graph_projection", project)
+    monkeypatch.setattr(dynamic, "_select_literal_values", lambda *_args: [])
+    monkeypatch.setattr(dynamic, "_compile_workflow_decision", compile_decision)
+    monkeypatch.setattr(dynamic, "_validate_document", lambda document, *_args: document)
 
     monkeypatch.setattr(dynamic, "_client", object)
-    monkeypatch.setattr(dynamic, "_generate", generate)
+    monkeypatch.setattr(dynamic, "_generate_workflow_graph", generate)
     monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
     report = dynamic.dynamic_functional_node(_state())["dynamic_functional_report"]
     assert "RUNTIME_EXPRESSION_UNRESOLVED" in prompts[0]
     assert "#/invented" in prompts[0]
-    assert "Execution failed with TEST_DEFECT" in prompts[0]
+    assert '"executionFailure"' in prompts[0]
     assert len(executions) == (1 if weaken_oracle else 2)
     assert report["gateStatus"] == ("FAIL" if weaken_oracle else "PASS")
     assert report["planRepairs"][0]["status"] == ("FAILED" if weaken_oracle else "PASS")
@@ -1465,17 +1585,26 @@ def test_execution_repair_respects_ownership_and_replay_boundary(monkeypatch, de
         pytest.fail("This failure must not trigger local plan repair/replay")
 
     def repair_generation(*_args, **_kwargs):
-        revised = deepcopy(_document()["workflows"][0])
-        revised["steps"][0]["outputs"] = {"payload": "$response.body"}
-        return revised
+        return {"graph": True}
 
+    revised = deepcopy(_document()["workflows"][0])
+    revised["steps"][0]["outputs"] = {"payload": "$response.body"}
+
+    monkeypatch.setattr(dynamic, "_select_semantic_producers", lambda *_args: [])
+    monkeypatch.setattr(dynamic, "_validated_graph_projection", lambda candidate, _graph: (candidate, {}, []))
+    monkeypatch.setattr(dynamic, "_select_literal_values", lambda *_args: [])
+    monkeypatch.setattr(
+        dynamic, "_compile_workflow_decision",
+        lambda *_args: deepcopy(revised),
+    )
+    monkeypatch.setattr(dynamic, "_validate_document", lambda document, *_args: document)
     monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
     monkeypatch.setattr(
         dynamic,
         "_client",
         object if defect == "TEST_DEFECT" else unexpected_generation,
     )
-    monkeypatch.setattr(dynamic, "_generate", repair_generation)
+    monkeypatch.setattr(dynamic, "_generate_workflow_graph", repair_generation)
     report = dynamic.dynamic_functional_node(state)["dynamic_functional_report"]
     assert len(calls) == 1
     assert report["defectClass"] == defect
