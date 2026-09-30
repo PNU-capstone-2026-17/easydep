@@ -124,13 +124,14 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
         metadata_type, metadata_bytes = _dump(get_checkpoint_metadata(config, metadata))
 
         with session_scope() as db:
+            blobs = []
             for channel, version in new_versions.items():
                 # 값이 없는 채널도 자리를 남긴다 — 나중에 "버전은 있는데 blob이 없다"와
                 # "값이 비어 있다"를 구별해야 한다.
                 blob_type, blob = (
                     _dump(values[channel]) if channel in values else (_EMPTY, b"")
                 )
-                db.merge(
+                blobs.append(
                     self._blob(
                         graph_type=self.graph_type,
                         thread_id=thread_id,
@@ -141,6 +142,28 @@ class SqlCheckpointSaver(BaseCheckpointSaver):
                         blob=blob,
                     )
                 )
+            if blobs:
+                existing_rows = db.scalars(
+                    select(self._blob).where(
+                        self._blob.graph_type == self.graph_type,
+                        self._blob.thread_id == thread_id,
+                        self._blob.checkpoint_ns == checkpoint_ns,
+                        tuple_(self._blob.channel, self._blob.version).in_(
+                            [(row.channel, row.version) for row in blobs]
+                        ),
+                    )
+                ).all()
+                existing_by_key = {
+                    (row.channel, row.version): row for row in existing_rows
+                }
+                for blob_row in blobs:
+                    existing = existing_by_key.get((blob_row.channel, blob_row.version))
+                    if existing is None:
+                        db.add(blob_row)
+                    else:
+                        # ``merge`` updates an already stored value on version replay.
+                        existing.blob_type = blob_row.blob_type
+                        existing.blob = blob_row.blob
             db.merge(
                 self._checkpoint(
                     graph_type=self.graph_type,

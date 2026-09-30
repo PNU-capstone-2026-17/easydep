@@ -139,7 +139,13 @@ ERD 게이트 스냅샷에서 `render_and_validate`의 `not_applicable` 경로�
 
 SELECT 횟수 감소는 같은 입력에서 검증된 직접적인 효과다. cursor 누계와 호출 wall time은 한 번씩의 전후 표본이며 호출들이 서로 겹치므로 정밀한 개선율이나 그래프 전체 절감 시간으로 환산하지 않는다. `put`의 SELECT 100회는 이번 변경 범위 밖이다. 수정 후에도 원래의 수십 초 지연은 관찰되지 않았으므로 이 변경을 과거 지연의 해결로 주장하지 않는다. 임시 thread의 checkpoint/blob/write 잔여 행은 전후 모두 0건이고, 재시도 첫 값 보존·특수 인터럽트 최신 값·작업별 분리의 집중 테스트 3개가 통과했다.
 
+### `put` batch patch의 집중 확인
+
+`put` batch patch는 같은 저장 호출 안의 blob 기존 행 조회를 묶는 범위다. 패치 전 동일 동결 ERD 재생에서 `put`은 SELECT 100회·INSERT 8회, cursor 누계 438.444ms, 호출 wall time 226.207·201.267·148.689·24.272ms였다. 새 3-channel 집중 테스트에서는 `put` 1회당 SELECT가 2회였고, 같은 version을 다시 저장한 뒤에도 round-trip 값이 보존됐다. 이 focused test 2개는 통과했다. 다만 기존 ERD graph harness가 제거된 뒤라 패치 후의 비교 가능한 동결 ERD 재생은 실행하지 않았다. 따라서 이 확인으로 `put` wall time·그래프 전체 시간·과거 지연의 개선이나 해결을 주장하지 않는다.
+
 실제 OSS 호출을 포함한 요구사항 trace 재생도 한 번 시도했으나, 실행 래퍼가 하위 명령의 `output`만 전달했고 빈 문자열만 반환했다. 종료 코드·실행 span·요청 성공 여부는 보존되지 않아 이 시도에서는 사용할 수 있는 시간 근거가 없다. 같은 호출을 재시도하지 않았으며, 후속 읽기 전용 조회에서 일회용 checkpoint/blob/write 및 App 행은 0건이었다. 이 실행을 실모델 검증 성공으로 계산하지 않는다. 다음 계측 명령은 반드시 하위 명령의 종료 코드와 제한된 trace 요약을 함께 보존해야 한다.
+
+위의 무증거 시도와 별개로, 사용자 승인 아래 동일 소형 앱의 동결 Requirements checkpoint `1f1bc229-219c-6e0e-8004-f324e910662c`(앱/thread `3bae0dc2-ec5f-414c-8848-f3b7de9192d8`, `model_use_cases` 직전 state)에서 `identify_actors` 단일 노드만 일회용 MySQL checkpoint thread로 실행했다. Cloudflare `openai/gpt-oss-120b`의 native structured 출력은 **1회** 성공했고 fallback은 없었다(입력/출력 토큰 1,124/326, actor 1개). trace의 LLM span은 **4,103.541ms**, stage span은 **4,104.081ms**, graph invoke span은 **4,172.261ms**였다. 같은 trace에서 saver `put`은 60.575·22.067·18.556ms, `put_writes`는 69.209·13.941ms였으며, root → stage → LLM parentage는 확인됐다. saver span은 LangGraph scheduler 경계상 root의 직접 자식이고 서로 겹칠 수 있어 합산하지 않는다. 래퍼 전체 wall time은 **26.1초**(exit code 0, stderr 없음)였지만, 여기에는 동결 checkpoint 조회·진단 setup이 포함되므로 graph 시간으로 귀속하지 않았다. 일회용 thread의 checkpoint/blob/write 잔여 행은 정리 후 **0/0/0**이었다. 이 한 번의 현재 호출은 과거 마지막 모델 응답 뒤 약 85초 꼬리를 재현하지 않았으며, 과거 지연 원인을 확정하거나 해결됐다는 근거가 아니다.
 
 수강신청 앱 분기 `bec3aa53-ee83-4705-abc4-bdad2f994ad1`의 현재 상태를 읽기 전용으로 확인했다. 구현 job은 완료됐고 이후 `start_testing` 명령도 종료됐지만, 테스트 checkpoint는 `verification_complete`, `passed=false`, `gateStatus=FAIL`이다. 결과는 생성 앱 실패가 아니라 내부 test-plan authoring 결함을 platform diagnostic으로 기록한다. 활성 작업이나 재개 가능한 checkpoint가 없어 기존 명령의 나머지만 이어갈 수는 없고, 이 결함을 최소 범위로 해결한 뒤 새 시스템 명령으로 테스팅을 재검증해야 한다.
 

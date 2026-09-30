@@ -115,6 +115,49 @@ def test_checkpoint_roundtrip_restores_channel_values(sqlite_db):
     assert tup.parent_config is None
 
 
+def test_put_batches_blob_lookup_and_same_version_replay_updates(sqlite_db):
+    saver = store.SqlCheckpointSaver()
+    select_statements: list[str] = []
+
+    def capture_select(_conn, _cursor, statement, _parameters, _context, _many):
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_statements.append(statement)
+
+    def put_and_count(values):
+        select_statements.clear()
+        sqlalchemy_event.listen(sqlite_db, "before_cursor_execute", capture_select)
+        try:
+            saver.put(
+                _config("blob-batch"),
+                _checkpoint("c1", values, dict.fromkeys(values, 1)),
+                {},
+                dict.fromkeys(values, 1),
+            )
+        finally:
+            sqlalchemy_event.remove(sqlite_db, "before_cursor_execute", capture_select)
+        blob_lookups = [
+            statement
+            for statement in select_statements
+            if "agent_checkpoint_blobs" in statement
+        ]
+        assert len(blob_lookups) == 1
+        assert " IN (" in blob_lookups[0].upper()
+        return len(select_statements)
+
+    # Three new channel versions are looked up together; the checkpoint row has its
+    # own merge lookup, so the entire put performs two SELECTs rather than one per blob.
+    assert put_and_count({"a": "first-a", "b": "first-b", "c": "first-c"}) == 2
+    # A version replay must retain merge semantics and replace each blob's payload.
+    assert put_and_count({"a": "replayed-a", "b": "replayed-b", "c": "replayed-c"}) == 2
+    restored = saver.get_tuple(_config("blob-batch"))
+    assert restored is not None
+    assert restored.checkpoint["channel_values"] == {
+        "a": "replayed-a",
+        "b": "replayed-b",
+        "c": "replayed-c",
+    }
+
+
 def test_get_tuple_without_an_id_returns_the_latest(sqlite_db):
     saver = store.SqlCheckpointSaver()
     saver.put(_config("t"), _checkpoint("c1", {"n": 1}, {"n": 1}), {}, {"n": 1})
