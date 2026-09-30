@@ -364,6 +364,17 @@ def test_running_application_uses_test_database_and_keeps_container_for_logs(tmp
     assert "toolchain:test" in start
     assert "bootRun" in start
     assert f"{app_container.GRADLE_CACHE_VOLUME}:/tmp/easydep-gradle-cache" in start
+    application_volume = app_container.runtime_application_volume_name(info["container"])
+    assert f"{application_volume}:/easydep-application:rw" in start
+    assert any(command[:1] == ["cp"] for command in commands)
+    copier = next(command for command in commands if command[:1] == ["create"])
+    assert copier[copier.index("--user") + 1] == "root"
+    assert copier[copier.index("--entrypoint") + 1] == "chown"
+    assert "appuser:appuser" in copier
+    assert ["start", "-a", f"{info['container']}-copy"] in commands
+    assert any(command[:2] == ["volume", "create"] for command in commands)
+    assert any(command[:2] == ["volume", "rm"] and command[-1] == application_volume for command in commands)
+    assert any(command[:2] == ["rm", "-f"] and command[-1].endswith("-copy") for command in commands)
     assert "SPRING_PROFILES_ACTIVE=test" in start
     assert any(value.startswith("SPRING_DATASOURCE_URL=jdbc:h2:mem:") for value in start)
     assert f"SPRING_SECURITY_USER_NAME={SYNTHETIC_UUID_BASIC_USERNAME}" in start
@@ -371,11 +382,39 @@ def test_running_application_uses_test_database_and_keeps_container_for_logs(tmp
     assert events[0] == "prepare-gradle-cache"
     assert any(command[:2] == ["rm", "-f"] for command in commands)
     network = app_container.runtime_network_name(info["container"])
-    assert commands[:3] == [
-        ["rm", "-f", info["container"]],
-        ["network", "rm", network],
-        ["network", "create", network],
-    ]
+    assert commands[0] == ["rm", "-f", info["container"]]
+    assert ["network", "create", network] in commands
+
+
+def test_running_application_copy_failure_is_environment_and_cleans_owned_resources(
+    tmp_path, monkeypatch
+):
+    from app.testing.runtime import app_container
+    from app.testing.runtime.app_container import ApplicationLaunchError
+
+    (tmp_path / "Dockerfile").write_text("FROM scratch\nEXPOSE 8000\n", encoding="utf-8")
+    commands = []
+
+    def docker(arguments, **_kwargs):
+        commands.append(arguments)
+        if arguments[:1] == ["cp"]:
+            return type("Completed", (), {"returncode": 1, "stdout": "", "stderr": "copy sentinel"})()
+        return type("Completed", (), {"returncode": 0, "stdout": "ok", "stderr": ""})()
+
+    monkeypatch.setattr(app_container, "_docker", docker)
+    monkeypatch.setattr(app_container, "configured_runner_image", lambda: "toolchain:test")
+    monkeypatch.setattr(app_container, "prepare_gradle_cache", lambda _image: None)
+
+    with pytest.raises(ApplicationLaunchError, match="copy sentinel") as raised:
+        with app_container.running_application("app-1", tmp_path, launch_id="copy-fail"):
+            pytest.fail("copy failure must stop before application start")
+
+    assert raised.value.defect_class == "ENVIRONMENT_DEFECT"
+    name = app_container.runtime_identity("app-1", "copy-fail")[1]
+    volume = app_container.runtime_application_volume_name(name)
+    assert ["volume", "rm", volume] in commands
+    assert ["rm", "-f", f"{name}-copy"] in commands
+    assert not any(command[:2] == ["run", "-d"] for command in commands)
 
 
 def test_running_application_uses_current_fixed_runner_and_cleans_up(

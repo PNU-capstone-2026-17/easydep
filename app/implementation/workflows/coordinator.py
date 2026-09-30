@@ -209,6 +209,11 @@ def reconcile_workflow_state(run_root: Path) -> dict[str, object]:
                 "promptSha256": prompt_sha,
                 "outputHashes": output_hashes,
                 "attempts": int(old.get("attempts", 0)),
+                "executionAttempts": (
+                    old.get("executionAttempts", [])
+                    if isinstance(old.get("executionAttempts", []), list)
+                    else []
+                ),
                 "resultFile": (
                     result_path.relative_to(run_root).as_posix() if result_path.is_file() else None
                 ),
@@ -628,10 +633,28 @@ def _execute_task_batch(
         task["status"] = "RUNNING"
         task["attempts"] = int(task.get("attempts", 0)) + 1
         task["lastError"] = None
+        attempt_timings = task.setdefault("executionAttempts", [])
+        if not isinstance(attempt_timings, list):
+            attempt_timings = []
+            task["executionAttempts"] = attempt_timings
+        attempt_timing: dict[str, object] = {
+            "attempt": task["attempts"],
+            "dispatchedAt": _now(),
+            "executorReturnedAt": None,
+            "executorDurationMs": None,
+        }
+        attempt_timings.append(attempt_timing)
         state["updatedAt"] = _now()
         _write_json_atomic(state_path, state)
         try:
-            result = executor(run_root, str(task["task_id"]))
+            started = time.perf_counter()
+            try:
+                result = executor(run_root, str(task["task_id"]))
+            finally:
+                attempt_timing["executorReturnedAt"] = _now()
+                attempt_timing["executorDurationMs"] = round(
+                    (time.perf_counter() - started) * 1000, 3
+                )
             if result.get("status") not in {"SUCCEEDED", "NEEDS_INPUT"}:
                 raise RuntimeError(
                     f"Task returned non-success status: {task['task_id']}"

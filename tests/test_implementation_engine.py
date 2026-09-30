@@ -4505,6 +4505,40 @@ def test_retry_hides_previous_error_as_soon_as_task_is_running(tmp_path: Path) -
     assert observed["lastError"] is None
 
 
+def test_task_batch_persists_executor_timing_for_each_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.implementation.workflows.coordinator as coordinator_module
+
+    task = {"task_id": "implement-backend", "status": "PENDING", "attempts": 0}
+    state = {"tasks": [task]}
+    persisted_states: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        coordinator_module,
+        "_write_json_atomic",
+        lambda _path, value: persisted_states.append(json.loads(json.dumps(value))),
+    )
+    monkeypatch.setattr(coordinator_module, "_task_output_hashes", lambda *_args: {})
+
+    def execute(_run_root: Path, _task_id: str) -> dict[str, object]:
+        timing = persisted_states[-1]["tasks"][0]["executionAttempts"][-1]
+        assert timing["executorReturnedAt"] is None
+        return {"status": "SUCCEEDED"}
+
+    failures = _execute_task_batch(Path("unused-run-root"), state, [task], execute)
+
+    assert failures == []
+    timing = task["executionAttempts"][-1]
+    assert timing["attempt"] == 1
+    assert timing["dispatchedAt"]
+    assert timing["executorReturnedAt"] >= timing["dispatchedAt"]
+    assert isinstance(timing["executorDurationMs"], float)
+    assert persisted_states[-1]["tasks"][0]["executionAttempts"] == task[
+        "executionAttempts"
+    ]
+
+
 def test_reconcile_preserves_a_typed_upstream_gap_as_needs_input(tmp_path: Path) -> None:
     reports = tmp_path / "reports"
     executions = reports / "agent-executions"

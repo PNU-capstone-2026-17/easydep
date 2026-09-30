@@ -214,6 +214,11 @@ def runtime_network_name(container_name: str) -> str:
     return f"{container_name}-net"
 
 
+def runtime_application_volume_name(container_name: str) -> str:
+    """Return the per-launch volume holding the materialized application tree."""
+    return f"{container_name}-app"
+
+
 def _wait_until_ready(name: str, url: str, timeout: int) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -394,6 +399,8 @@ def running_application(
     container_port = exposed_port(context)
     _, name = runtime_identity(app_id, launch_id)
     network = runtime_network_name(name)
+    application_volume = runtime_application_volume_name(name)
+    copy_container = f"{name}-copy"
     host_port = free_port()
     runner_image = configured_runner_image()
     try:
@@ -408,7 +415,9 @@ def running_application(
     # 정리한다. container만 제거하면 재개 시 동일한 deterministic network 이름이
     # 충돌하여 애플리케이션을 시작하기도 전에 Testing이 중단된다.
     _docker(["rm", "-f", name], timeout=60)
+    _docker(["rm", "-f", copy_container], timeout=60)
     _docker(["network", "rm", network], timeout=60)
+    _docker(["volume", "rm", application_volume], timeout=60)
     created_network = _docker(["network", "create", network], timeout=60)
     if created_network.returncode != 0:
         output = created_network.stderr or created_network.stdout or ""
@@ -418,8 +427,73 @@ def running_application(
             defect_class="ENVIRONMENT_DEFECT",
             application_log=output,
         )
-    started = _docker(
-        [
+    created_volume = _docker(["volume", "create", application_volume], timeout=60)
+    if created_volume.returncode != 0:
+        output = created_volume.stderr or created_volume.stdout or ""
+        _docker(["network", "rm", network], timeout=60)
+        raise ApplicationLaunchError(
+            "The Docker volume for the Testing application could not be created:\n"
+            + _log_excerpt(output, limit=2000),
+            defect_class="ENVIRONMENT_DEFECT",
+            application_log=output,
+        )
+
+    # Docker Desktop bind mounts are very slow for Gradle's many small source files.
+    # Transfer the exact materialized tree through Docker's copy API into a Linux volume.
+    copy_error = ""
+    try:
+        copier = _docker(
+            [
+                "create",
+                "--name",
+                copy_container,
+                "--label",
+                "easydep.owner=testing-application-copy",
+                "--mount",
+                f"type=volume,src={application_volume},dst=/easydep-application",
+                "--user",
+                "root",
+                "--entrypoint",
+                "chown",
+                runner_image,
+                "-R",
+                "appuser:appuser",
+                "/easydep-application",
+            ],
+            timeout=60,
+        )
+        if copier.returncode == 0:
+            copied = _docker(
+                ["cp", f"{context.resolve()}\\.", f"{copy_container}:/easydep-application"],
+                timeout=180,
+            )
+            if copied.returncode != 0:
+                copy_error = copied.stderr or copied.stdout or "Docker copy returned a failure."
+            else:
+                ownership = _docker(["start", "-a", copy_container], timeout=180)
+                if ownership.returncode != 0:
+                    copy_error = (
+                        ownership.stderr
+                        or ownership.stdout
+                        or "The application volume ownership could not be prepared."
+                    )
+        else:
+            copy_error = copier.stderr or copier.stdout or "Docker copy container could not be created."
+    except subprocess.TimeoutExpired as error:
+        copy_error = f"Docker timed out while copying the application: {error}"
+    _docker(["rm", "-f", copy_container], timeout=60)
+    if copy_error:
+        _docker(["network", "rm", network], timeout=60)
+        _docker(["volume", "rm", application_volume], timeout=60)
+        raise ApplicationLaunchError(
+            "The materialized application could not be copied into its Linux Docker volume:\n"
+            + _log_excerpt(copy_error, limit=2000),
+            defect_class="ENVIRONMENT_DEFECT",
+            application_log=copy_error,
+        )
+    try:
+        started = _docker(
+            [
             "run",
             "-d",
             "--name",
@@ -429,7 +503,7 @@ def running_application(
             "--label",
             "easydep.owner=testing-application",
             "-v",
-            f"{context.resolve()}:/easydep-application:rw",
+            f"{application_volume}:/easydep-application:rw",
             "-v",
             f"{GRADLE_CACHE_VOLUME}:{GRADLE_CACHE_PATH}",
             "-w",
@@ -462,11 +536,20 @@ def running_application(
             "bootRun",
             "--no-daemon",
             "--build-cache",
-        ],
-        timeout=120,
-    )
+            ],
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as error:
+        _docker(["rm", "-f", name], timeout=60)
+        _docker(["network", "rm", network], timeout=60)
+        _docker(["volume", "rm", application_volume], timeout=60)
+        raise ApplicationLaunchError(
+            f"Docker timed out while starting the generated application: {error}",
+            defect_class="ENVIRONMENT_DEFECT",
+        ) from error
     if started.returncode != 0:
         _docker(["network", "rm", network], timeout=120)
+        _docker(["volume", "rm", application_volume], timeout=120)
         output = started.stderr or started.stdout or ""
         raise ApplicationLaunchError(
             "The generated application could not start in the shared toolchain:\n"
@@ -498,3 +581,4 @@ def running_application(
     finally:
         _docker(["rm", "-f", name], timeout=120)
         _docker(["network", "rm", network], timeout=120)
+        _docker(["volume", "rm", application_volume], timeout=120)
