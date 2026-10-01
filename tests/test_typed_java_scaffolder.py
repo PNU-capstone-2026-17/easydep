@@ -510,6 +510,50 @@ public interface OrdersApi {
     assert "EASYDEP_CONTROLLER_BODY_REQUIRED:submitOrderWithLongOperationIdentifier" in source
 
 
+def test_controller_json_string_response_is_explicitly_json_encoded() -> None:
+    """A JSON string contract must not be emitted as Spring's raw text String."""
+    payload = _payload()["bceModel"]
+    payload["Classes"][1]["operations"][0]["parameters"] = []
+    payload["Classes"][1]["operations"][0]["returnType"] = "string"
+    bce_model = BCEModel.model_validate(payload)
+    api_model = ApiSpecModel.model_validate(
+        {
+            "Endpoints": [
+                {
+                    "interaction_id": "read confirmation message",
+                    "method": "GET",
+                    "path": "/orders/confirmation",
+                    "responses": [{"status": 200, "schema_name": "string"}],
+                    "control_binding": {
+                        "control": "OrderControl",
+                        "method": "place",
+                        "arguments": [],
+                    },
+                }
+            ]
+        }
+    )
+    interface = """package com.example.orders.api;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+public interface OrdersApi {
+    @RequestMapping(method = RequestMethod.GET, value = "/orders/confirmation", produces = { "application/json" })
+    ResponseEntity<String> readConfirmation();
+}
+"""
+
+    _name, source = render_openapi_controller_scaffold(
+        interface,
+        "com.example.orders",
+        api_model=api_model,
+        bce_model=bce_model,
+    )
+
+    assert "var response = objectMapper.valueToTree(result).toString();" in source
+    assert "return ResponseEntity.status(200).body(response);" in source
+
+
 def test_controller_scaffold_connects_typed_control_without_llm_rewrite() -> None:
     """타입이 완결된 API binding은 생성 시점에 Control과 응답까지 연결한다."""
     interface = """package com.example.orders.api;

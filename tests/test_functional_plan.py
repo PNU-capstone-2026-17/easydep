@@ -2232,6 +2232,39 @@ def test_resource_instance_outline_rejects_relations_to_unknown_instances() -> N
         dynamic._validate_resource_instance_outline(candidate, result)
 
 
+def test_graph_outline_keeps_same_operation_relations_and_drops_unproven_cross_operation_relations() -> None:
+    candidate = {
+        "planningModel": {"availableSteps": [
+            {"operationId": "createOffering", "outputs": [
+                {"outputName": "offeringId", "type": "string", "format": "uuid"},
+            ]},
+            {"operationId": "registerForCourse", "outputs": [
+                {"outputName": "registrationId", "type": "string", "format": "uuid"},
+            ]},
+        ]},
+    }
+    outline = {
+        "occurrences": [
+            {"instanceId": "offering1", "operationId": "createOffering", "purpose": "Create offering"},
+            {"instanceId": "registration1", "operationId": "registerForCourse", "purpose": "Create registration"},
+            {"instanceId": "offering2", "operationId": "createOffering", "purpose": "Create another offering"},
+        ],
+        "identityRelations": [
+            {"leftInstanceId": "offering1", "rightInstanceId": "registration1", "relation": "distinct"},
+            {"leftInstanceId": "offering1", "rightInstanceId": "offering2", "relation": "distinct"},
+        ],
+    }
+
+    result = dynamic._graph_resource_instance_outline(candidate, outline)
+
+    assert result["occurrences"] == outline["occurrences"]
+    assert result["identityRelations"] == [outline["identityRelations"][1]]
+    assert outline["identityRelations"] == [
+        {"leftInstanceId": "offering1", "rightInstanceId": "registration1", "relation": "distinct"},
+        {"leftInstanceId": "offering1", "rightInstanceId": "offering2", "relation": "distinct"},
+    ]
+
+
 def test_literal_selection_receives_resource_instance_outline(monkeypatch: pytest.MonkeyPatch) -> None:
     candidate = {"planningModel": {
         "intent": {"goal": "Establish two different resources."},

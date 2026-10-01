@@ -283,7 +283,14 @@ def render_openapi_controller_scaffold(
         if api_model is not None and bce_model is not None:
             endpoint = _endpoint_for_mapping(mapping, constants, api_model)
             if endpoint is not None:
-                rendered = _controller_body(endpoint, signature, api_model, bce_model, base_package)
+                rendered = _controller_body(
+                    endpoint,
+                    signature,
+                    api_model,
+                    bce_model,
+                    base_package,
+                    json_response=_mapping_produces_json(mapping),
+                )
                 if rendered is not None:
                     control_name, body, uses_authenticated_actor = rendered
                     dependencies[control_name] = _field_name(control_name)
@@ -414,6 +421,8 @@ def _controller_body(
     api_model: ApiSpecModel,
     bce_model: BCEModel,
     base_package: str,
+    *,
+    json_response: bool,
 ) -> tuple[str, list[str] | None, bool] | None:
     """HTTP binding을 Control 호출 인자로 바꾸고 성공 응답을 반환한다."""
 
@@ -496,10 +505,26 @@ def _controller_body(
             "var response = result.stream()"
             f".map(item -> objectMapper.convertValue(item, {item_type}.class)).toList();"
         )
+    elif response_type == "String" and json_response:
+        # Spring writes ResponseEntity<String> verbatim.  A JSON string response
+        # therefore needs explicit JSON encoding so its bytes match the OpenAPI
+        # application/json contract rather than plain text.
+        body.append("var response = objectMapper.valueToTree(result).toString();")
     else:
         body.append(f"var response = {_object_mapper_conversion('result', response_type)};")
     body.append(f"return ResponseEntity.status({success.status}).body(response);")
     return control.class_name, body, authenticated_actor_used
+
+
+def _mapping_produces_json(mapping: str) -> bool:
+    """Return whether a generated mapping explicitly declares application/json."""
+
+    return bool(
+        re.search(
+            r"\bproduces\s*=\s*\{?\s*(?:\"application/json\"|MediaType\.APPLICATION_JSON_VALUE)",
+            mapping,
+        )
+    )
 
 
 def _http_parameter_sources(signature: str) -> dict[str, str]:

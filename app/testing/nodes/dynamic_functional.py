@@ -2116,6 +2116,39 @@ def _validate_resource_instance_outline(candidate: dict[str, Any], value: dict[s
     return value
 
 
+def _graph_resource_instance_outline(
+    candidate: dict[str, Any], outline: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep outline identity hints only when both occurrences share an operation contract."""
+    operation_by_instance = {
+        str(item.get("instanceId")): str(item.get("operationId"))
+        for item in outline.get("occurrences") or []
+        if isinstance(item, dict) and item.get("instanceId") and item.get("operationId")
+    }
+    available_operations = {
+        str(step.get("operationId"))
+        for step in (candidate.get("planningModel") or {}).get("availableSteps") or []
+        if isinstance(step, dict) and step.get("operationId")
+    }
+    comparable_relations = []
+    for relation in outline.get("identityRelations") or []:
+        if not isinstance(relation, dict):
+            continue
+        left_id = str(relation.get("leftInstanceId") or "")
+        right_id = str(relation.get("rightInstanceId") or "")
+        operation_id = operation_by_instance.get(left_id)
+        if (
+            left_id != right_id
+            and operation_id
+            and operation_id == operation_by_instance.get(right_id)
+            and operation_id in available_operations
+        ):
+            comparable_relations.append(deepcopy(relation))
+    result = deepcopy(outline)
+    result["identityRelations"] = comparable_relations
+    return result
+
+
 def _select_resource_instance_outline(client: OpenAI, candidate: dict[str, Any]) -> dict[str, Any]:
     """Produce a compact advisory outline; the graph validator remains authoritative."""
     planning = candidate.get("planningModel") or {}
@@ -2223,6 +2256,10 @@ def _workflow_graph_prompt(
     resource_instance_outline: dict[str, Any] | None = None,
 ) -> str:
     resource_instance_outline = resource_instance_outline or candidate["planningModel"].get("resourceInstanceOutline")
+    graph_outline = (
+        _graph_resource_instance_outline(candidate, resource_instance_outline)
+        if resource_instance_outline else None
+    )
     producer_selections = candidate["planningModel"].get("producerSelections") or []
     prompt = (
         _GRAPH_PROMPT
@@ -2242,13 +2279,15 @@ def _workflow_graph_prompt(
         + "Each requiredInputs record uses targetOccurrenceId, targetInputSlot, literalNeeded, and either sourceOccurrenceId/sourceOutputName for an output binding or sourceInputOccurrenceId/sourceInputSlot to reuse an earlier fixed input. "
         + "Optional successCriteria records use occurrenceId and statusCode. Collection identity selections are fixed by producerSelections and are not a graph response field.\n"
         + "When a selected producer constraint contains creatorOperationId, include that exact state-changing operation before its selected read-only resource producer, and place the reader before the target. The creator may be linked to a different use case if its frozen scenario evidence supports the resource flow.\n"
+        + "Preserve every prerequisite occurrence from the supplied resource-instance outline that exists in the finite operation catalog, including repeated occurrences of one operation, and keep their required producer-before-consumer order. Emit distinctResourcePairs only for comparable outputs that represent the same resource kind; matching UUID/string formats alone do not establish comparability.\n"
         + "workflowId: " + str(candidate.get("workflowId") or "")
     )
-    if resource_instance_outline:
+    if graph_outline:
         prompt += (
-            "\n\nAdvisory resource-instance outline (preserve the exact producer bindings above; "
-            "the outline does not replace those bindings or the frozen operation catalog):\n"
-            + json.dumps(resource_instance_outline, ensure_ascii=False, separators=(",", ":"))
+            "\n\nAdvisory resource-instance outline (preserve the exact producer bindings above and its prerequisite occurrences; "
+            "its identityRelations contain only conservative same-operation comparisons; the outline does not replace "
+            "those bindings or the frozen operation catalog):\n"
+            + json.dumps(graph_outline, ensure_ascii=False, separators=(",", ":"))
         )
     if correction_context:
         prompt += (
