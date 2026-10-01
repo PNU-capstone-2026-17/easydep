@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.config import settings
 from app.design.schemas.class_model import BCEModel
@@ -70,6 +72,8 @@ class. Use an empty useCaseIds list for valueObjects and enumerations; their
 availability is derived from Entity fields. Return every array field explicitly,
 using an empty array only when the selected kind requires none. Class ids are proposal scope only and are not
 persisted as a separate design decision.
+Compare trigger, precondition, success, and extension state across use cases.
+Persist explicitly required cross-request domain state; do not invent features.
 For each use case, decide whether its state must still exist after the request ends or
 whether it reads state created by an earlier request. Assign an Entity candidate only
 when that durable state is read or changed. A transient calculation, formatted result,
@@ -92,6 +96,37 @@ case. Candidate scope does not force the later operation task to select it.
         "decision is present in this model."
     )
 )
+
+
+_STATE_REVIEW_PROMPT = """
+Review a proposed BCE inventory for one narrow issue only: an explicit persistent
+business predicate that an accepted use case owns or changes but whose named
+Entity lacks a field for it. Compare the supplied trigger, preconditions,
+success guarantees, extension conditions, and steps across use cases. Treat a
+predicate derived from existing Entity fields as represented. Ignore external
+availability and authentication. Do not invent features.
+
+Return PASS with no findings, or FINDINGS. Each finding must cite one exact
+quote from the supplied use-case evidence, name an existing Entity, and name
+the missing persistent state. Do not report a field that is merely convenient.
+""".strip()
+
+
+class _StateReviewFinding(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    use_case_id: str = Field(alias="useCaseId")
+    evidence_quote: str = Field(alias="evidenceQuote", min_length=1)
+    entity: str = Field(min_length=1)
+    missing_state: str = Field(alias="missingState", min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class _StateReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["PASS", "FINDINGS"]
+    findings: list[_StateReviewFinding] = Field(default_factory=list)
 
 
 def inventory_reasoning_effort() -> str:
@@ -279,6 +314,73 @@ def inventory_payload(index: ScenarioIndex) -> dict[str, Any]:
     }
 
 
+def _evidence_strings(value: Any) -> tuple[str, ...]:
+    if isinstance(value, str):
+        return (" ".join(value.split()),)
+    if isinstance(value, dict):
+        return tuple(part for item in value.values() for part in _evidence_strings(item))
+    if isinstance(value, list):
+        return tuple(part for item in value for part in _evidence_strings(item))
+    return ()
+
+
+def _grounded_state_findings(
+    source_payload: dict[str, Any], candidate: dict[str, Any]
+) -> tuple[str, ...]:
+    """Return only reviewer findings directly grounded in supplied scenario text."""
+
+    use_cases = {
+        str(item.get("id")): item
+        for item in source_payload["useCases"]
+        if isinstance(item, dict) and item.get("id")
+    }
+    entities = {
+        str(item.get("className"))
+        for item in candidate["Classes"]
+        if isinstance(item, dict) and item.get("stereotype") == "Entity"
+    }
+    if not entities:
+        return ()
+    review_payload = {
+        "useCases": source_payload["useCases"],
+        "candidateEntities": [
+            {"name": item.get("className"), "fields": item.get("fields") or []}
+            for item in candidate["Classes"]
+            if isinstance(item, dict) and item.get("stereotype") == "Entity"
+        ],
+    }
+    parsed = parse_structured(
+        [
+            {"role": "system", "content": _STATE_REVIEW_PROMPT},
+            {"role": "user", "content": json.dumps(review_payload, ensure_ascii=False)},
+        ],
+        _StateReview,
+        reasoning_effort=inventory_reasoning_effort(),
+        max_completion_tokens=inventory_max_completion_tokens(),
+        operation="InteractionInventoryStateReview",
+        metadata={"executionSlice": "inventory", "candidateCount": len(entities)},
+    )
+    review = _StateReview.model_validate(parsed)
+    if review.status == "PASS":
+        return ()
+    grounded: set[str] = set()
+    for finding in review.findings:
+        use_case = use_cases.get(finding.use_case_id)
+        quote = " ".join(finding.evidence_quote.split())
+        if (
+            use_case is None
+            or finding.entity not in entities
+            or not quote
+            or not any(quote in evidence for evidence in _evidence_strings(use_case))
+        ):
+            continue
+        grounded.add(
+            f"{finding.use_case_id}: {finding.entity} lacks persistent state "
+            f"'{finding.missing_state}': {finding.reason}"
+        )
+    return tuple(sorted(grounded))
+
+
 def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
     """전역 inventory를 생성하고 이력 기반 전체 replacement로 수락한다.
 
@@ -355,10 +457,11 @@ def _inventory_proposal_uncached(index: ScenarioIndex) -> AcceptedInventory:
         report = run_checks(INVENTORY_CHECKS, candidate, index)
         if report.errors:
             raise RuntimeError("; ".join(report.errors))
-        if not report.findings:
-            return AcceptedInventory.from_payload(candidate)
-
         findings = tuple(sorted(set(finding_text(report.findings))))
+        if not findings:
+            findings = _grounded_state_findings(source_payload, candidate)
+        if not findings:
+            return AcceptedInventory.from_payload(candidate)
         candidate_digest = stable_digest(candidate)
         repeated = ledger.candidate_seen(
             input_digest=input_digest,
@@ -391,7 +494,7 @@ def _inventory_cache_key(index: ScenarioIndex) -> str:
         unit_slice=inventory_payload(index),
         inventory={},
         feedback="",
-        prompt=INVENTORY_PROMPT,
+        prompt=INVENTORY_PROMPT + "\n\n" + _STATE_REVIEW_PROMPT,
         schema=InventoryProposal,
         provider=configured_provider_identity(build_llm_connection().base_url),
         model=settings.model,

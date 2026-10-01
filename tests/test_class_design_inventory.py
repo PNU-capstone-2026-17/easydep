@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from types import SimpleNamespace
 
 import pytest
 from pydantic import ValidationError
@@ -273,6 +274,100 @@ def test_inventory_repair_continues_past_one_replacement(monkeypatch):
     assert {item["className"] for item in accepted.classes} == {
         "RequestBoundary",
         "RequestControl",
+    }
+
+
+def test_grounded_state_review_feeds_existing_inventory_repair(monkeypatch):
+    raw = single_use_case()
+    raw["use_case_specs"][0]["main_scenario"].append({
+        "step_number": 3,
+        "subject_ref": "system",
+        "sentence": "System marks the order as approved.",
+    })
+    initial = inventory_proposal()
+    initial["items"].append({
+        "name": "Order", "kind": "Entity", "description": "Persistent order",
+        "fields": [{"name": "orderId", "type": "String"}],
+        "identifier": ["orderId"], "values": [], "useCaseIds": ["UC1"],
+    })
+    repaired = deepcopy(initial)
+    repaired["items"][-1]["fields"].append({"name": "status", "type": "String"})
+    inventory_calls = 0
+    repair_prompts: list[str] = []
+
+    def fake_parse(messages, schema, **_kwargs):
+        nonlocal inventory_calls
+        if schema is InventoryProposal:
+            inventory_calls += 1
+            if inventory_calls == 2:
+                repair_prompts.append(messages[-1]["content"])
+            return initial if inventory_calls == 1 else repaired
+        if schema is inventory._StateReview:
+            return (
+                {"status": "FINDINGS", "findings": [{
+                    "useCaseId": "UC1", "evidenceQuote": "System marks the order as approved.",
+                    "entity": "Order", "missingState": "status", "reason": "Approval must persist.",
+                }]}
+                if inventory_calls == 1 else {"status": "PASS", "findings": []}
+            )
+        raise AssertionError(schema)
+
+    monkeypatch.setattr(inventory, "parse_structured", fake_parse)
+    monkeypatch.setattr(inventory, "run_checks", lambda *_args: SimpleNamespace(errors=[], findings=[]))
+    accepted = inventory.inventory_proposal(build_scenario_index(raw))
+
+    assert inventory_calls == 2
+    assert "Order lacks persistent state 'status'" in repair_prompts[0]
+    assert "status : String" in next(item for item in accepted.classes if item["className"] == "Order")["fields"]
+
+
+def test_state_review_ignores_unproven_external_quote(monkeypatch):
+    candidate = inventory_proposal()
+    candidate["items"].append({
+        "name": "Order", "kind": "Entity", "description": "Persistent order",
+        "fields": [{"name": "orderId", "type": "String"}],
+        "identifier": ["orderId"], "values": [], "useCaseIds": ["UC1"],
+    })
+    calls = 0
+
+    def fake_parse(_messages, schema, **_kwargs):
+        nonlocal calls
+        if schema is InventoryProposal:
+            calls += 1
+            return candidate
+        if schema is inventory._StateReview:
+            return {"status": "FINDINGS", "findings": [{
+                "useCaseId": "UC1", "evidenceQuote": "External payment service is available.",
+                "entity": "Order", "missingState": "paymentAvailable", "reason": "External availability.",
+            }]}
+        raise AssertionError(schema)
+
+    monkeypatch.setattr(inventory, "parse_structured", fake_parse)
+    monkeypatch.setattr(inventory, "run_checks", lambda *_args: SimpleNamespace(errors=[], findings=[]))
+
+    accepted = inventory.inventory_proposal(build_scenario_index(single_use_case()))
+
+    assert calls == 1
+    assert "orderId : String" in next(item for item in accepted.classes if item["className"] == "Order")["fields"]
+
+
+def test_state_review_skips_transient_only_inventory(monkeypatch):
+    candidate = inventory_proposal()
+
+    def fake_parse(_messages, schema, **_kwargs):
+        if schema is InventoryProposal:
+            return candidate
+        if schema is inventory._StateReview:
+            raise AssertionError("state reviewer must not run without an Entity")
+        raise AssertionError(schema)
+
+    monkeypatch.setattr(inventory, "parse_structured", fake_parse)
+    monkeypatch.setattr(inventory, "run_checks", lambda *_args: SimpleNamespace(errors=[], findings=[]))
+
+    accepted = inventory.inventory_proposal(build_scenario_index(single_use_case()))
+
+    assert {item["className"] for item in accepted.classes} == {
+        "RequestBoundary", "RequestControl"
     }
 
 

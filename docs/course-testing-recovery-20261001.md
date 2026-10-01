@@ -12,8 +12,21 @@
 | --- | --- | --- | --- |
 | UC2·UC10 JSON 문자열 응답 | 생성된 `ResponseEntity<String>` 컨트롤러가 `application/json` 계약인데 평문 문자열을 반환한다. | 컨트롤러 생성기에서 JSON 응답 문자열을 명시적으로 JSON 인코딩하도록 수정했다. 집중 테스트 1개가 통과했고, 동결된 두 API 메서드의 렌더링에 새 코드가 들어가는 것을 확인했다. | 완료된 구현 체크포인트의 컨트롤러는 immutable이며 41개 작업 중 어느 것도 해당 파일의 쓰기 소유권이 없다. 기존 Testing 수리로는 이 패치가 반영되지 않는다. 새 구현 스캐폴드 생성이 필요하다. |
 | UC8 계획 | 개요 모델이 `registerForCourse` 선행 작업을 누락하고, 서로 다른 자원 종류의 identity relation을 만들었다. | 그래프 입력에서 근거 없는 교차-operation identity relation을 제외하고 개요의 선행 occurrence를 보존하도록 했다. 집중 테스트 3개 통과. OSS 제품 경로의 UC3 계획은 구조 검증·컴파일·문서 검증 통과. | UC8의 실제 개요 재생성은 여전히 `registerForCourse`를 빠뜨렸다. 한 차례의 범용 프롬프트 변형 실험도 이를 해결하지 못했다. UC8 HTTP 성공을 주장할 수 없다. |
-| UC7 실행 | 실제 생성 앱의 `CREATE`는 요청에 `courseOfferingId`가 없으면 `success:false, offeringId:null`을 반환한다. 해당 API/엔티티에는 요구되는 `waitlistEnabled`·published 상태도 없다. | 실제 체크포인트의 API·컨트롤러·서비스를 읽어 결함 위치를 분리했다. 생성 앱 산출물이나 DB는 수정하지 않았다. | 현 구현 API만으로는 full + waitlist-enabled offering을 만드는 유효한 워크플로를 입증할 수 없다. 상류 API/설계 계약 보완 및 새 구현이 필요하다. |
+| UC7 실행 | 실제 생성 앱의 `CREATE`는 요청에 필수 `courseOfferingId`가 없으면 `success:false, offeringId:null`을 반환한다. 호출자 제공 ID는 가능한 설계이며, 이 부분은 계획이 필수값을 공급하지 않은 결함이다. 별도로 API/엔티티에는 요구되는 `waitlistEnabled` 상태가 없다. | 실제 체크포인트의 API·컨트롤러·서비스를 읽어 두 원인을 분리했다. 생성 앱 산출물이나 DB는 수정하지 않았다. | ID를 채워도 현 구현 API만으로는 waitlist-enabled 상태를 설정·검사할 수 없다. 이 계약은 상류 설계에서 보완하고 새 구현으로 검증해야 한다. |
 
 ## 재개 조건
 
 현재 체크포인트를 Testing만 다시 돌려도 UC2·UC10의 불변 컨트롤러와 UC7의 누락 계약은 고쳐지지 않는다. 먼저 시스템이 새 설계/API 근거에서 구현 스캐폴드를 재생성하고, 작은 실모델·집중 검증으로 UC7·UC8의 선행 상태를 확인해야 한다. 그다음에만 새 구현 결과의 실제 HTTP Testing을 실행한다. 자동 수리 결과나 계획의 구조 검증을 PASS로 승격하지 않는다.
+
+## 후속 설계 근거 점검 (2026-10-01)
+
+- 실제 요구사항 `RR9`는 대기열이 활성화된 강의의 정원 초과를 전제로 하지만, `RR13`의 강의 관리 입력에는 대기열 설정이 없다. 실제 UC7은 이 조건을 trigger 문장에만 두며, UC11과 클래스 모델에는 설정·지속 상태가 전달되지 않았다. 공개 상태도 UC11 publish 분기는 있으나 생성된 엔티티에 저장되지 않는다.
+- 동결된 클래스 모델과 OpenAPI는 `CourseOffering.course/term/section` 등 중첩 객체를 필수로 요구하면서, 강의 관리 요청·Control에는 이를 만들 입력이나 명시된 서버 출처가 없다. 실제 UC4 응답에서 학생과 해당 연관 객체가 null인 것은 단순 직렬화 문제가 아니라 이 상류 계약 불일치의 결과다.
+- 제품과 같은 OSS 모델(`openai/gpt-oss-120b`)에 실제 동결 유스케이스를 주고, 여러 유스케이스 사이의 명시적 지속 상태를 비교하도록 한 한 번의 작은 inventory 호출에서는 `waitlistEnabled`와 공개 상태가 Entity 후보에 나타났다. 독립적인 주문 도메인 한 번에서도 스키마에 맞는 Inventory가 생성됐다. 이 결과는 inventory 단계의 개선 가능성을 보일 뿐 UC11 연산/API/구현의 성공 증거는 아니다.
+
+### 범용 상태 검토의 실제 효과와 남은 계약
+
+- 같은 inventory 프롬프트라도 다른 OSS 수락본은 `waitlistEnabled`를 빠뜨렸다. 입력 부족만의 문제가 아니라 의미상 누락을 받아들이는 검증 경계 문제임이 확인됐다.
+- 별도의 작은 OSS 검토는 동결 클래스 모델에서 공개/취소 상태와 대기열 활성화 누락을 찾았고, 독립적인 주문 도메인에서는 외부 카탈로그 가용성을 내부 Entity 필드로 잘못 요구하지 않도록 제한한 후 PASS했다. 시스템은 이 검토에서 원문 인용·UC·Entity를 확인한 finding만 기존 inventory 수리 루프로 넘기도록 보완했다. 집중 테스트 3개가 통과했다.
+- 제품 함수로 동결 inventory부터 UC11 연산까지 재생한 결과, inventory는 두 번의 수리와 두 번의 상태 검토 후 `CourseOffering.waitlistEnabled`, `published`를 포함해 수락됐다. 하지만 수락된 UC11 Control/Request는 `operationType`, `courseOfferingId`, `instructorId`, `meetingSchedule`, `enrollmentCapacity`만 전달했다. `waitlistEnabled` 설정 및 필수 course/term 출처는 여전히 연산에 연결되지 않았다. 이 실험은 OSS 6회 실호출(인벤토리 3, 상태 검토 2, UC11 연산 1)이었고 구현/HTTP Testing은 실행하지 않았다.
+- 기존 요구사항 선택지 검토는 모든 UC 후보를 한 번에 읽더라도 선택한 UC의 직접 연결 요구사항만 출처로 인정한다. RR9·RR13을 함께 근거로 삼는 질문은 이 경로에서 아직 만들 수 없다. 범위를 넓힌 시험 호출은 관련 없는 UC6의 파일 형식을 질문했고, 인용도 현 검증 계약과 맞지 않았다. 이 프롬프트 변형을 제품에 반영하지 않았다. UC11의 대기열 설정 방식은 시스템이 실제로 질문·반영할 수 있는 경로가 생기기 전에는 Codex가 임의로 확정하지 않는다.
