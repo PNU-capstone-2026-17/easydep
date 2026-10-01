@@ -30,6 +30,7 @@ from app.testing.utils.functional_executor import (
     resolve_schema,
     response_summary,
     schema_errors,
+    security_parameters,
     send_operation_request,
     validate_operation_response,
 )
@@ -525,7 +526,8 @@ def _parameters(
     query: dict[str, Any] = {}
     headers: dict[str, Any] = {}
     seen: set[tuple[str, str]] = set()
-    for owner in (operation.path_item, operation.value):
+    for owner in (operation.path_item, operation.value,
+                  {"parameters": security_parameters(openapi, operation.value)}):
         for parameter in owner.get("parameters") or []:
             if not isinstance(parameter, dict):
                 continue

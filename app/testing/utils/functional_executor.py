@@ -45,6 +45,27 @@ class InputValueRequest:
 InputValueProposer = Callable[[InputValueRequest], Any]
 
 
+def security_parameters(openapi: dict[str, Any], operation: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expose declared OpenAPI security inputs as optional Arazzo parameters."""
+    schemes = (openapi.get("components") or {}).get("securitySchemes") or {}
+    parameters: dict[tuple[str, str], dict[str, Any]] = {}
+    for requirement in operation.get("security", openapi.get("security", [])) or []:
+        if not isinstance(requirement, dict):
+            continue
+        for name in requirement:
+            scheme = resolve_schema(openapi, schemes.get(name, {}))
+            kind = scheme.get("type")
+            if kind in {"http", "oauth2", "openIdConnect"}:
+                location, parameter_name = "header", "Authorization"
+            elif kind == "apiKey" and scheme.get("in") in {"header", "query"}:
+                location, parameter_name = scheme["in"], scheme.get("name")
+            else:
+                continue
+            if isinstance(parameter_name, str) and parameter_name:
+                parameters[(location, parameter_name)] = {"in": location, "name": parameter_name, "schema": {"type": "string", "minLength": 1}, "required": False}
+    return list(parameters.values())
+
+
 def _ref(
     document: dict[str, Any], schema: Any, seen: frozenset[str] = frozenset()
 ) -> dict[str, Any]:
@@ -337,7 +358,7 @@ def send_operation_request(
         operation_url(target_url, operation, paths, query),
         headers={"Accept": "application/json", **headers},
         json=body,
-        auth=_basic_auth(),
+        auth=None if any(name.lower() == "authorization" for name in headers) else _basic_auth(),
         timeout=timeout_seconds,
         follow_redirects=False,
     )

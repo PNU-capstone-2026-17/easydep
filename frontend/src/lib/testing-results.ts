@@ -1,4 +1,4 @@
-import type { WorkspaceCommand, WorkspaceEvent } from '$lib/types';
+import type { TestingResultResponse, WorkspaceCommand, WorkspaceEvent } from '$lib/types';
 
 export type TestingStatus =
   | 'PENDING'
@@ -561,15 +561,43 @@ export function projectTestingRun(input: {
   command?: WorkspaceCommand | null;
   events?: WorkspaceEvent[];
   result?: Record<string, any> | null;
+  testingResult?: TestingResultResponse | null;
 }): TestingRunView | null {
-  const command = input.command ?? null;
-  const outerResult = record(input.result ?? command?.result);
+  // A later workspace command must not make the last persisted testing
+  // report disappear.  The API returns that report without copying it into a
+  // new artifact, so project it as its original execution command.
+  const storedResult = input.testingResult;
+  const command = storedResult?.available && storedResult.command_id
+    ? {
+        ...(input.command ?? {}),
+        command_id: storedResult.command_id,
+        app_id: storedResult.app_id,
+        action: 'start_testing',
+        stage: 'testing' as const,
+        status: storedResult.command_status ?? input.command?.status ?? 'COMPLETED',
+        created_at: storedResult.created_at ?? input.command?.created_at,
+        payload: input.command?.command_id === storedResult.command_id
+          ? input.command.payload
+          : {},
+        result: {
+          job: {
+            implementation_job_id: storedResult.implementation_job_id,
+            result: storedResult.report
+          }
+        }
+      } as WorkspaceCommand
+    : input.command ?? null;
+  const resultSource = storedResult?.available
+    ? { job: { implementation_job_id: storedResult.implementation_job_id, result: storedResult.report } }
+    : input.result ?? command?.result;
+  const outerResult = record(resultSource);
   const checkpoint = record(command?.payload?.testing_checkpoint);
   const checkpointResult = record(checkpoint.result);
-  const report = finalReport(input.result ?? command?.result);
+  const report = finalReport(resultSource);
   const source = Object.keys(report).length ? report : checkpointResult;
   const verification = record(source.verification);
   const reports = record(verification.reports ?? source.reports);
+  const validationSkipped = verification.validationSkipped === true;
   const event = latestProgressEvent(input.events ?? [], command?.command_id);
   const checkpointProgress = record(checkpoint.testing_progress);
   const progress = foldTestingProgress(
@@ -611,7 +639,12 @@ export function projectTestingRun(input: {
     terminalVerificationStatus(dynamicReport.gateStatus ?? dynamicReport.status) &&
       commandTerminal
   );
-  const reportWorkflows = workflowsFromReport(dynamicReport, verificationFinal);
+  // A skipped validation contains planning data, not execution evidence.
+  // Do not promote those rows to PASS merely because the command completed.
+  const reportWorkflows = workflowsFromReport(
+    dynamicReport,
+    verificationFinal && !validationSkipped
+  );
   const progressWorkflows = workflowsFromProgress(progress);
   const workflows = mergeWorkflows(reportWorkflows, progressWorkflows);
   const progressGates = record(progress.gates);
@@ -666,7 +699,7 @@ export function projectTestingRun(input: {
     return null;
   }
   const gateCounts = record(verification.gateCounts ?? source.gateCounts);
-  const finalGateStatus = verificationFinal
+  const finalGateStatus = verificationFinal && !validationSkipped
     ? terminalVerificationStatus(source.gateStatus ?? verification.gateStatus ?? dynamicReport.gateStatus) ?? 'PENDING'
     : 'PENDING';
   const commandStatus = String(command?.status ?? '').toUpperCase();
@@ -685,7 +718,7 @@ export function projectTestingRun(input: {
     (item) => !['PENDING', 'RUNNING'].includes(item.status)
   ).length;
   const passedWorkflows = workflows.filter(
-    (item) => ['PASS', 'REUSED', 'SKIPPED'].includes(item.status)
+    (item) => ['PASS', 'REUSED'].includes(item.status)
   ).length;
   const failedWorkflows = workflows.filter((item) => item.status === 'FAIL').length;
   const workflowTotal = Math.max(workflows.length, planTotal);

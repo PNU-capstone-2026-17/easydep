@@ -276,6 +276,34 @@ test('keeps the initial failure beside a successful repaired result', () => {
   assert.equal(view?.repair?.status, 'COMPLETED');
 });
 
+test('restores the stored Testing report after a later workspace command', () => {
+  const view = projectTestingRun({
+    command: command({ command_id: 'design-command', action: 'message', stage: 'design' }),
+    testingResult: {
+      app_id: 'app-1', available: true, command_id: 'testing-command', command_status: 'COMPLETED',
+      implementation_job_id: 'implementation-1', created_at: '2026-09-12T01:00:00Z',
+      started_at: null, completed_at: null,
+      report: { verification: { reports: { dynamicFunctional: { gateStatus: 'PASS' } } } }
+    }
+  });
+
+  assert.equal(view?.commandId, 'testing-command');
+  assert.equal(view?.status, 'PASS');
+});
+
+test('does not present skipped validation planning as passed execution', () => {
+  const view = projectTestingRun({
+    command: command({
+      result: { verification: { validationSkipped: true, reports: { dynamicFunctional: {
+        gateStatus: 'PASS', candidatePlan: { workflows: [{ workflowId: 'workflow-UC1' }] }
+      } } } }
+    })
+  });
+
+  assert.equal(view?.status, 'PENDING');
+  assert.equal(view?.workflowCounts.passed, 0);
+});
+
 test('uses final workflow results over a matching pending candidate plan', () => {
   const view = projectTestingRun({
     command: command({

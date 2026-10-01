@@ -16,7 +16,7 @@ class ArazzoExpressionError(ValueError):
     """An Arazzo runtime expression could not be resolved deterministically."""
 
 
-_EMBEDDED = re.compile(r"\{([^{}]+)\}")
+_EMBEDDED = re.compile(r"\{(\$[^{}]+)\}")
 
 
 def _pointer(value: Any, pointer: str) -> Any:
@@ -77,7 +77,7 @@ def resolve(expression: str, context: Mapping[str, Any]) -> Any:
 
 
 def interpolate(value: Any, context: Mapping[str, Any]) -> Any:
-    """Resolve full expressions as values and ``{...}`` expressions inside strings."""
+    """Resolve expressions while preserving ordinary braces in literal strings."""
     if not isinstance(value, str):
         return value
     if value.startswith("$") and "{" not in value:

@@ -65,8 +65,11 @@ def test_latest_testing_result_exposes_report_without_repeating_frozen_inputs(
     }
     monkeypatch.setattr(workspace_api, "require_app", lambda _app_id: {})
 
-    def latest(_app_id: str, *, stage: str | None = None):
+    def latest(
+        _app_id: str, *, stage: str | None = None, action: str | None = None
+    ):
         assert stage == "testing"
+        assert action == "start_testing"
         return command
 
     monkeypatch.setattr(workspace_api.repository, "latest_command", latest)

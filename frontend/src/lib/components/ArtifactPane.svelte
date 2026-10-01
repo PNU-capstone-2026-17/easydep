@@ -12,7 +12,7 @@
   import TestingResultsPanel from '$lib/components/TestingResultsPanel.svelte';
   import { Badge } from '$lib/components/ui/badge';
   import { artifactLabels, artifactPresent, diagramArtifactTypes, requirementsArtifactTypes } from '$lib/artifacts';
-  import { projectTestingRun } from '$lib/testing-results';
+  import type { TestingRunView } from '$lib/testing-results';
   import { isAutomaticRepairActive } from '$lib/repair-presentation';
 
   let {
@@ -23,6 +23,7 @@
     preferredFile = '',
     events,
     command = null,
+    testingRun = null,
     classPreview,
     classGenerating = false,
     selected,
@@ -40,6 +41,7 @@
     preferredFile?: string;
     events: WorkspaceEvent[];
     command?: WorkspaceCommand | null;
+    testingRun?: TestingRunView | null;
     classPreview?: LiveDiagramPreview | null;
     classGenerating?: boolean;
     selected: string;
@@ -79,7 +81,6 @@
   let traceRequestVersion = 0;
   let previouslySelected = '';
   let content = $derived(document?.artifacts?.[selected]);
-  let testingRun = $derived(projectTestingRun({ command, events }));
   let liveClassPreview = $derived(
     selected === 'class_diagram' ? classPreview ?? null : null
   );

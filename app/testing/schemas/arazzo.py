@@ -21,7 +21,7 @@ from typing import Any, NoReturn
 import jsonpath_rfc9535
 import jsonschema
 
-from app.testing.utils.functional_executor import schema_errors
+from app.testing.utils.functional_executor import schema_errors, security_parameters
 
 ARAZZO_VERSION = "1.1.0"
 
@@ -654,7 +654,7 @@ def _validate_openapi_step_profile(
 ) -> None:
     """Reject request shapes the deterministic HTTP primitive cannot execute."""
     declared: dict[tuple[str, str], Any] = {}
-    for owner in (path_item, operation):
+    for owner in (path_item, operation, {"parameters": security_parameters(openapi, operation)}):
         for parameter in owner.get("parameters") or []:
             if not isinstance(parameter, dict):
                 continue

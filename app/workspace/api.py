@@ -82,7 +82,11 @@ def get_testing_result(app_id: str) -> dict[str, Any]:
 
     validate_app_id(app_id)
     require_app(app_id)
-    command = repository.latest_command(app_id, stage="testing")
+    # Checkpoint/navigation commands can share the testing stage.  The result
+    # pane must remain anchored to an actual Testing execution.
+    command = repository.latest_command(
+        app_id, stage="testing", action=WorkspaceAction.START_TESTING.value
+    )
     if command is None:
         return {
             "app_id": app_id,

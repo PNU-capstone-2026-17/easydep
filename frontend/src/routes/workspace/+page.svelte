@@ -8,8 +8,8 @@
   import Composer from '$lib/components/Composer.svelte';
   import StageRail from '$lib/components/StageRail.svelte';
   import ResizableWorkspace from '$lib/components/ResizableWorkspace.svelte';
-  import { connectEvents, getArtifacts, getClassDiagramPreview, getCloudOptions, getFileArtifact, getLiveImplementationSources, getWorkspace, listApps, saveDeploymentPreferences, sendCommand, stopCommand } from '$lib/api';
-  import type { ArtifactDocument, CloudProvider, CloudRegionOption, DeploymentPreferences, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, Stage, WorkspaceApp, WorkspaceCommand, WorkspaceEvent } from '$lib/types';
+  import { connectEvents, getArtifacts, getClassDiagramPreview, getCloudOptions, getFileArtifact, getLiveImplementationSources, getTestingResult, getWorkspace, listApps, saveDeploymentPreferences, sendCommand, stopCommand } from '$lib/api';
+  import type { ArtifactDocument, CloudProvider, CloudRegionOption, DeploymentPreferences, FileArtifactSnapshot, LiveDiagramPreview, LiveSourceSnapshot, Stage, TestingResultResponse, WorkspaceApp, WorkspaceCommand, WorkspaceEvent } from '$lib/types';
   import { errorMessage } from '$lib/utils';
   import { Badge } from '$lib/components/ui/badge';
   import { Button } from '$lib/components/ui/button';
@@ -32,6 +32,7 @@
   let events = $state.raw<WorkspaceEvent[]>([]);
   let progressCursor = 0;
   let command = $state.raw<WorkspaceCommand | null>(null);
+  let testingResult = $state.raw<TestingResultResponse | null>(null);
   let currentStage = $state<Stage>('requirements');
   let artifacts = $state.raw<ArtifactDocument | null>(null);
   let fileArtifacts = $state.raw<Record<string, FileArtifactSnapshot>>({});
@@ -88,7 +89,7 @@
     ) ?? null
   );
   let canApproveSequenceMethodProposals = $derived(Boolean(sequenceMethodApprovalOffer));
-  let testingRun = $derived(projectTestingRun({ command, events }));
+  let testingRun = $derived(projectTestingRun({ command, events, testingResult }));
 
   let busy = $derived(actionBusy || ['QUEUED', 'RUNNING'].includes(command?.status ?? ''));
   let classGenerating = $derived(
@@ -228,8 +229,14 @@
   async function loadApp(id: string) {
     loading = true;
     error = '';
+    testingResult = null;
     try {
-      const [snapshot, document] = await Promise.all([getWorkspace(id), getArtifacts(id)]);
+      const [snapshot, document, storedTestingResult] = await Promise.all([
+        getWorkspace(id),
+        getArtifacts(id),
+        getTestingResult(id).catch(() => null)
+      ]);
+      if (id === appId || !appId) testingResult = storedTestingResult;
       events = snapshot.events;
       progressCursor = snapshot.progress_cursor;
       classPreview = null;
@@ -317,6 +324,13 @@
     const previousCommand = command;
     const [snapshot, document] = await Promise.all([getWorkspace(id), getArtifacts(id)]);
     const nextCommand = snapshot.command ?? null;
+    if (
+      !testingResult ||
+      previousCommand?.command_id !== nextCommand?.command_id ||
+      previousCommand?.status !== nextCommand?.status
+    ) {
+      testingResult = await getTestingResult(id).catch(() => null);
+    }
     events = reconcileWorkspaceEvents(
       events,
       snapshot.events,
@@ -691,6 +705,7 @@
           <ArtifactPane
             {appId}
             {command}
+            {testingRun}
             document={artifacts}
             {fileArtifacts}
             {liveSources}

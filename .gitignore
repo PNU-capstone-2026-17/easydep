@@ -55,6 +55,8 @@ artifacts/*
 /frontend/node_modules/
 /frontend/.svelte-kit/
 /frontend/build/
+# Local scenario artifacts are not part of the product source.
+/scenario_packs/
 # 모델 가중치. 원본 model.safetensors(417MiB)는 GitHub 파일당 100MiB 한도를 넘어
 # 커밋할 수 없다.
 *.safetensors
