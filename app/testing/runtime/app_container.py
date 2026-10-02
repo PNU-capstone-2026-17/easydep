@@ -464,7 +464,7 @@ def running_application(
         )
         if copier.returncode == 0:
             copied = _docker(
-                ["cp", f"{context.resolve()}\\.", f"{copy_container}:/easydep-application"],
+                ["cp", f"{context.resolve()}{os.sep}.", f"{copy_container}:/easydep-application"],
                 timeout=180,
             )
             if copied.returncode != 0:
