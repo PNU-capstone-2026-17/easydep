@@ -134,6 +134,24 @@ def test_prior_step_outputs_and_criteria_are_resolvable() -> None:
     _validate(document)
 
 
+@pytest.mark.parametrize(
+    "condition",
+    [
+        "$statusCode == 200 == 201",
+        "($statusCode == 200 == 201)",
+        "!($statusCode == 200 == 201)",
+    ],
+)
+def test_chained_simple_success_criterion_is_rejected_before_execution(condition: str) -> None:
+    document = _document()
+    document["workflows"][0]["steps"][0]["successCriteria"] = [
+        {"condition": condition}
+    ]
+
+    with pytest.raises(ArazzoValidationError, match="chained comparison"):
+        _validate(document)
+
+
 def test_double_brace_template_placeholder_is_rejected_before_execution() -> None:
     document = _document()
     document["workflows"][0]["steps"][0] = {

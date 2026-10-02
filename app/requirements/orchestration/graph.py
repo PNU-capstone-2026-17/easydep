@@ -483,6 +483,7 @@ ARTIFACT_KEYS = (
     "spec_report",
     "semantic_ambiguity_question",
     "identity_source_question",
+    "state_source_question",
     "relationships",
     "relationship_report",
     "diagram",
@@ -522,6 +523,7 @@ def result_payload(
                 # 되묻기. 화면이 이걸 받아야 `resource_answers`를 만들 수 있다 —
                 # 안 실으면 질문이 상태에만 있고 사용자에게는 영영 안 보인다.
                 "resource_questions": value.get("resource_questions"),
+                "state_source_question": value.get("state_source_question"),
                 "blocking_findings": value.get("blocking_findings"),
                 "requires_revision": value.get("requires_revision"),
                 "repair_state": value.get("repair_state"),

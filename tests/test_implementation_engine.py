@@ -277,7 +277,6 @@ def test_final_workspace_verification_publishes_success_report(
     source = run / "application" / "src" / "Main.java"
     source.parent.mkdir(parents=True)
     source.write_text("class Main {}", encoding="utf-8")
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     verification = {"exitCode": 0, "testResults": ""}
     with (
         patch(
@@ -298,12 +297,11 @@ def test_final_workspace_verification_publishes_success_report(
     assert report["verification"] == verification
 
 
-def test_validation_flag_disabled_runs_backend_and_frontend_checks(
+def test_implementation_verification_runs_backend_and_frontend_checks(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     (tmp_path / "application").mkdir()
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     with patch(
         "app.implementation.agents.verification.build.subprocess.run",
         return_value=SimpleNamespace(
@@ -321,54 +319,6 @@ def test_validation_flag_disabled_runs_backend_and_frontend_checks(
 
     backend.assert_called_once()
     frontend.assert_called_once()
-
-
-def test_validation_flag_skips_implementation_backend_frontend_and_final_checks(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    (tmp_path / "application").mkdir()
-    monkeypatch.setenv("EASYDEP_DEMO_SKIP_VALIDATION", "true")
-    with patch(
-        "app.implementation.agents.verification.build.subprocess.run",
-    ) as backend:
-        backend_evidence = verify_agent_workspace(tmp_path)
-    with patch(
-        "app.implementation.agents.verification.build.run_frontend_verification",
-    ) as frontend:
-        frontend_evidence = verify_frontend_workspace(tmp_path)
-    run = tmp_path / "run"
-    (run / "application").mkdir(parents=True)
-    with patch(
-        "app.implementation.agents.verification.build.verify_agent_workspace",
-    ) as final_backend, patch(
-        "app.implementation.agents.verification.build.verify_frontend_workspace",
-    ) as final_frontend:
-        final_result = verify_run_workspace(run)
-
-    assert backend.call_count == 0
-    assert frontend.call_count == 0
-    assert final_backend.call_count == 0
-    assert final_frontend.call_count == 0
-    assert backend_evidence == {"status": "SKIPPED", "reason": "demo-validation-skip"}
-    assert frontend_evidence == backend_evidence
-    assert final_result["status"] == "SUCCEEDED"
-    assert final_result["verification"] == backend_evidence
-
-
-def test_validation_skip_does_not_bypass_testing_gate(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("EASYDEP_DEMO_SKIP_VALIDATION", "true")
-    failure = {"command": ["testing-dynamic"], "exitCode": 1, "gateStatus": "FAIL"}
-    with patch(
-        "app.testing.repair_check.verify_testing_repair_gate",
-        return_value=failure,
-    ) as dynamic_gate, pytest.raises(WorkspaceVerificationError):
-        verify_agent_workspace(tmp_path, "testing-dynamic-functional")
-
-    dynamic_gate.assert_called_once()
 
 
 def test_feedback_regression_succeeds_when_http_scenarios_are_deferred(
@@ -399,7 +349,6 @@ def test_thin_integration_check_runs_backend_then_frontend(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     application = tmp_path / "application"
     application.mkdir()
     calls: list[str] = []
@@ -459,7 +408,6 @@ def test_thin_integration_startup_failure_preserves_diagnostics_and_cleans_up(
 ) -> None:
     from app.testing.runtime.app_container import ApplicationLaunchError
 
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     calls: list[str] = []
 
     @contextmanager
@@ -517,7 +465,6 @@ def test_frontend_marker_contract_fails_before_build_and_cleared_marker_builds(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     source = tmp_path / "application/frontend/src/features/orders.tsx"
     source.parent.mkdir(parents=True)
     source.write_text("// TODO_IMPLEMENT_ORDER\n", encoding="utf-8")
@@ -554,7 +501,6 @@ def test_integration_marker_contract_fails_before_backend_or_frontend(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     source = tmp_path / "application/frontend/src/features/orders.tsx"
     source.parent.mkdir(parents=True)
     source.write_text("// TODO_INTEGRATION_ORDER\n", encoding="utf-8")
@@ -584,7 +530,6 @@ def test_backend_marker_contract_still_fails_before_gradle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     source = tmp_path / "application/src/main/java/Orders.java"
     source.parent.mkdir(parents=True)
     source.write_text("// TODO_IMPLEMENT_ORDER\n", encoding="utf-8")
@@ -2538,7 +2483,6 @@ def test_bounded_owner_upstream_gap_after_recovery_preserves_candidate(
     context_path = run / task["context_file"]
     context_path.write_text(json.dumps({"readSourcePaths": []}), encoding="utf-8")
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     monkeypatch.setattr(
         "app.implementation.agents.runtime.settings.implementation_openhands_canary",
         False,
@@ -2640,7 +2584,6 @@ def test_verify_or_repair_passes_before_openhands_connection(
         json.dumps({'readSourcePaths': [source_path]}), encoding='utf-8'
     )
     monkeypatch.setenv('EASYDEP_FIXED_LINUX_RUNNER', '1')
-    monkeypatch.delenv('EASYDEP_DEMO_SKIP_VALIDATION', raising=False)
     evidence = {'command': ['thin-integration'], 'exitCode': 0}
 
     with (
@@ -2718,7 +2661,6 @@ def test_verify_or_repair_failure_result_preserves_initial_diagnosis(
         json.dumps({"readSourcePaths": [source_path]}), encoding="utf-8"
     )
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     diagnosis = "application startup failed: RootCauseSentinel"
 
     class IncompleteConversation:
@@ -2803,7 +2745,6 @@ def test_verify_or_repair_typed_startup_environment_failure_skips_agent(
         json.dumps({"readSourcePaths": [source_path]}), encoding="utf-8"
     )
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     evidence = {
         "command": ["application-startup", "health-check"],
         "exitCode": 1,
@@ -2860,7 +2801,6 @@ def test_semantic_admission_does_not_block_integration_check(
     context = {"readSourcePaths": [source_path]}
     (run / task["context_file"]).write_text(json.dumps(context), encoding="utf-8")
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
 
     with (
         patch(
@@ -2949,7 +2889,6 @@ def test_integration_fqcn_rtm_routes_unique_failure_owner_without_widening(
         "applicationStartup": {"status": "FAILED", "applicationLog": "startup failed"},
     }
     monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
 
     def failed_precheck(session: TaskCheckSession):
         session._last_evidence = evidence
@@ -3010,95 +2949,6 @@ def test_integration_fqcn_rtm_routes_unique_failure_owner_without_widening(
     assert fallback is not None
     assert fallback["ownerTaskIds"] == [integration_id]
     assert fallback["repairPaths"] == []
-
-
-def test_demo_skip_avoids_upstream_gap_tool(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    run, task_id, _source_path, _source = _write_minimal_agent_task(tmp_path)
-    task_path = run / "reports/implementation-tasks/order.task.json"
-    task = json.loads(task_path.read_text(encoding="utf-8"))
-    task.update(
-        {
-            "task_type": "integration-implementation",
-            "owner": "implementation",
-            "source_refs": ["use_case_spec:UC-12"],
-        }
-    )
-    task_path.write_text(json.dumps(task), encoding="utf-8")
-    (run / "reports/run-manifest.json").write_text(
-        json.dumps({"implementation_tasks": [task]}), encoding="utf-8"
-    )
-    context = {"readSourcePaths": []}
-    (run / task["context_file"]).write_text(json.dumps(context), encoding="utf-8")
-    monkeypatch.setenv("EASYDEP_FIXED_LINUX_RUNNER", "1")
-    monkeypatch.setenv("EASYDEP_DEMO_SKIP_VALIDATION", "true")
-    monkeypatch.setattr(
-        "app.implementation.agents.runtime.settings.implementation_openhands_canary",
-        False,
-    )
-
-    class FakeConversation:
-        def __init__(self, sandbox: Path) -> None:
-            from openhands.sdk.conversation.state import ConversationExecutionStatus
-
-            self.sandbox = sandbox
-            self.state = SimpleNamespace(
-                execution_status=ConversationExecutionStatus.FINISHED
-            )
-
-        def send_message(self, _message: str) -> None:
-            pass
-
-        def run(self) -> None:
-            pass
-
-        def close(self) -> None:
-            pass
-
-    connection = LlmConnection(
-        provider="openrouter",
-        api_key="approved-key",
-        base_url="https://example.invalid/v1",
-        model="openai/gpt-oss-20b",
-        litellm_provider="openrouter",
-    )
-    conversation_options: dict[str, object] = {}
-
-    def create_conversation(sandbox: Path, *_args: object, **kwargs: object):
-        conversation_options.update(kwargs)
-        return FakeConversation(sandbox), SimpleNamespace(_tools={})
-
-    with (
-        patch("app.implementation.agents.runtime.register_upstream_gap_tool") as register_gap,
-        patch("app.implementation.agents.runtime.reported_upstream_gap") as reported_gap,
-        patch(
-            "app.implementation.agents.runtime.openhands_compatibility",
-            return_value={
-                "pythonCompatible": True,
-                "sdkInstalled": True,
-                "toolsInstalled": True,
-                "apiKeyConfigured": True,
-            },
-        ),
-        patch("app.implementation.agents.runtime.openhands_connection", return_value=connection),
-        patch(
-            "app.implementation.agents.runtime.create_openhands_conversation",
-            side_effect=create_conversation,
-        ) as create,
-        patch(
-            "app.implementation.agents.runtime.verify_agent_workspace",
-            return_value={"exitCode": 0},
-        ),
-    ):
-        result = execute_openhands_task(run, task_id)
-
-    register_gap.assert_not_called()
-    reported_gap.assert_not_called()
-    create.assert_called_once()
-    assert conversation_options["upstream_gap_source_refs"] is None
-    assert result["status"] == "SUCCEEDED"
 
 
 def test_owner_candidate_contract_change_is_rejected_before_verification(

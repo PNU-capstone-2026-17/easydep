@@ -291,19 +291,6 @@ test('restores the stored Testing report after a later workspace command', () =>
   assert.equal(view?.status, 'PASS');
 });
 
-test('does not present skipped validation planning as passed execution', () => {
-  const view = projectTestingRun({
-    command: command({
-      result: { verification: { validationSkipped: true, reports: { dynamicFunctional: {
-        gateStatus: 'PASS', candidatePlan: { workflows: [{ workflowId: 'workflow-UC1' }] }
-      } } } }
-    })
-  });
-
-  assert.equal(view?.status, 'PENDING');
-  assert.equal(view?.workflowCounts.passed, 0);
-});
-
 test('uses final workflow results over a matching pending candidate plan', () => {
   const view = projectTestingRun({
     command: command({

@@ -27,12 +27,13 @@ from app.requirements.contracts.request import (
 from app.requirements.contracts.state import AgentState
 from app.requirements.modeling.refinement import classify
 from app.requirements.modeling.relationships import check_relationships
-from app.requirements.modeling.specifications import check_specs
+from app.requirements.modeling.specifications import check_specs, generate_specs
 from app.requirements.orchestration.feedback import apply_feedback_upto
 
 
 def _ask(stage: str, summary, *, edit_stage: str | None = None, edit_targets=(),
-         questions=(), semantic_ambiguity_question=None, identity_source_question=None) -> object:
+         questions=(), semantic_ambiguity_question=None, identity_source_question=None,
+         state_source_question=None) -> object:
     """피드백을 요청하는 interrupt. 재개 값을 그대로 반환한다.
 
     재개 값은 `FeedbackEdit`·`ResourceAnswer`·`DeploymentPreferences` 중 하나다.
@@ -54,6 +55,7 @@ def _ask(stage: str, summary, *, edit_stage: str | None = None, edit_targets=(),
         "resource_questions": list(questions),
         "semantic_ambiguity_question": semantic_ambiguity_question,
         "identity_source_question": identity_source_question,
+        "state_source_question": state_source_question,
     })
 
 
@@ -206,6 +208,7 @@ def gate_specs(state: AgentState) -> dict[str, object]:
     # node and would otherwise duplicate the review call.
     ambiguity = state.get("semantic_ambiguity_question")
     source_question = state.get("identity_source_question")
+    state_question = state.get("state_source_question")
     answer = _ask(
         "specs",
         [s["use_case_id"] for s in specs],
@@ -213,15 +216,56 @@ def gate_specs(state: AgentState) -> dict[str, object]:
         edit_targets=[s["use_case_id"] for s in specs if s.get("use_case_id")],
         semantic_ambiguity_question=ambiguity,
         identity_source_question=source_question,
+        state_source_question=state_question,
     )
     if _empty(answer):
-        if source_question:
+        if source_question or ambiguity or state_question:
             return {
                 "gate_route": "loop",
                 "semantic_ambiguity_question": ambiguity,
                 "identity_source_question": source_question,
+                "state_source_question": state_question,
             }
         return {"gate_route": "advance", "semantic_ambiguity_question": ambiguity}
+    if isinstance(answer, ResourceAnswer) and isinstance(state_question, dict):
+        state_ref = str(state_question.get("stateRef") or "").strip()
+        expected_field = str(state_question.get("field") or "").strip()
+        if state_question.get("kind") != "state_source" or not state_ref or expected_field != state_ref:
+            raise ValueError("State-source answer does not match the pending condition question.")
+        answer_text = ""
+        if answer.free_text is not None:
+            if answer.expected_field != state_ref:
+                raise ValueError("State-source answer does not match the pending condition question.")
+            answer_text = answer.free_text.strip()
+        elif set(answer.answers) == {state_ref}:
+            answer_text = str(answer.answers.get(state_ref) or "").strip()
+        if not answer_text:
+            raise ValueError("State-source answer does not match the pending condition question.")
+        st = dict(state)
+        answers = dict(st.get("state_source_answers") or {})
+        answers[state_ref] = {
+            "stateRef": state_ref,
+            "useCaseId": str(state_question.get("useCaseId") or ""),
+            "condition": str(state_question.get("condition") or ""),
+            "requirementIds": ",".join(str(item) for item in state_question.get("requirementIds") or []),
+            "answer": answer_text,
+        }
+        st["state_source_answers"] = answers
+        # Recreate the accepted specifications through the normal generator so
+        # the user-owned answer is evidence supplied to generation, not a patch
+        # written directly into an artifact.
+        st.update(generate_specs(cast(AgentState, st)))
+        st["state_source_question"] = None
+        st.update(check_specs(cast(AgentState, st)))
+        return {
+            "use_case_specs": st["use_case_specs"],
+            "spec_report": st["spec_report"],
+            "semantic_ambiguity_question": st.get("semantic_ambiguity_question"),
+            "identity_source_question": st.get("identity_source_question"),
+            "state_source_question": st.get("state_source_question"),
+            "state_source_answers": answers,
+            "gate_route": "loop",
+        }
     if isinstance(answer, IdentitySourceAnswer):
         if not isinstance(source_question, dict):
             raise ValueError("There is no current identity-source question to answer.")

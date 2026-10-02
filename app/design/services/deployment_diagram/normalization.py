@@ -260,11 +260,18 @@ def validate_workload_graph(
                             source_refs=_refs(configuration.get("sourceRefs")) or refs,
                         )
                     )
-            if kind in {"secret", "secretBinding"} and configuration.get("value") is not None:
+            if (
+                kind in {"secret", "secretBinding"}
+                or (kind == "endpointBinding" and configuration.get("sensitive") is True)
+            ) and configuration.get("value") is not None:
                 issues.append(
                     _issue(
                         f"workloads.{workload_id}.configuration.{configuration_id}.value",
-                        "Secret values must never be stored in the deployment design.",
+                        (
+                            "Sensitive endpoint values must never be stored in the deployment design."
+                            if kind == "endpointBinding"
+                            else "Secret values must never be stored in the deployment design."
+                        ),
                         classification="invalid",
                         source_refs=_refs(configuration.get("sourceRefs")) or refs,
                     )

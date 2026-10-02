@@ -14,7 +14,6 @@ import time
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from app.demo_validation import demo_skip_validation_enabled
 
 from ..workspace import cleanup_agent_workspace, prepare_agent_workspace
 from .frontend import (
@@ -24,10 +23,6 @@ from .frontend import (
     run_frontend_verification,
     store_frontend_build,
 )
-
-
-def _skipped_validation_evidence() -> dict[str, object]:
-    return {"status": "SKIPPED", "reason": "demo-validation-skip"}
 
 
 def gradle_command() -> list[str]:
@@ -79,23 +74,6 @@ def verify_run_workspace(
     """
     if Path(report_name).name != report_name or not report_name.endswith(".json"):
         raise ValueError(f"Invalid verification report name: {report_name}")
-    if demo_skip_validation_enabled():
-        result: dict[str, object] = {
-            "status": "SUCCEEDED",
-            "verification": _skipped_validation_evidence(),
-            "scenarioVerification": {"status": "SKIPPED", "tasks": []},
-            "frontendVerification": (
-                _skipped_validation_evidence() if verify_frontend else None
-            ),
-        }
-        report = run_root / "reports" / report_name
-        report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text(
-            json.dumps(result, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        return result
-
     cached_frontend = reuse_frontend_build(run_root) if verify_frontend else None
     sandbox = prepare_agent_workspace(
         run_root,
@@ -174,8 +152,6 @@ def verify_agent_workspace(
     같은 sandbox에서 수리할 때도 Gradle의 증분 결과와 build cache를 재사용한다. 바뀐
     source는 Gradle이 다시 compile하므로 ``--rerun-tasks``로 모든 task를 강제할 필요가 없다.
     """
-    if demo_skip_validation_enabled():
-        return _skipped_validation_evidence()
     marker_evidence = _verify_absent_markers(sandbox, verification_profile)
     if marker_evidence is not None:
         raise WorkspaceVerificationError(marker_evidence)
@@ -480,8 +456,6 @@ def task_verification_command(
 
 def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:
     """frontend production build 결과를 같은 오류 형식으로 반환한다."""
-    if demo_skip_validation_enabled():
-        return _skipped_validation_evidence()
     evidence = run_frontend_verification(sandbox, run_frontend_command)
     if evidence["exitCode"] != 0:
         raise WorkspaceVerificationError(evidence)
@@ -490,8 +464,6 @@ def verify_frontend_workspace(sandbox: Path) -> dict[str, object]:
 
 def verify_frontend_typecheck_workspace(sandbox: Path) -> dict[str, object]:
     """Run the per-owner TypeScript project check without producing a Vite bundle."""
-    if demo_skip_validation_enabled():
-        return _skipped_validation_evidence()
     evidence = run_frontend_verification(
         sandbox,
         run_frontend_command,

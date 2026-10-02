@@ -386,6 +386,82 @@ def test_backend_owner_includes_an_existing_generated_operation_contract_sidecar
     assert "UnrelatedApi" not in prompt
 
 
+def test_backend_unit_task_includes_only_its_required_response_shapes(tmp_path: Path) -> None:
+    spec, run = _spec_and_run(tmp_path)
+    source = (
+        "application/src/main/java/com/example/orders/application/impl/"
+        "OrderControlService.java"
+    )
+    source_path = run / source
+    source_path.parent.mkdir(parents=True)
+    source_path.write_text(
+        "// EASYDEP-IMPLEMENT: complete place-order\n"
+        "final class OrderControlService {}\n",
+        encoding="utf-8",
+    )
+    reports = run / "reports"
+    reports.mkdir()
+    _write_json(
+        reports / "generated-operation-contracts.json",
+        {
+            "schemaVersion": "generated-operation-contracts/v1",
+            "contracts": [
+                {
+                    "operationId": "place-order",
+                    "signature": "place(id: String): void",
+                    "writableSource": source,
+                    "completionMarker": "EASYDEP-IMPLEMENT: complete place-order",
+                    "endpoints": [
+                        {
+                            "method": "post",
+                            "path": "/orders",
+                            "requiredResponseShape": ["term", "term.termId"],
+                        }
+                    ],
+                },
+                {
+                    "operationId": "unrelated-operation",
+                    "signature": "unrelated(): void",
+                    "writableSource": (
+                        "application/src/main/java/com/example/orders/application/impl/"
+                        "UnrelatedService.java"
+                    ),
+                    "completionMarker": "EASYDEP-IMPLEMENT: complete unrelated-operation",
+                    "endpoints": [
+                        {
+                            "method": "get",
+                            "path": "/unrelated",
+                            "requiredResponseShape": ["unrelatedId"],
+                        }
+                    ],
+                },
+            ],
+        },
+    )
+
+    with patch(
+        "app.implementation.planning.design_context.llm_config",
+        return_value={"model": "test-model"},
+    ):
+        owners = generate_backend_owner_tasks(spec, run)
+        unit = generate_backend_unit_test_tasks(spec, run, owners)[0]
+
+    context = json.loads((run / unit.context_file).read_text(encoding="utf-8"))
+    assert context["operationContractResponseShapes"] == [
+        {
+            "operationId": "place-order",
+            "method": "post",
+            "path": "/orders",
+            "requiredResponseShape": ["term", "term.termId"],
+        }
+    ]
+    prompt = (run / unit.prompt_file).read_text(encoding="utf-8")
+    assert "assert every applicable required response field" in prompt
+    assert "term.termId" in prompt
+    assert "unrelated-operation" not in prompt
+    assert "unrelatedId" not in prompt
+
+
 def test_backend_owner_includes_only_imported_frozen_java_dependencies(
     tmp_path: Path,
 ) -> None:
@@ -1300,6 +1376,18 @@ def test_backend_owner_projects_only_declared_related_contract_inventories(
                     ],
                 },
                 {
+                    "className": "OrderSummary",
+                    "stereotype": "Entity",
+                    "fields": ["summaryId: String"],
+                    "operations": [],
+                },
+                {
+                    "className": "Warehouse",
+                    "stereotype": "Entity",
+                    "fields": ["warehouseId: String", "location: String"],
+                    "operations": [],
+                },
+                {
                     "className": "UnrelatedRecord",
                     "stereotype": "Entity",
                     "fields": ["excludedField: String"],
@@ -1321,6 +1409,18 @@ def test_backend_owner_projects_only_declared_related_contract_inventories(
                     "className": "Order",
                     "stereotype": "Entity",
                     "fields": ["orderId: String", "storedAt: String"],
+                    "operations": [],
+                },
+                {
+                    "className": "OrderSummary",
+                    "stereotype": "Entity",
+                    "fields": ["storedSummary: String"],
+                    "operations": [],
+                },
+                {
+                    "className": "Warehouse",
+                    "stereotype": "Entity",
+                    "fields": ["storedLocation: String"],
                     "operations": [],
                 },
                 {
@@ -1370,6 +1470,7 @@ def test_backend_owner_projects_only_declared_related_contract_inventories(
                     "path": "/orders/{accountId}",
                     "path_params": [{"name": "accountId", "type": "string", "required": True}],
                     "request_schema": "PlaceOrderRequest",
+                    "responses": [{"status": 201, "schema_name": "OrderSummaryResponse"}],
                     "control_binding": {
                         "control": "OrderControl",
                         "method": "place",
@@ -1381,11 +1482,27 @@ def test_backend_owner_projects_only_declared_related_contract_inventories(
                 {
                     "name": "PlaceOrderRequest",
                     "fields": [{"name": "id", "type": "string", "required": True}],
-                }
+                },
+                {"name": "OrderSummaryResponse", "source_class": "OrderSummary", "fields": [{"name": "order", "type": "OrderResponse", "required": True}]},
+                {"name": "OrderResponse", "source_class": "Order", "fields": [{"name": "warehouse", "type": "WarehouseResponse", "required": True}]},
+                {"name": "WarehouseResponse", "source_class": "Warehouse", "fields": [{"name": "warehouseId", "type": "string", "required": True}]},
             ],
         },
     )
     bce_model = BCEModel.model_validate_json(spec.inputs["bceModel"].read_text(encoding="utf-8"))
+    write_generated_operation_contracts(
+        run,
+        build_generated_operation_contracts(
+            bce_model=bce_model,
+            sequence_model=SequenceCollection.model_validate_json(
+                spec.inputs["sequenceModel"].read_text(encoding="utf-8")
+            ),
+            api_model=ApiSpecModel.model_validate_json(
+                spec.inputs["apiModel"].read_text(encoding="utf-8")
+            ),
+            base_package=spec.base_package,
+        ),
+    )
     for relative_path, source in render_java_scaffold(
         JavaScaffoldInput(
             bceModel=bce_model,
@@ -1413,9 +1530,11 @@ def test_backend_owner_projects_only_declared_related_contract_inventories(
     assert evidence["scope"]["ownerOperationIds"] == ["OrderControl::place(id:String)"]
     assert evidence["scope"]["directSequenceCallTargets"] == ["Order"]
     assert evidence["sourceRefs"] == ["api:placeOrder", "operation:OrderControl::place(id:String)"]
-    assert {item["className"] for item in evidence["bceClasses"]} == {"OrderControl", "Order"}
+    assert {item["className"] for item in evidence["bceClasses"]} == {"OrderControl", "Order", "OrderSummary", "Warehouse"}
     assert evidence["persistenceClasses"] == [
-        {"className": "Order", "stereotype": "Entity", "fields": ["orderId : String", "storedAt : String"], "fieldRefs": []}
+        {"className": "Order", "stereotype": "Entity", "fields": ["orderId : String", "storedAt : String"], "fieldRefs": []},
+        {"className": "OrderSummary", "stereotype": "Entity", "fields": ["storedSummary : String"], "fieldRefs": []},
+        {"className": "Warehouse", "stereotype": "Entity", "fields": ["storedLocation : String"], "fieldRefs": []},
     ]
     assert evidence["apiInputBindings"][0]["requestSchema"]["fields"] == [
         {"name": "id", "type": "string", "required": True, "description": ""}
@@ -1425,6 +1544,9 @@ def test_backend_owner_projects_only_declared_related_contract_inventories(
     assert "excludedField" not in prompt
     assert "excludedPersistenceField" not in prompt
     assert "undeclaredField" not in prompt
+    assert "summaryId" in prompt and "warehouseId" in prompt
+    assert "requiredResponseShape" in prompt
+    assert "order.warehouse.warehouseId" in prompt
 
 
 def test_controller_task_scope_comes_from_its_owned_endpoint_contracts(tmp_path: Path) -> None:

@@ -89,6 +89,128 @@ def test_operation_contracts_keep_typed_source_and_endpoint_facts(tmp_path):
     assert path == tmp_path / "reports" / "generated-operation-contracts.json"
 
 
+def test_endpoint_contract_carries_required_nested_response_shape():
+    bce = BCEModel.model_validate(
+        {
+            "Classes": [
+                {
+                    "className": "RegistrationControl",
+                    "stereotype": "Control",
+                    "operations": [{"operationId": "ignored", "name": "list"}],
+                }
+            ],
+            "DataTypes": [],
+            "Relationships": [],
+            "Collaborations": [],
+        }
+    )
+    api = ApiSpecModel.model_validate(
+        {
+            "Endpoints": [
+                {
+                    "operation_id": "listRegistrations",
+                    "path": "/registrations",
+                    "method": "get",
+                    "responses": [
+                        {"status": 200, "schema_name": "RegistrationScheduleView"},
+                        {"status": 404, "schema_name": "Problem"},
+                    ],
+                    "control_binding": {
+                        "control": "RegistrationControl",
+                        "method": "list",
+                    },
+                }
+            ],
+            "Schemas": [
+                {
+                    "name": "RegistrationScheduleView",
+                    "fields": [
+                        {"name": "registrationList", "type": "List<Registration>"},
+                        {"name": "nextPage", "type": "Optional<string>"},
+                    ],
+                },
+                {
+                    "name": "Registration",
+                    "fields": [{"name": "offering", "type": "CourseOffering"}],
+                },
+                {
+                    "name": "CourseOffering",
+                    "fields": [
+                        {"name": "term", "type": "AcademicTerm"},
+                        {"name": "note", "type": "string", "required": False},
+                    ],
+                },
+                {"name": "AcademicTerm", "fields": [{"name": "termId", "type": "string"}]},
+            ],
+        }
+    )
+
+    endpoint = build_generated_operation_contracts(
+        bce_model=bce,
+        sequence_model=SequenceCollection.model_validate({"Diagrams": []}),
+        api_model=api,
+        base_package="com.example.registrations",
+    ).contracts[0].endpoints[0]
+
+    assert endpoint.required_response_shape == [
+        "registrationList",
+        "registrationList[].offering",
+        "registrationList[].offering.term",
+        "registrationList[].offering.term.termId",
+    ]
+
+
+def test_response_shape_ignores_scalar_void_and_stops_recursive_types():
+    bce = BCEModel.model_validate(
+        {
+            "Classes": [
+                {
+                    "className": "NodeControl",
+                    "stereotype": "Control",
+                    "operations": [{"operationId": "ignored", "name": "get"}],
+                }
+            ],
+            "DataTypes": [],
+            "Relationships": [],
+            "Collaborations": [],
+        }
+    )
+    api = ApiSpecModel.model_validate(
+        {
+            "Endpoints": [
+                {
+                    "operation_id": "getNode",
+                    "path": "/node",
+                    "method": "get",
+                    "responses": [
+                        {"status": 200, "schema_name": "Node"},
+                        {"status": 204, "schema_name": "void"},
+                    ],
+                    "control_binding": {"control": "NodeControl", "method": "get"},
+                }
+            ],
+            "Schemas": [
+                {
+                    "name": "Node",
+                    "fields": [
+                        {"name": "name", "type": "string"},
+                        {"name": "child", "type": "Node"},
+                    ],
+                }
+            ],
+        }
+    )
+
+    endpoint = build_generated_operation_contracts(
+        bce_model=bce,
+        sequence_model=SequenceCollection.model_validate({"Diagrams": []}),
+        api_model=api,
+        base_package="com.example.nodes",
+    ).contracts[0].endpoints[0]
+
+    assert endpoint.required_response_shape == ["name", "child"]
+
+
 def test_interface_and_entity_writable_contract_facts_are_honest():
     bce = BCEModel.model_validate(
         {

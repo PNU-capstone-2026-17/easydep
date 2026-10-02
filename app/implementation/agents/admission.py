@@ -12,7 +12,6 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.demo_validation import demo_skip_validation_enabled
 from app.design.services.common.structured import parse_structured
 from app.llm_connection import build_admission_llm_connection
 
@@ -542,8 +541,6 @@ def preflight_semantic_integration(
         payload = prepare_integration_admission_payload(
             run_root, task, context, source_refs
         )
-    if demo_skip_validation_enabled():
-        return None
     return _preflight_admission(
         run_root,
         task,

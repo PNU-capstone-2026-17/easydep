@@ -50,7 +50,12 @@ from app.requirements.modeling.feedback import feedback_for
 from app.requirements.modeling.cross_uc_values import reconcile_cross_use_case_values
 from app.requirements.runtime import telemetry
 from app.requirements.runtime.structured_llm import invoke_structured
-from app.requirements.schemas import SemanticAmbiguityReview, UseCaseSpec
+from app.requirements.schemas import (
+    SemanticAmbiguityReview,
+    StateConditionCandidates,
+    StateSourceReviews,
+    UseCaseSpec,
+)
 from app.requirements.traceability import constraints_for_use_case, modeled_global_constraints
 from app.validation import (
     RepairAttempt,
@@ -387,6 +392,16 @@ def _spec_human(
         for item in (uc.get("_global_constraint_context") or [])
         if item.get("id")
     ) or "- (none)"
+    state_source_answers = uc.get("_state_source_answers") or []
+    state_source_context = ""
+    if state_source_answers:
+        state_source_context = (
+            "User-provided source decisions for unresolved persistent conditions. "
+            "Apply an answer only to the matching condition and affected use cases; do not "
+            "invent additional policy:\n"
+            + json.dumps(state_source_answers, ensure_ascii=False)
+            + "\n\n"
+        )
     base = (
         f"Use case: {uc['name']}\n"
         f"{scope}\n"
@@ -405,6 +420,7 @@ def _spec_human(
         "the constraint applies. Public or published-data browsing alone, and actor labels "
         "alone, do not establish applicability. Do not assert this use case is protected "
         "merely because a global constraint is listed.\n\n"
+        f"{state_source_context}"
         "Public behavior contract: list only identity obligations and values explicitly "
         "established by the covered functional requirements or explicitly applicable constraints. "
         "'authenticate' validates the acting principal or session; 'identify' distinguishes "
@@ -1086,6 +1102,9 @@ def generate_specs(
         spec_input = cast(_SpecificationInput, {
             **use_case,
             "_neighboring_goals": neighbouring_goals,
+            "_state_source_answers": list(
+                (state.get("state_source_answers") or {}).values()
+            ),
             "_constraint_requirements": applicable_constraints,
             "_global_constraint_context": modeled_global_constraints(
                 state.get("traceability") or {}
@@ -1191,6 +1210,14 @@ def check_specs(
             prior_issues = spec.get("issues") or []
             spec["issues"] = list(dict.fromkeys([*prior_issues, *static_issues]))
     reviewed_state = cast(AgentState, {**state, "use_case_specs": specs})
+    state_question, state_review_status, unreviewed_state_sources = (
+        review_state_sources(reviewed_state)
+        if review_semantic else (
+            state.get("state_source_question"),
+            state.get("state_source_review_status", "unreviewed"),
+            state.get("unreviewed_state_sources", []),
+        )
+    )
     report = {
         "n_specs": len(specs),
         "total_issues": sum(len(s.get("issues", [])) for s in specs),
@@ -1215,6 +1242,8 @@ def check_specs(
         "repair_stopped": dict(
             Counter(s.get("repair_stopped", "unknown") for s in specs)
         ),
+        "state_source_review_status": state_review_status,
+        "unreviewed_state_sources": unreviewed_state_sources,
     }
     # This runs in the stage subgraph before its parent feedback gate.  Persist
     # the selective-review result in graph state so an interrupt resume does not
@@ -1227,8 +1256,292 @@ def check_specs(
             if review_semantic else state.get("semantic_ambiguity_question")
         ),
         "identity_source_question": identity_source_question(reviewed_state),
+        "state_source_question": state_question,
+        "state_source_review_status": state_review_status,
+        "unreviewed_state_sources": unreviewed_state_sources,
         "phase": "check_specs",
     }
+
+
+def state_source_question(
+    state: AgentState,
+    *,
+    proposal_call: StructuredProposalCall | None = None,
+) -> dict[str, object] | None:
+    """Compatibility wrapper for callers that need only the pending question."""
+    question, _, _ = review_state_sources(state, proposal_call=proposal_call)
+    return question
+
+
+def _state_source_question_payload(
+    *, state_ref: str, consumer_id: str, req_ids: list[str], condition: str,
+    evidence_spans: list[str],
+) -> dict[str, object]:
+    evidence = evidence_spans[0]
+    prompt_text = (
+        f"Requirement {req_ids[0]} says: ‘{evidence}’ The specifications do not establish "
+        "how the condition’s value is supplied. How should EasyDep model its source and "
+        "policy? Describe who or what supplies it, when it is set, and any default."
+    )
+    return {
+        "kind": "state_source", "stateRef": state_ref,
+        "useCaseId": consumer_id, "requirementIds": req_ids,
+        "evidenceSpans": evidence_spans, "condition": condition,
+        "field": state_ref, "question": prompt_text,
+        "reason": "A conditional state has no evidence-backed producer, default, external source, or derivation.",
+    }
+
+
+def review_state_sources(
+    state: AgentState,
+    *,
+    proposal_call: StructuredProposalCall | None = None,
+) -> tuple[dict[str, object] | None, str, list[dict[str, str]]]:
+    """Retrieve condition candidates once, then review only selected state refs.
+
+    A source question is emitted only for an unresolved, persistent condition with
+    exact linked requirement evidence. Incomplete model output is recorded as
+    unreviewed instead of being treated as a clean result.
+    """
+    specs = [
+        item for item in state.get("use_case_specs") or []
+        if isinstance(item, dict) and item.get("generated") is not False
+    ]
+    requirements = {
+        str(item.get("id")): item for item in state.get("classified") or []
+        if isinstance(item, dict) and item.get("id")
+    }
+    by_uc = {str(item.get("use_case_id") or ""): item for item in specs}
+    accepted_answers = state.get("state_source_answers") or {}
+    conditions: list[tuple[str, dict, str, list[str]]] = []
+    for spec in specs:
+        uc_id = str(spec.get("use_case_id") or "")
+        if not uc_id:
+            continue
+        scenarios = {
+            int(step["step_number"]): step
+            for step in spec.get("main_scenario") or []
+            if isinstance(step, dict) and isinstance(step.get("step_number"), int)
+        }
+        raw_conditions = [
+            ("precondition", index, None, str(value or "").strip())
+            for index, value in enumerate(spec.get("preconditions") or [], start=1)
+        ]
+        raw_conditions.extend(
+            ("extension", index, extension.get("branch_step"),
+             str(extension.get("condition") or "").strip())
+            for index, extension in enumerate(spec.get("extensions") or [], start=1)
+            if isinstance(extension, dict)
+        )
+        for condition_kind, condition_index, branch, condition in raw_conditions:
+            if not condition:
+                continue
+            linked = (
+                scenarios.get(branch, {}).get("covered_req_ids", [])
+                if isinstance(branch, int) else []
+            )
+            requirement_ids = [
+                str(value) for value in (linked or spec.get("requirement_ids") or [])
+                if str(value) in requirements
+            ]
+            if not requirement_ids:
+                continue
+            state_ref = "state_" + stable_digest([
+                uc_id, condition_kind, condition_index, branch, condition, requirement_ids
+            ])[:20]
+            if state_ref not in accepted_answers:
+                conditions.append((state_ref, spec, condition, requirement_ids))
+
+    if not conditions:
+        return None, "reviewed", []
+    call = proposal_call or invoke_structured
+    specs_by_id = {uc_id: item for uc_id, item in by_uc.items() if uc_id}
+    inventory = []
+    for state_ref, consumer, condition, linked_ids in conditions:
+        inventory.append({
+            "stateRef": state_ref,
+            "consumerUseCaseId": str(consumer.get("use_case_id") or ""),
+            "condition": condition,
+            "requirementIds": linked_ids,
+            "requirementText": {
+                req_id: str(requirements[req_id].get("text") or "") for req_id in linked_ids
+            },
+        })
+    try:
+        selected = call(
+            StateConditionCandidates,
+            [
+                SystemMessage(content=(
+                    "Select only persistent state conditions whose truth controls later "
+                    "behavior. Return their exact stateRef values from this finite inventory. "
+                    "Exclude ordinary event facts, transient values, and conditions that are "
+                    "not stored, externally maintained, or otherwise sourced by the system. "
+                    "Do not invent or rewrite refs."
+                )),
+                HumanMessage(content=json.dumps(inventory, ensure_ascii=False)),
+            ],
+        )
+    except Exception as error:  # noqa: BLE001 - incomplete audit is not a clean finding
+        telemetry.record_degradation("spec.state_source_candidates", f"{type(error).__name__}: {error}")
+        unreviewed = [
+            {"stateRef": ref, "useCaseId": str(spec.get("use_case_id") or "")}
+            for ref, spec, _, _ in conditions
+        ]
+        return None, "unreviewed", unreviewed
+    finite_refs = {item["stateRef"] for item in inventory}
+    selected_refs = list(selected.state_refs)
+    if (
+        len(selected_refs) != len(set(selected_refs))
+        or any(ref not in finite_refs for ref in selected_refs)
+    ):
+        unreviewed = [
+            {"stateRef": ref, "useCaseId": str(spec.get("use_case_id") or "")}
+            for ref, spec, _, _ in conditions
+        ]
+        return None, "unreviewed", unreviewed
+    if not selected_refs:
+        return None, "reviewed", []
+    condition_by_ref = {item[0]: item for item in conditions}
+    unreviewed: list[dict[str, str]] = []
+    for state_ref in selected_refs:
+        _, consumer, condition, linked_ids = condition_by_ref[state_ref]
+        consumer_id = str(consumer["use_case_id"])
+        candidate_payload = []
+        for uc_id, producer in specs_by_id.items():
+            if uc_id == consumer_id:
+                continue
+            candidate_payload.append({
+                "useCaseId": uc_id,
+                "name": producer.get("name", ""),
+                "requirementIds": list(producer.get("requirement_ids") or []),
+                "requirementTexts": {
+                    str(req_id): str(requirements[str(req_id)].get("text") or "")
+                    for req_id in producer.get("requirement_ids") or []
+                    if str(req_id) in requirements
+                },
+                "publicContract": producer.get("public_contract") or {},
+                "preconditions": producer.get("preconditions") or [],
+                "mainScenario": producer.get("main_scenario") or [],
+                "extensions": producer.get("extensions") or [],
+                "guarantees": producer.get("success_guarantee") or [],
+            })
+        consumer_requirements = {
+            req_id: str(requirements[req_id].get("text") or "")
+            for req_id in linked_ids
+        }
+        all_requirements = {
+            str(req_id): str(requirements[str(req_id)].get("text") or "")
+            for candidate in [consumer, *specs_by_id.values()]
+            for req_id in candidate.get("requirement_ids") or []
+            if str(req_id) in requirements
+        }
+        prompt = (
+            "Review exactly one condition that may depend on durable application state. "
+            "Use only the supplied consumer, its linked requirements, and the finite other-use-case "
+            "candidates. Distinguish explicit_setter, default, external, derived, unresolved, and "
+            "not_persistent. A setter must actually assign or change the condition; a reader or "
+            "creator of a related resource is not a setter. External/default/derived sources require "
+            "an exact supporting quote. Do not infer source from names. If no source is supported, "
+            "return unresolved, no producer id, and quote the exact consumer requirement span. "
+            "Return one review for this consumerUseCaseId.\n"
+            "For explicit_setter, sourceEvidenceSpan must be a verbatim quote from the selected "
+            "producer use case specification or one of its linked requirement texts, not from "
+            "the consumer condition.\n"
+            f"Consumer use case: {json.dumps({k: consumer.get(k) for k in ('use_case_id', 'name', 'requirement_ids', 'preconditions', 'trigger', 'main_scenario', 'extensions', 'success_guarantee', 'public_contract')}, ensure_ascii=False)}\n"
+            f"Condition under review: {json.dumps(condition, ensure_ascii=False)}\n"
+            f"Exact linked requirement text: {json.dumps(consumer_requirements, ensure_ascii=False)}\n"
+            f"Other finite use-case candidates: {json.dumps(candidate_payload, ensure_ascii=False)}"
+        )
+        try:
+            response = call(
+                StateSourceReviews,
+                [
+                    SystemMessage(content="Audit one persistent condition's state source."),
+                    HumanMessage(content=prompt),
+                ],
+            )
+        except Exception as error:  # noqa: BLE001 - failed review must not create a question
+            telemetry.record_degradation(
+                "spec.state_source", f"{type(error).__name__}: {error}", subject=consumer_id
+            )
+            unreviewed.append({"stateRef": state_ref, "useCaseId": consumer_id})
+            continue
+        if len(response.reviews) != 1:
+            unreviewed.append({"stateRef": state_ref, "useCaseId": consumer_id})
+            continue
+        review = response.reviews[0]
+        if review.consumer_use_case_id != consumer_id:
+            unreviewed.append({"stateRef": state_ref, "useCaseId": consumer_id})
+            continue
+        req_ids = list(dict.fromkeys(review.requirement_ids))
+        if not req_ids or not set(req_ids).issubset(set(all_requirements)):
+            unreviewed.append({"stateRef": state_ref, "useCaseId": consumer_id})
+            continue
+        cited_text = "\n".join(all_requirements[item] for item in req_ids)
+        consumer_text = "\n".join(consumer_requirements.values())
+        consumer_quotes = [
+            span for span in review.evidence_spans
+            if span and span in consumer_text
+        ]
+        if review.disposition != "unresolved":
+            if review.disposition == "explicit_setter":
+                producer = specs_by_id.get(str(review.producer_use_case_id or ""))
+                if producer is None or producer.get("use_case_id") == consumer_id:
+                    unreviewed.append({"stateRef": state_ref, "useCaseId": consumer_id})
+                    continue
+                producer_req_ids = {
+                    str(item) for item in producer.get("requirement_ids") or []
+                }
+                producer_text = json.dumps(producer, ensure_ascii=False)
+                producer_requirement_text = "\n".join(
+                    str(requirements[req_id].get("text") or "")
+                    for req_id in producer_req_ids if req_id in requirements
+                )
+                if not review.source_evidence_span or (
+                    review.source_evidence_span not in producer_text
+                    and review.source_evidence_span not in producer_requirement_text
+                ):
+                    unreviewed.append({"stateRef": state_ref, "useCaseId": consumer_id})
+                    continue
+                continue
+            elif review.disposition in {"default", "external", "derived"}:
+                source_quote = review.source_evidence_span or ""
+                if source_quote and source_quote in cited_text and source_quote not in consumer_quotes:
+                    continue
+                question_quotes = consumer_quotes
+                if (set(req_ids).issubset(set(linked_ids)) and question_quotes
+                        and review.producer_use_case_id is None):
+                    req_ids = [req_id for req_id in req_ids if req_id in linked_ids]
+                    question = _state_source_question_payload(
+                        state_ref=state_ref, consumer_id=consumer_id, req_ids=req_ids,
+                        condition=condition, evidence_spans=question_quotes,
+                    )
+                    return question, ("unreviewed" if unreviewed else "question_required"), unreviewed
+                unreviewed.append({"stateRef": state_ref, "useCaseId": consumer_id})
+                continue
+            else:
+                # `not_persistent` needs a fully grounded quote too.
+                if not review.evidence_spans or any(span not in cited_text for span in review.evidence_spans):
+                    unreviewed.append({"stateRef": state_ref, "useCaseId": consumer_id})
+                continue
+        source_is_duplicate_consumer_quote = bool(
+            review.source_evidence_span
+            and review.source_evidence_span in consumer_text
+            and review.source_evidence_span in consumer_quotes
+        )
+        unresolved_quotes = consumer_quotes
+        if (review.producer_use_case_id is not None
+            or (review.source_evidence_span is not None and not source_is_duplicate_consumer_quote)
+            or not set(req_ids).issubset(set(linked_ids))
+            or not unresolved_quotes):
+            unreviewed.append({"stateRef": state_ref, "useCaseId": consumer_id})
+            continue
+        question = _state_source_question_payload(
+            state_ref=state_ref, consumer_id=consumer_id, req_ids=req_ids,
+            condition=condition, evidence_spans=unresolved_quotes,
+        )
+        return question, ("unreviewed" if unreviewed else "question_required"), unreviewed
+    return None, ("unreviewed" if unreviewed else "reviewed"), unreviewed
 
 
 def _identity_source_options(spec: dict[str, object], obligation: dict[str, object]) -> list[dict[str, str]]:

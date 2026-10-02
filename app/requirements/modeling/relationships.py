@@ -1034,6 +1034,7 @@ def identify_relationships(
             )
             improved = (
                 candidate_review.status == validator.OK
+                and not candidate_review.unexamined
                 and not repeated
                 and repair_makes_progress(finding_keys, candidate_keys)
             )
@@ -1060,16 +1061,24 @@ def identify_relationships(
                 continue
             relations = candidate
             review = candidate_review
-        if review.status == validator.OK and not review.findings:
+        # A validator that skipped expected rules has not established a clean
+        # result, even if it returned no findings (same contract as specs).
+        semantic_status = (
+            validator.UNGROUNDED if review.unexamined else review.status
+        )
+        if semantic_status == validator.OK and not review.findings:
             ledger.status = "COMPLETED"
+        elif review.unexamined and ledger.status == "ACTIVE":
+            ledger.status = "STALLED"
+            ledger.stall_reason = "Semantic review left expected relationship rules unexamined."
         relations["relationship_issues"] = review.findings
-        relations["semantic_status"] = review.status
+        relations["semantic_status"] = semantic_status
         relations["unexamined_rules"] = list(review.unexamined)
         relations["repair_iters"] = attempts
         relations["repair_history"] = ledger.model_dump(mode="json")
         relations["repair_stopped"] = (
             "clean"
-            if review.status == validator.OK and not review.findings
+            if semantic_status == validator.OK and not review.findings
             else "waiting_external"
             if ledger.status == "WAITING_EXTERNAL"
             else "stalled"

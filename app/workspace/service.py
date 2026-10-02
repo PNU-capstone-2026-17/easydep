@@ -4190,6 +4190,42 @@ class WorkspaceService:
             return None
 
     @staticmethod
+    def _state_source_resource_question(candidate: object) -> dict[str, Any] | None:
+        """Expose a requirements state-source value question through the existing resource UI.
+
+        This is deliberately a free-text input contract, not a Workspace revision
+        question: the saved state ref is the answer field and is checked again by
+        the requirements gate before regeneration.
+        """
+        if not isinstance(candidate, dict) or candidate.get("kind") != "state_source":
+            return None
+        state_ref = str(candidate.get("stateRef") or "").strip()
+        field = str(candidate.get("field") or "").strip()
+        prompt = str(candidate.get("question") or "").strip()
+        requirement_ids = [
+            str(item).strip() for item in candidate.get("requirementIds") or []
+            if str(item).strip()
+        ]
+        evidence = [
+            str(item).strip() for item in candidate.get("evidenceSpans") or []
+            if str(item).strip()
+        ]
+        if (
+            not state_ref or field != state_ref or not state_ref.startswith("state_")
+            or not prompt or not requirement_ids or not evidence
+        ):
+            return None
+        return {
+            "kind": "state_source",
+            "field": state_ref,
+            "question": prompt,
+            "reason": str(candidate.get("reason") or ""),
+            "allowFreeText": True,
+            "requirementIds": requirement_ids,
+            "evidenceSpans": evidence,
+        }
+
+    @staticmethod
     def _identity_source_question(app_id: str, candidate: object) -> Question | None:
         """Bind a requirements-owned identity-source choice to one live UC spec.
 
@@ -4434,6 +4470,19 @@ class WorkspaceService:
         if status == "need_feedback":
             phase = str(result.get("phase") or "requirements")
             app_id = str(result.get("app_id") or "")
+            state_source_question = self._state_source_resource_question(
+                result.get("state_source_question")
+            )
+            if state_source_question is not None and phase == "specs":
+                return {
+                    "awaiting_input": True,
+                    "kind": "question",
+                    "message": state_source_question["question"],
+                    "phase": phase,
+                    "resource_question": state_source_question,
+                    "resource_questions": [state_source_question],
+                    "review_artifacts": ["Use-case specifications"],
+                }
             identity_question = self._identity_source_question(
                 app_id, result.get("identity_source_question")
             ) if app_id else None
@@ -6784,6 +6833,26 @@ class WorkspaceService:
                     "requires_revision": False,
                     "internal_diagnostic": {
                         "category": "TEST_PLAN_AUTHORING_DEFECT",
+                        "owner": "EasyDep",
+                    },
+                    "blocking_findings": blockers,
+                    "repair_state": repair_state,
+                    "blocking_route": "platform",
+                    "job_id": job_id,
+                    "job": job,
+                }
+            repair_state = report.get("repair_state")
+            if (isinstance(repair_state, dict)
+                    and str(repair_state.get("status") or "").upper() == "STALLED"):
+                return {
+                    "kind": "platform_diagnostic",
+                    "message": (
+                        "Testing remains failed. Automatic repair repeated the same "
+                        "candidate without changing the findings."
+                    ),
+                    "requires_revision": False,
+                    "internal_diagnostic": {
+                        "category": "AUTOMATIC_REPAIR_STALLED",
                         "owner": "EasyDep",
                     },
                     "blocking_findings": blockers,

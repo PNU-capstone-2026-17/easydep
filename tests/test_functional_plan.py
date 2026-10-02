@@ -953,87 +953,6 @@ def test_single_operation_testing_uses_plan_llm(
     assert report["candidatePlan"]["workflows"][0]["steps"] == [{"stepId": "health", "operationId": "health"}]
 
 
-def test_demo_skip_preserves_plan_without_executing_workflows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Demo mode makes a durable plan but must not claim HTTP assertions ran."""
-
-    def unexpected_execution(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        pytest.fail("demo validation skip must not invoke the Arazzo executor")
-
-    monkeypatch.setattr(dynamic, "execute_arazzo_workflow", unexpected_execution)
-
-    report = dynamic.dynamic_functional_node(
-        _state(validation_skipped=True)
-    )["dynamic_functional_report"]
-
-    assert report["status"] == "PASSED"
-    assert report["gateStatus"] == "PASS"
-    assert report["validationSkipped"] is True
-    assert report["validationSkipReason"] == "demo"
-    assert report["candidatePlan"]["workflows"]
-    planned = report["workflows"]
-    assert planned[0]["status"] == "PASSED"
-    assert planned[0]["result"]["gateStatus"] == "PASS"
-    assert planned[0]["useCaseName"] == "Check service 1"
-    assert planned[0]["summary"] == "Check service 1"
-    operation = planned[0]["operations"][0]
-    assert (operation["method"], operation["path"], operation["operationId"]) == (
-        "GET", "/health", "health"
-    )
-    assert operation["responses"][0]["status"] == "200"
-    assert report["executedWorkflowCount"] == 0
-
-
-def test_demo_workflow_progress_transitions_pending_plan_to_terminal_passes() -> None:
-    from app.testing import service as testing_service
-    from app.testing.progress import reduce_testing_progress, testing_progress_scope
-
-    events: list[dict[str, Any]] = []
-    with testing_progress_scope(events.append):
-        report = dynamic.dynamic_functional_node(
-            _state(2, validation_skipped=True)
-        )["dynamic_functional_report"]
-        testing_service._emit_demo_terminal_workflow_progress(
-            {"validationSkipped": True, "reports": {"dynamicFunctional": report}}
-        )
-
-    lifecycle = [event for event in events if event["scope"] == "workflow" and event["phase"] == "dynamic"]
-    assert [(event["workflow_id"], event["status"]) for event in lifecycle] == [
-        ("workflow-UC-1", "PENDING"),
-        ("workflow-UC-2", "PENDING"),
-        ("workflow-UC-1", "PASS"),
-        ("workflow-UC-2", "PASS"),
-    ]
-    assert [event["phase"] for event in lifecycle] == ["dynamic", "dynamic", "dynamic", "dynamic"]
-    assert [event["use_case_name"] for event in lifecycle] == [
-        "Check service 1", "Check service 2", "Check service 1", "Check service 2",
-    ]
-    progress: dict[str, Any] = {}
-    for event in events:
-        progress = reduce_testing_progress(progress, event)
-    assert progress["workflow_counts"] == {
-        "total": 2,
-        "passed": 2,
-        "failed": 0,
-        "running": 0,
-        "pending": 0,
-        "reused": 0,
-        "inconclusive": 0,
-        "deferred": 0,
-        "completed": 2,
-    }
-    assert report["workflowCounts"] == {
-        "total": 2,
-        "completed": 2,
-        "passed": 2,
-        "failed": 0,
-        "running": 0,
-        "pending": 0,
-    }
-    assert all("status" not in workflow for workflow in report["candidatePlan"]["workflows"])
-
-
 def test_workflow_summary_uses_each_use_case_name_with_readable_missing_name_fallback() -> None:
     use_cases = _use_cases(2)
     use_cases["use_case_specs"][1].pop("name")
@@ -1061,7 +980,7 @@ def test_workflow_summary_uses_each_use_case_name_with_readable_missing_name_fal
     ]
 
 
-def test_validation_skip_disabled_still_invokes_workflow_executor(
+def test_workflow_executor_runs_for_normal_testing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[str] = []
@@ -1073,27 +992,11 @@ def test_validation_skip_disabled_still_invokes_workflow_executor(
     monkeypatch.setattr(dynamic, "execute_arazzo_workflow", execute)
 
     report = dynamic.dynamic_functional_node(
-        _state(validation_skipped=False)
+        _state()
     )["dynamic_functional_report"]
 
     assert report["gateStatus"] == "PASS"
     assert calls == ["workflow-UC-1"]
-
-
-def test_demo_skip_keeps_plan_generation_errors_as_failures(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    def fail_generation(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        raise ValueError("planner response is invalid")
-
-    monkeypatch.setattr(dynamic, "_generate_document", fail_generation)
-
-    report = dynamic.dynamic_functional_node(
-        _state(validation_skipped=True, fixed_arazzo_document=None)
-    )["dynamic_functional_report"]
-
-    assert report["gateStatus"] == "FAIL"
-    assert "planner response is invalid" in report["reason"]
 
 
 def test_plan_generation_failure_keeps_workflow_identity_without_execution(
@@ -2065,6 +1968,50 @@ def test_integer_path_literals_allow_operands_but_reject_marked_resource_identit
     })
 
 
+def test_authoring_marks_only_frozen_caller_input_refs_as_literal_evidence() -> None:
+    candidate = {
+        "workflowId": "workflow-invoice",
+        "operations": [{"operationId": "previewInvoice"}],
+        "setupOperations": [{"operationId": "createInvoice"}],
+        "useCase": {"public_contract": {"required_values": [
+            {"value_ref": "val_invoice_format", "source": "caller_input"},
+            {"value_ref": "val_invoice_id", "source": "system_result"},
+        ]}},
+    }
+    available_steps = [{
+        "stepId": "previewInvoice",
+        "operationId": "previewInvoice",
+        "inputs": [
+            {"inputSlot": "path:format", "type": "string", "requiredValueRef": "val_invoice_format"},
+            {"inputSlot": "path:invoiceId", "type": "string", "requiredValueRef": "val_invoice_id"},
+            {"inputSlot": "path:rawRef", "type": "string", "requiredValueRef": "val_unmatched"},
+        ],
+    }, {
+        # A different setup use case can reuse an opaque value_ref.  It must
+        # not inherit the selected target use case's caller-input authority.
+        "stepId": "createInvoice",
+        "operationId": "createInvoice",
+        "inputs": [
+            {"inputSlot": "path:invoiceId", "type": "string", "requiredValueRef": "val_invoice_format"},
+        ],
+    }]
+
+    authoring = dynamic._authoring_candidate(candidate, available_steps)
+    slots = authoring["planningModel"]["availableSteps"][0]["inputs"]
+
+    assert slots[0]["callerInputEvidence"] is True
+    assert dynamic._literal_input_allowed(slots[0])
+    # An independent invoice-resource input is a system result and must still
+    # have a producer; an unmatched raw reference is not evidence either.
+    assert "callerInputEvidence" not in slots[1]
+    assert not dynamic._literal_input_allowed(slots[1])
+    assert "callerInputEvidence" not in slots[2]
+    assert not dynamic._literal_input_allowed(slots[2])
+    setup_slot = authoring["planningModel"]["availableSteps"][1]["inputs"][0]
+    assert "callerInputEvidence" not in setup_slot
+    assert not dynamic._literal_input_allowed(setup_slot)
+
+
 def test_selected_semantic_producer_must_be_the_actual_graph_binding() -> None:
     candidate = {
         "workflowId": "workflow-resource",
@@ -2438,9 +2385,13 @@ def test_get_collection_producer_is_available_only_as_deferred_lookup(monkeypatc
             "targetOperationIds": ["consume"],
             "resourceInstanceOutline": {"occurrences": [
                 {"instanceId": "list", "operationId": "list", "purpose": "read matching entries"},
+                {"instanceId": "consume", "operationId": "consume", "purpose": "consume selected entry"},
                 {"instanceId": "entry", "operationId": "createEntry", "purpose": "create entry"},
                 {"instanceId": "offering", "operationId": "createOffering", "purpose": "establish offering"},
-            ], "identityRelations": []},
+            ], "identityRelations": [
+                {"leftInstanceId": "list", "rightInstanceId": "consume", "relation": "retained"},
+                {"leftInstanceId": "list", "rightInstanceId": "entry", "relation": "dangling"},
+            ]},
             "availableSteps": [
                 {"operationId": "consume", "stepId": "consume", "method": "POST", "inputs": [
                     {"inputSlot": "path:resourceId", "type": "string", "format": "uuid", "cardinality": "one"},
@@ -2549,7 +2500,13 @@ def test_get_collection_producer_is_available_only_as_deferred_lookup(monkeypatc
     assert all(option["collectionArrayRoots"] == (["list:#"] if option["operationId"] == "list" else [])
                for option in consume_payload["producerOptions"])
     assert "selectionId" not in json.dumps(catalog)
-    assert any("matching row, uniqueness" in rule for rule in observed["rules"])
+    assert "resourceInstanceOutline" not in consume_payload
+    assert [item["operationId"] for item in consume_payload["plannedResourceChain"]["occurrences"]] == ["list", "consume"]
+    assert consume_payload["plannedResourceChain"]["identityRelations"] == [{
+        "leftInstanceId": "list", "rightInstanceId": "consume", "relation": "retained",
+    }]
+    assert len(consume_payload["rules"]) == 5
+    assert any("matching types alone" in rule for rule in consume_payload["rules"])
     # A collection match key scopes a row; its returned value may be a child identity.
     assert "SAME resource identity" in collection_identity_payload["instruction"]
     assert "selected child ID with the match identity" in collection_identity_payload["instruction"]
@@ -2761,6 +2718,116 @@ def test_deferred_collection_selection_compiles_finite_selector_from_fixed_liter
             openapi,
             execution_candidates,
         )
+
+
+def test_readback_only_stage_uses_compact_payload_without_state_changing_options(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = {
+        "workflowId": "workflow-readback-only",
+        "operations": [{"operationId": "consume"}],
+        "setupOperations": [{"operationId": "list", "linkedUseCaseEvidence": []}],
+        "useCase": {"public_contract": {"required_values": []}},
+        "planningModel": {"targetOperationIds": ["consume"], "availableSteps": [
+            {"operationId": "consume", "method": "POST", "inputs": [
+                {"inputSlot": "path:resourceId", "type": "string", "format": "uuid", "cardinality": "one"},
+            ], "outputs": []},
+            {"operationId": "list", "method": "GET", "inputs": [], "outputs": [
+                {"outputName": "body0ResourceId", "slot": "body[].resourceId", "type": "string", "format": "uuid",
+                 "cardinality": "one", "outputExpression": "$response.body#/0/resourceId"},
+            ], "collectionSelectionCandidates": [{
+                "selectionId": "list:body0ResourceId=>body0ResourceId", "arrayRootPointer": "#",
+                "matchOutputName": "body0ResourceId", "matchType": "string", "matchFormat": "uuid",
+                "selectedOutputName": "body0ResourceId", "selectedType": "string", "selectedFormat": "uuid",
+            }]},
+        ]},
+    }
+    payloads: list[dict[str, Any]] = []
+
+    class FakeCompletions:
+        def create(self, **kwargs: Any) -> Any:
+            payloads.append(json.loads(kwargs["messages"][1]["content"]))
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+                content='{"decision":"unsupported","sourceOptionId":null}'
+            ))])
+
+    monkeypatch.setattr(dynamic, "build_arazzo_llm_connection", lambda: SimpleNamespace(
+        provider="cloudflare", model="openai/gpt-oss-120b"
+    ))
+    with pytest.raises(dynamic.ArazzoPlanningError, match="No grounded producer"):
+        dynamic._select_semantic_producers(SimpleNamespace(chat=SimpleNamespace(completions=FakeCompletions())), candidate, {})
+    assert len(payloads) == 1
+    assert payloads[0]["selectionStage"] == "readback_fallback"
+    assert "resourceInstanceOutline" not in payloads[0]
+    assert len(payloads[0]["rules"]) == 5
+
+
+def test_collection_identity_retries_one_compact_finite_selector_on_abstention(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = {
+        "planningModel": {"availableSteps": [
+            {"operationId": "createOffering", "method": "POST", "summary": "Create offering",
+             "inputs": [{"inputSlot": "body.courseOfferingId", "type": "string", "format": "uuid",
+                         "callerInputEvidence": True}], "outputs": []},
+            {"operationId": "listOfferings", "method": "GET", "summary": "List offerings",
+             "inputs": [], "outputs": []},
+        ]},
+        "setupOperations": [{"operationId": "createOffering", "linkedUseCaseEvidence": []}],
+    }
+    choices = [{
+        "selectionId": "listOfferings:body0OfferingId=>body0EnrollmentId",
+        "matchOutputName": "body0OfferingId", "matchType": "string", "matchFormat": "",
+        "selectedOutputName": "body0EnrollmentId", "selectedType": "string", "selectedFormat": "",
+        "matchItemPointerParts": ["offeringId"], "selectedItemPointerParts": ["enrollmentId"],
+    }]
+    selected = {"selectionId": choices[0]["selectionId"], "anchorId": "createOffering::body.courseOfferingId"}
+
+    class FakeCompletions:
+        def __init__(self, responses: list[dict[str, str]]) -> None:
+            self.responses = responses
+            self.payloads: list[dict[str, Any]] = []
+
+        def create(self, **kwargs: Any) -> Any:
+            self.payloads.append(json.loads(kwargs["messages"][1]["content"]))
+            response = self.responses.pop(0)
+            return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(response)))])
+
+    class FakeClient:
+        def __init__(self, responses: list[dict[str, str]]) -> None:
+            self.completions = FakeCompletions(responses)
+            self.chat = SimpleNamespace(completions=self.completions)
+
+    monkeypatch.setattr(dynamic, "build_arazzo_llm_connection", lambda: SimpleNamespace(
+        provider="cloudflare", model="openai/gpt-oss-120b"
+    ))
+
+    def choose(client: FakeClient) -> dict[str, str]:
+        return dynamic._select_collection_match_and_anchor(
+            client, candidate,
+            {"operationId": "listOfferings", "summary": "List offerings", "outputName": "body0EnrollmentId"},
+            {"inputSlot": "path:enrollmentId", "type": "string", "format": "uuid"},
+            {"targetOperationId": "enroll", "targetInputSlot": "path:enrollmentId", "useCaseEvidence": {}},
+            choices, creator_operation_id="createOffering",
+        )
+
+    retry_client = FakeClient([{"selectionId": "none", "anchorId": "none"}, selected])
+    assert choose(retry_client) == {
+        "collectionSelectionId": choices[0]["selectionId"],
+        "anchorOperationId": "createOffering", "anchorInputSlot": "body.courseOfferingId",
+    }
+    assert len(retry_client.completions.payloads) == 2
+    assert "useCaseEvidence" not in retry_client.completions.payloads[1]["target"]
+    assert retry_client.completions.payloads[1]["finiteSameItemChoices"] == retry_client.completions.payloads[0]["finiteSameItemChoices"]
+
+    failing_client = FakeClient([{"selectionId": "none", "anchorId": "none"}] * 2)
+    with pytest.raises(dynamic.ArazzoPlanningError, match="No semantically valid finite"):
+        choose(failing_client)
+    assert len(failing_client.completions.payloads) == 2
+
+    first_valid_client = FakeClient([selected])
+    assert choose(first_valid_client)["anchorInputSlot"] == "body.courseOfferingId"
+    assert len(first_valid_client.completions.payloads) == 1
 
 
 def test_repeated_collection_anchor_resolves_from_creator_binding_and_rejects_ambiguity() -> None:

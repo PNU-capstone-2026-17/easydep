@@ -277,6 +277,103 @@ def _runtime_expressions(value: str, *, condition: bool = False) -> list[str]:
     return []
 
 
+def _simple_condition_parts(value: str, token: str) -> list[str]:
+    """Split a simple condition at a top-level operator without evaluating it."""
+
+    parts: list[str] = []
+    start = depth = 0
+    quote = ""
+    escaped = False
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth < 0:
+                _error("Arazzo simple condition has unbalanced parentheses.")
+        elif depth == 0 and value.startswith(token, index):
+            parts.append(value[start:index].strip())
+            start = index + len(token)
+            index += len(token) - 1
+        index += 1
+    if quote or depth != 0:
+        _error("Arazzo simple condition has unbalanced quotes or parentheses.")
+    parts.append(value[start:].strip())
+    return parts
+
+
+def _fully_enclosing_simple_condition_parentheses(value: str) -> str | None:
+    """Return the inner text only when one pair encloses the entire condition."""
+
+    if not value.startswith("(") or not value.endswith(")"):
+        return None
+    depth = 0
+    quote = ""
+    escaped = False
+    for index, char in enumerate(value):
+        if quote:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+        elif char in {"'", '"'}:
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return value[1:-1].strip() if index == len(value) - 1 else None
+    return None
+
+
+def _validate_simple_condition_syntax(condition: str, path: str) -> None:
+    """Reject simple-condition forms the deterministic executor cannot evaluate."""
+
+    value = condition.strip()
+    if not value:
+        _error(f"{path} must not be empty.")
+    while (inner := _fully_enclosing_simple_condition_parentheses(value)) is not None:
+        value = inner
+    if value.startswith("!") and not value.startswith("!="):
+        operand = value[1:].strip()
+        if not operand:
+            _error(f"{path} has an empty operand after !.")
+        _validate_simple_condition_syntax(operand, path)
+        return
+    for token in ("||", "&&"):
+        parts = _simple_condition_parts(value, token)
+        if len(parts) > 1:
+            if any(not part for part in parts):
+                _error(f"{path} has an empty operand around {token}.")
+            for part in parts:
+                _validate_simple_condition_syntax(part, path)
+            return
+    for operator in ("==", "!=", ">=", "<=", ">", "<"):
+        operands = _simple_condition_parts(value, operator)
+        if len(operands) > 2:
+            _error(f"{path} contains a chained comparison.")
+        if len(operands) == 2:
+            if not all(operands):
+                _error(f"{path} has an empty comparison operand.")
+            # Preserve the executor's operator precedence: it selects the
+            # first matching comparison token from this ordered list.
+            return
+
+
 def _pointer(document: dict[str, Any], ref: str) -> Any:
     if not ref.startswith("#/"):
         _error(f"External reference is not allowed: {ref}")
@@ -569,6 +666,7 @@ def _validate_criteria(
         condition = _nonempty_string(criterion.get("condition"), f"{criterion_path}.condition")
         if kind == "simple":
             expressions = _runtime_expressions(condition, condition=True)
+            _validate_simple_condition_syntax(condition, f"{criterion_path}.condition")
             if not expressions and condition not in {"true", "false"}:
                 _error(f"{criterion_path}.condition has no verifiable Runtime Expression.")
         else:

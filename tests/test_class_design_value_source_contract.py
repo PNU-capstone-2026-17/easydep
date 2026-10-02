@@ -235,10 +235,17 @@ def test_authenticated_required_identifier_is_a_direct_handoff_source(
         _identity_plan(prefix, identity_name),
     )
 
-    assert [binding.source_ref for binding in result.calls[1].argument_bindings] == [
-        f"{result.calls[0].stable_id}#{model.Classes[0].operations[0].parameters[0].stable_ref}",
-        f"value#val-{use_case_id}",
-    ]
+    bindings = {
+        binding.parameter: binding.source_ref
+        for binding in result.calls[1].argument_bindings
+    }
+    assert bindings == {
+        model.Classes[1].operations[0].parameters[0].name: (
+            f"{result.calls[0].stable_id}#"
+            f"{model.Classes[0].operations[0].parameters[0].stable_ref}"
+        ),
+        model.Classes[1].operations[0].parameters[1].name: f"value#val-{use_case_id}",
+    }
 
 
 def test_required_value_catalog_is_exact_typed_and_keeps_availability():
@@ -586,7 +593,10 @@ def test_direct_required_value_binding_is_not_offered_for_caller_or_system_resul
         )
         assert f"value#{value_ref}" not in candidates
         if value_ref == "val-output":
-            assert "call-first#result" in candidates
+            # The producer is an executing ancestor, so its result is not
+            # available to the descendant call.  Completed sibling results
+            # remain eligible through the separate non-ancestor path.
+            assert "call-first#result" not in candidates
 
 
 def test_boundary_control_handoff_uses_compatible_opaque_id_despite_parameter_rename(monkeypatch):

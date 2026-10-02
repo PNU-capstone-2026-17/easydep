@@ -346,7 +346,10 @@ def _repair_class_batch(
         "class.public-contract-semantic",
         "class.boundary-public-object-parameter",
     }
-    collaboration_rule_ids = {"class.collaboration.ancestor-result-binding"}
+    collaboration_rule_ids = {
+        "class.collaboration.ancestor-result-binding",
+        "class.collaboration.http-projection",
+    }
     operation_use_case_ids = {
         str(finding.location).strip()
         for finding in batch
@@ -394,7 +397,17 @@ def _class_model_findings(
     """typed 클래스 검증 보고서를 graph artifact finding 계약으로 투영한다."""
     index = _class_index(state)
     accepted = _stored_class_model(model)
-    report = validate_class_model(accepted, index)
+    evidence = (state.get("class_diagram_check") or {}).get("semanticEvidence") or {}
+    # The evidence hook already ran the deterministic validator for this exact
+    # gate digest. Reuse its compact report instead of checking the same model
+    # twice; direct callers still validate normally.
+    cached_report = evidence.get("_staticValidation") if isinstance(evidence, dict) else None
+    if isinstance(cached_report, dict):
+        from app.validation import ValidationReport
+
+        report = ValidationReport.model_validate(cached_report)
+    else:
+        report = validate_class_model(accepted, index)
     if report.errors:
         raise RuntimeError("; ".join(report.errors))
     findings = [
@@ -410,7 +423,7 @@ def _class_model_findings(
     if not findings:
         semantic, _evidence = review_public_contract_closure(
             model, index, cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
-            evidence=(state.get("class_diagram_check") or {}).get("semanticEvidence"),
+            evidence=evidence,
         )
         findings.extend(
             ArtifactFinding(
@@ -540,13 +553,14 @@ def _class_semantic_evidence(model: dict[str, Any], state: ArchitectureState) ->
     # have already rejected.  A corrected model changes the digest and is then
     # reviewed at its next class approval gate.
     static = validate_class_model(_stored_class_model(model), _class_index(state))
+    static_snapshot = static.model_dump(mode="json")
     if static.errors or static.findings:
-        return {"status": "skipped_static_findings"}
+        return {"status": "skipped_static_findings", "_staticValidation": static_snapshot}
     _findings, evidence = review_public_contract_closure(
         model, _class_index(state), cache=_CLASS_DESIGN_ACCEPTED_UNIT_CACHE,
         evidence=(state.get("class_diagram_check") or {}).get("semanticEvidence"),
     )
-    return evidence
+    return {**evidence, "_staticValidation": static_snapshot}
 
 
 def _sequence_model_findings(

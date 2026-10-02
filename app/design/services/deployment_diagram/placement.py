@@ -446,6 +446,14 @@ def build_deployment_plan(
                         or _refs(connection.get("sourceRefs")),
                     }
                 )
+                if (
+                    strategy == "externalInput"
+                    and configuration.get("sensitive") is not True
+                    and configuration.get("value")
+                ):
+                    # Only external endpoints consume a supplied endpoint value;
+                    # internal routing is derived from the provider topology.
+                    runtime_bindings[-1]["endpointValue"] = configuration["value"]
 
     selected_zones = _refs(zone for compute in compute_units for zone in compute.get("zones") or [])
     plan = {

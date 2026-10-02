@@ -19,6 +19,14 @@ def test_result_only_review_does_not_require_a_parameter_reference():
     assert "For every required value, the cited parameter's requiredValueRef" not in prompt
 
 
+def test_system_result_exemption_applies_only_to_result_usage() -> None:
+    from app.design.services.class_diagram.public_contract_review import _PROMPT
+
+    prompt = " ".join(_PROMPT.split())
+    assert "whose source is system_result and usage is result" in prompt
+    assert "system_result value with usage both still requires the exact Control parameter and argument binding" in prompt
+
+
 def _scenario(source: str = "caller_input") -> dict:
     return {
         "use_cases": [{"id": "UC1", "name": "Submit", "primary_actor_ref": "ACT1", "primary_actor": "Member"}],
@@ -883,6 +891,44 @@ def test_class_graph_adapts_semantic_finding_for_artifact_check_serialization(mo
     serialized = findings[0].as_issue()
     assert "UC1: Missing contract mapping" in serialized
     assert "class.public-contract-semantic" in serialized
+
+
+def test_class_gate_reuses_deterministic_validation_for_unchanged_digest(monkeypatch) -> None:
+    from dataclasses import replace
+
+    from app.design.graphs import subgraphs
+    from app.design.nodes.artifact import check_node
+    from app.validation import Finding, ValidationReport
+
+    calls = 0
+
+    def validate(*_args):
+        nonlocal calls
+        calls += 1
+        return ValidationReport(
+            status="findings",
+            findings=(Finding("class.test", "unchanged finding", "UC1"),),
+        )
+
+    monkeypatch.setattr(subgraphs, "validate_class_model", validate)
+    monkeypatch.setattr(subgraphs, "_stored_class_model", lambda value: value)
+    monkeypatch.setattr(
+        subgraphs,
+        "review_public_contract_closure",
+        lambda *_args, **_kwargs: ([], {"status": "pass"}),
+    )
+    spec = replace(subgraphs.CLASS_DIAGRAM_SPEC, repair=None)
+    model = _model()
+    model["Collaborations"][0]["useCaseIds"] = ["UC1"]
+    result = check_node(spec)({
+        "extracted_bce_classes": model,
+        "usecase_spec": _scenario(),
+    })
+
+    assert calls == 1
+    assert "unchanged finding" in result["class_diagram_check"]["findings"][0]
+    assert result["class_diagram_check"]["finding_details"][0]["rule_id"] == "class.test"
+    assert result["class_diagram_check"]["semanticEvidence"] == {"status": "skipped_static_findings"}
 
 
 def test_class_semantic_repair_batch_forces_the_owning_operation_scope(monkeypatch) -> None:

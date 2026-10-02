@@ -14,7 +14,7 @@ from typing import Any
 
 from app.testing.nodes.static_verification import static_verification_node
 from app.testing.runtime.app_container import ApplicationLaunchError, running_application
-from app.testing.schemas.arazzo import ArazzoValidationError, validate_arazzo_document
+from app.testing.schemas.arazzo import ArazzoValidationError
 from app.testing.utils.arazzo_executor import execute_arazzo_workflow
 from app.testing.utils.functional_executor import InputValueRequest
 from app.testing.utils.gates import gate_status
@@ -46,7 +46,7 @@ def _profile_document(profile: dict[str, Any], openapi: dict[str, Any]) -> dict[
             "candidatePlan must be a pure Arazzo document; unsupported fields: "
             + ", ".join(sorted(legacy))
         )
-    return validate_arazzo_document(document, openapi=openapi)
+    return document
 
 
 def _failed_workflow_id(profile: dict[str, Any], document: dict[str, Any]) -> str:

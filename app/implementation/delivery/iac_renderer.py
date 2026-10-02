@@ -718,6 +718,11 @@ def _runtime_files(
                     continue
                 env_name = str(binding.get("environmentName") or "")
                 host = binding.get("endpointHost")
+                if binding.get("strategy") == "externalInput" and binding.get("endpointValue"):
+                    value = str(binding.get("endpointValue"))
+                    lines.append(f"export {env_name}={_shell_literal(value)}")
+                    environment_names.append(env_name)
+                    continue
                 if binding.get("endpointProducerRef"):
                     endpoint_key = (
                         f"endpoint_{workload_label}_{_label(binding.get('configurationRef'))}"

@@ -4,6 +4,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.design.contracts.type_system import (
+    DesignTypeError,
+    parse_type_expression,
+    render_design_type,
+)
 from app.design.services.class_diagram.scenario import (
     ExecutionGroup,
     ScenarioIndex,
@@ -13,6 +18,7 @@ from app.design.services.class_diagram.scenario import (
 from app.design.services.class_diagram.trusted_context import (
     directly_available_sources,
     required_value_catalog,
+    server_context_sources,
 )
 from app.design.services.class_diagram.type_system import (
     required_value_type_compatible,
@@ -459,6 +465,99 @@ def _collaboration_ancestor_result_bindings(
     return findings
 
 
+def _actor_entry_http_projection(
+    collaboration: dict[str, Any], context: CollaborationContext,
+) -> list[Finding]:
+    """Keep API-exposed Boundary→Control handoffs directly scaffoldable.
+
+    This intentionally examines only the child Control call immediately below an
+    actor-entry Boundary. Runtime clocks and completed-call results remain valid
+    provenance inside Control/Entity implementation flows; neither, nor an
+    arbitrary precondition/call source, has a generic HTTP/controller
+    representation at the public handoff.
+    """
+
+    operations = operation_catalog(context.model)
+    calls = [item for item in collaboration.get("calls") or [] if isinstance(item, dict)]
+    positions = {text(call.get("callId")): position for position, call in enumerate(calls)}
+    findings: list[Finding] = []
+    for position, call in enumerate(calls):
+        parent_id = text(call.get("parentCallId"))
+        parent_position = positions.get(parent_id)
+        if parent_position is None or parent_position not in _root_positions(calls):
+            continue
+        parent = calls[parent_position]
+        boundary = operations.get(text(parent.get("receiverOperationId")), {})
+        control = operations.get(text(call.get("receiverOperationId")), {})
+        if (
+            text(boundary.get("stereotype")) != "boundary"
+            or text(control.get("stereotype")) != "control"
+        ):
+            continue
+        location = context.use_case.id
+        try:
+            boundary_return = render_design_type(
+                parse_type_expression(text(boundary.get("returnType")))
+            )
+            control_return = render_design_type(
+                parse_type_expression(text(control.get("returnType")))
+            )
+        except DesignTypeError:
+            # The class model schema/type checks own malformed expressions.
+            boundary_return = control_return = ""
+        if boundary_return and control_return and boundary_return != control_return:
+            findings.append(Finding(
+                "class.collaboration.http-projection",
+                "API-exposed Boundary→Control handoff must use matching public and "
+                "Control return types unless an explicit result adapter is designed",
+                location,
+            ))
+        accepted_value_sources = {
+            text(item.get("sourceRef"))
+            for item in server_context_sources(context.use_case)
+            if text(item.get("sourceRef"))
+        }
+        accepted_boundary_source_ids = {
+            text(parent.get("callId")),
+            text(parent.get("stableId")),
+        }
+        accepted_boundary_source_ids.discard("")
+        for binding in call.get("argumentBindings") or []:
+            if not isinstance(binding, dict):
+                continue
+            parameter = text(binding.get("parameter"))
+            source_ref = text(binding.get("sourceRef"))
+            if source_ref in accepted_value_sources:
+                continue
+            source_id, separator, path = source_ref.partition("#")
+            if (
+                separator
+                and source_id in accepted_boundary_source_ids
+                and path
+                and path != "result"
+                and not path.startswith("result.")
+            ):
+                # Field/stable-ref/type correctness remains owned by the
+                # existing collaboration binding validator. This rule owns only
+                # whether the source is representable at the HTTP boundary.
+                continue
+            if source_ref.startswith("runtime#"):
+                reason = "runtime value"
+            elif separator and (path == "result" or path.startswith("result.")):
+                reason = "prior-call result"
+            else:
+                reason = "non-Boundary source"
+            findings.append(Finding(
+                "class.collaboration.http-projection",
+                "API-exposed Boundary→Control handoff cannot use "
+                f"{reason} '{source_ref}' for {parameter}; use the current "
+                "Boundary input or an accepted value# source, or declare an "
+                "explicit HTTP/runtime or cross-request contract first",
+                location,
+            ))
+    return findings
+
+
 COLLABORATION_CHECKS = (
     CheckSpec("class.collaboration.contract", _collaboration_contract),
     CheckSpec("class.collaboration.bindings", _collaboration_bindings),
@@ -466,6 +565,7 @@ COLLABORATION_CHECKS = (
         "class.collaboration.ancestor-result-binding",
         _collaboration_ancestor_result_bindings,
     ),
+    CheckSpec("class.collaboration.http-projection", _actor_entry_http_projection),
 )
 
 

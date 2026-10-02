@@ -131,12 +131,14 @@ def _collaboration_rule(
             _collaboration_ancestor_result_bindings,
             _collaboration_bindings,
             _collaboration_contract,
+            _actor_entry_http_projection,
         )
 
         rules = {
             "class.collaboration.contract": _collaboration_contract,
             "class.collaboration.bindings": _collaboration_bindings,
             "class.collaboration.ancestor-result-binding": _collaboration_ancestor_result_bindings,
+            "class.collaboration.http-projection": _actor_entry_http_projection,
         }
         owned_check = rules[rule_id]
         collaborations = _collaborations(model)
@@ -200,6 +202,7 @@ CLASS_MODEL_CHECKS: tuple[CheckSpec[dict[str, Any], ScenarioIndex], ...] = (
     _collaboration_rule("class.collaboration.contract"),
     _collaboration_rule("class.collaboration.bindings"),
     _collaboration_rule("class.collaboration.ancestor-result-binding"),
+    _collaboration_rule("class.collaboration.http-projection"),
     CheckSpec("class.boundary-public-object-parameter", _boundary_public_object_parameters),
 )
 

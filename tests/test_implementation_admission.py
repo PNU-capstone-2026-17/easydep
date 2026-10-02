@@ -53,7 +53,6 @@ def test_integration_needs_input_admission_returns_one_upstream_gap() -> None:
 def test_integration_preflight_hashes_exact_file_evidence_without_persisting_it(
     tmp_path: Path, monkeypatch
 ) -> None:
-    monkeypatch.delenv("EASYDEP_DEMO_SKIP_VALIDATION", raising=False)
     monkeypatch.setattr(
         admission,
         "build_admission_llm_connection",
@@ -253,8 +252,7 @@ def test_integration_payload_rejects_token_only_absolute_configuration_binding(
     assert "deliveryContract" not in payload
 
 
-def test_demo_skip_preserves_missing_integration_evidence_error(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("EASYDEP_DEMO_SKIP_VALIDATION", "true")
+def test_missing_integration_evidence_error_is_preserved(tmp_path: Path) -> None:
     context = {"readSourcePaths": ["application/missing-source.java"]}
     with (
         patch.object(admission, "_preflight_admission") as preflight,

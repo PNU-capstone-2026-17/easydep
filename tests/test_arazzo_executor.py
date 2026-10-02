@@ -1215,6 +1215,23 @@ def test_criterion_mismatch_is_sut_defect(monkeypatch: pytest.MonkeyPatch) -> No
     _assert_result(result, gate="FAIL", defect="SUT_DEFECT")
 
 
+def test_chained_success_criterion_is_rejected_before_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorder = _HttpRecorder([])
+    step = {
+        "stepId": "health",
+        "operationId": "health",
+        "successCriteria": [{"condition": "!($statusCode == 200 == 201)"}],
+    }
+
+    result = _run(monkeypatch, _document([_workflow("main", step)]), recorder)
+
+    _assert_result(result, gate="FAIL", defect="TEST_DEFECT")
+    assert result["finding"]["code"] == "ARAZZO_DOCUMENT_INVALID"
+    assert recorder.calls == []
+
+
 def test_missing_fixed_workflow_input_is_test_defect(monkeypatch: pytest.MonkeyPatch) -> None:
     recorder = _HttpRecorder([])
     document = _document(

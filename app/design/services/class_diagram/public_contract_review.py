@@ -33,7 +33,7 @@ from app.llm_connection import build_llm_connection
 from app.llm_profiles import effective_temperature
 from app.validation import Finding, stable_digest
 
-_EVIDENCE_VERSION = "class-public-contract-review/v8"
+_EVIDENCE_VERSION = "class-public-contract-review/v9"
 _PROMPT = """You independently review whether an accepted class-model use-case
 slice closes every public-contract obligation owned by the class stage.  The
 requirements/API/implementation stages own the authentication policy expressed
@@ -47,8 +47,11 @@ concrete return or input parameter type cited by that mapping.
 For required_values with usage control or both, cite the Control call that receives
 the value, its exact parameter, and that call's argument binding. For usage result
 or both, cite a Control operation with a concrete non-void return type. For a
-required_value whose source is system_result, that Control return is sufficient
-evidence: do not require an argument binding or a prior call result. When a
+required_value whose source is system_result and usage is result, that Control
+return is sufficient evidence: do not require an argument binding or a prior
+call result. A system_result value with usage both still requires the exact
+Control parameter and argument binding for its control use, as well as the
+concrete Control return for its result use. When a
 required system_result identifier is returned through a declared structured
 type, cite its concrete return DTO fieldRef; the field must not be Optional<T>.
 For identify identity obligations, cite a Control parameter and its exact argument

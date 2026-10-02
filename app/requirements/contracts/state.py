@@ -204,6 +204,10 @@ class AgentState(TypedDict):
     # keyed by minted obligation_ref so local specification regeneration preserves answers.
     identity_source_question: NotRequired[dict | None]
     identity_source_overrides: NotRequired[dict[str, dict[str, str]]]
+    # A source-grounded free-text question for one unresolved durable condition.
+    # The answer is keyed by its server-minted state ref and fed into spec generation.
+    state_source_question: NotRequired[dict | None]
+    state_source_answers: NotRequired[dict[str, dict[str, str]]]
     # 4단계 — 관계 식별(LLM) + 검증 요약 + 다이어그램 렌더(결정론)
     relationships: dict  # {associations, includes, extends, generalizations, derived_use_cases}
     relationship_report: dict  # check_relationships의 관계 검증 집계

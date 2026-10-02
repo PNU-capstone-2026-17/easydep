@@ -42,6 +42,120 @@ class InteractionContract:
     scenario_step_refs: tuple[str, ...]
 
 
+def response_projection_context(
+    model: ApiSpecModel,
+    bce_model: BCEModel,
+) -> list[dict[str, Any]]:
+    """Enumerate required response paths with existing BCE stable field refs.
+
+    This is intentionally an internal, read-only planning context.  It neither
+    changes the accepted API model nor asserts that an implementation can
+    populate a field.  A later response-projection contract may use these
+    finite rows, but unknown source provenance must not be inferred here.
+    """
+
+    # API schemas can be projected from Entity and DataType declarations.  Do
+    # not use Boundary/Control fields as nested response schemas.
+    declaration_items = [
+        *(
+            item
+            for item in bce_model.Classes
+            if item.stereotype == "Entity"
+        ),
+        *bce_model.DataTypes,
+    ]
+    declaration_sources = {
+        item.class_name if hasattr(item, "class_name") else item.name: item
+        for item in declaration_items
+    }
+    declarations: dict[str, list[tuple[str, str, str, bool]]] = {}
+
+    def declaration_fields(owner: str) -> list[tuple[str, str, str, bool]]:
+        """Validate only a declaration reached from a successful response."""
+
+        if owner in declarations:
+            return declarations[owner]
+        item = declaration_sources[owner]
+        fields = list(item.fields)
+        refs = list(item.field_refs)
+        if len(refs) != len(fields) or not all(str(ref).strip() for ref in refs):
+            raise ValueError(
+                f"Response projection requires aligned stable field refs for {owner}."
+            )
+        entries: list[tuple[str, str, str, bool]] = []
+        for declaration, ref in zip(fields, refs, strict=True):
+            name, separator, type_name = str(declaration).partition(":")
+            if not separator or not name.strip() or not type_name.strip():
+                raise ValueError(
+                    f"Response projection requires a typed field declaration in {owner}."
+                )
+            expression = parse_type_expression(type_name)
+            optional = expression.kind == "container" and expression.name == "optional"
+            entries.append((name.strip(), type_name.strip(), str(ref), not optional))
+        declarations[owner] = entries
+        return entries
+
+    contracts = {item.interaction_id: item for item in interaction_contracts(bce_model)}
+    control_stable_ids = {
+        (component.class_name, operation.name): operation.stable_id
+        for component in bce_model.Classes
+        for operation in component.operations
+        if component.stereotype == "Control" and operation.stable_id
+    }
+    rows: list[dict[str, Any]] = []
+
+    def walk(
+        type_name: str,
+        path_refs: tuple[str, ...],
+        path_names: tuple[str, ...],
+        seen: frozenset[str],
+        base: dict[str, Any],
+    ) -> None:
+        item, _is_array = _type_parts(type_name)
+        if item not in declaration_sources or item in seen:
+            return
+        for field_name, field_type, field_ref, required in declaration_fields(item):
+            if not required:
+                continue
+            row = {
+                **base,
+                "pathFieldRefs": [*path_refs, field_ref],
+                "pathNames": [*path_names, field_name],
+                "declaredType": field_type,
+            }
+            rows.append(row)
+            walk(
+                field_type,
+                tuple(row["pathFieldRefs"]),
+                tuple(row["pathNames"]),
+                seen | {item},
+                base,
+            )
+
+    for endpoint in model.Endpoints:
+        contract = contracts.get(endpoint.interaction_id)
+        if contract is None:
+            continue
+        control_stable_id = control_stable_ids.get(
+            (contract.control_class, contract.control_method)
+        )
+        for response in endpoint.responses:
+            if not (200 <= response.status < 300) or not response.schema_name:
+                continue
+            base = {
+                "interactionId": endpoint.interaction_id,
+                "operationId": endpoint.operation_id,
+                "status": response.status,
+                "responseSchema": response.schema_name,
+                "rootControlOperationStableId": control_stable_id,
+            }
+            if response.schema_name not in declaration_sources:
+                rows.append({**base, "pathFieldRefs": [], "pathNames": [], "declaredType": response.schema_name})
+                continue
+            walk(response.schema_name, (), (), frozenset(), base)
+    return rows
+
+
 def allowed_path_parameter_names(
     contract: InteractionContract,
     bce_model: BCEModel,
@@ -175,7 +289,7 @@ def interaction_context(bce_model: BCEModel) -> list[dict[str, Any]]:
                 allowed_path_parameter_names(item, bce_model)
             ),
         }
-        for item in interaction_contracts(bce_model)
+        for item in api_executable_interaction_contracts(bce_model)
     ]
 
 
@@ -218,6 +332,40 @@ def response_contract_for_control(return_type: str) -> tuple[str, bool]:
     return _api_contract_type_for_control(item), is_array
 
 
+def _same_public_and_control_result(contract: InteractionContract) -> bool:
+    """Return whether the generated controller can return the Control result directly."""
+
+    try:
+        boundary = render_design_type(parse_type_expression(contract.boundary_return_type))
+        control = render_design_type(parse_type_expression(contract.return_type))
+    except DesignTypeError:
+        return False
+    return boundary == control
+
+
+def _require_executable_interaction(contract: InteractionContract) -> None:
+    """Reject a BCE interaction that has no direct API/controller projection."""
+
+    if not _same_public_and_control_result(contract):
+        raise ValueError(
+            "API interaction requires matching Boundary and Control return types "
+            f"because no result adapter is declared: {contract.interaction_id} "
+            f"(Boundary={contract.boundary_return_type}, Control={contract.return_type})"
+        )
+
+
+def api_executable_interaction_contracts(
+    bce_model: BCEModel,
+) -> tuple[InteractionContract, ...]:
+    """Return only interactions whose result contract can be scaffolded directly."""
+
+    return tuple(
+        contract
+        for contract in interaction_contracts(bce_model)
+        if _same_public_and_control_result(contract)
+    )
+
+
 def normalize_api_spec_model(
     proposal: ApiSpecProposal,
     bce_model: BCEModel,
@@ -237,6 +385,7 @@ def normalize_api_spec_model(
         contract = contracts.get(endpoint.interaction_id)
         if contract is None:
             continue
+        _require_executable_interaction(contract)
         payload = endpoint.model_dump()
         payload.update(_http_inputs(payload, contract, schemas, bce_model))
         payload["operation_id"] = _unique_operation_id(
@@ -246,7 +395,7 @@ def normalize_api_spec_model(
         )
         payload["responses"] = _complete_responses(
             payload.get("responses") or [],
-            contract.return_type,
+            contract.boundary_return_type,
         )
         endpoints.append(_materialize_endpoint(payload, contracts, schemas, bce_model))
     request_schemas = {endpoint.request_schema for endpoint in endpoints if endpoint.request_schema}
@@ -309,25 +458,31 @@ def _materialize_endpoint(
 
     request_name = str(endpoint.get("request_schema") or "").strip()
     request_schema = schemas.get(request_name)
-    response_type, response_is_array = response_contract_for_control(contract.return_type)
-    control_returns_void = _type_parts(contract.return_type)[0].casefold() == "void"
+    _require_executable_interaction(contract)
+    response_type, response_is_array = response_contract_for_control(
+        contract.boundary_return_type
+    )
+    public_returns_void = _type_parts(contract.boundary_return_type)[0].casefold() == "void"
     responses = []
     void_success_added = False
     for response in endpoint.get("responses") or []:
         status = int(response.get("status", 0) or 0)
-        # A void Control cannot satisfy a successful HTTP response-body
+        # A void public result cannot satisfy a successful HTTP response-body
         # contract.  Keep the accepted BCE operation authoritative and
         # canonicalize an LLM-proposed 2xx response to No Content before the
         # response schema and named outcomes are derived.  Without this step
         # every API-only revision is normalized back to the same invalid
         # ``200 + empty schema`` candidate and the repair loop stalls.
-        void_success = control_returns_void and 200 <= status < 300
+        void_success = public_returns_void and 200 <= status < 300
         if void_success and void_success_added:
             continue
         normalized_void_success = void_success and status != 204
         if void_success:
             status = 204
             void_success_added = True
+        nonvoid_no_content = not public_returns_void and status == 204
+        if nonvoid_no_content:
+            status = 200
         responses.append(
             {
                 **response,
@@ -335,6 +490,8 @@ def _materialize_endpoint(
                 **(
                     {"description": "Completed successfully with no response body."}
                     if normalized_void_success
+                    else {"description": "Successful response."}
+                    if nonvoid_no_content
                     else {}
                 ),
                 "schema_name": response_type if 200 <= status < 300 and status != 204 else "",
@@ -576,16 +733,33 @@ def _control_arguments(
     accepted_boundary_call_ids = {contract.boundary_call_id}
     if contract.boundary_call_stable_id:
         accepted_boundary_call_ids.add(contract.boundary_call_stable_id)
+    supplied_parameters: set[str] = set()
+    unsupported: list[str] = []
     for parameter, source_ref in contract.control_argument_sources:
         if parameter not in expected_parameters:
             continue
+        supplied_parameters.add(parameter)
         if source_ref.partition("#")[0] == "value" and source_ref.partition("#")[2]:
             # Exact accepted value catalog refs remain server-owned; never turn
             # them into HTTP request fields.
             arguments.append({"name": parameter, "source": f"$context.{parameter}"})
             continue
+        if source_ref.startswith("runtime#"):
+            unsupported.append(f"{parameter} uses runtime source '{source_ref}'")
+            continue
         source_call, separator, source_path = source_ref.partition("#")
-        if not separator or source_call not in accepted_boundary_call_ids:
+        if not separator:
+            unsupported.append(f"{parameter} has invalid source '{source_ref}'")
+            continue
+        if source_path.startswith("result"):
+            unsupported.append(
+                f"{parameter} uses earlier-result source '{source_ref}'"
+            )
+            continue
+        if source_call not in accepted_boundary_call_ids:
+            unsupported.append(
+                f"{parameter} is not sourced by this Boundary call: '{source_ref}'"
+            )
             continue
         boundary_parameter_ref, dot, nested_path = source_path.partition(".")
         boundary_parameter = dict(contract.boundary_parameter_stable_refs).get(
@@ -594,6 +768,10 @@ def _control_arguments(
         )
         source = boundary_sources.get(boundary_parameter)
         if source is None:
+            unsupported.append(
+                f"{parameter} references Boundary value '{boundary_parameter}' "
+                "without an HTTP representation"
+            )
             continue
         if dot:
             field_path = _resolve_stable_field_path(
@@ -602,14 +780,31 @@ def _control_arguments(
                 bce_model,
             )
             if field_path is None:
+                unsupported.append(
+                    f"{parameter} has unresolved Boundary field source '{source_ref}'"
+                )
                 continue
             if source == "$body":
                 source = f"$body.{field_path}"
             elif source.startswith("$body."):
                 source = f"{source}.{field_path}"
             else:
+                unsupported.append(
+                    f"{parameter} requires nested non-body source '{source_ref}'"
+                )
                 continue
         arguments.append({"name": parameter, "source": source})
+    missing = expected_parameters - supplied_parameters
+    if missing:
+        unsupported.append("missing bindings for " + ", ".join(sorted(missing)))
+    if unsupported:
+        raise ValueError(
+            "API interaction cannot project accepted Control inputs without an "
+            "explicit runtime or cross-request contract: "
+            + contract.interaction_id
+            + "; "
+            + "; ".join(unsupported)
+        )
     return [
         {
             **argument,
@@ -775,9 +970,11 @@ def api_spec_proposal_from_model(
 
 __all__ = [
     "api_input_type_for_control",
+    "api_executable_interaction_contracts",
     "api_spec_proposal_from_model",
     "interaction_context",
     "interaction_contracts",
     "normalize_api_spec_model",
+    "response_projection_context",
     "response_contract_for_control",
 ]

@@ -777,10 +777,26 @@ def _compile_workflow_decision(
     )
 
 
+def _explicit_identity_input(input_slot: dict[str, Any]) -> bool:
+    """Whether a slot denotes a resource identity that needs a produced value."""
+
+    return bool(
+        input_slot.get("resourceRole") or input_slot.get("identityObligationRef")
+        or input_slot.get("valueRef") and input_slot.get("evidenceRefs")
+        or str(input_slot.get("sourceKind") or "").lower()
+        in {"resource", "identity", "system_result"}
+    )
+
+
 def _literal_input_allowed(input_slot: dict[str, Any]) -> bool:
     """Accept schema-grounded literals unless the path denotes a resource identity."""
     if input_slot.get("literalEvidence") or input_slot.get("sourceKind") == "literal":
         return True
+    # A required-value reference alone has no execution semantics.  The
+    # authoring candidate marks it only after matching the frozen public
+    # contract's caller_input declaration; never use it for an identity.
+    if input_slot.get("callerInputEvidence"):
+        return not _explicit_identity_input(input_slot)
     if any(key in input_slot for key in ("const", "default", "example", "examples", "enum")):
         return True
     if not str(input_slot.get("inputSlot") or "").startswith("path:"):
@@ -788,11 +804,7 @@ def _literal_input_allowed(input_slot: dict[str, Any]) -> bool:
     # Numeric and boolean path parameters are ordinary scalar inputs (for
     # example, calculator operands). Integer paths can also encode resource
     # identities, so require a producer when the slot carries identity metadata.
-    explicit_identity = bool(
-        input_slot.get("resourceRole") or input_slot.get("identityObligationRef")
-        or input_slot.get("valueRef") and input_slot.get("evidenceRefs")
-        or str(input_slot.get("sourceKind") or "").lower() in {"resource", "identity", "system_result"}
-    )
+    explicit_identity = _explicit_identity_input(input_slot)
     return input_slot.get("type") in {"number", "boolean"} or (
         input_slot.get("type") == "integer" and not explicit_identity
     )
@@ -1268,6 +1280,27 @@ def _authoring_candidate(
 ) -> dict[str, Any]:
     value = deepcopy(candidate)
     projected_steps = deepcopy(available_steps)
+    contract = value.get("useCase", {}).get("public_contract", {})
+    required_values = contract.get("required_values", []) if isinstance(contract, dict) else []
+    caller_input_refs = {
+        str(item.get("value_ref") or item.get("valueRef"))
+        for item in required_values
+        if isinstance(item, dict)
+        and str(item.get("source") or "").lower() == "caller_input"
+        and isinstance(item.get("value_ref") or item.get("valueRef"), str)
+        and str(item.get("value_ref") or item.get("valueRef")).strip()
+    }
+    target_operation_ids = {
+        str(operation.get("operationId") or "")
+        for operation in value.get("operations") or []
+        if isinstance(operation, dict) and operation.get("operationId")
+    }
+    for step in projected_steps:
+        if not isinstance(step, dict) or step.get("operationId") not in target_operation_ids:
+            continue
+        for slot in step.get("inputs") or []:
+            if isinstance(slot, dict) and slot.get("requiredValueRef") in caller_input_refs:
+                slot["callerInputEvidence"] = True
     value["planningModel"] = _planning_model(candidate, projected_steps)
     return value
 
@@ -1497,6 +1530,7 @@ def _select_semantic_producers(
         value: dict[str, Any] | None = None
         selected: dict[str, Any] | None = None
         for stage_index, stage_options in enumerate(stages):
+            is_readback_stage = stage_options is readback_fallback
             schema = {
                 "type": "object", "additionalProperties": False,
                 "properties": {
@@ -1542,6 +1576,55 @@ def _select_semantic_producers(
                 "Choose literal only when target.inputContract.literalAllowed is true; otherwise use a grounded producer or unsupported.",
                 ],
             }
+            if is_readback_stage:
+                # A readback fallback needs its finite collection evidence,
+                # not the full workflow outline and every generic producer
+                # rule.  Keep only occurrences that can participate in this
+                # target/readback decision.
+                relevant_operations = stage_operation_ids | {str(request["targetOperationId"])}
+                outline_occurrences = [
+                    item for item in outline.get("occurrences") or []
+                    if isinstance(item, dict) and str(item.get("operationId")) in relevant_operations
+                ]
+                relevant_occurrence_ids = {
+                    str(item.get("instanceId") or item.get("occurrenceId"))
+                    for item in outline_occurrences
+                    if item.get("instanceId") or item.get("occurrenceId")
+                }
+                compact_outline = {
+                    "occurrences": outline_occurrences,
+                    "identityRelations": [
+                        item for item in outline.get("identityRelations") or []
+                        if isinstance(item, dict)
+                        and str(item.get("leftInstanceId")) in relevant_occurrence_ids
+                        and str(item.get("rightInstanceId")) in relevant_occurrence_ids
+                    ],
+                }
+                payload = {
+                    "target": request,
+                    "producerOptions": [
+                        {key: value for key, value in item.items() if key != "linkedUseCaseEvidence"}
+                        for item in stage_options
+                    ],
+                    "finiteCollectionCatalog": [
+                        item for item in collection_catalog_by_root.values()
+                        if f"{item.get('operationId')}:{item.get('arrayRootPointer')}" in stage_roots
+                    ],
+                    **({"operationEvidence": [
+                        {"operationId": operation_id, "identityEvidence": evidence}
+                        for operation_id, evidence in sorted(operation_evidence_by_id.items())
+                        if operation_id in stage_operation_ids
+                    ]} if any(operation_id in stage_operation_ids for operation_id in operation_evidence_by_id) else {}),
+                    "plannedResourceChain": compact_outline,
+                    "selectionStage": "readback_fallback",
+                    "rules": [
+                        "Select only a listed option or unsupported.",
+                        "Use exact target evidence, output path, response description, and operation evidence; matching types alone do not establish identity.",
+                        "A related resource identifier is not interchangeable with the target resource identifier.",
+                        "An array item is not a direct producer. Choose deferred_collection_lookup only when the listed collection has finite same-item paths.",
+                        "Use the supplied planned creator/readback chain when available; a caller_input is not an already-persisted test fixture.",
+                    ],
+                }
             request_args: dict[str, Any] = {
                 "model": connection.model, "temperature": profile.temperature,
                 "messages": [
@@ -1791,6 +1874,41 @@ def _select_collection_match_and_anchor(
     jsonschema.Draft202012Validator(schema).validate(value)
     selection_id = str(value.get("selectionId") or "")
     anchor_id = str(value.get("anchorId") or "")
+    if selection_id == "none" or anchor_id == "none":
+        # A large linked-use-case projection can drown out the finite pair in
+        # an otherwise grounded decision.  Retry once with the exact same
+        # source, target, creator, choices, and anchors; this never infers or
+        # auto-selects an identity in code.
+        compact_payload = {
+            "frozenIntent": payload["frozenIntent"],
+            "target": {
+                "operationId": payload["target"]["operationId"],
+                "inputSlot": payload["target"]["inputSlot"],
+                "meaning": payload["target"]["meaning"],
+            },
+            "collection": payload["collection"],
+            "rowCreator": payload["rowCreator"],
+            "finiteSameItemChoices": compact_choices,
+            "finiteCompatibleLiteralAnchors": anchors,
+            "instruction": (
+                "Choose only one listed selectionId and one listed anchorId, or none. "
+                "The matchField and anchor input must denote the same resource identity; "
+                "the selectedField is the child/resource ID supplied to target. "
+                "Use the source/target/creator evidence shown here, never type compatibility alone, "
+                "and do not invent a relationship."
+            ),
+        }
+        retry_args = dict(args)
+        retry_args["messages"] = [
+            {"role": "system", "content": "Choose a finite resource identity pair from the supplied evidence."},
+            {"role": "user", "content": json.dumps(compact_payload, ensure_ascii=False, separators=(",", ":"))},
+        ]
+        value = json.loads(_completion_content(
+            client.chat.completions.create(**retry_args), operation="Arazzo joint collection identity retry"
+        ))
+        jsonschema.Draft202012Validator(schema).validate(value)
+        selection_id = str(value.get("selectionId") or "")
+        anchor_id = str(value.get("anchorId") or "")
     if selection_id == "none" or anchor_id == "none":
         raise ArazzoPlanningError("No semantically valid finite collection identity and anchor pair was selected.")
     selected_matches = [item for item in choices if item.get("selectionId") == selection_id]
@@ -4039,9 +4157,8 @@ def _workflow_failure_analysis(
 
 def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
     """Plan once, execute Arazzo workflows, and preserve exact inputs for repair."""
-    validation_skipped = bool(state.get("validation_skipped"))
     scope = state.get("gate_scope")
-    if scope is not None and "dynamicFunctional" not in scope and not validation_skipped:
+    if scope is not None and "dynamicFunctional" not in scope:
         emit_testing_progress(
             phase="dynamic",
             scope="phase",
@@ -4064,7 +4181,7 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         return {"current_node": "dynamic_functional", "dynamic_functional_report": report}
 
     target_url = str(state.get("target_url") or "").strip()
-    if not target_url and not validation_skipped:
+    if not target_url:
         emit_testing_progress(
             phase="dynamic",
             scope="phase",
@@ -4317,137 +4434,6 @@ def dynamic_functional_node(state: TestingState) -> dict[str, Any]:
         candidate = candidate_by_workflow_id.get(str(workflow["workflowId"]))
         if candidate is not None:
             _emit_dynamic_workflow_plan(candidate, workflow, total_workflows)
-
-    if validation_skipped:
-        if planning_failures:
-            # Demo mode may skip HTTP execution, but it may never turn an
-            # actual graph-authoring failure into a passing testing result.
-            first = planning_failures[0]
-            return {
-                "current_node": "dynamic_functional",
-                "dynamic_functional_report": {
-                    "status": "FAILED",
-                    "gateStatus": "FAIL",
-                    "reason": str(first["reason"]),
-                    "defectClass": str(first["defectClass"]),
-                    "defect": repair_route(str(first["defectClass"])),
-                    "finding": deepcopy(first["finding"]),
-                    "candidatePlan": document,
-                    "candidateDigest": stable_digest({"document": document}),
-                    "planDigest": stable_digest(document),
-                    "workflowInputs": workflow_inputs,
-                    "inputValues": _input_records(input_values),
-                    "workflows": [],
-                    "plannedWorkflowIds": [str(item["workflowId"]) for item in document["workflows"]],
-                    "executionOrder": [],
-                    "executedWorkflowCount": 0,
-                    "workflowCounts": {
-                        "total": len(candidates), "completed": len(planning_failures),
-                        "passed": 0, "failed": len(planning_failures), "running": 0,
-                        # These valid plans were deliberately not executed in
-                        # demo mode; do not count them as passing HTTP tests.
-                        "pending": len(document["workflows"]),
-                    },
-                    "requirements": _requirements([], candidates),
-                    "planningFailures": planning_failures,
-                    "failureAnalyses": planning_failures,
-                    "planRepairs": [],
-                    "reusedWorkflowIds": [],
-                    "pendingWorkflowIds": [],
-                    "targetUrl": "",
-                },
-            }
-        # Arazzo generation and validation above are still intentional durable
-        # Testing artifacts. Do not synthesize HTTP responses, runtime logs,
-        # assertions, or step results: no executor was invoked.
-        candidate_by_workflow_id = {
-            str(candidate["workflowId"]): candidate for candidate in candidates
-        }
-        planned_workflow_ids = [str(workflow["workflowId"]) for workflow in document["workflows"]]
-        planned_input_values = _input_records(input_values)
-        planned_workflows = []
-        total_workflows = len(planned_workflow_ids)
-        for workflow in document["workflows"]:
-            workflow_id = str(workflow["workflowId"])
-            candidate = candidate_by_workflow_id.get(workflow_id)
-            if candidate is None:
-                continue
-            # No executor ran, so this intentionally contains no runtime
-            # response, log, assertion, or step result.  The plan itself and
-            # its frozen operation references are still real durable evidence.
-            planned_workflows.append(
-                {
-                    "workflowId": workflow_id,
-                    "requirementIds": list(
-                        (workflow.get("x-easydep-trace") or {}).get("requirementIds") or []
-                    ),
-                    "useCaseIds": list(
-                        (workflow.get("x-easydep-trace") or {}).get("useCaseIds") or []
-                    ),
-                    "useCaseId": use_case_id_for_candidate(candidate),
-                    "useCaseName": use_case_display_name(candidate),
-                    "use_case_name": use_case_display_name(candidate),
-                    "summary": str(workflow.get("summary") or use_case_display_name(candidate)),
-                    "status": "PASSED",
-                    "gateStatus": "PASS",
-                    "validationSkipped": True,
-                    "workflow": deepcopy(workflow),
-                    "operations": deepcopy(candidate.get("operations") or []),
-                    "inputValues": planned_input_values.get(workflow_id, []),
-                    "workflowInputsById": deepcopy(
-                        {workflow_id: workflow_inputs.get(workflow_id, {})}
-                    ),
-                    "inputValuesById": {
-                        workflow_id: planned_input_values.get(workflow_id, [])
-                    },
-                    "result": {
-                        "status": "PASSED",
-                        "gateStatus": "PASS",
-                        "validationSkipped": True,
-                        "steps": [],
-                    },
-                }
-            )
-        return {
-            "current_node": "dynamic_functional",
-            "dynamic_functional_report": {
-                "status": "PASSED",
-                "gateStatus": "PASS",
-                "validationSkipped": True,
-                "validationSkipReason": "demo",
-                "candidatePlan": document,
-                "candidateDigest": stable_digest(
-                    {
-                        "document": document,
-                        "fixedInputs": {
-                            "workflowInputs": workflow_inputs,
-                            "inputValues": planned_input_values,
-                        },
-                    }
-                ),
-                "planDigest": stable_digest(document),
-                "workflowInputs": workflow_inputs,
-                "inputValues": planned_input_values,
-                "workflows": planned_workflows,
-                "plannedWorkflowIds": planned_workflow_ids,
-                "executionOrder": [],
-                "executedWorkflowCount": 0,
-                "workflowCounts": {
-                    "total": total_workflows,
-                    "completed": total_workflows,
-                    "passed": total_workflows,
-                    "failed": 0,
-                    "running": 0,
-                    "pending": 0,
-                },
-                "requirements": _requirements([], candidates),
-                "failureAnalyses": [],
-                "planRepairs": [],
-                "reusedWorkflowIds": [],
-                "pendingWorkflowIds": [],
-                "targetUrl": "",
-            },
-        }
 
     previous_results = {
         str(item.get("workflowId")): item

@@ -219,38 +219,6 @@ def test_dynamic_and_static_verification_branches_run_concurrently() -> None:
     assert result["static_report"]["gateStatus"] == "PASS"
 
 
-def test_demo_skip_does_not_invoke_static_validation_runners(monkeypatch) -> None:
-    from app.testing.nodes import static_verification as static
-
-    monkeypatch.setattr(
-        static,
-        "scan_stage",
-        lambda *_args, **_kwargs: pytest.fail("demo mode must not scan deployment files"),
-    )
-    monkeypatch.setattr(
-        static,
-        "check_deployment_package",
-        lambda *_args, **_kwargs: pytest.fail("demo mode must not validate deployment packages"),
-    )
-
-    reports = static.static_verification_node({"validation_skipped": True})
-
-    assert reports["static_report"]["status"] == "PASSED"
-    assert reports["static_report"]["gateStatus"] == "PASS"
-    assert reports["static_report"]["trivyScan"]["status"] == "PASSED"
-    assert reports["static_report"]["deploymentPackage"]["status"] == "PASSED"
-    assert reports["static_report"]["trivyScan"]["commands"][0]["name"] == "trivy config"
-    assert reports["static_report"]["deploymentPackage"]["checkNames"]
-    assert reports["static_report"]["checkCounts"] == {
-        "total": 2, "passed": 2, "failed": 0
-    }
-    assert reports["static_report"]["deploymentPackage"]["checkCounts"]["failed"] == 0
-    assert reports["iac_report"]["status"] == "PASSED"
-    assert reports["iac_report"]["gateStatus"] == "PASS"
-    assert reports["static_report"]["issues"] == []
-    assert reports["static_report"]["validationSkipped"] is True
-
-
 def test_dynamic_failure_analyses_become_use_case_scoped_repair_blockers(monkeypatch) -> None:
     testing_input = FrozenTestingInput(
         app_id="app-1",
@@ -1366,6 +1334,76 @@ def test_testing_result_preserves_dynamic_runtime_evidence_for_implementation_re
     assert blocking["evidence"]["requestDigest"] == "request-digest-1"
 
 
+def test_identical_failed_repair_candidate_stalls_testing_repair(monkeypatch, tmp_path) -> None:
+    """Repeated evidence from the same repair candidate must not reopen its owner."""
+
+    testing_input = FrozenTestingInput(
+        app_id="app-1",
+        implementation_job_id="implementation-1",
+        artifact_version_ids={TYPE_SOURCE_CODE: 1, TYPE_DEPLOYMENT_FILE: 2},
+    )
+    application = tmp_path / "application"
+    application.mkdir()
+
+    @contextmanager
+    def restored_application(_testing_input):
+        yield tmp_path
+
+    verification = {
+        "diagnostics": [],
+        "reports": {
+            "static": {"status": "PASSED", "gateStatus": "PASS"},
+            "iac": {"status": "SKIPPED", "gateStatus": "NOT_APPLICABLE"},
+            "dynamicFunctional": {
+                "status": "FAILED",
+                "gateStatus": "FAIL",
+                "defectClass": "SUT_DEFECT",
+                "reason": "still broken",
+                "planDigest": "plan-1",
+                "failedRequestDigest": "request-1",
+                "candidatePlan": {"workflows": []},
+            },
+        },
+    }
+    monkeypatch.setattr(testing_service, "materialized_testing_application", restored_application)
+    monkeypatch.setattr(testing_service, "run_verification_graph", lambda **_kwargs: verification)
+    monkeypatch.setattr(testing_service, "_application_content_digest", lambda _path: "app-1")
+    monkeypatch.setattr(testing_service, "_blocking_findings", lambda *_args: [])
+    candidate_digest = testing_service.stable_digest(
+        {
+            "plan": "plan-1",
+            "failedRequest": "request-1",
+            "application": "app-1",
+            "gates": {"iacExpected": False, "preservedWorkflows": []},
+        }
+    )
+
+    report, history = testing_service._run_test(
+        "testing-repeat",
+        testing_input,
+        repair_history={
+            "attempts": [
+                {
+                    "stage": "testing.dynamic-functional",
+                    "strategy_key": "regenerate_from_accumulated_failures",
+                    "input_digest": "previous-input",
+                    "candidate_digest": candidate_digest,
+                    "finding_keys_before": ["testing.dynamic-functional:still broken"],
+                    "finding_keys_after": ["testing.dynamic-functional:still broken"],
+                    "outcome": "no_improvement",
+                }
+            ]
+        },
+        previous_findings=("testing.dynamic-functional:still broken",),
+    )
+
+    assert report["passed"] is False
+    assert report["repair_state"]["status"] == "STALLED"
+    assert "same repair candidate" in report["repair_state"]["stall_reason"]
+    assert history["status"] == "STALLED"
+    assert history["attempts"][-1]["outcome"] == "repeated_candidate"
+
+
 def test_upstream_ambiguity_is_not_reclassified_as_environment(monkeypatch) -> None:
     """An unprovable plan order must route to design, never runtime retry."""
 
@@ -1493,59 +1531,9 @@ def test_verification_runs_dynamic_tests_against_the_launched_app(tmp_path):
     assert captured["target_url"] == "http://localhost:54321"
     assert result["passed"] is True
     assert result["blockingReason"] is None
-    assert result["validationSkipped"] is False
     assert result["application"]["hostPort"] == 54321
     assert result["reports"]["static"]["source"]["source"] == "application"
     assert result["reports"]["dynamicFunctional"]["targetUrl"] == "http://localhost:54321"
-
-
-def test_demo_env_skips_runtime_before_the_testing_graph_runs(tmp_path, monkeypatch):
-    """The shared env switch reaches Testing without treating a skipped run as an error."""
-    from app.testing.runtime import verification
-
-    captured: dict = {}
-
-    class Graph:
-        def invoke(self, state):
-            captured.update(state)
-            return {
-                "errors": [],
-                "static_report": {"status": "SKIPPED", "gateStatus": "PASS"},
-                "iac_report": {"status": "SKIPPED", "gateStatus": "PASS"},
-                "dynamic_functional_report": {
-                    "status": "SKIPPED",
-                    "gateStatus": "PASS",
-                    "candidatePlan": {"workflows": [{"workflowId": "workflow-UC-1"}]},
-                    "workflows": [],
-                    "executedWorkflowCount": 0,
-                },
-            }
-
-    def create_graph() -> Graph:
-        return Graph()
-
-    monkeypatch.setenv("EASYDEP_DEMO_SKIP_VALIDATION", "true")
-    monkeypatch.setattr(verification, "create_testing_graph", create_graph)
-    monkeypatch.setattr(
-        verification,
-        "running_application",
-        lambda *_args, **_kwargs: pytest.fail("demo mode must not start the application"),
-    )
-
-    result = verification.run_verification_graph(
-        run_id="demo-skip", app_id="app-1", application_dir=str(tmp_path)
-    )
-
-    assert captured["validation_skipped"] is True
-    assert captured["target_url"] == ""
-    assert result["passed"] is True
-    assert result["validationSkipped"] is True
-    assert result["validationSkipReason"] == "demo"
-    assert result["executedWorkflowCount"] == 0
-    assert result["diagnostics"] == []
-    assert result["reports"]["static"]["status"] == "PASSED"
-    assert result["reports"]["iac"]["status"] == "PASSED"
-    assert result["reports"]["dynamicFunctional"]["status"] == "PASSED"
 
 
 def test_verification_defers_static_gates_when_the_app_cannot_be_launched(tmp_path):

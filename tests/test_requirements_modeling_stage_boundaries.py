@@ -358,6 +358,74 @@ def test_relationship_repair_is_one_bounded_selection_rerun() -> None:
     assert patch["relationships"]["repair_stopped"] == "clean"
 
 
+def test_partial_relationship_review_is_not_marked_clean() -> None:
+    """No findings cannot imply clean when expected rules were not examined."""
+    state = {
+        "actors": [],
+        "classified": [{"id": "R1", "text": "Members submit requests.", "type": "FR"}],
+        "use_cases": [_use_case_item("UC1", "Submit request")],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "main_scenario": [{
+                "step_number": 1,
+                "subject_ref": "system",
+                "sentence": "System validates the request.",
+                "covered_req_ids": ["R1"],
+            }],
+            "issues": [],
+            "semantic_status": validation.OK,
+        }],
+    }
+    partial = validation.Review(unexamined=("rel.include-justification",))
+
+    patch = relationships.identify_relationships(
+        state,
+        proposal_call=lambda schema, _messages: schema(),
+        review_call=lambda *_args, **_kwargs: partial,
+    )
+
+    result = patch["relationships"]
+    assert result["semantic_status"] == validation.UNGROUNDED
+    assert result["unexamined_rules"] == ["rel.include-justification"]
+    assert result["repair_stopped"] != "clean"
+
+
+def test_partially_examined_relationship_repair_candidate_is_rejected() -> None:
+    state = {
+        "actors": [],
+        "classified": [{"id": "R1", "text": "Members submit requests.", "type": "FR"}],
+        "use_cases": [_use_case_item("UC1", "Submit request")],
+        "use_case_specs": [{
+            "use_case_id": "UC1",
+            "main_scenario": [{
+                "step_number": 1,
+                "subject_ref": "system",
+                "sentence": "System validates the request.",
+                "covered_req_ids": ["R1"],
+            }],
+            "issues": [],
+            "semantic_status": validation.OK,
+        }],
+    }
+    reviews = iter([
+        validation.Review(findings=["[rel] confirmed defect"]),
+        validation.Review(unexamined=("rel.include-justification",)),
+        validation.Review(unexamined=("rel.include-justification",)),
+    ])
+
+    patch = relationships.identify_relationships(
+        state,
+        proposal_call=lambda schema, _messages: schema(),
+        review_call=lambda *_args, **_kwargs: next(reviews),
+    )
+
+    result = patch["relationships"]
+    attempts = result["repair_history"]["attempts"]
+    assert len(attempts) == 2
+    assert all(attempt["outcome"] != "clean" for attempt in attempts)
+    assert result["relationship_issues"] == ["[rel] confirmed defect"]
+
+
 def test_semantic_validator_voting_keeps_logical_and_physical_call_count(
     monkeypatch,
 ) -> None:

@@ -11,7 +11,6 @@ from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 
 from app.config import settings
-from app.demo_validation import DEMO_SKIP_VALIDATION_ENV
 from app.implementation.config import NPM_REGISTRY_ENV
 
 CONTAINER_WORKSPACE = PurePosixPath("/easydep-workspace")
@@ -48,7 +47,6 @@ RUNTIME_ENVIRONMENT = (
     "IMPLEMENTATION_VERIFICATION_TIMEOUT_SECONDS",
     "IMPLEMENTATION_MAX_TASK_ATTEMPTS",
     "EASYDEP_MEMBER_CHECKPOINT_RUN",
-    DEMO_SKIP_VALIDATION_ENV,
 )
 # ``llm_subprocess_environment`` publishes the selected provider credential
 # under this canonical name.  Keep the list next to the Docker transport so

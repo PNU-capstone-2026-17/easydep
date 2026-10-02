@@ -226,7 +226,7 @@ def test_typed_normalization_uses_exact_bce_contract_without_plantuml() -> None:
     assert endpoint.operation_id == "browseCatalog"
 
 
-def test_nonvoid_boundary_rejects_no_content_success_response() -> None:
+def test_nonvoid_boundary_canonicalizes_no_content_success_response() -> None:
     proposal = _proposal().model_dump()
     proposal["Endpoints"][0]["responses"] = [
         {"status": 204, "description": "Catalog searched"}
@@ -236,12 +236,12 @@ def test_nonvoid_boundary_rejects_no_content_success_response() -> None:
         ApiSpecProposal.model_validate(proposal), bce_model
     )
 
-    findings = api_control_outcomes(
+    assert normalized.Endpoints[0].responses[0].status == 200
+    assert normalized.Endpoints[0].responses[0].schema_name == "Course"
+    assert api_control_outcomes(
         normalized.model_dump(),
         {"extracted_bce_classes": bce_model.model_dump(by_alias=True)},
-    )
-
-    assert any("Boundary 공개 반환 타입" in finding.message for finding in findings)
+    ) == []
 
 
 def test_void_boundary_allows_no_content_success_response() -> None:
@@ -527,6 +527,38 @@ def test_control_arguments_resolve_opaque_dto_field_refs_to_api_names() -> None:
     ) == []
 
 
+def test_api_rejects_mismatched_boundary_and_control_results() -> None:
+    payload = _bce_model().model_dump(by_alias=True)
+    payload["Classes"][0]["operations"][0]["returnType"] = "Course"
+    bce_model = BCEModel.model_validate(payload)
+
+    with pytest.raises(ValueError, match="matching Boundary and Control return types"):
+        normalize_api_spec_model(_proposal(), bce_model)
+
+
+@pytest.mark.parametrize("source_ref", ["runtime#currentDateTime", "earlier-call#result"])
+def test_api_rejects_control_sources_without_http_runtime_contract(
+    source_ref: str,
+) -> None:
+    payload = _bce_model().model_dump(by_alias=True)
+    control = payload["Classes"][1]["operations"][0]
+    control["parameters"].append({"name": "generatedAt", "type": "LocalDateTime"})
+    payload["Collaborations"][0]["calls"][1]["receiverOperationId"] = (
+        "CatalogControl::searchCatalog(filter:CourseFilter,generatedAt:LocalDateTime)"
+    )
+    payload["Collaborations"][0]["calls"][1]["argumentBindings"].append(
+        {"parameter": "generatedAt", "sourceRef": source_ref}
+    )
+    proposal = _proposal().model_dump()
+    proposal["Endpoints"][0]["interaction_id"] = (
+        "CatalogBoundary::browseCatalog(filter:CourseFilter) -> "
+        "CatalogControl::searchCatalog(filter:CourseFilter,generatedAt:LocalDateTime)"
+    )
+
+    with pytest.raises(ValueError, match="explicit runtime or cross-request contract"):
+        normalize_api_spec_model(ApiSpecProposal.model_validate(proposal), BCEModel.model_validate(payload))
+
+
 def test_control_argument_preserves_exact_stable_value_provenance() -> None:
     payload = _bce_model().model_dump(by_alias=True)
     parameter = payload["Classes"][1]["operations"][0]["parameters"][0]
@@ -595,13 +627,8 @@ def test_control_arguments_do_not_fall_back_to_matching_names_or_types() -> None
     payload = _bce_model().model_dump(by_alias=True)
     payload["Collaborations"][0]["calls"][1]["argumentBindings"] = []
 
-    endpoint = normalize_api_spec_model(
-        _proposal(),
-        BCEModel.model_validate(payload),
-    ).Endpoints[0]
-
-    assert endpoint.control_binding is not None
-    assert endpoint.control_binding.arguments == []
+    with pytest.raises(ValueError, match="missing bindings for filter"):
+        normalize_api_spec_model(_proposal(), BCEModel.model_validate(payload))
 
 
 def test_accepted_trusted_context_stays_internal_to_the_control() -> None:
@@ -647,7 +674,7 @@ def test_accepted_trusted_context_stays_internal_to_the_control() -> None:
     ]
 
 
-def test_plain_precondition_ref_is_not_projected_as_trusted_context() -> None:
+def test_plain_precondition_ref_is_rejected_without_runtime_contract() -> None:
     payload = _bce_model().model_dump(by_alias=True)
     control = payload["Classes"][1]["operations"][0]
     payload["DataTypes"].append(
@@ -675,14 +702,10 @@ def test_plain_precondition_ref_is_not_projected_as_trusted_context() -> None:
         "CatalogControl::searchCatalog(filter:CourseFilter,authenticatedPrincipal:AuthenticatedPrincipal)"
     )
 
-    endpoint = normalize_api_spec_model(
-        ApiSpecProposal.model_validate(proposal), BCEModel.model_validate(payload)
-    ).Endpoints[0]
-
-    assert endpoint.control_binding is not None
-    assert [item.model_dump() for item in endpoint.control_binding.arguments] == [
-        {"name": "filter", "source": "$query.filter"}
-    ]
+    with pytest.raises(ValueError, match="not sourced by this Boundary call"):
+        normalize_api_spec_model(
+            ApiSpecProposal.model_validate(proposal), BCEModel.model_validate(payload)
+        )
 
 
 @pytest.mark.parametrize(

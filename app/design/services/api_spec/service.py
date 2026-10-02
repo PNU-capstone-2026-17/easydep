@@ -14,8 +14,8 @@ from app.design.contracts.api_spec import (
 from app.design.schemas.class_model import BCEModel
 from app.design.services.api_spec.normalization import (
     allowed_path_parameter_names,
+    api_executable_interaction_contracts,
     api_spec_proposal_from_model,
-    interaction_contracts,
     normalize_api_spec_model,
     path_placeholders,
 )
@@ -43,7 +43,7 @@ def _finite_proposal_schema(
 
     contracts = tuple(
         item
-        for item in interaction_contracts(bce_model)
+        for item in api_executable_interaction_contracts(bce_model)
         if interaction_ids is None or item.interaction_id in interaction_ids
     )
     accepted_interaction_ids = tuple(item.interaction_id for item in contracts)

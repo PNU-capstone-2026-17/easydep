@@ -10,6 +10,7 @@ import hcl2
 import pytest
 
 from app.design.services.deployment_diagram.bundle import build_deployment_diagram_bundle
+from app.design.services.deployment_diagram.normalization import validate_workload_graph
 from app.design.services.deployment_diagram.provider_plantuml import (
     deployment_bundle_provisioning_puml,
     deployment_bundle_runtime_puml,
@@ -993,10 +994,14 @@ def test_secret_binding_has_permission_and_identity_based_runtime_fetch(
 
 
 def test_colocated_connection_injects_container_dns_contract_and_renders_env_name() -> None:
-    bundle = build_deployment_diagram_bundle(
-        _graph(STANDALONE_DEFAULT_TWO_WORKLOADS_ONE_PERSISTENT),
-        _resource_spec("aws"),
+    graph = _graph(STANDALONE_DEFAULT_TWO_WORKLOADS_ONE_PERSISTENT)
+    endpoint_configuration = next(
+        item
+        for item in graph["workloads"][0]["configuration"]
+        if item.get("kind") == "endpointBinding"
     )
+    endpoint_configuration["value"] = "http://wrong-external.example.test"
+    bundle = build_deployment_diagram_bundle(graph, _resource_spec("aws"))
     resource_plan = bundle["projections"][0]["resourcePlan"]
     binding = next(
         item
@@ -1007,6 +1012,7 @@ def test_colocated_connection_injects_container_dns_contract_and_renders_env_nam
     runtime = deployment_bundle_runtime_puml(bundle)
 
     assert binding["strategy"] == "containerDns"
+    assert "endpointValue" not in binding
     assert 'export STATE_SERVICE_URL="http://state:' in bootstrap
     assert bootstrap.count("    ports:") == 1
     assert '"${port_state_service}:${port_state_service}"' not in bootstrap
@@ -1202,7 +1208,7 @@ def test_ordinary_and_external_endpoint_configuration_are_injected_without_secre
             "kind": "endpointBinding",
             "connectionRef": "web-to-payments",
             "projection": "url",
-            "value": "https://payments.example.test",
+            "value": "https://payments.example.test/path/$literal/'quoted'",
             "sourceRefs": ["sequence:PAY"],
         },
     ]
@@ -1216,12 +1222,28 @@ def test_ordinary_and_external_endpoint_configuration_are_injected_without_secre
         "export APP_MODE='EasyDep live check: spaces, equals=ok, dollar=$literal'"
         in bootstrap
     )
-    assert 'export PAYMENTS_URL="${endpoint_web_payments_url}"' in bootstrap
-    assert 'variable "external_endpoint_web_to_payments"' in files["variables.tf"]
+    assert "export PAYMENTS_URL='https://payments.example.test/path/$literal/'\"'\"'quoted'\"'\"''" in bootstrap
+    assert 'variable "external_endpoint_web_to_payments"' not in files["variables.tf"]
+    endpoint_binding = next(
+        item
+        for item in resource_plan["runtimeBindings"]
+        if item.get("kind") == "endpointEnvironment"
+    )
+    assert endpoint_binding["endpointValue"] == "https://payments.example.test/path/$literal/'quoted'"
     assert "    environment:" in bootstrap
     assert "      - APP_MODE" in bootstrap
     assert "      - PAYMENTS_URL" in bootstrap
     assert "compose --env-file /opt/easydep/runtime/.env" in bootstrap
+
+    graph["workloads"][0]["configuration"][1]["sensitive"] = True
+    sensitive_value_findings = [
+        issue
+        for issue in validate_workload_graph(graph)
+        if issue.get("field") == "workloads.web.configuration.payments-url.value"
+    ]
+    assert len(sensitive_value_findings) == 1
+    assert sensitive_value_findings[0]["classification"] == "invalid"
+    assert "Sensitive endpoint values" in sensitive_value_findings[0]["reason"]
 
 
 def test_delivery_script_revalidates_existing_inputs_atomically_without_port_prompt(

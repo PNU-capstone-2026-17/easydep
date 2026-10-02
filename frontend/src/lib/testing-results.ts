@@ -597,7 +597,6 @@ export function projectTestingRun(input: {
   const source = Object.keys(report).length ? report : checkpointResult;
   const verification = record(source.verification);
   const reports = record(verification.reports ?? source.reports);
-  const validationSkipped = verification.validationSkipped === true;
   const event = latestProgressEvent(input.events ?? [], command?.command_id);
   const checkpointProgress = record(checkpoint.testing_progress);
   const progress = foldTestingProgress(
@@ -639,11 +638,9 @@ export function projectTestingRun(input: {
     terminalVerificationStatus(dynamicReport.gateStatus ?? dynamicReport.status) &&
       commandTerminal
   );
-  // A skipped validation contains planning data, not execution evidence.
-  // Do not promote those rows to PASS merely because the command completed.
   const reportWorkflows = workflowsFromReport(
     dynamicReport,
-    verificationFinal && !validationSkipped
+    verificationFinal
   );
   const progressWorkflows = workflowsFromProgress(progress);
   const workflows = mergeWorkflows(reportWorkflows, progressWorkflows);
@@ -699,7 +696,7 @@ export function projectTestingRun(input: {
     return null;
   }
   const gateCounts = record(verification.gateCounts ?? source.gateCounts);
-  const finalGateStatus = verificationFinal && !validationSkipped
+  const finalGateStatus = verificationFinal
     ? terminalVerificationStatus(source.gateStatus ?? verification.gateStatus ?? dynamicReport.gateStatus) ?? 'PENDING'
     : 'PENDING';
   const commandStatus = String(command?.status ?? '').toUpperCase();

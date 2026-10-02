@@ -19,7 +19,6 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.config import settings
-from app.demo_validation import demo_skip_validation_enabled
 from app.llm_connection import LlmConnection
 from app.llm_profiles import profile_for
 from app.metrics import langsmith as langsmith_metrics
@@ -2159,7 +2158,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
     if (
         task.get('completion_mode', 'agent') == 'verify-or-repair'
         and task_type == 'integration-implementation'
-        and not demo_skip_validation_enabled()
     ):
         precheck_started = time.monotonic()
         raw_profile = task.get('verification_profile')
@@ -2310,7 +2308,6 @@ def _execute_openhands_task(run_root: Path, task_id: str) -> dict[str, object]:
             owner_task
             and bounded_evidence
             and owner_tool_mode in {"restricted", "editor"}
-            and not demo_skip_validation_enabled()
         )
         else None
     )

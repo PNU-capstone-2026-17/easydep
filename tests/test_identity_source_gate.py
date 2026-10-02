@@ -147,6 +147,19 @@ def test_blank_answer_cannot_advance_unresolved_mandatory_source(monkeypatch) ->
     assert result["identity_source_question"] == question
 
 
+def test_blank_answer_cannot_advance_pending_semantic_ambiguity(monkeypatch) -> None:
+    question = {"prompt": "Which interpretation should apply?", "options": ["A", "B"]}
+    monkeypatch.setattr(feedback_gates, "_ask", lambda *args, **kwargs: "")
+
+    result = feedback_gates.gate_specs({
+        "use_case_specs": [], "identity_source_question": None,
+        "semantic_ambiguity_question": question,
+    })
+
+    assert result["gate_route"] == "loop"
+    assert result["semantic_ambiguity_question"] == question
+
+
 def test_identity_answer_requires_authenticate_ref_only_for_authenticated_context() -> None:
     with pytest.raises(ValueError):
         IdentitySourceAnswer(

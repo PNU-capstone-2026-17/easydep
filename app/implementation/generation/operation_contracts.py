@@ -11,6 +11,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.design.contracts.api_spec import ApiSpecModel
+from app.design.contracts.type_system import DesignTypeError, parse_type_expression
 from app.design.schemas.class_model import BCEModel
 from app.design.schemas.sequence_model import SequenceCollection
 
@@ -69,6 +70,9 @@ class EndpointContract(BaseModel):
     path: str
     request_type: str | None = Field(default=None, alias="requestType")
     response_types: list[str] = Field(default_factory=list, alias="responseTypes")
+    required_response_shape: list[str] = Field(
+        default_factory=list, alias="requiredResponseShape"
+    )
     control: str | None = None
     control_method: str | None = Field(default=None, alias="controlMethod")
     input_bindings: list[EndpointInputBinding] = Field(default_factory=list, alias="inputBindings")
@@ -158,6 +162,7 @@ def build_generated_operation_contracts(
                     )
                     if value is not None
                 ],
+                requiredResponseShape=_required_response_shape(endpoint, api_model),
                 control=binding.control,
                 controlMethod=binding.method,
                 inputBindings=[
@@ -302,6 +307,67 @@ def write_generated_operation_contracts(root: Path, contracts: GeneratedOperatio
         encoding="utf-8",
     )
     return path
+
+
+def _required_response_shape(endpoint: object, api_model: ApiSpecModel) -> list[str]:
+    """Return finite required response paths without inferring how to populate them.
+
+    This is a descriptive handoff to the implementation planner.  In particular,
+    it deliberately does not claim that a repository lookup, a DTO mapper, or a
+    control operation can produce any of these paths.
+    """
+    schemas = {schema.name: schema for schema in api_model.Schemas}
+    paths: list[str] = []
+    seen_paths: set[str] = set()
+
+    def add(path: str) -> None:
+        if path and path not in seen_paths:
+            seen_paths.add(path)
+            paths.append(path)
+
+    def walk(schema_name: str, prefix: str, ancestors: frozenset[str]) -> None:
+        schema = schemas.get(schema_name)
+        if schema is None or schema.values or schema_name in ancestors:
+            return
+        for field in schema.fields:
+            if not field.required:
+                continue
+            item_type, is_array, is_optional = _response_shape_type(field.type)
+            # A nullable/optional member has no required nested output shape.
+            if is_optional:
+                continue
+            path = f"{prefix}.{field.name}" if prefix else field.name
+            add(path)
+            nested_prefix = f"{path}[]" if is_array else path
+            if item_type in schemas:
+                walk(item_type, nested_prefix, ancestors | {schema_name})
+
+    for response in endpoint.responses:
+        if not (200 <= response.status < 300) or not response.schema_name:
+            continue
+        root_prefix = "[]" if response.is_array else ""
+        walk(response.schema_name, root_prefix, frozenset())
+    return paths
+
+
+def _response_shape_type(value: str) -> tuple[str, bool, bool]:
+    """Extract a named nested schema and its collection/nullable wrappers safely."""
+    try:
+        expression = parse_type_expression(value)
+    except DesignTypeError:
+        return "", False, False
+
+    is_array = False
+    is_optional = False
+    while expression.kind == "container":
+        if expression.name == "optional":
+            is_optional = True
+        elif expression.name in {"list", "set", "collection", "iterable"}:
+            is_array = True
+        else:
+            return "", is_array, is_optional
+        expression = expression.arguments[0]
+    return (expression.name if expression.kind == "named" else ""), is_array, is_optional
 
 
 def _owner_fqcn(stereotype: str, name: str, base_package: str) -> str:

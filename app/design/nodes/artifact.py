@@ -972,7 +972,12 @@ def check_node(spec: DesignArtifactSpec) -> Callable[[ArchitectureState], dict]:
             "repair_history": ledger.model_dump(mode="json"),
         }
         if evidence is not None:
-            report["semanticEvidence"] = evidence
+            # Check hooks may attach same-gate transient data used by the
+            # checker. Keep that data out of the persisted semantic evidence.
+            report["semanticEvidence"] = {
+                key: value for key, value in evidence.items()
+                if key != "_staticValidation"
+            }
         if error:
             report["error"] = error
         log_design_timing(

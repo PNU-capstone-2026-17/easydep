@@ -474,6 +474,37 @@ class SemanticAmbiguityReview(BaseModel):
     question: SemanticAmbiguityQuestion | None = None
 
 
+class StateSourceReview(BaseModel):
+    """Evidence-bounded review of one persistent condition's source."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    disposition: Literal[
+        "explicit_setter", "default", "external", "derived", "unresolved", "not_persistent"
+    ]
+    consumer_use_case_id: str = Field(alias="consumerUseCaseId", min_length=1)
+    requirement_ids: list[str] = Field(alias="requirementIds", default_factory=list)
+    evidence_spans: list[str] = Field(alias="evidenceSpans", default_factory=list)
+    producer_use_case_id: str | None = Field(default=None, alias="producerUseCaseId")
+    source_evidence_span: str | None = Field(default=None, alias="sourceEvidenceSpan")
+
+
+class StateSourceReviews(BaseModel):
+    """A per-condition review result. The caller supplies the finite candidates."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    reviews: list[StateSourceReview] = Field(default_factory=list)
+
+
+class StateConditionCandidates(BaseModel):
+    """Finite refs selected from a compact condition inventory."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    state_refs: list[str] = Field(alias="stateRefs", default_factory=list)
+
+
 class IdentityObligation(BaseModel):
     """An identity or delegation condition explicitly required by a functional requirement."""
 

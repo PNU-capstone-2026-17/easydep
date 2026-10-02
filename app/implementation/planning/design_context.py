@@ -25,7 +25,10 @@ from ..domain.implementation_ir import (
 from ..domain.models import JobSpec
 from ..generation.frontend_scaffold import frontend_feature_operations, operation_ids
 from ..generation.java_scaffold import controller_body_marker
-from ..generation.operation_contracts import build_generated_operation_contracts
+from ..generation.operation_contracts import (
+    _response_shape_type,
+    build_generated_operation_contracts,
+)
 from ..generation.persistence_scaffold import persistence_repository_fqcns
 from .frontend_contracts import GeneratedClientContracts, GeneratedClientOperation
 from .method_projection import MethodProjection, MethodProjectionResult, project_method_calls
@@ -272,6 +275,11 @@ def _build_unit_test_task(
     if isinstance(design_inputs, dict):
         read_path_set.update(str(path) for path in design_inputs.values() if isinstance(path, str))
     read_paths = sorted(read_path_set)
+    response_shape_packet = (
+        _backend_unit_response_shape_packet(run_root, subject_context)
+        if owner == "backend"
+        else []
+    )
     context = {
         "schemaVersion": "implementation-unit-test-context/v1alpha1",
         "taskId": task_id,
@@ -283,6 +291,11 @@ def _build_unit_test_task(
         "readSourcePaths": read_paths,
         "subjectContextPath": subject.context_file,
         **({"designInputs": design_inputs} if isinstance(design_inputs, dict) else {}),
+        **(
+            {"operationContractResponseShapes": response_shape_packet}
+            if response_shape_packet
+            else {}
+        ),
     }
     context_path = output / f"{task_id}.context.json"
     context_path.write_text(json.dumps(context, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -304,6 +317,18 @@ copy it into planning artifacts or modify it.
 - Complete the test source with English identifiers and messages. The focused test runner must execute
   at least one passing test without skipped-only results.
 """
+    if response_shape_packet:
+        prompt += """
+
+### Selected operation response shapes
+
+For each packet below, assert every applicable required response field in a representative successful
+fixture when a nonempty result is valid. This does not require collections to be nonempty for every
+valid successful outcome. Do not assume paths absent from `requiredResponseShape` are always present;
+only assert optional fields when the specific behavior being tested guarantees them.
+
+```json
+""" + json.dumps(response_shape_packet, ensure_ascii=False, indent=2) + "\n```\n"
     prompt += render_allowed_output_rules([test_path])
     prompt_path = output / f"{task_id}.prompt.md"
     prompt_path.write_text(prompt, encoding="utf-8")
@@ -332,6 +357,52 @@ copy it into planning artifacts or modify it.
         json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return task
+
+
+def _backend_unit_response_shape_packet(
+    run_root: Path, subject_context: dict[str, object]
+) -> list[dict[str, object]]:
+    """Project the subject's existing owner sidecar into backend test evidence."""
+    sidecar_path = subject_context.get("generatedOperationContractsPath")
+    if not isinstance(sidecar_path, str):
+        return []
+    payload = _read_json(run_root / sidecar_path)
+    contracts = payload.get("contracts") if isinstance(payload, dict) else None
+    if not isinstance(contracts, list):
+        return []
+    packet: list[dict[str, object]] = []
+    for contract in contracts:
+        if not isinstance(contract, dict) or not isinstance(contract.get("operationId"), str):
+            continue
+        endpoints = contract.get("endpoints")
+        if not isinstance(endpoints, list):
+            continue
+        for endpoint in endpoints:
+            if not isinstance(endpoint, dict):
+                continue
+            required_shape = endpoint.get("requiredResponseShape")
+            if not (
+                isinstance(endpoint.get("method"), str)
+                and isinstance(endpoint.get("path"), str)
+                and isinstance(required_shape, list)
+            ):
+                continue
+            fields = [field for field in required_shape if isinstance(field, str)]
+            if fields:
+                packet.append(
+                    {
+                        "operationId": contract["operationId"],
+                        "method": endpoint["method"],
+                        "path": endpoint["path"],
+                        "requiredResponseShape": fields,
+                    }
+                )
+    return sorted(
+        packet,
+        key=lambda item: (
+            str(item["operationId"]), str(item["method"]), str(item["path"])
+        ),
+    )
 
 
 def _is_work_component(component: ComponentIR) -> bool:
@@ -1693,6 +1764,40 @@ def _owner_declared_contract_evidence(
     }
     class_names.update(direct_call_targets)
 
+    schemas = {item.name: item for item in api_model.Schemas}
+    bce_classes = {item.class_name: item for item in bce_model.Classes}
+    data_types = {item.name: item for item in bce_model.DataTypes}
+    reached_response_classes: set[str] = set()
+
+    def response_schema_closure(schema_name: str, ancestors: frozenset[str]) -> None:
+        schema = schemas.get(schema_name)
+        if schema is None or schema_name in ancestors:
+            return
+        source_class = schema.source_class
+        if source_class:
+            if source_class in bce_classes and bce_classes[source_class].stereotype == "Entity":
+                reached_response_classes.add(source_class)
+            elif source_class in data_types:
+                reached_response_classes.add(source_class)
+        for field in schema.fields:
+            if not field.required:
+                continue
+            nested_name, _is_array, is_optional = _response_shape_type(field.type)
+            if nested_name in schemas and not is_optional:
+                response_schema_closure(nested_name, ancestors | {schema_name})
+
+    for endpoint in api_model.Endpoints:
+        binding = endpoint.control_binding
+        if binding is None or not any(
+            item.method.class_name == binding.control and item.method.name == binding.method
+            for item in method_projections
+        ):
+            continue
+        for response in endpoint.responses:
+            if 200 <= response.status < 300 and response.schema_name:
+                response_schema_closure(response.schema_name, frozenset())
+    class_names.update(reached_response_classes)
+
     def class_inventory(model: BCEModel | None) -> list[dict[str, object]]:
         if model is None:
             return []
@@ -1707,8 +1812,19 @@ def _owner_declared_contract_evidence(
             if item.class_name in class_names
         ]
 
+    bce_data_type_inventory = [
+        {
+            "name": item.name,
+            "kind": item.kind,
+            "fields": list(item.fields),
+            "fieldRefs": list(item.field_refs),
+            "values": list(item.values),
+        }
+        for item in bce_model.DataTypes
+        if item.name in reached_response_classes
+    ]
+
     bound_endpoints = []
-    schemas = {item.name: item for item in api_model.Schemas}
     for endpoint in api_model.Endpoints:
         binding = endpoint.control_binding
         if binding is None:
@@ -1766,6 +1882,7 @@ def _owner_declared_contract_evidence(
             }
         ),
         "bceClasses": class_inventory(bce_model),
+        "bceDataTypes": bce_data_type_inventory,
         "persistenceClasses": class_inventory(persistence_model),
         "relationships": [
             {

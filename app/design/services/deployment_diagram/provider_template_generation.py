@@ -452,9 +452,10 @@ def _runtime_units(
                     str(resolved.get("connectionRef") or "")
                 )
             elif strategy == "externalInput":
-                resolved["endpointValueBindingRef"] = (
-                    f"external-endpoint-{_slug(resolved.get('connectionRef'))}"
-                )
+                if not resolved.get("endpointValue"):
+                    resolved["endpointValueBindingRef"] = (
+                        f"external-endpoint-{_slug(resolved.get('connectionRef'))}"
+                    )
         runtime_bindings_by_workload[str(binding.get("workloadRef") or "")].append(resolved)
     result: list[dict[str, Any]] = []
     for compute in deployment_plan.get("computeUnits") or []:
@@ -2141,13 +2142,14 @@ def build_complete_provider_template(
                     rule=f"{normalized_provider}.runtime-endpoint-injection",
                 )
         elif strategy == "externalInput":
-            template.binding(
-                f"external-endpoint-{_slug(connection_ref)}",
-                field=f"connections.{connection_ref}.endpoint",
-                kind="externalEndpoint",
-                phase="deployment",
-                source_refs=binding.get("sourceRefs"),
-            )
+            if not binding.get("endpointValue"):
+                template.binding(
+                    f"external-endpoint-{_slug(connection_ref)}",
+                    field=f"connections.{connection_ref}.endpoint",
+                    kind="externalEndpoint",
+                    phase="deployment",
+                    source_refs=binding.get("sourceRefs"),
+                )
     _complete_azure_resource_groups(template)
     runtime_units = _runtime_units(
         graph,

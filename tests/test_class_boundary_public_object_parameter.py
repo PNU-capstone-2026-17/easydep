@@ -140,6 +140,35 @@ def test_ancestor_result_finding_uses_per_use_case_collaboration_repair(monkeypa
     assert calls == [{"UC-CHECKOUT"}]
 
 
+def test_http_projection_finding_uses_per_use_case_collaboration_repair(monkeypatch) -> None:
+    index = build_scenario_index(_scenario())
+    calls: list[set[str]] = []
+    monkeypatch.setattr(subgraphs, "_class_index", lambda _state: index)
+    monkeypatch.setattr(subgraphs, "_stored_class_model", lambda model: model)
+    monkeypatch.setattr(
+        subgraphs,
+        "revise_class_model",
+        lambda _model, _index, _feedback, _targets, **kwargs: (
+            calls.append(set(kwargs["collaboration_use_case_ids"]))
+            or SimpleNamespace(model_dump=lambda **_kwargs: _model)
+        ),
+    )
+
+    subgraphs._repair_class_batch(
+        _model(["UC-CHECKOUT:main:1"]),
+        "Repair the HTTP projection gap.",
+        {"usecase_spec": _scenario()},
+        {"UC-CHECKOUT"},
+        [ArtifactFinding(
+            "class.collaboration.http-projection",
+            "Public handoff cannot use a runtime value.",
+            "UC-CHECKOUT",
+        )],
+    )
+
+    assert calls == [{"UC-CHECKOUT"}]
+
+
 def _binding_model(source_call: str) -> dict:
     step_ref = "UC-CHECKOUT:main:1"
     model = {
@@ -225,3 +254,109 @@ def test_class_binding_allows_result_from_completed_non_ancestor_call() -> None:
     report = validate_class_model(model, index)
 
     assert not any(item.rule_id == "class.collaboration.ancestor-result-binding" for item in report.findings)
+
+
+def _api_handoff_model(*, return_type: str = "String", source_ref: str = "stable-root#param") -> dict:
+    step_ref = "UC-CHECKOUT:main:1"
+    return {
+        "Classes": [
+            {
+                "className": "CheckoutBoundary", "stereotype": "Boundary", "fields": [],
+                "operations": [{
+                    "operationId": "CheckoutBoundary::submit(value:String)", "name": "submit",
+                    "parameters": [{"name": "value", "type": "String", "stableRef": "param"}],
+                    "returnType": "String", "stepRefs": [step_ref],
+                }],
+            },
+            {
+                "className": "CheckoutControl", "stereotype": "Control", "fields": [],
+                "operations": [{
+                    "operationId": "CheckoutControl::prepare(value:String)", "name": "prepare",
+                    "parameters": [{"name": "value", "type": "String"}],
+                    "returnType": return_type, "stepRefs": [step_ref],
+                }],
+            },
+        ],
+        "DataTypes": [],
+        "Collaborations": [{
+            "collaborationId": "UC-CHECKOUT", "useCaseIds": ["UC-CHECKOUT"],
+            "calls": [
+                {
+                    "callId": "call-root", "stableId": "stable-root",
+                    "receiverOperationId": "CheckoutBoundary::submit(value:String)",
+                    "stepRefs": [step_ref],
+                    "argumentBindings": [{"parameter": "value", "sourceRef": "UC-CHECKOUT:main:1#param"}],
+                },
+                {
+                    "callId": "call-control", "stableId": "stable-control",
+                    "receiverOperationId": "CheckoutControl::prepare(value:String)",
+                    "parentCallId": "call-root", "stepRefs": [step_ref],
+                    "argumentBindings": [{"parameter": "value", "sourceRef": source_ref}],
+                },
+            ],
+        }],
+    }
+
+
+def test_class_gate_rejects_nonprojectable_actor_entry_handoffs() -> None:
+    index = build_scenario_index(_scenario())
+    cases = [
+        _api_handoff_model(return_type="Integer"),
+        _api_handoff_model(source_ref="runtime#currentDateTime"),
+        _api_handoff_model(source_ref="earlier-call#result"),
+        _api_handoff_model(source_ref="UC-CHECKOUT:precondition:1#principal"),
+        _api_handoff_model(source_ref="other-call#parameter"),
+    ]
+
+    reports = [validate_class_model(model, index) for model in cases]
+
+    assert all(any(
+        finding.rule_id == "class.collaboration.http-projection"
+        for finding in report.findings
+    ) for report in reports)
+
+
+def test_class_gate_rejects_non_server_value_catalog_sources_at_http_handoff() -> None:
+    scenario = _scenario()
+    scenario["use_case_specs"][0]["public_contract"] = {"required_values": [
+        {"value_ref": "caller", "name": "input", "source": "caller_input", "value_type": "string"},
+        {"value_ref": "result", "name": "result", "source": "system_result", "value_type": "string"},
+    ]}
+    index = build_scenario_index(scenario)
+
+    reports = [
+        validate_class_model(_api_handoff_model(source_ref=f"value#{value_ref}"), index)
+        for value_ref in ("caller", "result")
+    ]
+
+    assert all(any(
+        finding.rule_id == "class.collaboration.http-projection"
+        for finding in report.findings
+    ) for report in reports)
+
+
+def test_class_gate_keeps_runtime_values_inside_internal_calls() -> None:
+    index = build_scenario_index(_scenario())
+    model = _api_handoff_model()
+    step_ref = "UC-CHECKOUT:main:1"
+    model["Classes"].append({
+        "className": "CheckoutEntity", "stereotype": "Entity", "fields": [],
+        "operations": [{
+            "operationId": "CheckoutEntity::record(at:LocalDateTime)", "name": "record",
+            "parameters": [{"name": "at", "type": "LocalDateTime"}],
+            "returnType": "void", "stepRefs": [step_ref],
+        }],
+    })
+    model["Collaborations"][0]["calls"].append({
+        "callId": "call-entity", "stableId": "stable-entity",
+        "receiverOperationId": "CheckoutEntity::record(at:LocalDateTime)",
+        "parentCallId": "call-control", "stepRefs": [step_ref],
+        "argumentBindings": [{"parameter": "at", "sourceRef": "runtime#currentDateTime"}],
+    })
+
+    report = validate_class_model(model, index)
+
+    assert not any(
+        finding.rule_id == "class.collaboration.http-projection"
+        for finding in report.findings
+    )

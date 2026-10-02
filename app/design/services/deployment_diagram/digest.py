@@ -96,6 +96,8 @@ def deployment_plan_structure_digest(plan: dict[str, Any]) -> str:
         compute["resourceRequirements"] = {}
     for path in structural.get("networkPaths") or []:
         path.pop("port", None)
+    for binding in structural.get("runtimeBindings") or []:
+        binding.pop("endpointValue", None)
     return _canonical_digest(structural)
 
 
